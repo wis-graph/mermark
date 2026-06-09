@@ -21,3 +21,7 @@ html, body { margin: 0; height: 100%; }
 .cm-footnote-ref { color: #5082ff; cursor: default; }
 .cm-footnote-def { font-size: .9em; opacity: .8; }
 .cm-image { display: block; max-width: 100%; height: auto; margin: .5em auto; }
+.cm-wikilink-active { color: #5082ff; cursor: pointer; text-decoration: none; }
+.cm-wikilink-active:hover { text-decoration: underline; }
+.cm-wikilink-missing { color: #999; text-decoration: line-through dotted; cursor: default; }
+.cm-wikilink-pending { color: #777; }

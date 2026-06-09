@@ -10,6 +10,12 @@ pub fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }
 
+/// Check whether a path points to an existing file (used by wikilink rendering).
+#[tauri::command]
+pub fn path_exists(path: String) -> bool {
+    std::path::Path::new(&path).is_file()
+}
+
 /// Open another file in a brand-new window (used by wikilink clicks).
 #[tauri::command]
 pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {

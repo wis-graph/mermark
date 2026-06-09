@@ -14,7 +14,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             commands::read_file,
-            commands::open_path
+            commands::open_path,
+            commands::path_exists
         ])
         .setup(|app| {
             let args: Vec<String> = std::env::args().skip(1).collect();

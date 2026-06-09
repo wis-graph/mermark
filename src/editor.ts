@@ -8,6 +8,7 @@ import { inlineDecorations } from "./markdown/inline";
 import { mathBlocks } from "./markdown/math-widget";
 import { mermaidBlocks } from "./markdown/mermaid-widget";
 import { markdownLang } from "./markdown/parser";
+import { wikilinkPlugin } from "./markdown/wikilink";
 
 export function mountEditor(parent: HTMLElement, doc: string, baseDir: string): EditorView {
   const state = EditorState.create({
@@ -16,6 +17,7 @@ export function mountEditor(parent: HTMLElement, doc: string, baseDir: string): 
       markdownLang(),
       inlineDecorations,
       imagePlugin(baseDir),
+      wikilinkPlugin(baseDir),
       mermaidBlocks,
       codeBlocks,
       mathBlocks,
