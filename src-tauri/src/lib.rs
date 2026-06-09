@@ -1,4 +1,5 @@
 pub mod cli;
+mod commands;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -10,7 +11,35 @@ fn greet(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            commands::read_file,
+            commands::open_path
+        ])
+        .setup(|app| {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match cli::resolve_target(&args, &cwd) {
+                Ok(path) => {
+                    let url = tauri::WebviewUrl::App(
+                        format!(
+                            "index.html?file={}",
+                            urlencoding::encode(&path.to_string_lossy())
+                        )
+                        .into(),
+                    );
+                    tauri::WebviewWindowBuilder::new(app, "main", url)
+                        .title("mermark")
+                        .inner_size(900.0, 720.0)
+                        .build()?;
+                }
+                Err(e) => {
+                    eprintln!("mermark: {e:?}");
+                    std::process::exit(2);
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
