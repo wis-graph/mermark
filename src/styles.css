@@ -12,3 +12,5 @@ html, body { margin: 0; height: 100%; }
 .cm-mermaid-error { color: #ff6b6b; white-space: pre-wrap; padding: .75em; }
 .cm-mermaid svg { cursor: grab; }
 .cm-mermaid svg:active { cursor: grabbing; }
+.cm-math-block { display: block; margin: .5em 0; text-align: center; }
+.cm-math-inline { padding: 0 .15em; }
