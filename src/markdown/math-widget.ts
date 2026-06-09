@@ -1,5 +1,6 @@
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from "@codemirror/view";
 import { RangeSetBuilder } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
 import katex from "katex";
 
 class KatexWidget extends WidgetType {
@@ -24,10 +25,18 @@ const INLINE = /(?<!\$)\$([^$\n]+?)\$(?!\$)/g;
 function build(view: EditorView): DecorationSet {
   const ranges: { from: number; to: number; deco: Decoration }[] = [];
   const text = view.state.doc.toString();
+  const codeSpans: [number, number][] = [];
+  syntaxTree(view.state).iterate({
+    enter: (node) => {
+      if (node.name === "FencedCode" || node.name === "InlineCode") codeSpans.push([node.from, node.to]);
+    },
+  });
+  const inCode = (pos: number) => codeSpans.some(([a, b]) => pos >= a && pos < b);
   let m: RegExpExecArray | null;
   BLOCK.lastIndex = 0;
   const blockSpans: [number, number][] = [];
   while ((m = BLOCK.exec(text))) {
+    if (inCode(m.index)) continue;
     blockSpans.push([m.index, m.index + m[0].length]);
     ranges.push({ from: m.index, to: m.index + m[0].length, deco: Decoration.replace({ widget: new KatexWidget(m[1].trim(), true), block: true }) });
   }
@@ -35,6 +44,7 @@ function build(view: EditorView): DecorationSet {
   while ((m = INLINE.exec(text))) {
     const start = m.index;
     if (blockSpans.some(([a, b]) => start >= a && start < b)) continue; // inside a block-math span
+    if (inCode(start)) continue; // inside a code block / inline code
     ranges.push({ from: start, to: start + m[0].length, deco: Decoration.replace({ widget: new KatexWidget(m[1].trim(), false) }) });
   }
   ranges.sort((a, b) => a.from - b.from || a.to - b.to);
