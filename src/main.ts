@@ -1,22 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
+import { mountEditor } from "./editor";
+import "./styles.css";
 
-let greetInputEl: HTMLInputElement | null;
-let greetMsgEl: HTMLElement | null;
-
-async function greet() {
-  if (greetMsgEl && greetInputEl) {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsgEl.textContent = await invoke("greet", {
-      name: greetInputEl.value,
-    });
+async function boot() {
+  const root = document.querySelector<HTMLDivElement>("#app")!;
+  const file = new URLSearchParams(location.search).get("file");
+  if (!file) {
+    root.textContent = "No file specified.";
+    return;
+  }
+  try {
+    const text = await invoke<string>("read_file", { path: file });
+    root.innerHTML = "";
+    mountEditor(root, text);
+  } catch (e) {
+    root.textContent = `Failed to open: ${String(e)}`;
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  greetInputEl = document.querySelector("#greet-input");
-  greetMsgEl = document.querySelector("#greet-msg");
-  document.querySelector("#greet-form")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    greet();
-  });
-});
+boot();
