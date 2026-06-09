@@ -2,6 +2,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { codeBlocks } from "./markdown/codeblock";
 import { inlineDecorations } from "./markdown/inline";
+import { mermaidBlocks } from "./markdown/mermaid-widget";
 import { markdownLang } from "./markdown/parser";
 
 export function mountEditor(parent: HTMLElement, doc: string): EditorView {
@@ -10,6 +11,7 @@ export function mountEditor(parent: HTMLElement, doc: string): EditorView {
     extensions: [
       markdownLang(),
       inlineDecorations,
+      mermaidBlocks,
       codeBlocks,
       EditorState.readOnly.of(true),
       EditorView.editable.of(false),

@@ -7,3 +7,6 @@ html, body { margin: 0; height: 100%; }
 .cm-strike { text-decoration: line-through; }
 .cm-inline-code { font-family: ui-monospace, monospace; padding: 0 .25em; border-radius: 4px; background: rgba(127,127,127,.18); }
 .cm-code-block { background: rgba(127,127,127,.10); font-family: ui-monospace, monospace; }
+.cm-mermaid { display: block; margin: 1em 0; overflow: hidden; border: 1px solid rgba(127,127,127,.25); border-radius: 8px; }
+.cm-mermaid svg { display: block; width: 100%; height: auto; }
+.cm-mermaid-error { color: #ff6b6b; white-space: pre-wrap; padding: .75em; }
