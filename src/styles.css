@@ -53,3 +53,9 @@ html, body { margin: 0; height: 100%; }
 .cm-wikilink-pending { color: var(--muted); }
 
 .theme-toggle { position: fixed; top: 8px; right: 8px; z-index: 10; background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); width: 30px; height: 30px; cursor: pointer; }
+
+.cm-table-wrap { overflow-x: auto; margin: 1em 0; }
+.cm-table { border-collapse: collapse; width: 100%; }
+.cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; }
+.cm-table th { background: var(--surface); font-weight: 700; }
+.cm-task-checkbox { margin-right: .4em; vertical-align: middle; }
