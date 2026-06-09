@@ -4,8 +4,6 @@ import { RangeSetBuilder } from "@codemirror/state";
 import mermaid from "mermaid";
 import svgPanZoom from "svg-pan-zoom";
 
-mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
-
 let idSeq = 0;
 
 class MermaidWidget extends WidgetType {

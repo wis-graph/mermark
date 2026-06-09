@@ -1,9 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { mountEditor } from "./editor";
+import { systemTheme, applyTheme, mountThemeToggle } from "./theme";
 import "katex/dist/katex.min.css";
 import "./styles.css";
 
 async function boot() {
+  const theme = systemTheme();
+  applyTheme(theme);
+  mountThemeToggle(theme);
   const root = document.querySelector<HTMLDivElement>("#app")!;
   const file = new URLSearchParams(location.search).get("file");
   if (!file) {
