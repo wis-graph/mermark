@@ -18,3 +18,5 @@ html, body { margin: 0; height: 100%; }
 .cm-callout-head { font-weight: 700; }
 .cm-callout-warning { background: rgba(255,180,0,.12); border-left-color: #ffb400; }
 .cm-callout-danger { background: rgba(255,80,80,.12); border-left-color: #ff5050; }
+.cm-footnote-ref { color: #5082ff; cursor: default; }
+.cm-footnote-def { font-size: .9em; opacity: .8; }
