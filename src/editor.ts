@@ -1,13 +1,13 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { markdown } from "@codemirror/lang-markdown";
 import { inlineDecorations } from "./markdown/inline";
+import { markdownLang } from "./markdown/parser";
 
 export function mountEditor(parent: HTMLElement, doc: string): EditorView {
   const state = EditorState.create({
     doc,
     extensions: [
-      markdown(),
+      markdownLang(),
       inlineDecorations,
       EditorState.readOnly.of(true),
       EditorView.editable.of(false),
