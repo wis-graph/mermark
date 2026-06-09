@@ -2,3 +2,7 @@ html, body { margin: 0; height: 100%; }
 #app { height: 100vh; overflow: auto; }
 .cm-editor { height: 100%; }
 .cm-content { max-width: 820px; margin: 0 auto; padding: 2rem 1rem; }
+.cm-strong { font-weight: 700; }
+.cm-em { font-style: italic; }
+.cm-strike { text-decoration: line-through; }
+.cm-inline-code { font-family: ui-monospace, monospace; padding: 0 .25em; border-radius: 4px; background: rgba(127,127,127,.18); }
