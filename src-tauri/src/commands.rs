@@ -1,5 +1,8 @@
 use std::path::PathBuf;
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use std::sync::atomic::{AtomicU32, Ordering};
+use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+static WINDOW_SEQ: AtomicU32 = AtomicU32::new(1);
 
 /// Read a file's UTF-8 contents. Used by the frontend at startup.
 #[tauri::command]
@@ -14,7 +17,7 @@ pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     if !p.is_file() {
         return Err(format!("not a file: {path}"));
     }
-    let label = format!("w{}", app.webview_windows().len() + 1);
+    let label = format!("w{}", WINDOW_SEQ.fetch_add(1, Ordering::Relaxed));
     let url = WebviewUrl::App(format!("index.html?file={}", urlencoding::encode(&path)).into());
     WebviewWindowBuilder::new(&app, label, url)
         .title("mermark")

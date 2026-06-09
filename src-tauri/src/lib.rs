@@ -34,7 +34,14 @@ pub fn run() {
                         .build()?;
                 }
                 Err(e) => {
-                    eprintln!("mermark: {e:?}");
+                    match &e {
+                        cli::CliError::Missing => {
+                            eprintln!("mermark: no file given.\nusage: mermark <file.md>");
+                        }
+                        cli::CliError::NotFound(p) => {
+                            eprintln!("mermark: file not found: {}", p.display());
+                        }
+                    }
                     std::process::exit(2);
                 }
             }
