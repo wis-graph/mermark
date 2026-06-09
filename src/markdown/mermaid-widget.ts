@@ -36,6 +36,7 @@ class MermaidWidget extends WidgetType {
           fit: true,
           center: true,
         });
+        (host as unknown as { __pz?: { destroy(): void } }).__pz = pz;
         let zoomed = false;
         host.addEventListener("dblclick", (e) => {
           e.preventDefault();
@@ -52,6 +53,7 @@ class MermaidWidget extends WidgetType {
           },
           { passive: false },
         );
+        host.dispatchEvent(new CustomEvent("mermaid-rendered", { bubbles: true }));
       })
       .catch((err) => {
         host.innerHTML = "";
@@ -64,6 +66,10 @@ class MermaidWidget extends WidgetType {
   }
   ignoreEvent() {
     return true;
+  }
+  destroy(dom: HTMLElement): void {
+    const pz = (dom as unknown as { __pz?: { destroy(): void } }).__pz;
+    try { pz?.destroy(); } catch { /* already gone */ }
   }
 }
 
