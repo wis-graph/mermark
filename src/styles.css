@@ -6,3 +6,4 @@ html, body { margin: 0; height: 100%; }
 .cm-em { font-style: italic; }
 .cm-strike { text-decoration: line-through; }
 .cm-inline-code { font-family: ui-monospace, monospace; padding: 0 .25em; border-radius: 4px; background: rgba(127,127,127,.18); }
+.cm-code-block { background: rgba(127,127,127,.10); font-family: ui-monospace, monospace; }
