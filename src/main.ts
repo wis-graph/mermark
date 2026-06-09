@@ -13,7 +13,8 @@ async function boot() {
   try {
     const text = await invoke<string>("read_file", { path: file });
     root.innerHTML = "";
-    mountEditor(root, text);
+    const baseDir = file.slice(0, Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")));
+    mountEditor(root, text, baseDir);
   } catch (e) {
     root.textContent = `Failed to open: ${String(e)}`;
   }

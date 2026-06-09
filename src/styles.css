@@ -20,3 +20,4 @@ html, body { margin: 0; height: 100%; }
 .cm-callout-danger { background: rgba(255,80,80,.12); border-left-color: #ff5050; }
 .cm-footnote-ref { color: #5082ff; cursor: default; }
 .cm-footnote-def { font-size: .9em; opacity: .8; }
+.cm-image { display: block; max-width: 100%; height: auto; margin: .5em auto; }

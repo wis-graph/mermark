@@ -3,17 +3,19 @@ import { EditorView } from "@codemirror/view";
 import { callouts } from "./markdown/callout-widget";
 import { codeBlocks } from "./markdown/codeblock";
 import { footnotes } from "./markdown/footnote";
+import { imagePlugin } from "./markdown/image";
 import { inlineDecorations } from "./markdown/inline";
 import { mathBlocks } from "./markdown/math-widget";
 import { mermaidBlocks } from "./markdown/mermaid-widget";
 import { markdownLang } from "./markdown/parser";
 
-export function mountEditor(parent: HTMLElement, doc: string): EditorView {
+export function mountEditor(parent: HTMLElement, doc: string, baseDir: string): EditorView {
   const state = EditorState.create({
     doc,
     extensions: [
       markdownLang(),
       inlineDecorations,
+      imagePlugin(baseDir),
       mermaidBlocks,
       codeBlocks,
       mathBlocks,
