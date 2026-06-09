@@ -22,7 +22,7 @@ class ImageWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
-const IMG = /!\[([^\]]*)\]\(([^)]+)\)/g;
+const IMG = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 
 export function imagePlugin(baseDir: string) {
   function build(view: EditorView): DecorationSet {
