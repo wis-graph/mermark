@@ -1,6 +1,7 @@
 import { syntaxTree } from "@codemirror/language";
-import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from "@codemirror/view";
-import { RangeSetBuilder } from "@codemirror/state";
+import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
+import { RangeSetBuilder, StateField } from "@codemirror/state";
+import type { EditorState } from "@codemirror/state";
 import mermaid from "mermaid";
 import svgPanZoom from "svg-pan-zoom";
 
@@ -72,45 +73,40 @@ class MermaidWidget extends WidgetType {
 }
 
 /** Extract the inner code of a FencedCode node, dropping the ``` fences. */
-function fenceBody(view: EditorView, from: number, to: number): string {
-  const first = view.state.doc.lineAt(from);
-  const last = view.state.doc.lineAt(to);
+function fenceBody(state: EditorState, from: number, to: number): string {
+  const first = state.doc.lineAt(from);
+  const last = state.doc.lineAt(to);
   const startLine = first.number + 1;
   const endLine = last.text.trim().startsWith("```") ? last.number - 1 : last.number;
   if (endLine < startLine) return "";
-  return view.state.doc.sliceString(view.state.doc.line(startLine).from, view.state.doc.line(endLine).to);
+  return state.doc.sliceString(state.doc.line(startLine).from, state.doc.line(endLine).to);
 }
 
-function infoLang(view: EditorView, from: number): string {
-  return view.state.doc.lineAt(from).text.replace(/^\s*`{3,}\s*/, "").trim().toLowerCase();
+function infoLang(state: EditorState, from: number): string {
+  return state.doc.lineAt(from).text.replace(/^\s*`{3,}\s*/, "").trim().toLowerCase();
 }
 
-function build(view: EditorView): DecorationSet {
+// Block decorations (block:true) MUST come from a StateField, not a ViewPlugin —
+// CM6 throws "Block decorations may not be specified via plugins" otherwise.
+// The whole tree is scanned (not just visible ranges) since a StateField has no viewport.
+function build(state: EditorState): DecorationSet {
   const b = new RangeSetBuilder<Decoration>();
-  const tree = syntaxTree(view.state);
-  for (const { from, to } of view.visibleRanges) {
-    tree.iterate({
-      from,
-      to,
-      enter: (node) => {
-        if (node.name !== "FencedCode" || infoLang(view, node.from) !== "mermaid") return;
-        const code = fenceBody(view, node.from, node.to);
-        b.add(node.from, node.to, Decoration.replace({ widget: new MermaidWidget(code), block: true }));
-      },
-    });
-  }
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== "FencedCode" || infoLang(state, node.from) !== "mermaid") return;
+      const code = fenceBody(state, node.from, node.to);
+      b.add(node.from, node.to, Decoration.replace({ widget: new MermaidWidget(code), block: true }));
+    },
+  });
   return b.finish();
 }
 
-export const mermaidBlocks = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    constructor(v: EditorView) {
-      this.decorations = build(v);
-    }
-    update(u: ViewUpdate) {
-      if (u.docChanged || u.viewportChanged) this.decorations = build(u.view);
-    }
+export const mermaidBlocks = StateField.define<DecorationSet>({
+  create(state) {
+    return build(state);
   },
-  { decorations: (v) => v.decorations },
-);
+  update(deco, tr) {
+    return tr.docChanged ? build(tr.state) : deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});

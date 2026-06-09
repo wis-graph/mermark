@@ -1,5 +1,6 @@
-import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from "@codemirror/view";
-import { RangeSetBuilder } from "@codemirror/state";
+import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
+import { RangeSetBuilder, StateField } from "@codemirror/state";
+import type { EditorState } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import katex from "katex";
 
@@ -22,11 +23,13 @@ class KatexWidget extends WidgetType {
 const BLOCK = /\$\$([\s\S]+?)\$\$/g;
 const INLINE = /(?<!\$)\$([^$\n]+?)\$(?!\$)/g;
 
-function build(view: EditorView): DecorationSet {
+// Contains block:true (display math) decorations, so this MUST be a StateField,
+// not a ViewPlugin (CM6 forbids block decorations from plugins).
+function build(state: EditorState): DecorationSet {
   const ranges: { from: number; to: number; deco: Decoration }[] = [];
-  const text = view.state.doc.toString();
+  const text = state.doc.toString();
   const codeSpans: [number, number][] = [];
-  syntaxTree(view.state).iterate({
+  syntaxTree(state).iterate({
     enter: (node) => {
       if (node.name === "FencedCode" || node.name === "InlineCode") codeSpans.push([node.from, node.to]);
     },
@@ -53,11 +56,8 @@ function build(view: EditorView): DecorationSet {
   return b.finish();
 }
 
-export const mathBlocks = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    constructor(v: EditorView) { this.decorations = build(v); }
-    update(u: ViewUpdate) { if (u.docChanged) this.decorations = build(u.view); }
-  },
-  { decorations: (v) => v.decorations },
-);
+export const mathBlocks = StateField.define<DecorationSet>({
+  create(state) { return build(state); },
+  update(deco, tr) { return tr.docChanged ? build(tr.state) : deco; },
+  provide: (f) => EditorView.decorations.from(f),
+});
