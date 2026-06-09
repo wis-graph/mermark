@@ -1,5 +1,6 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { callouts } from "./markdown/callout-widget";
 import { codeBlocks } from "./markdown/codeblock";
 import { inlineDecorations } from "./markdown/inline";
 import { mathBlocks } from "./markdown/math-widget";
@@ -15,6 +16,7 @@ export function mountEditor(parent: HTMLElement, doc: string): EditorView {
       mermaidBlocks,
       codeBlocks,
       mathBlocks,
+      callouts,
       EditorState.readOnly.of(true),
       EditorView.editable.of(false),
       EditorView.lineWrapping,

@@ -14,3 +14,7 @@ html, body { margin: 0; height: 100%; }
 .cm-mermaid svg:active { cursor: grabbing; }
 .cm-math-block { display: block; margin: .5em 0; text-align: center; }
 .cm-math-inline { padding: 0 .15em; }
+.cm-callout { background: rgba(80,130,255,.10); border-left: 3px solid #5082ff; padding-left: .75em; }
+.cm-callout-head { font-weight: 700; }
+.cm-callout-warning { background: rgba(255,180,0,.12); border-left-color: #ffb400; }
+.cm-callout-danger { background: rgba(255,80,80,.12); border-left-color: #ff5050; }
