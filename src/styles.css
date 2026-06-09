@@ -10,3 +10,5 @@ html, body { margin: 0; height: 100%; }
 .cm-mermaid { display: block; margin: 1em 0; overflow: hidden; border: 1px solid rgba(127,127,127,.25); border-radius: 8px; }
 .cm-mermaid svg { display: block; width: 100%; height: auto; }
 .cm-mermaid-error { color: #ff6b6b; white-space: pre-wrap; padding: .75em; }
+.cm-mermaid svg { cursor: grab; }
+.cm-mermaid svg:active { cursor: grabbing; }

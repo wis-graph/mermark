@@ -2,6 +2,7 @@ import { syntaxTree } from "@codemirror/language";
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from "@codemirror/view";
 import { RangeSetBuilder } from "@codemirror/state";
 import mermaid from "mermaid";
+import svgPanZoom from "svg-pan-zoom";
 
 mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
 
@@ -23,7 +24,34 @@ class MermaidWidget extends WidgetType {
       .then(({ svg, bindFunctions }) => {
         host.innerHTML = svg;
         bindFunctions?.(host);
-        host.dispatchEvent(new CustomEvent("mermaid-rendered", { bubbles: true }));
+        const el = host.querySelector<SVGSVGElement>("svg");
+        if (!el) return;
+        el.removeAttribute("height");
+        el.style.width = "100%";
+        const pz = svgPanZoom(el, {
+          panEnabled: true,
+          zoomEnabled: true,
+          mouseWheelZoomEnabled: false, // we gate wheel on Ctrl/Cmd manually
+          dblClickZoomEnabled: false,
+          fit: true,
+          center: true,
+        });
+        let zoomed = false;
+        host.addEventListener("dblclick", (e) => {
+          e.preventDefault();
+          if (zoomed) { pz.reset(); zoomed = false; } else { pz.zoomBy(2); zoomed = true; }
+        });
+        host.addEventListener(
+          "wheel",
+          (e) => {
+            if (!(e.ctrlKey || e.metaKey)) return; // plain wheel = page scroll
+            e.preventDefault();
+            const rect = el.getBoundingClientRect();
+            const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+            pz.zoomAtPointBy(e.deltaY < 0 ? 1.15 : 0.87, point);
+          },
+          { passive: false },
+        );
       })
       .catch((err) => {
         host.innerHTML = "";
