@@ -63,8 +63,24 @@ export class MermaidWidget extends WidgetType {
     host.innerHTML = svg;
     const el = host.querySelector<SVGSVGElement>("svg");
     if (!el) return;
+    // Read the diagram's natural aspect ratio BEFORE svg-pan-zoom strips the
+    // viewBox; without it the svg collapses to the 150px replaced-element
+    // default and tall diagrams get cropped.
+    const vb = (el.getAttribute("viewBox") ?? "").split(/[\s,]+/).map(Number);
+    const aspect = vb.length === 4 && vb[2] > 0 && vb[3] > 0 ? vb[3] / vb[2] : 0.6;
     el.removeAttribute("height");
     el.style.width = "100%";
+    el.style.height = "100%";
+
+    // Size the host so the whole diagram fits: width-driven height, capped to
+    // the window so huge diagrams scale down instead of overflowing.
+    const fitHeight = () => {
+      const w = host.clientWidth || 600;
+      const cap = (window.innerHeight || 800) * 0.85;
+      host.style.height = `${Math.max(80, Math.min(w * aspect, cap))}px`;
+    };
+    fitHeight();
+
     const pz = svgPanZoom(el, {
       panEnabled: true,
       zoomEnabled: true,
@@ -74,6 +90,22 @@ export class MermaidWidget extends WidgetType {
       center: true,
     });
     (host as unknown as { __pz?: { destroy(): void } }).__pz = pz;
+
+    // Refit on container resize until the user pans/zooms manually.
+    let touched = false;
+    el.addEventListener("pointerdown", () => (touched = true), { once: true });
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => {
+        fitHeight();
+        pz.resize();
+        if (!touched) {
+          pz.fit();
+          pz.center();
+        }
+      });
+      ro.observe(host);
+      (host as unknown as { __ro?: ResizeObserver }).__ro = ro;
+    }
     let zoomed = false;
     host.addEventListener("dblclick", (e) => {
       e.preventDefault();
@@ -107,6 +139,7 @@ export class MermaidWidget extends WidgetType {
     return true;
   }
   destroy(dom: HTMLElement): void {
+    (dom as unknown as { __ro?: ResizeObserver }).__ro?.disconnect();
     const pz = (dom as unknown as { __pz?: { destroy(): void } }).__pz;
     try {
       pz?.destroy();
