@@ -1,20 +1,95 @@
 import { describe, it, expect } from "vitest";
-import { scanWikilinks } from "../src/markdown/parser";
+import { parser as baseParser } from "@lezer/markdown";
+import { GFM } from "@lezer/markdown";
+import { mermarkExtensions } from "../src/markdown/parser";
 
-describe("scanWikilinks", () => {
-  it("finds a single wikilink with start/end offsets and target", () => {
-    const line = "see [[notes/foo]] now";
-    expect(scanWikilinks(line, 0)).toEqual([{ from: 4, to: 17, target: "notes/foo", alias: "notes/foo" }]);
+const parser = baseParser.configure([GFM, ...mermarkExtensions]);
+
+/** Parse and return [nodeName, text] pairs for nodes matching `names`. */
+function nodesOf(doc: string, ...names: string[]): [string, string][] {
+  const tree = parser.parse(doc);
+  const out: [string, string][] = [];
+  tree.iterate({
+    enter(n) {
+      if (names.includes(n.name)) out.push([n.name, doc.slice(n.from, n.to)]);
+    },
   });
-  it("supports alias syntax [[target|alias]]", () => {
-    const r = scanWikilinks("[[a/b|Bee]]", 0);
-    expect(r[0]).toMatchObject({ target: "a/b", alias: "Bee" });
+  return out;
+}
+
+describe("wikilink parsing", () => {
+  it("parses [[target]] as a Wikilink node", () => {
+    expect(nodesOf("see [[notes/foo]] now", "Wikilink")).toEqual([["Wikilink", "[[notes/foo]]"]]);
   });
-  it("returns [] when none", () => {
-    expect(scanWikilinks("no links here", 0)).toEqual([]);
+  it("parses alias syntax with Target/Alias children", () => {
+    expect(nodesOf("[[a/b|Bee]]", "WikilinkTarget", "WikilinkAlias")).toEqual([
+      ["WikilinkTarget", "a/b"],
+      ["WikilinkAlias", "Bee"],
+    ]);
   });
-  it("applies a base offset to absolute positions", () => {
-    const r = scanWikilinks("[[x]]", 100);
-    expect(r[0].from).toBe(100);
+  it("parses ![[embed]] as WikilinkEmbed, not Image", () => {
+    expect(nodesOf("![[pic.png]]", "WikilinkEmbed", "Image")).toEqual([
+      ["WikilinkEmbed", "![[pic.png]]"],
+    ]);
+  });
+  it("does NOT parse wikilinks inside code fences", () => {
+    expect(nodesOf("```\n[[x]]\n```", "Wikilink")).toEqual([]);
+  });
+  it("does NOT parse wikilinks inside inline code", () => {
+    expect(nodesOf("a `[[x]]` b", "Wikilink")).toEqual([]);
+  });
+});
+
+describe("inline math parsing", () => {
+  it("parses $e=mc^2$", () => {
+    expect(nodesOf("Inline $e=mc^2$ here", "InlineMath")).toEqual([["InlineMath", "$e=mc^2$"]]);
+  });
+  it("leaves currency alone: $5 and $10", () => {
+    expect(nodesOf("It costs $5 and $10 total", "InlineMath")).toEqual([]);
+  });
+  it("does not cross newlines", () => {
+    expect(nodesOf("a $x\ny$ b", "InlineMath")).toEqual([]);
+  });
+  it("ignores math inside code", () => {
+    expect(nodesOf("`$x$`", "InlineMath")).toEqual([]);
+  });
+});
+
+describe("block math parsing", () => {
+  it("parses a $$ … $$ block", () => {
+    const doc = "before\n\n$$\n\\int_0^1 x\n$$\n\nafter";
+    expect(nodesOf(doc, "BlockMath")).toEqual([["BlockMath", "$$\n\\int_0^1 x\n$$"]]);
+  });
+  it("parses a one-liner $$x^2$$", () => {
+    expect(nodesOf("$$x^2$$", "BlockMath")).toEqual([["BlockMath", "$$x^2$$"]]);
+  });
+  it("does not swallow paragraphs between mid-sentence $$ pairs", () => {
+    const doc = "price $$ is high\n\nmiddle paragraph\n\nend $$ here";
+    expect(nodesOf(doc, "BlockMath")).toEqual([]);
+  });
+  it("ignores $$ inside code fences", () => {
+    expect(nodesOf("```\n$$\nx\n$$\n```", "BlockMath")).toEqual([]);
+  });
+  it("works inside blockquotes", () => {
+    expect(nodesOf("> $$\n> x^2\n> $$", "BlockMath").length).toBe(1);
+  });
+});
+
+describe("footnote parsing", () => {
+  it("parses [^1] refs", () => {
+    expect(nodesOf("Ref[^1] done", "FootnoteRef")).toEqual([["FootnoteRef", "[^1]"]]);
+  });
+  it("ignores refs in code", () => {
+    expect(nodesOf("`[^1]`", "FootnoteRef")).toEqual([]);
+  });
+});
+
+describe("GFM still intact", () => {
+  it("parses tables, task markers, links, images", () => {
+    const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n\n[t](u) ![a](b.png)";
+    expect(nodesOf(doc, "Table").length).toBe(1);
+    expect(nodesOf(doc, "TaskMarker").length).toBe(1);
+    expect(nodesOf(doc, "Link").length).toBe(1);
+    expect(nodesOf(doc, "Image").length).toBe(1);
   });
 });

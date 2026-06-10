@@ -10,6 +10,12 @@ pub fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }
 
+/// Write a file's UTF-8 contents. Used by the editor's debounced autosave.
+#[tauri::command]
+pub fn write_file(path: String, text: String) -> Result<(), String> {
+    std::fs::write(&path, text).map_err(|e| format!("write {path}: {e}"))
+}
+
 /// Check whether a path points to an existing file (used by wikilink rendering).
 #[tauri::command]
 pub fn path_exists(path: String) -> bool {

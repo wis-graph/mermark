@@ -7,6 +7,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::read_file,
+            commands::write_file,
             commands::open_path,
             commands::path_exists
         ])

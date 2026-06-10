@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Tauri's invoke is called by image/wikilink widgets; stub it so jsdom doesn't error.
+// Tauri's invoke is called by image/wikilink widgets and autosave; stub it.
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(() => Promise.resolve(false)),
   convertFileSrc: (p: string) => `asset://localhost/${p}`,
@@ -31,22 +31,109 @@ $$
 > [!note] hi
 > body
 
-Ref[^1] and [[wikilink]] and ![alt](pic.png).
+Ref[^1] and [[wikilink]] and ![alt](pic.png) and [a link](https://x.com).
 
 [^1]: def
 `;
 
+function mount(host: HTMLElement, doc: string) {
+  return mountEditor(host, doc, "/tmp", "/tmp/doc.md");
+}
+
 describe("full-editor render smoke", () => {
   let host: HTMLElement;
-  beforeEach(() => { host = document.createElement("div"); document.body.appendChild(host); });
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
 
   it("mounts and renders the feature-rich doc without throwing", () => {
     expect(() => {
-      const view = mountEditor(host, DOC, "/tmp");
-      // force the view to build decorations / run measure
+      const view = mount(host, DOC);
       view.dispatch({ selection: { anchor: 0 } });
       (view as unknown as { measure(): void }).measure();
       view.destroy();
     }).not.toThrow();
+  });
+
+  it("is editable: typing changes the document", () => {
+    const view = mount(host, "hello");
+    view.dispatch({ changes: { from: 5, insert: " world" } });
+    expect(view.state.doc.toString()).toBe("hello world");
+    view.destroy();
+  });
+
+  it("survives a single huge line inside a code fence (D5)", () => {
+    const huge = "```\n" + "x".repeat(25000) + "\n```\n";
+    expect(() => {
+      const view = mount(host, huge);
+      (view as unknown as { measure(): void }).measure();
+      view.destroy();
+    }).not.toThrow();
+  });
+
+  it("conceals wikilink markers when cursor is elsewhere, reveals on the line (B1/B2)", () => {
+    const doc = "first line\n\nsee [[target|Alias]] here";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    // concealed: widget shows alias, raw brackets hidden
+    expect(view.contentDOM.textContent).not.toContain("[[target");
+    expect(view.contentDOM.textContent).toContain("Alias");
+    // move cursor onto the wikilink line → raw source revealed
+    view.dispatch({ selection: { anchor: doc.indexOf("[[") + 2 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("[[target|Alias]]");
+    // move cursor away again → re-concealed
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toContain("[[target");
+    view.destroy();
+  });
+
+  it("reveals table source when the cursor enters it", () => {
+    const doc = "intro\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\noutro";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-table")).not.toBeNull();
+    view.dispatch({ selection: { anchor: doc.indexOf("| A") + 2 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("| A | B |");
+    view.destroy();
+  });
+
+  it("renders [text](url) as a clickable link span (D1)", () => {
+    const view = mount(host, "go [home](https://example.com) now\n\nfar away");
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    (view as unknown as { measure(): void }).measure();
+    const link = view.contentDOM.querySelector(".cm-link") as HTMLElement | null;
+    expect(link).not.toBeNull();
+    expect(link!.dataset.href).toBe("https://example.com");
+    expect(link!.textContent).toBe("home");
+    // the (url) part is concealed
+    expect(view.contentDOM.textContent).not.toContain("(https://example.com)");
+    view.destroy();
+  });
+
+  it("renders a table inside a blockquote without > leaking into cells (D4)", () => {
+    const doc = "intro\n\n> | A | B |\n> |---|---|\n> | 1 | 2 |\n\nend";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const th = view.contentDOM.querySelector(".cm-table th");
+    expect(th?.textContent).toBe("A");
+    view.destroy();
+  });
+
+  it("does not render widgets inside code fences (A3)", () => {
+    const doc = "```\n[[x]] ![a](b.png) $e=mc^2$\n```\n\ntail";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-wikilink")).toBeNull();
+    expect(view.contentDOM.querySelector(".cm-image")).toBeNull();
+    expect(view.contentDOM.textContent).toContain("[[x]]");
+    view.destroy();
   });
 });

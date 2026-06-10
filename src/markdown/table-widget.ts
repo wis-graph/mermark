@@ -1,7 +1,4 @@
-import { syntaxTree } from "@codemirror/language";
-import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
-import { RangeSetBuilder, StateField } from "@codemirror/state";
-import type { EditorState } from "@codemirror/state";
+import { EditorView, WidgetType } from "@codemirror/view";
 
 /** Split a GFM table row into trimmed cells (strip leading/trailing pipes). */
 function splitRow(line: string): string[] {
@@ -19,16 +16,21 @@ function alignOf(spec: string): string | null {
   return null;
 }
 
-class TableWidget extends WidgetType {
+export class TableWidget extends WidgetType {
   constructor(readonly source: string) {
     super();
   }
   eq(o: TableWidget) {
     return o.source === this.source;
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "cm-table-wrap";
+    // click a rendered table → cursor into its source
+    wrap.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      view.dispatch({ selection: { anchor: view.posAtDOM(wrap) } });
+    });
     const lines = this.source.split("\n").filter((l) => l.trim() !== "");
     if (lines.length < 2) {
       wrap.textContent = this.source;
@@ -75,27 +77,3 @@ class TableWidget extends WidgetType {
     return true;
   }
 }
-
-// Block decorations (block:true) MUST come from a StateField, not a ViewPlugin —
-// CM6 throws "Block decorations may not be specified via plugins" otherwise.
-function build(state: EditorState): DecorationSet {
-  const b = new RangeSetBuilder<Decoration>();
-  syntaxTree(state).iterate({
-    enter: (node) => {
-      if (node.name !== "Table") return;
-      const source = state.doc.sliceString(node.from, node.to);
-      b.add(node.from, node.to, Decoration.replace({ widget: new TableWidget(source), block: true }));
-    },
-  });
-  return b.finish();
-}
-
-export const tables = StateField.define<DecorationSet>({
-  create(state) {
-    return build(state);
-  },
-  update(deco, tr) {
-    return tr.docChanged ? build(tr.state) : deco;
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
