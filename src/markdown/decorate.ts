@@ -6,7 +6,7 @@ import {
   ViewPlugin,
   ViewUpdate,
 } from "@codemirror/view";
-import { StateField } from "@codemirror/state";
+import { Facet, StateField } from "@codemirror/state";
 import type { EditorState, Transaction, Range } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 import { invoke } from "@tauri-apps/api/core";
@@ -24,11 +24,23 @@ import { WikilinkWidget, wikilinkPath, isImageTarget } from "./wikilink";
 // (Obsidian-style). Non-concealing decorations (styling) always apply.
 // ---------------------------------------------------------------------------
 
+export type PreviewMode = "edit" | "read";
+
+/** "edit" = live preview (cursor reveals source); "read" = render is fixed. */
+export const modeFacet = Facet.define<PreviewMode, PreviewMode>({
+  combine: (values) => values[0] ?? "read",
+});
+
 /** True when any selection range touches [from,to] expanded to whole lines. */
 export function selectionTouches(state: EditorState, from: number, to: number): boolean {
   const lineFrom = state.doc.lineAt(from).from;
   const lineTo = state.doc.lineAt(Math.min(to, state.doc.length)).to;
   return state.selection.ranges.some((r) => r.from <= lineTo && r.to >= lineFrom);
+}
+
+/** Reveal only happens in edit mode; reader mode never un-conceals. */
+function revealed(state: EditorState, from: number, to: number): boolean {
+  return state.facet(modeFacet) === "edit" && selectionTouches(state, from, to);
 }
 
 /** True when the syntax tree advanced (incremental background parse or edit). */
@@ -235,7 +247,7 @@ function buildInline(view: EditorView, baseDir: string, currentFile: string): De
 
   const ranges: Range<Decoration>[] = [];
   for (const s of specs) {
-    if (s.conceal && selectionTouches(state, s.from, s.to)) continue;
+    if (s.conceal && revealed(state, s.from, s.to)) continue;
     ranges.push(s.deco.range(s.from, s.to));
   }
   for (const [lineFrom, classes] of lineClasses) {
@@ -256,7 +268,13 @@ export function inlinePreview(baseDir: string, currentFile: string) {
           this.decorations = buildInline(view, baseDir, currentFile);
         }
         update(u: ViewUpdate) {
-          if (u.docChanged || u.viewportChanged || u.selectionSet || treeChanged(u.startState, u.state))
+          if (
+            u.docChanged ||
+            u.viewportChanged ||
+            u.selectionSet ||
+            treeChanged(u.startState, u.state) ||
+            u.startState.facet(modeFacet) !== u.state.facet(modeFacet)
+          )
             this.decorations = buildInline(u.view, baseDir, currentFile);
         }
       },
@@ -354,7 +372,7 @@ function computeBlockSpecs(state: EditorState): BlockSpec[] {
 function buildBlockDeco(state: EditorState, specs: BlockSpec[]): DecorationSet {
   const ranges: Range<Decoration>[] = [];
   for (const s of specs) {
-    if (selectionTouches(state, s.from, s.to)) continue; // cursor inside → raw source
+    if (revealed(state, s.from, s.to)) continue; // cursor inside → raw source (edit mode only)
     const widget =
       s.kind === "mermaid" ? new MermaidWidget(s.src)
       : s.kind === "table" ? new TableWidget(s.src)
@@ -379,7 +397,8 @@ export const blockPreview = StateField.define<BlockValue>({
       const specs = computeBlockSpecs(tr.state);
       return { specs, deco: buildBlockDeco(tr.state, specs) };
     }
-    if (tr.selection) return { specs: value.specs, deco: buildBlockDeco(tr.state, value.specs) };
+    if (tr.selection || tr.startState.facet(modeFacet) !== tr.state.facet(modeFacet))
+      return { specs: value.specs, deco: buildBlockDeco(tr.state, value.specs) };
     return value;
   },
   provide: (f) => EditorView.decorations.from(f, (v) => v.deco),

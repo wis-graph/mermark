@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { mountEditor, type SaveStatus } from "./editor";
+import { mountEditor, type PreviewMode, type SaveStatus } from "./editor";
 import { initialTheme, applyTheme, mountThemeToggle } from "./theme";
 import "katex/dist/katex.min.css";
 import "./styles.css";
@@ -23,6 +23,23 @@ function mountSaveStatus(): (s: SaveStatus, detail?: string) => void {
   };
 }
 
+const MODE_KEY = "mermark.mode";
+
+function savedMode(): PreviewMode {
+  return localStorage.getItem(MODE_KEY) === "edit" ? "edit" : "read";
+}
+
+function mountModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode) => void } {
+  const btn = document.createElement("button");
+  btn.className = "mode-toggle";
+  const render = (m: PreviewMode) => {
+    btn.textContent = m === "edit" ? "✎" : "👁";
+    btn.title = m === "edit" ? "편집 모드 (⌘E: 리더 모드로)" : "리더 모드 (⌘E: 편집 모드로)";
+  };
+  document.body.appendChild(btn);
+  return { btn, render };
+}
+
 async function boot() {
   const theme = initialTheme();
   applyTheme(theme);
@@ -37,7 +54,25 @@ async function boot() {
     const text = await invoke<string>("read_file", { path: file });
     root.innerHTML = "";
     const baseDir = file.slice(0, Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")));
-    mountEditor(root, text, baseDir, file, mountSaveStatus());
+    const { btn, render } = mountModeToggle();
+    const initialMode = savedMode();
+    render(initialMode);
+    const editor = mountEditor(root, text, baseDir, file, {
+      onStatus: mountSaveStatus(),
+      initialMode,
+      onMode: (m) => {
+        localStorage.setItem(MODE_KEY, m);
+        render(m);
+      },
+    });
+    btn.addEventListener("click", () => editor.toggleMode());
+    // global fallback so ⌘E works even when the editor isn't focused
+    window.addEventListener("keydown", (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        editor.toggleMode();
+      }
+    });
   } catch (e) {
     root.textContent = `Failed to open: ${String(e)}`;
   }

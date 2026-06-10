@@ -68,6 +68,7 @@ html, body { margin: 0; height: 100%; }
 .save-status[data-state="error"] { color: #dc2626; background: var(--surface); border: 1px solid #dc2626; border-radius: var(--radius-md); padding: 4px 8px; pointer-events: auto; }
 
 .theme-toggle { position: fixed; top: 8px; right: 8px; z-index: 10; background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); width: 30px; height: 30px; cursor: pointer; }
+.mode-toggle { position: fixed; top: 8px; right: 46px; z-index: 10; background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); width: 30px; height: 30px; cursor: pointer; }
 
 .cm-table-wrap { overflow-x: auto; margin: 1em 0; }
 .cm-table { border-collapse: collapse; width: 100%; }

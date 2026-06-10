@@ -37,7 +37,8 @@ Ref[^1] and [[wikilink]] and ![alt](pic.png) and [a link](https://x.com).
 `;
 
 function mount(host: HTMLElement, doc: string) {
-  return mountEditor(host, doc, "/tmp", "/tmp/doc.md");
+  // edit mode = live preview behavior, which most tests exercise
+  return mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "edit" }).view;
 }
 
 describe("full-editor render smoke", () => {
@@ -135,5 +136,61 @@ describe("full-editor render smoke", () => {
     expect(view.contentDOM.querySelector(".cm-image")).toBeNull();
     expect(view.contentDOM.textContent).toContain("[[x]]");
     view.destroy();
+  });
+});
+
+describe("mode toggle", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+
+  const DOC2 = "first line\n\nsee [[target|Alias]] here";
+
+  it("read mode never reveals, even with the cursor on the line", () => {
+    const ed = mountEditor(host, DOC2, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    ed.view.dispatch({ selection: { anchor: DOC2.indexOf("[[") + 2 } });
+    (ed.view as unknown as { measure(): void }).measure();
+    expect(ed.view.contentDOM.textContent).not.toContain("[[target");
+    expect(ed.view.contentDOM.textContent).toContain("Alias");
+    ed.view.destroy();
+  });
+
+  it("toggling to edit enables reveal; back to read re-conceals", () => {
+    const modes: string[] = [];
+    const ed = mountEditor(host, DOC2, "/tmp", "/tmp/doc.md", {
+      initialMode: "read",
+      onMode: (m) => modes.push(m),
+    });
+    ed.view.dispatch({ selection: { anchor: DOC2.indexOf("[[") + 2 } });
+    ed.toggleMode(); // → edit: cursor line reveals
+    (ed.view as unknown as { measure(): void }).measure();
+    expect(ed.view.contentDOM.textContent).toContain("[[target|Alias]]");
+    ed.toggleMode(); // → read: fixed render again
+    (ed.view as unknown as { measure(): void }).measure();
+    expect(ed.view.contentDOM.textContent).not.toContain("[[target");
+    expect(modes).toEqual(["edit", "read"]);
+    ed.view.destroy();
+  });
+
+  it("switching edit→read flushes a pending autosave immediately", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const calls = invoke as unknown as ReturnType<typeof vi.fn>;
+    calls.mockClear();
+    const ed = mountEditor(host, "hello", "/tmp", "/tmp/doc.md", { initialMode: "edit" });
+    ed.view.dispatch({ changes: { from: 5, insert: "!" } });
+    ed.setMode("read"); // debounce not elapsed — flush must write now
+    const writes = calls.mock.calls.filter((c: unknown[]) => c[0] === "write_file");
+    expect(writes.length).toBe(1);
+    expect((writes[0][1] as { text: string }).text).toBe("hello!");
+    ed.view.destroy();
+  });
+
+  it("read mode blocks typing via commands (readOnly)", () => {
+    const ed = mountEditor(host, "hello", "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    expect(ed.view.state.readOnly).toBe(true);
+    expect(ed.view.contentDOM.getAttribute("contenteditable")).toBe("false");
+    ed.view.destroy();
   });
 });
