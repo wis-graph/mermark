@@ -3,10 +3,69 @@
 // Lets the frontend run in a plain browser (Vite dev server) with no Rust backend,
 // so CDP / Playwright / DevTools debugging works without WKWebView limits.
 
-const SAMPLE = `# Mermark — browser mock
+const SAMPLE = `# Mermark — markdown kitchen sink
 
-This file is served by the **browser mock**, not the Rust backend.
-Edit it, hit save (⌘S) — changes round-trip in-memory until reload.
+Served by the **browser mock**, not the Rust backend. Edit it, hit save (⌘S) — changes round-trip in-memory until reload. This first paragraph is deliberately one long unbroken line with no hard wraps so you can confirm the reading column wraps soft text correctly and that the 820px measure holds: lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur excepteur sint occaecat cupidatat non proident sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+## Headings
+
+### H3 level
+#### H4 level
+##### H5 level
+###### H6 level
+
+## Inline styles
+
+**bold**, *italic*, ***bold italic***, ~~strikethrough~~, \`inline code\`, and a [labeled link](https://tauri.app). Autolink: https://github.com . Wikilink: [[some-note]] and an image wikilink: [[diagram.png]].
+
+## Blockquote
+
+> Top-level quote.
+>
+> > Nested quote with **bold** inside.
+
+## Lists
+
+Unordered, nested:
+
+- Fruit
+  - Apple
+  - Pear
+- Veg
+  - Carrot
+
+Ordered:
+
+1. First
+2. Second
+   1. Second-a
+   2. Second-b
+3. Third
+
+Task list:
+
+- [x] Wire the browser mock
+- [x] Fix baseDir char-eat bug
+- [ ] Cover every markdown construct
+
+## Table
+
+| Feature   | Status | Note            |
+| --------- | :----: | --------------- |
+| Mermaid   |   ✅   | renders in box  |
+| Math      |   ✅   | KaTeX           |
+| Wikilinks |   ✅   | \`[[target]]\`    |
+
+---
+
+## Code block
+
+\`\`\`ts
+export function dirOf(path: string): string {
+  const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\\\"));
+  return sep >= 0 ? path.slice(0, sep) : "";
+}
+\`\`\`
 
 ## Mermaid
 
@@ -23,11 +82,9 @@ Inline $E = mc^2$ and block:
 
 $$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$
 
-## Links
+## Image
 
-- Wikilink: [[some-note]]
-- External: [tauri](https://tauri.app)
-- Image (won't load in browser, that's expected): ![local](./pic.png)
+Local image (won't load in a plain browser — expected): ![local](./pic.png)
 `;
 
 // in-memory FS so write_file -> read_file round-trips during a session
