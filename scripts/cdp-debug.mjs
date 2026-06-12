@@ -44,7 +44,8 @@ await page.waitForTimeout(1500); // let mermaid/katex async render
 const dom = await page.evaluate(() => ({
   title: document.title,
   appHTML: document.querySelector("#app")?.innerHTML.slice(0, 300) ?? null,
-  mermaidSvgs: document.querySelectorAll("svg[id^='mermaid'], .mermaid svg").length,
+  mermaidSvgs: document.querySelectorAll(".cm-mermaid svg").length,
+  mermaidErrors: [...document.querySelectorAll(".cm-mermaid-error")].map((e) => e.textContent),
   katex: document.querySelectorAll(".katex").length,
   images: [...document.querySelectorAll("img")].map((i) => ({
     src: i.getAttribute("src"),

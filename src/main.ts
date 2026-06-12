@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { dirOf } from "./path";
 import { mountEditor, type PreviewMode, type SaveStatus } from "./editor";
 import { initialTheme, applyTheme, mountThemeToggle } from "./theme";
 import "katex/dist/katex.min.css";
@@ -53,7 +54,7 @@ async function boot() {
   try {
     const text = await invoke<string>("read_file", { path: file });
     root.innerHTML = "";
-    const baseDir = file.slice(0, Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")));
+    const baseDir = dirOf(file);
     const { btn, render } = mountModeToggle();
     const initialMode = savedMode();
     render(initialMode);
