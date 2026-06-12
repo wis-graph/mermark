@@ -27,9 +27,13 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); m
 html, body { margin: 0; height: 100%; }
 #app { height: 100vh; overflow: auto; }
 .cm-editor { height: 100%; }
-/* CM makes .cm-scroller a flex row; a bare `margin: 0 auto` loses to CM's own
-   rule, so the 820px column pinned left. Force-center it as a flex item. */
-.cm-editor .cm-content { max-width: 820px; margin-inline: auto; padding: 2rem 1rem; }
+/* Center the 820px reading column. CM makes .cm-scroller a flex row with the
+   content as its only child, so center via the container with `safe`: if any
+   line is wider than the viewport it falls back to flex-start (scrolls) instead
+   of clipping the left/start edge. Item `margin: auto` collapses under overflow
+   and shoves the column off-screen — don't use it. */
+.cm-scroller { justify-content: safe center; }
+.cm-editor .cm-content { max-width: 820px; padding: 2rem 1rem; }
 .cm-strong { font-weight: 700; }
 .cm-em { font-style: italic; }
 .cm-strike { text-decoration: line-through; }
