@@ -27,13 +27,18 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); m
 html, body { margin: 0; height: 100%; }
 #app { height: 100vh; overflow: auto; }
 .cm-editor { height: 100%; }
-.cm-content { max-width: 820px; margin: 0 auto; padding: 2rem 1rem; }
+/* CM makes .cm-scroller a flex row; a bare `margin: 0 auto` loses to CM's own
+   rule, so the 820px column pinned left. Force-center it as a flex item. */
+.cm-editor .cm-content { max-width: 820px; margin-inline: auto; padding: 2rem 1rem; }
 .cm-strong { font-weight: 700; }
 .cm-em { font-style: italic; }
 .cm-strike { text-decoration: line-through; }
 .cm-inline-code { font-family: ui-monospace, monospace; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface); }
 .cm-code-block { background: var(--surface); font-family: ui-monospace, monospace; }
-.cm-mermaid { display: block; margin: 1em 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); }
+/* Diagrams break out of the 820px prose measure — a text column shouldn't cap a chart.
+   Width centers on the column (= viewport) center; falls back to the column on narrow screens. */
+.cm-mermaid { display: block; margin: 1em 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md);
+  width: min(1100px, 92vw); margin-left: 50%; transform: translateX(-50%); }
 .cm-mermaid svg { display: block; width: 100%; height: auto; }
 .cm-mermaid-error { color: #dc2626; white-space: pre-wrap; padding: .75em; }
 .cm-mermaid svg { cursor: grab; }
