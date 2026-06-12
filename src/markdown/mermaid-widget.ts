@@ -71,6 +71,10 @@ export class MermaidWidget extends WidgetType {
     el.removeAttribute("height");
     el.style.width = "100%";
     el.style.height = "100%";
+    // Mermaid stamps `max-width: <natural width>px` inline on the <svg>, which
+    // caps it at the diagram's natural size and leaves it small/left in a wide
+    // host. Clear it so the diagram scales to the full container width.
+    el.style.maxWidth = "none";
 
     // Size the host so the whole diagram fits: width-driven height, capped to
     // the window so huge diagrams scale down instead of overflowing.
