@@ -127,6 +127,18 @@ describe("full-editor render smoke", () => {
     view.destroy();
   });
 
+  it("conceals the language token on a fence opener (```ts → no stray 'ts' line)", () => {
+    const doc = "intro\n\n```ts\nconst a = 1;\n```\n\ntail";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    (ed.view as unknown as { measure(): void }).measure();
+    const lines = [...ed.view.contentDOM.querySelectorAll(".cm-line")].map((l) =>
+      l.textContent?.trim(),
+    );
+    expect(lines).toContain("const a = 1;"); // code body shown
+    expect(lines).not.toContain("ts"); // language token concealed, not leaked as a line
+    ed.view.destroy();
+  });
+
   it("does not render widgets inside code fences (A3)", () => {
     const doc = "```\n[[x]] ![a](b.png) $e=mc^2$\n```\n\ntail";
     const view = mount(host, doc);

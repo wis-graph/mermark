@@ -59,6 +59,7 @@ const STYLE: Record<string, string> = {
 const MARKERS = new Set([
   "EmphasisMark",
   "CodeMark",
+  "CodeInfo", // language token on a fence opener (```ts) — hide like the backticks
   "StrikethroughMark",
   "HeaderMark",
   "QuoteMark",
