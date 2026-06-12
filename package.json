@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:browser": "vite --mode browser",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "jsdom": "^29.1.1",
+    "playwright": "^1.60.0",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
     "vitest": "^4.1.8"

@@ -1,10 +1,24 @@
 import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(async ({ mode }) => ({
+
+  // `--mode browser`: run frontend with no Rust backend by swapping the Tauri
+  // IPC module for an in-memory mock (src/mocks/tauri-core.ts). Tauri builds untouched.
+  resolve:
+    mode === "browser"
+      ? {
+          alias: {
+            "@tauri-apps/api/core": fileURLToPath(
+              new URL("./src/mocks/tauri-core.ts", import.meta.url),
+            ),
+          },
+        }
+      : undefined,
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
