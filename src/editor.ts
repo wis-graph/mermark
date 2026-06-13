@@ -2,7 +2,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, highlightActiveLine } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
-import { blockPreview, inlinePreview, modeFacet, type PreviewMode } from "./markdown/decorate";
+import { blockPreview, inlinePreview, modeFacet, type PreviewMode } from "./markdown/live-preview";
 import { markdownFolding } from "./markdown/fold";
 import { markdownLang } from "./markdown/parser";
 
