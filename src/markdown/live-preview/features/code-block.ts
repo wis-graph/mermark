@@ -22,11 +22,7 @@ export const codeBlock: BlockFeature = {
   match(node, ctx) {
     const lang = fencedInfo(ctx.state, node);
     if (lang === "mermaid") return null;
-    const lines = ctx.strippedLines(node.from, node.to);
-    // drop the opening ```lang line and the closing ``` line (if present)
-    const body = lines
-      .slice(1, lines[lines.length - 1]?.trim().startsWith("```") ? -1 : undefined)
-      .join("\n");
+    const body = ctx.fencedBody(node).join("\n");
     return {
       kind: "code",
       from: node.from,

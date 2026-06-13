@@ -99,6 +99,13 @@ export function strippedLines(
   return out;
 }
 
+/** Body lines of a fenced block: drop the opening ```lang line (always) and the
+ *  closing ``` line (only if present — an unclosed fence has none). The single
+ *  definition of "a fence body", shared by the code-block and mermaid features. */
+export function dropFences(lines: string[]): string[] {
+  return lines.slice(1, lines[lines.length - 1]?.trim().startsWith("```") ? -1 : undefined);
+}
+
 // --- Inline features -------------------------------------------------------
 
 /** Handed to an inline feature so it can emit decorations without knowing how
@@ -222,6 +229,8 @@ export interface BlockCtx {
   state: EditorState;
   /** Lines of the block, stripped of any enclosing blockquote markers. */
   strippedLines(from: number, to: number): string[];
+  /** Body lines of a fenced block (opening ```lang and closing ``` removed). */
+  fencedBody(node: SyntaxNode): string[];
 }
 
 export interface BlockFeature {
@@ -300,6 +309,7 @@ export function blockPreview(features: BlockFeature[]): Extension {
     const ctx: BlockCtx = {
       state,
       strippedLines: (from, to) => strippedLines(state, from, to, quoteDepth),
+      fencedBody: (node) => dropFences(strippedLines(state, node.from, node.to, quoteDepth)),
     };
     syntaxTree(state).iterate({
       enter(node) {
