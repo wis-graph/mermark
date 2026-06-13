@@ -392,11 +392,10 @@ export function blockPreview(features: BlockFeature[]): Extension {
 
   // Click entry: in edit mode a click on a rendered block places the caret
   // inside it (revealing the source). A capture-phase listener on the editor
-  // root runs before both svg-pan-zoom (mermaid swallows its own mousedown) and
-  // CM's default caret placement, so it works uniformly for every block; we
-  // stop the event so neither of those fights our caret. Read mode does nothing
-  // — mermaid keeps its pan/zoom.
-  const BLOCK_SEL = ".cm-mermaid, .cm-table, .cm-math-block";
+  // root runs before CM's default caret placement; we stop the event so it
+  // doesn't fight our caret. Mermaid is intentionally EXCLUDED — a click there
+  // pans/zooms the diagram instead (enter it with the arrow keys to edit).
+  const BLOCK_SEL = ".cm-table, .cm-math-block";
   const clickEntry = ViewPlugin.fromClass(
     class {
       readonly onDown: (e: MouseEvent) => void;

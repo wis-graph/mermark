@@ -36,6 +36,8 @@ html, body { margin: 0; height: 100%; }
    and shoves the column off-screen — don't use it. */
 .cm-scroller { justify-content: safe center; }
 .cm-editor .cm-content { max-width: 820px; padding: 2rem 1rem; }
+/* CM hard-codes a black caret; follow the text colour so it shows in dark mode. */
+.cm-editor .cm-content { caret-color: var(--fg); }
 /* fold toggles sit in the gutter, which `justify-content: center` parks right
    beside the centered column. Markers stay faint until you hover the editor. */
 /* `.cm-editor` prefix beats CM's runtime gutter theme (a light-grey bg + border
