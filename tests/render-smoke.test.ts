@@ -139,6 +139,40 @@ describe("full-editor render smoke", () => {
     ed.view.destroy();
   });
 
+  it("renders unordered list markers as CSS bullets; ordered numbers stay", () => {
+    const doc = "- Fruit\n- Veg\n\n1. First\n2. Second";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    (ed.view as unknown as { measure(): void }).measure();
+    expect(ed.view.contentDOM.querySelectorAll(".cm-bullet").length).toBe(2);
+    const text = ed.view.contentDOM.textContent ?? "";
+    expect(text).not.toContain("- Fruit"); // dash concealed by the bullet
+    expect(text).toContain("Fruit");
+    expect(text).toContain("1. First"); // ordered marker left as a number
+    ed.view.destroy();
+  });
+
+  it("task items keep the checkbox and get no bullet", () => {
+    const doc = "- [x] done\n- [ ] todo";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    (ed.view as unknown as { measure(): void }).measure();
+    expect(ed.view.contentDOM.querySelectorAll(".cm-bullet").length).toBe(0);
+    expect(ed.view.contentDOM.querySelector(".cm-task-checkbox")).not.toBeNull();
+    ed.view.destroy();
+  });
+
+  it("reveals the raw dash when the caret is on a bullet line (edit mode)", () => {
+    const doc = "intro\n\n- Fruit\n- Veg";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelectorAll(".cm-bullet").length).toBe(2);
+    view.dispatch({ selection: { anchor: doc.indexOf("- Fruit") + 1 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("- Fruit"); // revealed on its line
+    expect(view.contentDOM.querySelectorAll(".cm-bullet").length).toBe(1); // other line still a bullet
+    view.destroy();
+  });
+
   it("does not render widgets inside code fences (A3)", () => {
     const doc = "```\n[[x]] ![a](b.png) $e=mc^2$\n```\n\ntail";
     const view = mount(host, doc);

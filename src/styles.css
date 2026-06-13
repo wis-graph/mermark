@@ -102,3 +102,8 @@ html, body { margin: 0; height: 100%; }
 .cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; }
 .cm-table th { background: var(--surface); font-weight: 700; }
 .cm-task-checkbox { margin-right: .4em; vertical-align: middle; }
+
+/* Unordered-list bullet, drawn in CSS so a collapsed item can show a halo ring
+   (a state a font glyph can't express). */
+.cm-bullet { display: inline-block; width: .38em; height: .38em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
+.cm-bullet-collapsed { box-shadow: 0 0 0 .3em color-mix(in srgb, var(--muted) 50%, transparent); }

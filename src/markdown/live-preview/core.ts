@@ -1,4 +1,4 @@
-import { syntaxTree } from "@codemirror/language";
+import { foldedRanges, syntaxTree } from "@codemirror/language";
 import {
   Decoration,
   DecorationSet,
@@ -193,7 +193,9 @@ export function inlinePreview(
             u.viewportChanged ||
             u.selectionSet ||
             treeChanged(u.startState, u.state) ||
-            u.startState.facet(modeFacet) !== u.state.facet(modeFacet)
+            u.startState.facet(modeFacet) !== u.state.facet(modeFacet) ||
+            // fold state changed → list bullets re-render to add/remove their halo
+            foldedRanges(u.startState) !== foldedRanges(u.state)
           )
             this.decorations = build(u.view);
         }
