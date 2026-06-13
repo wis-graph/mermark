@@ -29,6 +29,12 @@ function cachePut(code: string, svg: string) {
 
 let idSeq = 0;
 
+// Height of the most recently rendered diagram. When a re-render misses the
+// cache (the source was edited), we reserve this height on the new host while
+// mermaid renders async, so leaving the block doesn't collapse the box to 0 and
+// jump the page. Cleared once the real height is set.
+let lastHeight = 0;
+
 export class MermaidWidget extends WidgetType {
   constructor(readonly code: string) {
     super();
@@ -43,6 +49,9 @@ export class MermaidWidget extends WidgetType {
     if (cached !== undefined) {
       this.applySvg(host, cached);
     } else {
+      // reserve the last diagram's height so the box doesn't collapse (and jump
+      // the page) during the async render after an edit
+      if (lastHeight) host.style.minHeight = `${lastHeight}px`;
       loadMermaid()
         .then((mermaid) => mermaid.render(`mmd-${idSeq++}`, this.code))
         .then(({ svg }) => {
@@ -50,6 +59,7 @@ export class MermaidWidget extends WidgetType {
           this.applySvg(host, svg);
         })
         .catch((err) => {
+          host.style.minHeight = "";
           host.innerHTML = "";
           const pre = document.createElement("pre");
           pre.className = "cm-mermaid-error";
@@ -81,7 +91,10 @@ export class MermaidWidget extends WidgetType {
     const fitHeight = () => {
       const w = host.clientWidth || 600;
       const cap = (window.innerHeight || 800) * 0.85;
-      host.style.height = `${Math.max(80, Math.min(w * aspect, cap))}px`;
+      const h = Math.max(80, Math.min(w * aspect, cap));
+      host.style.height = `${h}px`;
+      host.style.minHeight = ""; // real height set → drop the reserved placeholder
+      lastHeight = h;
     };
     fitHeight();
 
