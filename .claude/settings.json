@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty'); case \"$f\" in *.test.ts|*.spec.ts|*.d.ts) exit 0;; *.ts) ;; *) exit 0;; esac; SCRIPT=\"$HOME/.claude/skills/intent-review/quick-check.sh\"; [ -f \"$f\" ] && [ -x \"$SCRIPT\" ] && bash \"$SCRIPT\" \"$f\" 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "intent-review quick-check..."
+          }
+        ]
+      }
+    ]
+  }
+}
