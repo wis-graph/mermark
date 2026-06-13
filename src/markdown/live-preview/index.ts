@@ -13,7 +13,7 @@ import { wikilink } from "./features/wikilink";
 import { footnote } from "./features/footnote";
 import { task } from "./features/task";
 import { list } from "./features/list";
-import { codeBlock } from "./features/code-block";
+import { codeBlock, codeLines } from "./features/code-block";
 import { inlineMath, blockMath } from "./features/math";
 import { mermaid } from "./features/mermaid";
 import { table } from "./features/table";
@@ -33,6 +33,7 @@ const INLINE_FEATURES: InlineFeature[] = [
   footnote,
   task,
   list,
+  codeLines,
   inlineMath,
 ];
 

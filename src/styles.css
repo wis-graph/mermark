@@ -59,6 +59,9 @@ html, body { margin: 0; height: 100%; }
 .cm-codeblock { display: block; margin: 0; position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: .7em .9em; overflow-x: auto; font-size: .92em; line-height: 1.5; }
 .cm-codeblock code { font-family: ui-monospace, monospace; white-space: pre; }
 .cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: .6em; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
+/* revealed (editing) fenced code keeps a code background, so it still reads as a
+   code block while you edit it. */
+.cm-code-line { background: var(--surface); font-family: ui-monospace, monospace; }
 /* Block-widget vertical spacing MUST be padding, not margin: CM measures a
    widget's height via offsetHeight (which excludes margin), so a margin here
    desyncs the height map and makes vertical cursor motion skip lines below. */
@@ -69,6 +72,8 @@ html, body { margin: 0; height: 100%; }
 .cm-mermaid svg:active { cursor: grabbing; }
 .cm-math-block { display: block; padding: .5em 0; text-align: center; }
 .cm-math-inline { padding: 0 .15em; }
+/* blockquote: a left rule + soft tint, kept whether focused or not. */
+.cm-blockquote { border-left: 3px solid var(--border); background: color-mix(in srgb, var(--muted) 9%, transparent); padding-left: .75em; }
 .cm-callout { background: var(--surface); border-left: 3px solid var(--accent); padding-left: .75em; }
 .cm-callout-head { font-weight: 700; }
 .cm-callout-warning { background: rgba(255,180,0,.12); border-left-color: #ffb400; }
