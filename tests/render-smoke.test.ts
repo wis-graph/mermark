@@ -127,34 +127,22 @@ describe("full-editor render smoke", () => {
     view.destroy();
   });
 
-  it("conceals the language token on a fence opener (```ts → no stray 'ts' line)", () => {
+  it("renders a fenced code block as a widget; reveals raw source when the caret enters", () => {
     const doc = "intro\n\n```ts\nconst a = 1;\n```\n\ntail";
-    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
-    (ed.view as unknown as { measure(): void }).measure();
-    const lines = [...ed.view.contentDOM.querySelectorAll(".cm-line")].map((l) =>
-      l.textContent?.trim(),
-    );
-    expect(lines).toContain("const a = 1;"); // code body shown
-    expect(lines).not.toContain("ts"); // language token concealed, not leaked as a line
-    ed.view.destroy();
-  });
-
-  it("collapses code-fence lines unless the caret is inside the block", () => {
-    const doc = "intro\n\n```ts\nconst a = 1;\n```\n\ntail";
-    // read mode: always tight (both fence rows collapsed)
-    const r = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
-    (r.view as unknown as { measure(): void }).measure();
-    expect(r.view.contentDOM.querySelectorAll(".cm-code-fence-hidden").length).toBe(2);
-    r.view.destroy();
-    // edit mode, caret OUTSIDE the block → still tight
     const e = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "edit" });
     e.view.dispatch({ selection: { anchor: 0 } });
     (e.view as unknown as { measure(): void }).measure();
-    expect(e.view.contentDOM.querySelectorAll(".cm-code-fence-hidden").length).toBe(2);
-    // caret INSIDE the block → fences revealed (none collapsed), so ```ts is editable
+    // unfocused → a styled box holding the code body, no raw fence lines
+    const box = e.view.contentDOM.querySelector(".cm-codeblock");
+    expect(box).not.toBeNull();
+    expect(box?.textContent).toContain("const a = 1;");
+    expect(box?.getAttribute("data-lang")).toBe("ts");
+    expect(e.view.contentDOM.textContent).not.toContain("```");
+    // caret inside the block → raw source (fences + code) revealed for editing
     e.view.dispatch({ selection: { anchor: doc.indexOf("const a") } });
     (e.view as unknown as { measure(): void }).measure();
-    expect(e.view.contentDOM.querySelectorAll(".cm-code-fence-hidden").length).toBe(0);
+    expect(e.view.contentDOM.querySelector(".cm-codeblock")).toBeNull();
+    expect(e.view.contentDOM.textContent).toContain("```ts");
     e.view.destroy();
   });
 

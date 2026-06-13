@@ -33,11 +33,10 @@ const INLINE_FEATURES: InlineFeature[] = [
   footnote,
   task,
   list,
-  codeBlock,
   inlineMath,
 ];
 
-const BLOCK_FEATURES: BlockFeature[] = [mermaid, table, blockMath];
+const BLOCK_FEATURES: BlockFeature[] = [mermaid, codeBlock, table, blockMath];
 
 /** Inline decorations (conceal/style/line-class) for the registered features. */
 export function inlinePreview(baseDir: string, currentFile: string) {

@@ -1,23 +1,26 @@
-import { fencedInfo, revealed, type InlineFeature } from "../core";
+import { fencedInfo, type BlockFeature } from "../core";
+import { CodeBlockWidget } from "../../code-widget";
 
-export const codeBlock: InlineFeature = {
+/** A fenced code block becomes a block widget (same pipeline as mermaid/table/
+ *  math): rendered as a styled box, and the raw ```lang … ``` source is revealed
+ *  for editing when the caret enters it. Mermaid fences are owned by the mermaid
+ *  feature, so they're skipped here. */
+export const codeBlock: BlockFeature = {
   nodes: ["FencedCode"],
-  enter(node, ctx) {
-    if (fencedInfo(ctx.state, node) === "mermaid") return false; // block widget owns it
-
-    // The fence lines (```lang and the closing ```) are concealed to empty rows
-    // that still occupy a full line + background, padding the box top and bottom.
-    // Collapse them so the box hugs the code — UNLESS the caret is inside the
-    // block, which reveals the raw source (fences shown) so the fence/language
-    // stays editable. Obsidian-style: tight when unfocused, expanded when in it.
-    // (In read mode `revealed` is always false, so the box is always tight.)
-    const reveal = revealed(ctx.state, node.from, node.to);
-    const first = ctx.state.doc.lineAt(node.from).from;
-    const last = ctx.state.doc.lineAt(Math.max(node.from, node.to - 1)).from;
-    ctx.eachLine(node.from, node.to, (lf) => {
-      const fence = lf === first || lf === last;
-      ctx.line(lf, fence && !reveal ? "cm-code-fence-hidden" : "cm-code-block");
-    });
-    return; // descend so CodeMark / CodeInfo get concealed
+  match(node, ctx) {
+    const lang = fencedInfo(ctx.state, node);
+    if (lang === "mermaid") return null;
+    const lines = ctx.strippedLines(node.from, node.to);
+    // drop the opening ```lang line and the closing ``` line (if present)
+    const body = lines
+      .slice(1, lines[lines.length - 1]?.trim().startsWith("```") ? -1 : undefined)
+      .join("\n");
+    return {
+      kind: "code",
+      from: node.from,
+      to: node.to,
+      src: body,
+      widget: () => new CodeBlockWidget(body, lang),
+    };
   },
 };
