@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { dirOf } from "./path";
 import { mountEditor, type PreviewMode, type SaveStatus } from "./editor";
-import { initialTheme, applyTheme, makeThemeToggle } from "./theme";
+import { applyTheme, makeThemeToggle } from "./theme";
+import { themeSetting } from "./settings/app";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
 import "./styles.css";
@@ -50,8 +51,10 @@ function makeModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode) =>
 }
 
 async function boot() {
-  const theme = initialTheme();
-  applyTheme(theme);
+  // Theme is the SSOT; bind the DOM sink first so the dataset is set before the
+  // editor mounts (mermaid reads it on its lazy initial load) — and so it also
+  // applies on the no-file / error screens below.
+  themeSetting.bind(applyTheme);
   const root = document.querySelector<HTMLDivElement>("#app")!;
   const file = new URLSearchParams(location.search).get("file");
   if (!file) {
@@ -79,11 +82,11 @@ async function boot() {
     const save = makeSaveStatus();
     // live theme switch: flip CSS vars + re-render mermaid (theme is baked into
     // its SVGs), no page reload — so the layout never flashes/re-mounts.
-    const themeBtn = makeThemeToggle(theme, () => {
-      refreshMermaidTheme();
-      editor.refresh();
-    });
-    bar.append(mode.btn, pos, spacer, save.el, themeBtn);
+    const themeBtn = makeThemeToggle(() =>
+      themeSetting.set(themeSetting.get() === "dark" ? "light" : "dark"),
+    );
+    themeSetting.bind(themeBtn.render); // initial icon + on change
+    bar.append(mode.btn, pos, spacer, save.el, themeBtn.btn);
 
     const editor = mountEditor(host, text, baseDir, file, {
       onStatus: save.set,
@@ -93,6 +96,12 @@ async function boot() {
         mode.render(m);
       },
       onCursor: (line, col) => (pos.textContent = `Ln ${line}, Col ${col}`),
+    });
+    // mermaid bakes theme colors into its SVGs, so a theme change must clear its
+    // cache + re-render every block. Change-only sink (no initial work needed).
+    themeSetting.subscribe((t) => {
+      refreshMermaidTheme(t);
+      editor.refresh();
     });
     // dev-only: expose the controller so the debug harness can read real editor
     // state (selection offsets, block specs) instead of guessing from the DOM.

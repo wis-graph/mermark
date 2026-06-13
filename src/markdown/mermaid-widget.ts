@@ -1,6 +1,7 @@
 import { WidgetType } from "@codemirror/view";
 import svgPanZoom from "svg-pan-zoom";
 import { boundedCache } from "./bounded-cache";
+import type { Theme } from "../theme";
 
 type Mermaid = typeof import("mermaid").default;
 
@@ -28,12 +29,13 @@ let idSeq = 0;
 let themeVersion = 0;
 
 /** Re-theme mermaid live (no page reload): clear the cache, re-init mermaid with
- *  the current document theme, and bump the version so widgets re-render. */
-export function refreshMermaidTheme() {
+ *  the given theme, and bump the version so widgets re-render. The theme is
+ *  passed in (a SSOT sink) rather than pulled from the DOM. */
+export function refreshMermaidTheme(theme: Theme) {
   themeVersion++;
   svgCache.clear();
   if (mermaidLoader) {
-    const light = document.documentElement.dataset.theme === "light";
+    const light = theme === "light";
     mermaidLoader.then((m) =>
       m.initialize({ startOnLoad: false, securityLevel: "strict", theme: light ? "default" : "dark" }),
     );
