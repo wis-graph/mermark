@@ -8,7 +8,7 @@ import {
   WidgetType,
   keymap,
 } from "@codemirror/view";
-import { Facet, Prec, StateField } from "@codemirror/state";
+import { EditorSelection, Facet, Prec, StateField } from "@codemirror/state";
 import type { EditorState, Extension, Transaction, Range } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
@@ -243,6 +243,41 @@ interface BlockValue {
   deco: DecorationSet;
 }
 
+/** Decide where a vertical caret move should land so it *reveals* a block
+ *  instead of leaping over it.
+ *
+ *  Block widgets are atomic, so CM's geometric vertical motion (moveVertically)
+ *  skips across them and lands the caret on text past the block — the cause of
+ *  the multi-line "leaps". Given the caret's current head and that geometric
+ *  target head, this finds the first un-revealed block the move *crossed* (its
+ *  half-open `[from,to)` overlaps the travelled span) and returns the offset to
+ *  snap to: the block's first line going down, its last source line going up.
+ *  Returns null when no block was crossed (→ let default motion run, preserving
+ *  wrapped-line visual-row navigation) or when the caret is already on that edge
+ *  (→ let default motion walk out, so single-line blocks don't ping-pong).
+ *
+ *  Pure (no layout): unit-testable by feeding pre-computed heads + specs. */
+export function pickBlockLanding(
+  state: EditorState,
+  oldHead: number,
+  targetHead: number,
+  dir: 1 | -1,
+  specs: BlockSpec[],
+): number | null {
+  if (oldHead === targetHead) return null;
+  const lo = Math.min(oldHead, targetHead);
+  const hi = Math.max(oldHead, targetHead);
+  const crossed = specs
+    .filter((s) => s.from < hi && s.to > lo && !revealed(state, s.from, s.to))
+    .sort((a, b) => a.from - b.from);
+  if (!crossed.length) return null;
+  // down → nearest block below (smallest from); up → nearest above (largest from)
+  const block = dir === 1 ? crossed[0] : crossed[crossed.length - 1];
+  const anchor =
+    dir === 1 ? block.from : state.doc.lineAt(Math.max(block.from, block.to - 1)).from;
+  return anchor === oldHead ? null : anchor;
+}
+
 export function blockPreview(features: BlockFeature[]): Extension {
   const byNode = new Map<string, BlockFeature[]>();
   for (const f of features) {
@@ -308,36 +343,38 @@ export function blockPreview(features: BlockFeature[]): Extension {
     provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
   });
 
-  // Cursor entry. An atomic block widget can't be reached by arrow keys (they
-  // skip it) or a click (the widget swallows events), so the reveal never
-  // fires and the block can't be edited. Redirect a vertical caret move that
-  // would step onto a rendered block's line into the block's source instead —
-  // landing there reveals it.
-  function enter(view: EditorView, dir: 1 | -1): boolean {
+  // Vertical entry. An atomic block widget can't be reached by the arrow keys —
+  // CM's geometric motion *skips across* it (the multi-line leaps) — so the
+  // reveal never fires. We delegate to the SAME geometric motion CM would use
+  // (moveVertically, so wrapped-line visual-row navigation is unchanged), then
+  // if that move crossed a rendered block, snap the caret onto the block's near
+  // edge to reveal it. Falls through (returns false) for pure-text moves and at
+  // the document edge, so default motion handles those.
+  function moveOrEnter(view: EditorView, dir: 1 | -1): boolean {
     const state = view.state;
     if (state.facet(modeFacet) !== "edit") return false;
     const main = state.selection.main;
-    if (!main.empty) return false;
-    const line = state.doc.lineAt(main.head);
-    const n = line.number + dir;
-    if (n < 1 || n > state.doc.lines) return false;
-    const probe = state.doc.line(n).from;
+    if (!main.empty || state.selection.ranges.length > 1) return false; // selections / multi-cursor → default
     const value = state.field(field, false);
-    if (!value) return false;
-    const spec = value.specs.find(
-      (s) => s.from <= probe && probe < s.to && !revealed(state, s.from, s.to),
-    );
-    if (!spec) return false;
-    // entering from above → first line; from below → last line (natural motion)
-    const anchor = dir === 1 ? spec.from : state.doc.lineAt(Math.max(spec.from, spec.to - 1)).from;
-    view.dispatch({ selection: { anchor }, scrollIntoView: true });
+    if (!value?.specs.length) return false;
+    const target = view.moveVertically(main, dir === 1); // CM's own geometric target
+    if (target.head === main.head) return false; // doc edge → default
+    const anchor = pickBlockLanding(state, main.head, target.head, dir, value.specs);
+    if (anchor === null) return false; // no block crossed → default (R2 wrap motion)
+    view.dispatch({
+      // carry the goal column so leaving the block on the next press keeps the
+      // caret's horizontal position instead of resetting to column 0
+      selection: EditorSelection.cursor(anchor, dir === 1 ? -1 : 1, undefined, main.goalColumn ?? undefined),
+      scrollIntoView: true,
+      userEvent: "select",
+    });
     return true;
   }
 
   const entryKeymap = Prec.high(
     keymap.of([
-      { key: "ArrowDown", run: (v) => enter(v, 1) },
-      { key: "ArrowUp", run: (v) => enter(v, -1) },
+      { key: "ArrowDown", run: (v) => moveOrEnter(v, 1) },
+      { key: "ArrowUp", run: (v) => moveOrEnter(v, -1) },
     ]),
   );
 
