@@ -1,13 +1,13 @@
 import { fencedInfo, type BlockFeature, type InlineFeature } from "../core";
 import { CodeBlockWidget } from "../../code-widget";
 
-/** Line backgrounds for fenced code. Only visible when the block is revealed
- *  for editing (otherwise the CodeBlockWidget covers these lines) — so the code
- *  keeps its box-like background while you edit it. */
+/** Line backgrounds for fenced code (including mermaid's ```mermaid source).
+ *  Only visible when the block is revealed for editing — otherwise the block
+ *  widget covers these lines — so the source keeps its code background while you
+ *  edit it. */
 export const codeLines: InlineFeature = {
   nodes: ["FencedCode"],
   enter(node, ctx) {
-    if (fencedInfo(ctx.state, node) === "mermaid") return false; // mermaid widget owns it
     ctx.eachLine(node.from, node.to, (lf) => ctx.line(lf, "cm-code-line"));
     return; // descend so CodeMark etc. are handled
   },
