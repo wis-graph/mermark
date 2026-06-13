@@ -122,3 +122,15 @@ Golden Master 시나리오 구체 목록(테마/모드 전환 스냅샷), 커밋
 - [x] 새 구조 매개변수 ≤3 (설정 항목 = {기본값, 키, 적용자})
 - [x] 대기 리스트 명시
 - [x] 마지막에 플랜 스킬 호출 안내 포함
+
+---
+
+## 실행 완료 (2026-06-13)
+
+SSOT 설정 스토어 이주 완료 (`docs/superpowers/plans/2026-06-13-ssot-settings-store.md`).
+- `src/settings/store.ts` (`defineSetting`) + `src/settings/app.ts` (`themeSetting`/`modeSetting`) 도입.
+- theme·mode가 SSOT를 읽고 sink가 구독(`bind`/`subscribe`). localStorage 영속은 스토어가 담당.
+- theme의 push/pull 이중 채널 제거: `refreshMermaidTheme(theme)`가 값을 받음(DOM pull-on-change 제거). 잔존 `dataset.theme` 읽기는 `loadMermaid`의 1회성 초기 부트스트랩뿐.
+- mode: `controller.setMode`가 순수 sink(reconfigure + 떠날 때 autosave flush), 토글은 `modeSetting.set` 단일 커맨드(버튼·Mod-e·window keydown 위임). `MODE_KEY`/`savedMode`/`toggleMode`/`onMode` fan-out 제거.
+- Golden Master(`scripts/settings-golden.mjs`) 전/후 동일, 콘솔 에러 0. 단위 테스트 84개 green(신규 settings-store 10 + settings-app 4), tsc 0.
+- **대기 리스트 잔존**: Command-Pattern 클릭→소스 단일화, 플러그인 설정 등록 API, mermaid의 theme sink 자기등록(main.ts의 도메인 지식 제거)은 다음 라운드.
