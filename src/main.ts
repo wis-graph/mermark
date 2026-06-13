@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { dirOf } from "./path";
 import { mountEditor, type PreviewMode, type SaveStatus } from "./editor";
 import { applyTheme, makeThemeToggle } from "./theme";
-import { themeSetting } from "./settings/app";
+import { themeSetting, modeSetting } from "./settings/app";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
 import "./styles.css";
@@ -32,12 +32,6 @@ function makeSaveStatus(): { el: HTMLElement; set: (s: SaveStatus, detail?: stri
       }
     },
   };
-}
-
-const MODE_KEY = "mermark.mode";
-
-function savedMode(): PreviewMode {
-  return localStorage.getItem(MODE_KEY) === "edit" ? "edit" : "read";
 }
 
 /** Edit/read toggle that lives in the status bar (icon + label). */
@@ -73,10 +67,10 @@ async function boot() {
     root.append(host, bar);
 
     const baseDir = dirOf(file);
-    const initialMode = savedMode();
+    const initialMode = modeSetting.get();
+    const toggleMode = () => modeSetting.set(modeSetting.get() === "edit" ? "read" : "edit");
 
     const mode = makeModeToggle();
-    mode.render(initialMode);
     const pos = el("span", "status-pos");
     const spacer = el("span", "status-spacer");
     const save = makeSaveStatus();
@@ -91,10 +85,7 @@ async function boot() {
     const editor = mountEditor(host, text, baseDir, file, {
       onStatus: save.set,
       initialMode,
-      onMode: (m) => {
-        localStorage.setItem(MODE_KEY, m);
-        mode.render(m);
-      },
+      onToggleMode: toggleMode,
       onCursor: (line, col) => (pos.textContent = `Ln ${line}, Col ${col}`),
     });
     // mermaid bakes theme colors into its SVGs, so a theme change must clear its
@@ -107,14 +98,19 @@ async function boot() {
     // state (selection offsets, block specs) instead of guessing from the DOM.
     if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
       (window as unknown as { __mermark?: unknown }).__mermark = editor;
-    mode.btn.addEventListener("click", () => editor.toggleMode());
+    mode.btn.addEventListener("click", toggleMode);
     // global fallback so ⌘E works even when the editor isn't focused
     window.addEventListener("keydown", (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
         e.preventDefault();
-        editor.toggleMode();
+        toggleMode();
       }
     });
+    // mode is the SSOT: the button label binds to it; the editor reacts to
+    // changes (reconfigure CM + flush autosave on leaving edit). Persistence is
+    // handled by the store.
+    modeSetting.bind(mode.render); // initial label + on change
+    modeSetting.subscribe((m) => editor.setMode(m));
   } catch (e) {
     root.textContent = `Failed to open: ${String(e)}`;
   }

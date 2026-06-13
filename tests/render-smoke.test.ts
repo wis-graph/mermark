@@ -223,20 +223,15 @@ describe("mode toggle", () => {
     ed.view.destroy();
   });
 
-  it("toggling to edit enables reveal; back to read re-conceals", () => {
-    const modes: string[] = [];
-    const ed = mountEditor(host, DOC2, "/tmp", "/tmp/doc.md", {
-      initialMode: "read",
-      onMode: (m) => modes.push(m),
-    });
+  it("switching to edit enables reveal; back to read re-conceals", () => {
+    const ed = mountEditor(host, DOC2, "/tmp", "/tmp/doc.md", { initialMode: "read" });
     ed.view.dispatch({ selection: { anchor: DOC2.indexOf("[[") + 2 } });
-    ed.toggleMode(); // → edit: cursor line reveals
+    ed.setMode("edit"); // → edit: cursor line reveals
     (ed.view as unknown as { measure(): void }).measure();
     expect(ed.view.contentDOM.textContent).toContain("[[target|Alias]]");
-    ed.toggleMode(); // → read: fixed render again
+    ed.setMode("read"); // → read: fixed render again
     (ed.view as unknown as { measure(): void }).measure();
     expect(ed.view.contentDOM.textContent).not.toContain("[[target");
-    expect(modes).toEqual(["edit", "read"]);
     ed.view.destroy();
   });
 

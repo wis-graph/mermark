@@ -14,8 +14,9 @@ export type { PreviewMode };
 export interface EditorController {
   view: EditorView;
   mode(): PreviewMode;
+  /** Apply a mode to the editor (SSOT sink): reconfigure CM and flush autosave
+   *  when leaving edit. The setting is the writer; this only reacts. */
   setMode(m: PreviewMode): void;
-  toggleMode(): void;
   /** Force block widgets (mermaid) to re-render — used after a live theme change. */
   refresh(): void;
 }
@@ -72,11 +73,11 @@ export function mountEditor(
   opts: {
     onStatus?: (s: SaveStatus, detail?: string) => void;
     initialMode?: PreviewMode;
-    onMode?: (m: PreviewMode) => void;
+    onToggleMode?: () => void;
     onCursor?: (line: number, col: number) => void;
   } = {},
 ): EditorController {
-  const { onStatus = () => {}, initialMode = "read", onMode = () => {}, onCursor = () => {} } = opts;
+  const { onStatus = () => {}, initialMode = "read", onToggleMode = () => {}, onCursor = () => {} } = opts;
   const autosave = makeAutosave(filePath, onStatus);
   const modeCompartment = new Compartment();
   let mode: PreviewMode = initialMode;
@@ -89,10 +90,6 @@ export function mountEditor(
       if (mode === "edit") autosave.flush(); // leaving edit = save point
       mode = m;
       controller.view.dispatch({ effects: modeCompartment.reconfigure(modeExtensions(m)) });
-      onMode(m);
-    },
-    toggleMode() {
-      controller.setMode(mode === "edit" ? "read" : "edit");
     },
     refresh() {
       controller.view.dispatch({ effects: refreshBlocks.of(null) });
@@ -109,7 +106,7 @@ export function mountEditor(
       modeCompartment.of(modeExtensions(initialMode)),
       history(),
       keymap.of([
-        { key: "Mod-e", run: () => (controller.toggleMode(), true) },
+        { key: "Mod-e", run: () => (onToggleMode(), true) },
         ...defaultKeymap,
         ...historyKeymap,
       ]),
