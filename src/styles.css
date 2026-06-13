@@ -49,6 +49,8 @@ html, body { margin: 0; height: 100%; }
 .cm-fold-marker:hover { opacity: 1 !important; color: var(--fg); }
 .cm-fold-marker-closed { opacity: .8; } /* a collapsed section always shows its toggle */
 .cm-editor:hover .cm-fold-marker-closed { opacity: .9; }
+/* folded-content placeholder (…) — CM hard-codes a light pill; theme it. */
+.cm-editor .cm-foldPlaceholder { background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); margin: 0 .25em; padding: 0 .45em; }
 
 /* themed scrollbar — the editor scrolls inside .cm-scroller */
 .cm-scroller::-webkit-scrollbar { width: 11px; height: 11px; }
