@@ -34,6 +34,16 @@ html, body { margin: 0; height: 100%; }
    and shoves the column off-screen — don't use it. */
 .cm-scroller { justify-content: safe center; }
 .cm-editor .cm-content { max-width: 820px; padding: 2rem 1rem; }
+/* fold toggles sit in the gutter, which `justify-content: center` parks right
+   beside the centered column. Markers stay faint until you hover the editor. */
+.cm-gutters { background: transparent; border: none; color: var(--muted); }
+.cm-foldGutter { width: 1.1em; }
+.cm-fold-marker { cursor: pointer; opacity: 0; transition: opacity .12s; font-size: .85em; }
+.cm-editor:hover .cm-fold-marker { opacity: .45; }
+.cm-fold-marker:hover { opacity: 1 !important; }
+.cm-fold-marker-closed { opacity: .7; } /* a collapsed section always shows its toggle */
+.cm-editor:hover .cm-fold-marker-closed { opacity: .85; }
+
 /* focused line in edit mode — subtle tint so the caret's line is obvious.
    `.cm-editor` prefix beats CM's runtime-injected default `.cm-activeLine` blue. */
 .cm-editor .cm-activeLine { background: color-mix(in srgb, var(--fg) 7%, transparent); border-radius: var(--radius-sm, 6px); }

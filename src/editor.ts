@@ -3,6 +3,7 @@ import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, highlightActiveLine } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
 import { blockPreview, inlinePreview, modeFacet, type PreviewMode } from "./markdown/decorate";
+import { markdownFolding } from "./markdown/fold";
 import { markdownLang } from "./markdown/parser";
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -96,6 +97,7 @@ export function mountEditor(
     doc,
     extensions: [
       markdownLang(),
+      markdownFolding,
       inlinePreview(baseDir, filePath),
       blockPreview,
       modeCompartment.of(modeExtensions(initialMode)),
