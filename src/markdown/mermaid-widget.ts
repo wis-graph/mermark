@@ -85,93 +85,17 @@ export class MermaidWidget extends WidgetType {
     host.innerHTML = svg;
     const el = host.querySelector<SVGSVGElement>("svg");
     if (!el) return;
-    // Read the diagram's natural aspect ratio BEFORE svg-pan-zoom strips the
-    // viewBox; without it the svg collapses to the 150px replaced-element
-    // default and tall diagrams get cropped.
-    const vb = (el.getAttribute("viewBox") ?? "").split(/[\s,]+/).map(Number);
-    const aspect = vb.length === 4 && vb[2] > 0 && vb[3] > 0 ? vb[3] / vb[2] : 0.6;
-    el.removeAttribute("height");
-    el.style.width = "100%";
-    el.style.height = "100%";
-    // Mermaid stamps `max-width: <natural width>px` inline on the <svg>, which
-    // caps it at the diagram's natural size and leaves it small/left in a wide
-    // host. Clear it so the diagram scales to the full container width.
-    el.style.maxWidth = "none";
-
-    // Size the host so the whole diagram fits: width-driven height, capped to
-    // the window so huge diagrams scale down instead of overflowing.
-    const fitHeight = () => {
-      const w = host.clientWidth || 600;
-      const cap = (window.innerHeight || 800) * 0.85;
-      const h = Math.max(80, Math.min(w * aspect, cap));
-      host.style.height = `${h}px`;
-      host.style.minHeight = ""; // real height set → drop the reserved placeholder
-      lastHeight = h;
-    };
-
+    const aspect = normalizeMermaidSvg(el);
     // svg-pan-zoom must initialize on a host that already has a width. toDOM
     // runs BEFORE CM attaches the host, so a synchronous init fits the diagram
     // to a 0-width box and it renders invisible (the re-render-after-edit bug).
-    // Defer until the host is connected and laid out.
-    let frames = 0;
-    const setup = () => {
-      if (!host.isConnected) return; // widget dropped before it ever laid out
-      if (host.clientWidth === 0 && frames++ < 120) {
-        requestAnimationFrame(setup);
-        return;
-      }
-      fitHeight();
-      const pz = svgPanZoom(el, {
-        panEnabled: true,
-        zoomEnabled: true,
-        mouseWheelZoomEnabled: false, // wheel zoom gated on Ctrl/Cmd below
-        dblClickZoomEnabled: false,
-        fit: true,
-        center: true,
-      });
-      (host as unknown as { __pz?: { destroy(): void } }).__pz = pz;
-
-      // Refit on container resize until the user pans/zooms manually.
-      let touched = false;
-      el.addEventListener("pointerdown", () => (touched = true), { once: true });
-      if (typeof ResizeObserver !== "undefined") {
-        const ro = new ResizeObserver(() => {
-          fitHeight();
-          pz.resize();
-          if (!touched) {
-            pz.fit();
-            pz.center();
-          }
-        });
-        ro.observe(host);
-        (host as unknown as { __ro?: ResizeObserver }).__ro = ro;
-      }
-      let zoomed = false;
-      host.addEventListener("dblclick", (e) => {
-        e.preventDefault();
-        if (zoomed) {
-          pz.reset();
-          zoomed = false;
-        } else {
-          pz.zoomBy(2);
-          zoomed = true;
-        }
-      });
-      host.addEventListener(
-        "wheel",
-        (e) => {
-          if (!(e.ctrlKey || e.metaKey)) return; // plain wheel = page scroll
-          e.preventDefault();
-          const rect = el.getBoundingClientRect();
-          pz.zoomAtPointBy(e.deltaY < 0 ? 1.15 : 0.87, { x: e.clientX - rect.left, y: e.clientY - rect.top });
-        },
-        { passive: false },
-      );
+    whenLaidOut(host, () => {
+      fitHostHeight(host, aspect);
+      initPanZoom(host, el, aspect);
       // Click-to-edit is handled centrally in live-preview/core (a capture-phase
       // listener that beats svg-pan-zoom), so the widget stays mode-agnostic.
       host.dispatchEvent(new CustomEvent("mermaid-rendered", { bubbles: true }));
-    };
-    requestAnimationFrame(setup);
+    });
   }
   ignoreEvent() {
     return true;
@@ -185,4 +109,100 @@ export class MermaidWidget extends WidgetType {
       /* already gone */
     }
   }
+}
+
+/** Normalize mermaid's inline SVG sizing so it fills the host, and return the
+ *  diagram's aspect ratio (height/width). The viewBox MUST be read here, before
+ *  svg-pan-zoom strips it; otherwise the svg collapses to the 150px
+ *  replaced-element default and tall diagrams get cropped. */
+function normalizeMermaidSvg(el: SVGSVGElement): number {
+  const vb = (el.getAttribute("viewBox") ?? "").split(/[\s,]+/).map(Number);
+  const aspect = vb.length === 4 && vb[2] > 0 && vb[3] > 0 ? vb[3] / vb[2] : 0.6;
+  el.removeAttribute("height");
+  el.style.width = "100%";
+  el.style.height = "100%";
+  // Mermaid stamps `max-width: <natural width>px` inline on the <svg>, capping
+  // it at the diagram's natural size (small/left in a wide host). Clear it so
+  // the diagram scales to the full container width.
+  el.style.maxWidth = "none";
+  return aspect;
+}
+
+/** Size the host so the whole diagram fits: width-driven height, capped to the
+ *  window so huge diagrams scale down instead of overflowing. Records the height
+ *  in `lastHeight` so the NEXT widget can reserve it during its async render. */
+function fitHostHeight(host: HTMLElement, aspect: number): void {
+  const w = host.clientWidth || 600;
+  const cap = (window.innerHeight || 800) * 0.85;
+  const h = Math.max(80, Math.min(w * aspect, cap));
+  host.style.height = `${h}px`;
+  host.style.minHeight = ""; // real height set → drop the reserved placeholder
+  lastHeight = h;
+}
+
+/** Run `cb` once the host is connected and laid out (nonzero width). Gives up
+ *  after ~120 frames if the host never lays out. */
+function whenLaidOut(host: HTMLElement, cb: () => void): void {
+  let frames = 0;
+  const tick = () => {
+    if (!host.isConnected) return; // widget dropped before it ever laid out
+    if (host.clientWidth === 0 && frames++ < 120) {
+      requestAnimationFrame(tick);
+      return;
+    }
+    cb();
+  };
+  requestAnimationFrame(tick);
+}
+
+/** Build the interactive viewer on a laid-out host: svg-pan-zoom, refit on
+ *  container resize until the user pans/zooms, dblclick zoom toggle, and
+ *  Ctrl/Cmd-wheel zoom (plain wheel stays page scroll). */
+function initPanZoom(host: HTMLElement, el: SVGSVGElement, aspect: number): void {
+  const pz = svgPanZoom(el, {
+    panEnabled: true,
+    zoomEnabled: true,
+    mouseWheelZoomEnabled: false, // wheel zoom gated on Ctrl/Cmd below
+    dblClickZoomEnabled: false,
+    fit: true,
+    center: true,
+  });
+  (host as unknown as { __pz?: { destroy(): void } }).__pz = pz;
+
+  // Refit on container resize until the user pans/zooms manually.
+  let touched = false;
+  el.addEventListener("pointerdown", () => (touched = true), { once: true });
+  if (typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(() => {
+      fitHostHeight(host, aspect);
+      pz.resize();
+      if (!touched) {
+        pz.fit();
+        pz.center();
+      }
+    });
+    ro.observe(host);
+    (host as unknown as { __ro?: ResizeObserver }).__ro = ro;
+  }
+  let zoomed = false;
+  host.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    if (zoomed) {
+      pz.reset();
+      zoomed = false;
+    } else {
+      pz.zoomBy(2);
+      zoomed = true;
+    }
+  });
+  host.addEventListener(
+    "wheel",
+    (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return; // plain wheel = page scroll
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      pz.zoomAtPointBy(e.deltaY < 0 ? 1.15 : 0.87, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+    },
+    { passive: false },
+  );
 }
