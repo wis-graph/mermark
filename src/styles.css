@@ -115,5 +115,8 @@ html, body { margin: 0; height: 100%; }
 
 /* Unordered-list bullet, drawn in CSS so a collapsed item can show a halo ring
    (a state a font glyph can't express). */
+/* thematic break (---) → a horizontal rule filling the line */
+.cm-hr { display: inline-block; width: 100%; height: 0; margin: 0; border: none; border-top: 1px solid var(--border); vertical-align: middle; }
+
 .cm-bullet { display: inline-block; width: .38em; height: .38em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
 .cm-bullet-collapsed { box-shadow: 0 0 0 .3em color-mix(in srgb, var(--muted) 50%, transparent); }

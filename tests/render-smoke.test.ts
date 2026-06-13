@@ -158,6 +158,19 @@ describe("full-editor render smoke", () => {
     ed.view.destroy();
   });
 
+  it("renders --- as a horizontal rule; reveals raw on its line", () => {
+    const doc = "above\n\n---\n\nbelow";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-hr")).not.toBeNull();
+    expect(view.contentDOM.textContent).not.toContain("---");
+    view.dispatch({ selection: { anchor: doc.indexOf("---") + 1 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("---");
+    view.destroy();
+  });
+
   it("task items keep the checkbox and get no bullet", () => {
     const doc = "- [x] done\n- [ ] todo";
     const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
