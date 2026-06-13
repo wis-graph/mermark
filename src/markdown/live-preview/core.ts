@@ -8,7 +8,7 @@ import {
   WidgetType,
   keymap,
 } from "@codemirror/view";
-import { EditorSelection, Facet, Prec, StateField } from "@codemirror/state";
+import { EditorSelection, Facet, Prec, StateEffect, StateField } from "@codemirror/state";
 import type { EditorState, Extension, Transaction, Range } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
@@ -280,6 +280,10 @@ export function pickBlockLanding(
   return anchor === oldHead ? null : anchor;
 }
 
+/** Dispatch this to force block widgets to rebuild (e.g. mermaid re-render on a
+ *  live theme change), even though the document hasn't changed. */
+export const refreshBlocks = StateEffect.define<null>();
+
 export function blockPreview(features: BlockFeature[]): Extension {
   const byNode = new Map<string, BlockFeature[]>();
   for (const f of features) {
@@ -338,7 +342,11 @@ export function blockPreview(features: BlockFeature[]): Extension {
         const specs = computeSpecs(tr.state);
         return { specs, deco: buildDeco(tr.state, specs) };
       }
-      if (tr.selection || tr.startState.facet(modeFacet) !== tr.state.facet(modeFacet))
+      if (
+        tr.selection ||
+        tr.startState.facet(modeFacet) !== tr.state.facet(modeFacet) ||
+        tr.effects.some((e) => e.is(refreshBlocks))
+      )
         return { specs: value.specs, deco: buildDeco(tr.state, value.specs) };
       return value;
     },

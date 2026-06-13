@@ -2,7 +2,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, highlightActiveLine } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
-import { blockPreview, inlinePreview, modeFacet, type PreviewMode } from "./markdown/live-preview";
+import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode } from "./markdown/live-preview";
 import { markdownFolding } from "./markdown/fold";
 import { markdownLang } from "./markdown/parser";
 
@@ -16,6 +16,8 @@ export interface EditorController {
   mode(): PreviewMode;
   setMode(m: PreviewMode): void;
   toggleMode(): void;
+  /** Force block widgets (mermaid) to re-render — used after a live theme change. */
+  refresh(): void;
 }
 
 /** Debounced autosave to disk; flush() writes any pending change immediately
@@ -91,6 +93,9 @@ export function mountEditor(
     },
     toggleMode() {
       controller.setMode(mode === "edit" ? "read" : "edit");
+    },
+    refresh() {
+      controller.view.dispatch({ effects: refreshBlocks.of(null) });
     },
   };
 

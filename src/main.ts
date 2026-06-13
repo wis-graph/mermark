@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { dirOf } from "./path";
 import { mountEditor, type PreviewMode, type SaveStatus } from "./editor";
 import { initialTheme, applyTheme, makeThemeToggle } from "./theme";
+import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
 import "./styles.css";
 
@@ -76,7 +77,12 @@ async function boot() {
     const pos = el("span", "status-pos");
     const spacer = el("span", "status-spacer");
     const save = makeSaveStatus();
-    const themeBtn = makeThemeToggle(theme);
+    // live theme switch: flip CSS vars + re-render mermaid (theme is baked into
+    // its SVGs), no page reload — so the layout never flashes/re-mounts.
+    const themeBtn = makeThemeToggle(theme, () => {
+      refreshMermaidTheme();
+      editor.refresh();
+    });
     bar.append(mode.btn, pos, spacer, save.el, themeBtn);
 
     const editor = mountEditor(host, text, baseDir, file, {

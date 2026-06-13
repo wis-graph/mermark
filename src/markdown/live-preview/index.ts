@@ -19,7 +19,7 @@ import { inlineMath, blockMath } from "./features/math";
 import { mermaid } from "./features/mermaid";
 import { table } from "./features/table";
 
-export { modeFacet, selectionTouches } from "./core";
+export { modeFacet, selectionTouches, refreshBlocks } from "./core";
 export type { PreviewMode } from "./core";
 
 /** The live-preview feature registry. Add a feature here to extend the editor;

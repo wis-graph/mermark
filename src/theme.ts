@@ -16,9 +16,10 @@ export function applyTheme(t: Theme) {
   document.documentElement.dataset.theme = t;
 }
 
-/** Build a theme toggle button; persists the choice across reloads. Returns the
- *  element so the caller can place it (e.g. in the status bar). */
-export function makeThemeToggle(initial: Theme): HTMLButtonElement {
+/** Build a theme toggle button; persists the choice. Switches the theme LIVE
+ *  (no page reload) and calls `onChange` so the caller can re-render anything
+ *  that bakes the theme in (mermaid). Returns the element to place. */
+export function makeThemeToggle(initial: Theme, onChange: (t: Theme) => void): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.className = "status-btn theme-toggle";
   let cur = initial;
@@ -30,10 +31,9 @@ export function makeThemeToggle(initial: Theme): HTMLButtonElement {
   btn.addEventListener("click", () => {
     cur = cur === "dark" ? "light" : "dark";
     localStorage.setItem(STORAGE_KEY, cur);
-    applyTheme(cur);
+    applyTheme(cur); // CSS vars switch instantly — no reload, no layout flash
     label();
-    // mermaid bakes its theme into rendered SVGs; reload re-renders everything
-    location.reload();
+    onChange(cur);
   });
   return btn;
 }

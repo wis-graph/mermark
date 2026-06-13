@@ -29,6 +29,24 @@ function cachePut(code: string, svg: string) {
 
 let idSeq = 0;
 
+// Bumped whenever the theme changes. Mermaid bakes theme colors into the SVG,
+// so a theme switch must re-render every diagram; widgets compare this version
+// in eq() so CM redraws them even though the source code is unchanged.
+let themeVersion = 0;
+
+/** Re-theme mermaid live (no page reload): clear the cache, re-init mermaid with
+ *  the current document theme, and bump the version so widgets re-render. */
+export function refreshMermaidTheme() {
+  themeVersion++;
+  svgCache.clear();
+  if (mermaidLoader) {
+    const light = document.documentElement.dataset.theme === "light";
+    mermaidLoader.then((m) =>
+      m.initialize({ startOnLoad: false, securityLevel: "strict", theme: light ? "default" : "dark" }),
+    );
+  }
+}
+
 // Height of the most recently rendered diagram. When a re-render misses the
 // cache (the source was edited), we reserve this height on the new host while
 // mermaid renders async, so leaving the block doesn't collapse the box to 0 and
@@ -36,11 +54,12 @@ let idSeq = 0;
 let lastHeight = 0;
 
 export class MermaidWidget extends WidgetType {
+  readonly version = themeVersion; // captured at construction; see refreshMermaidTheme
   constructor(readonly code: string) {
     super();
   }
   eq(o: MermaidWidget) {
-    return o.code === this.code;
+    return o.code === this.code && o.version === this.version;
   }
   toDOM(): HTMLElement {
     const host = document.createElement("div");
