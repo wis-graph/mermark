@@ -25,7 +25,9 @@
 body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); margin: 0; }
 
 html, body { margin: 0; height: 100%; }
-#app { height: 100vh; overflow: auto; }
+/* #app is a flex column: editor fills the space, a fixed status bar sits below. */
+#app { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+.editor-host { flex: 1; min-height: 0; overflow: hidden; }
 .cm-editor { height: 100%; }
 /* Center the 820px reading column. CM makes .cm-scroller a flex row with the
    content as its only child, so center via the container with `safe`: if any
@@ -86,11 +88,14 @@ html, body { margin: 0; height: 100%; }
 .cm-h5 { font-size: 1.05em; }
 .cm-h6 { font-size: 1em; color: var(--muted); }
 
-.save-status { position: fixed; bottom: 8px; right: 12px; z-index: 10; font-size: 12px; color: var(--muted); pointer-events: none; }
-.save-status[data-state="error"] { color: #dc2626; background: var(--surface); border: 1px solid #dc2626; border-radius: var(--radius-md); padding: 4px 8px; pointer-events: auto; }
-
-.theme-toggle { position: fixed; top: 8px; right: 8px; z-index: 10; background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); width: 30px; height: 30px; cursor: pointer; }
-.mode-toggle { position: fixed; top: 8px; right: 46px; z-index: 10; background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); width: 30px; height: 30px; cursor: pointer; }
+/* Bottom status bar — all editor chrome lives here, out of the content. */
+.status-bar { flex: none; height: 28px; display: flex; align-items: center; gap: .35em; padding: 0 .6em; border-top: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--muted); user-select: none; }
+.status-spacer { flex: 1; }
+.status-pos { font-variant-numeric: tabular-nums; padding: 0 .3em; }
+.status-btn { background: transparent; color: var(--muted); border: none; border-radius: var(--radius-sm, 6px); height: 22px; padding: 0 .55em; font: inherit; font-size: 12px; cursor: pointer; }
+.status-btn:hover { background: var(--bg); color: var(--fg); }
+.save-status { font-size: 12px; color: var(--muted); }
+.save-status[data-state="error"] { color: #dc2626; }
 
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }
 .cm-table { border-collapse: collapse; width: 100%; }

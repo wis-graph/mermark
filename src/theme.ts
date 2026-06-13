@@ -16,12 +16,16 @@ export function applyTheme(t: Theme) {
   document.documentElement.dataset.theme = t;
 }
 
-/** Mount a toggle button; persists the choice across reloads. */
-export function mountThemeToggle(initial: Theme) {
+/** Build a theme toggle button; persists the choice across reloads. Returns the
+ *  element so the caller can place it (e.g. in the status bar). */
+export function makeThemeToggle(initial: Theme): HTMLButtonElement {
   const btn = document.createElement("button");
-  btn.className = "theme-toggle";
+  btn.className = "status-btn theme-toggle";
   let cur = initial;
-  const label = () => (btn.textContent = cur === "dark" ? "☾" : "☀");
+  const label = () => {
+    btn.textContent = cur === "dark" ? "☾" : "☀";
+    btn.title = cur === "dark" ? "다크 모드 (클릭: 라이트)" : "라이트 모드 (클릭: 다크)";
+  };
   label();
   btn.addEventListener("click", () => {
     cur = cur === "dark" ? "light" : "dark";
@@ -31,5 +35,5 @@ export function mountThemeToggle(initial: Theme) {
     // mermaid bakes its theme into rendered SVGs; reload re-renders everything
     location.reload();
   });
-  document.body.appendChild(btn);
+  return btn;
 }

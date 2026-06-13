@@ -71,9 +71,10 @@ export function mountEditor(
     onStatus?: (s: SaveStatus, detail?: string) => void;
     initialMode?: PreviewMode;
     onMode?: (m: PreviewMode) => void;
+    onCursor?: (line: number, col: number) => void;
   } = {},
 ): EditorController {
-  const { onStatus = () => {}, initialMode = "read", onMode = () => {} } = opts;
+  const { onStatus = () => {}, initialMode = "read", onMode = () => {}, onCursor = () => {} } = opts;
   const autosave = makeAutosave(filePath, onStatus);
   const modeCompartment = new Compartment();
   let mode: PreviewMode = initialMode;
@@ -108,6 +109,12 @@ export function mountEditor(
         ...historyKeymap,
       ]),
       autosave.extension,
+      EditorView.updateListener.of((u) => {
+        if (!u.selectionSet && !u.docChanged) return;
+        const head = u.state.selection.main.head;
+        const line = u.state.doc.lineAt(head);
+        onCursor(line.number, head - line.from + 1);
+      }),
       EditorView.lineWrapping,
     ],
   });
