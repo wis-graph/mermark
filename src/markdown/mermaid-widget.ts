@@ -1,5 +1,6 @@
 import { WidgetType } from "@codemirror/view";
 import svgPanZoom from "svg-pan-zoom";
+import { boundedCache } from "./bounded-cache";
 
 type Mermaid = typeof import("mermaid").default;
 
@@ -17,15 +18,7 @@ function loadMermaid(): Promise<Mermaid> {
 
 // SVG cache keyed by diagram source: reveal/unreveal cycles and scrolling
 // must not re-run the mermaid renderer.
-const svgCache = new Map<string, string>();
-const CACHE_MAX = 50;
-function cachePut(code: string, svg: string) {
-  if (svgCache.size >= CACHE_MAX) {
-    const first = svgCache.keys().next().value;
-    if (first !== undefined) svgCache.delete(first);
-  }
-  svgCache.set(code, svg);
-}
+const svgCache = boundedCache<string, string>(50);
 
 let idSeq = 0;
 
@@ -74,7 +67,7 @@ export class MermaidWidget extends WidgetType {
       loadMermaid()
         .then((mermaid) => mermaid.render(`mmd-${idSeq++}`, this.code))
         .then(({ svg }) => {
-          cachePut(this.code, svg);
+          svgCache.put(this.code, svg);
           this.applySvg(host, svg);
         })
         .catch((err) => {

@@ -1,4 +1,5 @@
 import { EditorView, WidgetType } from "@codemirror/view";
+import { boundedCache } from "./bounded-cache";
 
 type Katex = typeof import("katex").default;
 
@@ -9,15 +10,7 @@ function loadKatex(): Promise<Katex> {
 }
 
 // Rendered-HTML cache so reveal/unreveal cycles don't re-typeset.
-const htmlCache = new Map<string, string>();
-const CACHE_MAX = 200;
-function cachePut(key: string, html: string) {
-  if (htmlCache.size >= CACHE_MAX) {
-    const first = htmlCache.keys().next().value;
-    if (first !== undefined) htmlCache.delete(first);
-  }
-  htmlCache.set(key, html);
-}
+const htmlCache = boundedCache<string, string>(200);
 
 export class KatexWidget extends WidgetType {
   constructor(readonly tex: string, readonly display: boolean) {
@@ -38,7 +31,7 @@ export class KatexWidget extends WidgetType {
       loadKatex()
         .then((katex) => {
           const html = katex.renderToString(this.tex, { displayMode: this.display, throwOnError: false });
-          cachePut(key, html);
+          htmlCache.put(key, html);
           el.innerHTML = html;
         })
         .catch(() => {
