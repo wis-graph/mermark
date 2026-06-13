@@ -1,6 +1,6 @@
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, highlightActiveLine } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
 import { blockPreview, inlinePreview, modeFacet, type PreviewMode } from "./markdown/decorate";
 import { markdownLang } from "./markdown/parser";
@@ -56,6 +56,8 @@ function modeExtensions(mode: PreviewMode) {
     EditorState.readOnly.of(mode === "read"),
     // keep the content focusable in read mode so Mod-e still toggles back
     EditorView.contentAttributes.of({ tabindex: "0" }),
+    // mark the cursor's line only while editing (read mode has no caret to track)
+    ...(mode === "edit" ? [highlightActiveLine()] : []),
   ];
 }
 

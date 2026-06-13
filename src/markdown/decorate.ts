@@ -144,7 +144,14 @@ function buildInline(view: EditorView, baseDir: string, currentFile: string): De
           return;
         }
         if (MARKERS.has(node.name)) {
-          if (node.to > node.from) specs.push({ from: node.from, to: node.to, deco: hide, conceal: true });
+          let to = node.to;
+          if (node.name === "HeaderMark") {
+            // also swallow the space(s) after `#`, else the heading text stays
+            // indented by that gap when the marker is concealed
+            const lineEnd = state.doc.lineAt(node.from).to;
+            while (to < lineEnd && state.sliceDoc(to, to + 1) === " ") to++;
+          }
+          if (to > node.from) specs.push({ from: node.from, to, deco: hide, conceal: true });
           return;
         }
         const heading = HEADING_LINE[node.name];
