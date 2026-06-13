@@ -1,4 +1,4 @@
-import { EditorView, WidgetType } from "@codemirror/view";
+import { WidgetType } from "@codemirror/view";
 
 /** Split a GFM table row into trimmed cells (strip leading/trailing pipes). */
 function splitRow(line: string): string[] {
@@ -23,14 +23,12 @@ export class TableWidget extends WidgetType {
   eq(o: TableWidget) {
     return o.source === this.source;
   }
-  toDOM(view: EditorView): HTMLElement {
+  toDOM(): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "cm-table-wrap";
-    // click a rendered table → cursor into its source
-    wrap.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      view.dispatch({ selection: { anchor: view.posAtDOM(wrap) } });
-    });
+    // Click→source is handled centrally in live-preview/core (clickEntry, a
+    // capture-phase listener, edit-mode only). Read mode is preview — a click
+    // does nothing, so no per-widget handler here.
     const lines = this.source.split("\n").filter((l) => l.trim() !== "");
     if (lines.length < 2) {
       wrap.textContent = this.source;

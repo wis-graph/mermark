@@ -133,4 +133,10 @@ SSOT 설정 스토어 이주 완료 (`docs/superpowers/plans/2026-06-13-ssot-set
 - theme의 push/pull 이중 채널 제거: `refreshMermaidTheme(theme)`가 값을 받음(DOM pull-on-change 제거). 잔존 `dataset.theme` 읽기는 `loadMermaid`의 1회성 초기 부트스트랩뿐.
 - mode: `controller.setMode`가 순수 sink(reconfigure + 떠날 때 autosave flush), 토글은 `modeSetting.set` 단일 커맨드(버튼·Mod-e·window keydown 위임). `MODE_KEY`/`savedMode`/`toggleMode`/`onMode` fan-out 제거.
 - Golden Master(`scripts/settings-golden.mjs`) 전/후 동일, 콘솔 에러 0. 단위 테스트 84개 green(신규 settings-store 10 + settings-app 4), tsc 0.
-- **대기 리스트 잔존**: Command-Pattern 클릭→소스 단일화, 플러그인 설정 등록 API, mermaid의 theme sink 자기등록(main.ts의 도메인 지식 제거)은 다음 라운드.
+
+### 후속: Command Pattern — 클릭→소스 단일화 (완료)
+
+- `table-widget`/`math-widget`의 위젯별 `mousedown` 핸들러 제거. 클릭→소스는 `core.ts:clickEntry`(capture-phase, edit 모드 전용) 단일 경로로 일원화.
+- **read-모드 동작 결정(사용자)**: read = 미리보기 → 클릭해도 원본 텍스트 안 보임. clickEntry가 edit-gated이고 위젯이 `ignoreEvent()=true`라 read 클릭은 완전 no-op.
+- CDP 검증: edit 클릭 → reveal(caret 진입), read 클릭 → 캐럿 불변·reveal 없음, 에러 0. 위젯 `toDOM(view)`의 죽은 `view` 의존도 제거.
+- **대기 리스트 잔존**: 플러그인 설정 등록 API + mermaid의 theme sink 자기등록(main.ts 도메인 지식 제거)은 묶어서 다음 라운드(설정 패널 UX brainstorming 선행).

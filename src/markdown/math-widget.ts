@@ -1,4 +1,4 @@
-import { EditorView, WidgetType } from "@codemirror/view";
+import { WidgetType } from "@codemirror/view";
 import { boundedCache } from "./bounded-cache";
 
 type Katex = typeof import("katex").default;
@@ -19,7 +19,7 @@ export class KatexWidget extends WidgetType {
   eq(o: KatexWidget) {
     return o.tex === this.tex && o.display === this.display;
   }
-  toDOM(view: EditorView) {
+  toDOM() {
     const el = document.createElement(this.display ? "div" : "span");
     el.className = this.display ? "cm-math-block" : "cm-math-inline";
     const key = (this.display ? "D" : "I") + this.tex;
@@ -38,14 +38,9 @@ export class KatexWidget extends WidgetType {
           el.textContent = `$${this.tex}$`;
         });
     }
-    if (this.display) {
-      // click a rendered math block → cursor into its source
-      el.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-        const pos = view.posAtDOM(el);
-        view.dispatch({ selection: { anchor: pos } });
-      });
-    }
+    // Click→source is handled centrally in live-preview/core (clickEntry, a
+    // capture-phase listener on .cm-math-block, edit-mode only). Read mode is
+    // preview — a click does nothing.
     return el;
   }
   ignoreEvent() {
