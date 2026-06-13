@@ -96,57 +96,70 @@ export class MermaidWidget extends WidgetType {
       host.style.minHeight = ""; // real height set → drop the reserved placeholder
       lastHeight = h;
     };
-    fitHeight();
 
-    const pz = svgPanZoom(el, {
-      panEnabled: true,
-      zoomEnabled: true,
-      mouseWheelZoomEnabled: false, // wheel zoom gated on Ctrl/Cmd below
-      dblClickZoomEnabled: false,
-      fit: true,
-      center: true,
-    });
-    (host as unknown as { __pz?: { destroy(): void } }).__pz = pz;
+    // svg-pan-zoom must initialize on a host that already has a width. toDOM
+    // runs BEFORE CM attaches the host, so a synchronous init fits the diagram
+    // to a 0-width box and it renders invisible (the re-render-after-edit bug).
+    // Defer until the host is connected and laid out.
+    let frames = 0;
+    const setup = () => {
+      if (!host.isConnected) return; // widget dropped before it ever laid out
+      if (host.clientWidth === 0 && frames++ < 120) {
+        requestAnimationFrame(setup);
+        return;
+      }
+      fitHeight();
+      const pz = svgPanZoom(el, {
+        panEnabled: true,
+        zoomEnabled: true,
+        mouseWheelZoomEnabled: false, // wheel zoom gated on Ctrl/Cmd below
+        dblClickZoomEnabled: false,
+        fit: true,
+        center: true,
+      });
+      (host as unknown as { __pz?: { destroy(): void } }).__pz = pz;
 
-    // Refit on container resize until the user pans/zooms manually.
-    let touched = false;
-    el.addEventListener("pointerdown", () => (touched = true), { once: true });
-    if (typeof ResizeObserver !== "undefined") {
-      const ro = new ResizeObserver(() => {
-        fitHeight();
-        pz.resize();
-        if (!touched) {
-          pz.fit();
-          pz.center();
+      // Refit on container resize until the user pans/zooms manually.
+      let touched = false;
+      el.addEventListener("pointerdown", () => (touched = true), { once: true });
+      if (typeof ResizeObserver !== "undefined") {
+        const ro = new ResizeObserver(() => {
+          fitHeight();
+          pz.resize();
+          if (!touched) {
+            pz.fit();
+            pz.center();
+          }
+        });
+        ro.observe(host);
+        (host as unknown as { __ro?: ResizeObserver }).__ro = ro;
+      }
+      let zoomed = false;
+      host.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        if (zoomed) {
+          pz.reset();
+          zoomed = false;
+        } else {
+          pz.zoomBy(2);
+          zoomed = true;
         }
       });
-      ro.observe(host);
-      (host as unknown as { __ro?: ResizeObserver }).__ro = ro;
-    }
-    let zoomed = false;
-    host.addEventListener("dblclick", (e) => {
-      e.preventDefault();
-      if (zoomed) {
-        pz.reset();
-        zoomed = false;
-      } else {
-        pz.zoomBy(2);
-        zoomed = true;
-      }
-    });
-    host.addEventListener(
-      "wheel",
-      (e) => {
-        if (!(e.ctrlKey || e.metaKey)) return; // plain wheel = page scroll
-        e.preventDefault();
-        const rect = el.getBoundingClientRect();
-        pz.zoomAtPointBy(e.deltaY < 0 ? 1.15 : 0.87, { x: e.clientX - rect.left, y: e.clientY - rect.top });
-      },
-      { passive: false },
-    );
-    // Click-to-edit is handled centrally in live-preview/core (a capture-phase
-    // listener that beats svg-pan-zoom), so the widget stays mode-agnostic.
-    host.dispatchEvent(new CustomEvent("mermaid-rendered", { bubbles: true }));
+      host.addEventListener(
+        "wheel",
+        (e) => {
+          if (!(e.ctrlKey || e.metaKey)) return; // plain wheel = page scroll
+          e.preventDefault();
+          const rect = el.getBoundingClientRect();
+          pz.zoomAtPointBy(e.deltaY < 0 ? 1.15 : 0.87, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+        },
+        { passive: false },
+      );
+      // Click-to-edit is handled centrally in live-preview/core (a capture-phase
+      // listener that beats svg-pan-zoom), so the widget stays mode-agnostic.
+      host.dispatchEvent(new CustomEvent("mermaid-rendered", { bubbles: true }));
+    };
+    requestAnimationFrame(setup);
   }
   ignoreEvent() {
     return true;
