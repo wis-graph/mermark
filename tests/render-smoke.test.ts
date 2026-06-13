@@ -139,13 +139,20 @@ describe("full-editor render smoke", () => {
     ed.view.destroy();
   });
 
-  it("collapses code-fence lines in read mode, keeps them in edit mode", () => {
+  it("collapses code-fence lines unless the caret is inside the block", () => {
     const doc = "intro\n\n```ts\nconst a = 1;\n```\n\ntail";
+    // read mode: always tight (both fence rows collapsed)
     const r = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
     (r.view as unknown as { measure(): void }).measure();
     expect(r.view.contentDOM.querySelectorAll(".cm-code-fence-hidden").length).toBe(2);
     r.view.destroy();
+    // edit mode, caret OUTSIDE the block → still tight
     const e = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "edit" });
+    e.view.dispatch({ selection: { anchor: 0 } });
+    (e.view as unknown as { measure(): void }).measure();
+    expect(e.view.contentDOM.querySelectorAll(".cm-code-fence-hidden").length).toBe(2);
+    // caret INSIDE the block → fences revealed (none collapsed), so ```ts is editable
+    e.view.dispatch({ selection: { anchor: doc.indexOf("const a") } });
     (e.view as unknown as { measure(): void }).measure();
     expect(e.view.contentDOM.querySelectorAll(".cm-code-fence-hidden").length).toBe(0);
     e.view.destroy();
