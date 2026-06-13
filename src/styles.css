@@ -68,7 +68,7 @@ html, body { margin: 0; height: 100%; }
 .cm-callout-danger { background: rgba(220,38,38,.12); border-left-color: #dc2626; }
 .cm-footnote-ref { color: var(--accent); cursor: default; }
 .cm-footnote-def { font-size: .9em; opacity: .8; }
-.cm-image { display: block; max-width: 100%; height: auto; margin: .5em auto; }
+.cm-image { display: block; max-width: 100%; height: auto; padding: .5em 0; margin: 0 auto; }
 .cm-wikilink-active { color: var(--accent); cursor: pointer; text-decoration: none; }
 .cm-wikilink-active:hover { text-decoration: underline; }
 .cm-wikilink-missing { color: var(--muted); text-decoration: line-through dotted; cursor: default; }

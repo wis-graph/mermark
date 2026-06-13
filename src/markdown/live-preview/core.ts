@@ -363,8 +363,10 @@ export function blockPreview(features: BlockFeature[]): Extension {
     if (anchor === null) return false; // no block crossed → default (R2 wrap motion)
     view.dispatch({
       // carry the goal column so leaving the block on the next press keeps the
-      // caret's horizontal position instead of resetting to column 0
-      selection: EditorSelection.cursor(anchor, dir === 1 ? -1 : 1, undefined, main.goalColumn ?? undefined),
+      // caret's horizontal position instead of resetting to column 0. Use the
+      // target's goalColumn (moveVertically recomputes it from the pre-entry
+      // caret x): main.goalColumn is undefined after a horizontal move/click.
+      selection: EditorSelection.cursor(anchor, dir === 1 ? -1 : 1, undefined, target.goalColumn ?? main.goalColumn),
       scrollIntoView: true,
       userEvent: "select",
     });
