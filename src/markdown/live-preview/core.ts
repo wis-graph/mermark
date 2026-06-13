@@ -6,8 +6,9 @@ import {
   ViewPlugin,
   ViewUpdate,
   WidgetType,
+  keymap,
 } from "@codemirror/view";
-import { Facet, StateField } from "@codemirror/state";
+import { Facet, Prec, StateField } from "@codemirror/state";
 import type { EditorState, Extension, Transaction, Range } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
@@ -290,7 +291,7 @@ export function blockPreview(features: BlockFeature[]): Extension {
     return Decoration.set(ranges, true);
   }
 
-  return StateField.define<BlockValue>({
+  const field = StateField.define<BlockValue>({
     create(state) {
       const specs = computeSpecs(state);
       return { specs, deco: buildDeco(state, specs) };
@@ -306,4 +307,66 @@ export function blockPreview(features: BlockFeature[]): Extension {
     },
     provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
   });
+
+  // Cursor entry. An atomic block widget can't be reached by arrow keys (they
+  // skip it) or a click (the widget swallows events), so the reveal never
+  // fires and the block can't be edited. Redirect a vertical caret move that
+  // would step onto a rendered block's line into the block's source instead —
+  // landing there reveals it.
+  function enter(view: EditorView, dir: 1 | -1): boolean {
+    const state = view.state;
+    if (state.facet(modeFacet) !== "edit") return false;
+    const main = state.selection.main;
+    if (!main.empty) return false;
+    const line = state.doc.lineAt(main.head);
+    const n = line.number + dir;
+    if (n < 1 || n > state.doc.lines) return false;
+    const probe = state.doc.line(n).from;
+    const value = state.field(field, false);
+    if (!value) return false;
+    const spec = value.specs.find(
+      (s) => s.from <= probe && probe < s.to && !revealed(state, s.from, s.to),
+    );
+    if (!spec) return false;
+    // entering from above → first line; from below → last line (natural motion)
+    const anchor = dir === 1 ? spec.from : state.doc.lineAt(Math.max(spec.from, spec.to - 1)).from;
+    view.dispatch({ selection: { anchor }, scrollIntoView: true });
+    return true;
+  }
+
+  const entryKeymap = Prec.high(
+    keymap.of([
+      { key: "ArrowDown", run: (v) => enter(v, 1) },
+      { key: "ArrowUp", run: (v) => enter(v, -1) },
+    ]),
+  );
+
+  // Click entry: in edit mode a click on a rendered block places the caret
+  // inside it (revealing the source). A capture-phase listener on the editor
+  // root runs before both svg-pan-zoom (mermaid swallows its own mousedown) and
+  // CM's default caret placement, so it works uniformly for every block; we
+  // stop the event so neither of those fights our caret. Read mode does nothing
+  // — mermaid keeps its pan/zoom.
+  const BLOCK_SEL = ".cm-mermaid, .cm-table, .cm-math-block";
+  const clickEntry = ViewPlugin.fromClass(
+    class {
+      readonly onDown: (e: MouseEvent) => void;
+      constructor(readonly view: EditorView) {
+        this.onDown = (e) => {
+          if (view.state.facet(modeFacet) !== "edit") return;
+          const host = (e.target as HTMLElement).closest?.(BLOCK_SEL) as HTMLElement | null;
+          if (!host) return;
+          e.preventDefault();
+          e.stopPropagation();
+          view.dispatch({ selection: { anchor: view.posAtDOM(host) } });
+        };
+        view.dom.addEventListener("mousedown", this.onDown, true);
+      }
+      destroy() {
+        this.view.dom.removeEventListener("mousedown", this.onDown, true);
+      }
+    },
+  );
+
+  return [field, entryKeymap, clickEntry];
 }

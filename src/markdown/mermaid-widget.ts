@@ -1,4 +1,4 @@
-import { EditorView, WidgetType } from "@codemirror/view";
+import { WidgetType } from "@codemirror/view";
 import svgPanZoom from "svg-pan-zoom";
 
 type Mermaid = typeof import("mermaid").default;
@@ -36,18 +36,18 @@ export class MermaidWidget extends WidgetType {
   eq(o: MermaidWidget) {
     return o.code === this.code;
   }
-  toDOM(view: EditorView): HTMLElement {
+  toDOM(): HTMLElement {
     const host = document.createElement("div");
     host.className = "cm-mermaid";
     const cached = svgCache.get(this.code);
     if (cached !== undefined) {
-      this.applySvg(host, cached, view);
+      this.applySvg(host, cached);
     } else {
       loadMermaid()
         .then((mermaid) => mermaid.render(`mmd-${idSeq++}`, this.code))
         .then(({ svg }) => {
           cachePut(this.code, svg);
-          this.applySvg(host, svg, view);
+          this.applySvg(host, svg);
         })
         .catch((err) => {
           host.innerHTML = "";
@@ -59,7 +59,7 @@ export class MermaidWidget extends WidgetType {
     }
     return host;
   }
-  private applySvg(host: HTMLElement, svg: string, view: EditorView) {
+  private applySvg(host: HTMLElement, svg: string) {
     host.innerHTML = svg;
     const el = host.querySelector<SVGSVGElement>("svg");
     if (!el) return;
@@ -131,12 +131,8 @@ export class MermaidWidget extends WidgetType {
       },
       { passive: false },
     );
-    // Cmd/Ctrl+click → edit the diagram source (plain click pans/zooms)
-    host.addEventListener("mousedown", (e) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      e.preventDefault();
-      view.dispatch({ selection: { anchor: view.posAtDOM(host) } });
-    });
+    // Click-to-edit is handled centrally in live-preview/core (a capture-phase
+    // listener that beats svg-pan-zoom), so the widget stays mode-agnostic.
     host.dispatchEvent(new CustomEvent("mermaid-rendered", { bubbles: true }));
   }
   ignoreEvent() {
