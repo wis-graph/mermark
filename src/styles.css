@@ -38,7 +38,9 @@ html, body { margin: 0; height: 100%; }
 .cm-editor .cm-content { max-width: 820px; padding: 2rem 1rem; }
 /* fold toggles sit in the gutter, which `justify-content: center` parks right
    beside the centered column. Markers stay faint until you hover the editor. */
-.cm-gutters { background: transparent; border: none; color: var(--muted); }
+/* `.cm-editor` prefix beats CM's runtime gutter theme (a light-grey bg + border
+   that otherwise shows as a pale bar down the left edge in dark mode). */
+.cm-editor .cm-gutters { background: transparent; border-right: none; color: var(--muted); }
 .cm-foldGutter { width: 1.1em; }
 .cm-fold-marker { cursor: pointer; color: var(--muted); opacity: 0; transition: opacity .12s, color .12s; font-size: .85em; }
 .cm-editor:hover .cm-fold-marker { opacity: .5; }
