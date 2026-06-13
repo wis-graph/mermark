@@ -40,11 +40,18 @@ html, body { margin: 0; height: 100%; }
    beside the centered column. Markers stay faint until you hover the editor. */
 .cm-gutters { background: transparent; border: none; color: var(--muted); }
 .cm-foldGutter { width: 1.1em; }
-.cm-fold-marker { cursor: pointer; opacity: 0; transition: opacity .12s; font-size: .85em; }
-.cm-editor:hover .cm-fold-marker { opacity: .45; }
-.cm-fold-marker:hover { opacity: 1 !important; }
-.cm-fold-marker-closed { opacity: .7; } /* a collapsed section always shows its toggle */
-.cm-editor:hover .cm-fold-marker-closed { opacity: .85; }
+.cm-fold-marker { cursor: pointer; color: var(--muted); opacity: 0; transition: opacity .12s, color .12s; font-size: .85em; }
+.cm-editor:hover .cm-fold-marker { opacity: .5; }
+.cm-fold-marker:hover { opacity: 1 !important; color: var(--fg); }
+.cm-fold-marker-closed { opacity: .8; } /* a collapsed section always shows its toggle */
+.cm-editor:hover .cm-fold-marker-closed { opacity: .9; }
+
+/* themed scrollbar — the editor scrolls inside .cm-scroller */
+.cm-scroller::-webkit-scrollbar { width: 11px; height: 11px; }
+.cm-scroller::-webkit-scrollbar-track { background: transparent; }
+.cm-scroller::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+.cm-scroller::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+.cm-scroller { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
 /* focused line in edit mode — subtle tint so the caret's line is obvious.
    `.cm-editor` prefix beats CM's runtime-injected default `.cm-activeLine` blue. */
