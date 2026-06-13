@@ -66,6 +66,10 @@ async function boot() {
         render(m);
       },
     });
+    // dev-only: expose the controller so the debug harness can read real editor
+    // state (selection offsets, block specs) instead of guessing from the DOM.
+    if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
+      (window as unknown as { __mermark?: unknown }).__mermark = editor;
     btn.addEventListener("click", () => editor.toggleMode());
     // global fallback so ⌘E works even when the editor isn't focused
     window.addEventListener("keydown", (e) => {
