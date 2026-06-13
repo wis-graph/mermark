@@ -139,6 +139,18 @@ describe("full-editor render smoke", () => {
     ed.view.destroy();
   });
 
+  it("collapses code-fence lines in read mode, keeps them in edit mode", () => {
+    const doc = "intro\n\n```ts\nconst a = 1;\n```\n\ntail";
+    const r = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    (r.view as unknown as { measure(): void }).measure();
+    expect(r.view.contentDOM.querySelectorAll(".cm-code-fence-hidden").length).toBe(2);
+    r.view.destroy();
+    const e = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "edit" });
+    (e.view as unknown as { measure(): void }).measure();
+    expect(e.view.contentDOM.querySelectorAll(".cm-code-fence-hidden").length).toBe(0);
+    e.view.destroy();
+  });
+
   it("renders unordered list markers as CSS bullets; ordered numbers stay", () => {
     const doc = "- Fruit\n- Veg\n\n1. First\n2. Second";
     const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });

@@ -54,6 +54,10 @@ html, body { margin: 0; height: 100%; }
 .cm-strike { text-decoration: line-through; }
 .cm-inline-code { font-family: ui-monospace, monospace; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface); }
 .cm-code-block { background: var(--surface); font-family: ui-monospace, monospace; }
+/* read mode: collapse the concealed ```lang / ``` fence lines so the code box
+   hugs the code instead of padding it with two empty rows. `.cm-editor` prefix
+   beats CM's runtime `.cm-line { display: block }`. */
+.cm-editor .cm-code-fence-hidden { display: none; }
 /* Block-widget vertical spacing MUST be padding, not margin: CM measures a
    widget's height via offsetHeight (which excludes margin), so a margin here
    desyncs the height map and makes vertical cursor motion skip lines below. */
