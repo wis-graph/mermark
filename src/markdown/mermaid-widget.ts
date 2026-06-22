@@ -109,9 +109,11 @@ export class MermaidWidget extends WidgetType {
     // runs BEFORE CM attaches the host, so a synchronous init fits the diagram
     // to a 0-width box and it renders invisible (the re-render-after-edit bug).
     whenLaidOut(host, () => {
-      // Record the natural height BEFORE pan-zoom transforms the SVG, so the
-      // reserved placeholder (next async render) matches the real diagram.
-      recordRenderedHeight(host);
+      // Pin the host to the diagram's natural height BEFORE pan-zoom transforms
+      // the SVG, so the reserved placeholder matches AND svg-pan-zoom's height:100%
+      // has a definite box to fill (otherwise the host collapses and the diagram
+      // is clipped).
+      fitHostHeight(host, this.dims);
       initPanZoom(host, el);
       // Click-to-edit is handled centrally in live-preview/core (a capture-phase
       // listener that beats svg-pan-zoom), so the widget stays mode-agnostic.
@@ -159,14 +161,21 @@ function prepareNaturalSvg(_el: SVGSVGElement): void {
   // intentionally leaves mermaid's inline sizing as-is
 }
 
-/** Record the host's rendered height in `lastHeight` so the NEXT widget can
- *  reserve it as a minHeight placeholder during its async render (prevents the
- *  box collapsing to 0 and jumping the page after an edit). The natural SVG
- *  determines the box height, so we only measure and drop the reservation. */
-function recordRenderedHeight(host: HTMLElement): void {
-  const h = host.getBoundingClientRect().height;
+/** Pin the host to the diagram's natural rendered height, measured while the SVG
+ *  is still at its natural size (before pan-zoom rewrites it to height:100%).
+ *  svg-pan-zoom sets the SVG to width/height:100%, so the host MUST carry a
+ *  definite height or the SVG resolves 100% against an auto-height parent and
+ *  collapses — clipping the diagram. A `dims.height` declaration already pinned
+ *  the host (applyDimensions), so leave that case alone. Also records `lastHeight`
+ *  so the NEXT async render can reserve a placeholder and not jump the page. */
+function fitHostHeight(host: HTMLElement, dims: MermaidDims): void {
   host.style.minHeight = ""; // real height present → drop the reserved placeholder
-  if (h > 0) lastHeight = h;
+  if (dims.height !== null) return; // explicit px height already set by applyDimensions
+  const h = host.getBoundingClientRect().height;
+  if (h > 0) {
+    host.style.height = `${h}px`;
+    lastHeight = h;
+  }
 }
 
 /** Run `cb` once the host is connected and laid out (nonzero width). Gives up
