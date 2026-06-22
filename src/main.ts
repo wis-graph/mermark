@@ -3,7 +3,22 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { dirOf } from "./path";
 import { mountEditor, type PreviewMode, type SaveStatus } from "./editor";
 import { applyTheme, applyFontScale, makeThemeToggle } from "./theme";
-import { themeSetting, modeSetting, fontScaleSetting, zoomIn, zoomOut, resetZoom } from "./settings/app";
+import {
+  themeSetting,
+  modeSetting,
+  fontScaleSetting,
+  zoomIn,
+  zoomOut,
+  resetZoom,
+  loadPreset,
+  themeJsonSetting,
+  fontFamilySetting,
+  fontSizeSetting,
+  readingWidthSetting,
+  lineHeightSetting,
+} from "./settings/app";
+import { themeVarsSink, cssVarSink } from "./settings/sinks";
+import { mountSettingsButton } from "./settings/panel/modal";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
 import "./styles.css";
@@ -68,10 +83,22 @@ async function boot() {
   // editor mounts (mermaid reads it on its lazy initial load) — and so it also
   // applies on the no-file / error screens below.
   themeSetting.bind(applyTheme);
+  // The theme JSON is the effective source: fan its token map onto documentElement
+  // (inline vars beat :root[data-theme]). Bind here, before the editor mounts, so
+  // the vars are on the DOM for the editor + the no-file/error screens — and so a
+  // saved/custom theme applies on first paint with no flash.
+  themeJsonSetting.bind(themeVarsSink());
   // Body text scale is the SSOT too: bind the CSS-var sink here (same place,
   // same reason as theme) so the saved scale is on the DOM before the editor
   // mounts, and so it applies on the no-file / error screens below.
   fontScaleSetting.bind(applyFontScale);
+  // Typography sinks — one setting.bind(sink) line each, no hand fan-out. These
+  // drive CSS vars composed in styles.css (--editor-font-size composes with
+  // --font-scale; --measure caps the reading column; --line-height the leading).
+  fontFamilySetting.bind(cssVarSink("--reading-font"));
+  fontSizeSetting.bind(cssVarSink("--editor-font-size", (px: number) => `${px}px`));
+  readingWidthSetting.bind(cssVarSink("--measure", (px: number) => `${px}px`));
+  lineHeightSetting.bind(cssVarSink("--line-height"));
   const root = document.querySelector<HTMLDivElement>("#app")!;
   const file = new URLSearchParams(location.search).get("file");
   if (!file) {
@@ -99,13 +126,17 @@ async function boot() {
     const pos = el("span", "status-pos");
     const spacer = el("span", "status-spacer");
     const save = makeSaveStatus();
-    // live theme switch: flip CSS vars + re-render mermaid (theme is baked into
-    // its SVGs), no page reload — so the layout never flashes/re-mounts.
+    // live theme switch: flip the preset (loadPreset writes themeJson + themeSetting
+    // in one place, keeping them coherent) → vars + data-theme + mermaid re-bake
+    // track together, no page reload, so the layout never flashes/re-mounts.
     const themeBtn = makeThemeToggle(() =>
-      themeSetting.set(themeSetting.get() === "dark" ? "light" : "dark"),
+      loadPreset(themeSetting.get() === "dark" ? "light" : "dark"),
     );
     themeSetting.bind(themeBtn.render); // initial icon + on change
     bar.append(mode.btn, pos, spacer, save.el, themeBtn.btn);
+    // ⚙ settings: append after the theme toggle. Boot-cheap — the modal DOM is
+    // built lazily on first open (cold-load constraint).
+    mountSettingsButton(bar);
 
     const editor = mountEditor(host, text, baseDir, file, {
       onStatus: save.set,

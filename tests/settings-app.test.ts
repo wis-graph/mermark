@@ -101,4 +101,75 @@ describe("app settings", () => {
     applyFontScale(1.4);
     expect(document.documentElement.style.getPropertyValue("--font-scale")).toBe("1.4");
   });
+
+  it("themeJsonSetting defaults to the system preset and persists under mermark.themeJson", async () => {
+    const { themeJsonSetting } = await import("../src/settings/app");
+    const { builtInTheme } = await import("../src/settings/theme-schema");
+    // matchMedia matches:false → systemTheme() = "dark"
+    expect(themeJsonSetting.get()).toEqual(builtInTheme("dark"));
+    const light = builtInTheme("light");
+    themeJsonSetting.set(light);
+    expect(localStorage.getItem("mermark.themeJson")).toBe(JSON.stringify(light, null, 2));
+  });
+
+  it("themeJsonSetting parses a saved JSON theme on construction", async () => {
+    const { builtInTheme, serializeTheme } = await import("../src/settings/theme-schema");
+    localStorage.setItem("mermark.themeJson", serializeTheme(builtInTheme("light")));
+    const { themeJsonSetting } = await import("../src/settings/app");
+    expect(themeJsonSetting.get()).toEqual(builtInTheme("light"));
+  });
+
+  it("themeJsonSetting falls back to the default on a corrupt saved JSON", async () => {
+    localStorage.setItem("mermark.themeJson", "{ broken");
+    const { themeJsonSetting } = await import("../src/settings/app");
+    const { builtInTheme } = await import("../src/settings/theme-schema");
+    expect(themeJsonSetting.get()).toEqual(builtInTheme("dark")); // parse → null → default
+  });
+
+  it("loadPreset writes BOTH themeJsonSetting and themeSetting (coherence in one place)", async () => {
+    const { themeSetting, themeJsonSetting, loadPreset } = await import("../src/settings/app");
+    const { builtInTheme } = await import("../src/settings/theme-schema");
+    loadPreset("light");
+    expect(themeSetting.get()).toBe("light");
+    expect(themeJsonSetting.get()).toEqual(builtInTheme("light"));
+  });
+
+  it("themeSetting still defaults/persists after migration to the registry", async () => {
+    const { themeSetting } = await import("../src/settings/app");
+    expect(themeSetting.get()).toBe("dark"); // unchanged from pre-migration
+    themeSetting.set("light");
+    expect(localStorage.getItem("mermark.theme")).toBe("light");
+  });
+
+  it("themeSetting appears in the registry under the 테마 group", async () => {
+    await import("../src/settings/app");
+    const { groups } = await import("../src/settings/registry");
+    const theme = groups().find((g) => g.name === "테마");
+    expect(theme).toBeDefined();
+    expect(theme!.entries.some((e) => e.ui.label === "테마 JSON")).toBe(true);
+  });
+
+  it("declares the typography settings with defaults and persistence", async () => {
+    const app = await import("../src/settings/app");
+    expect(app.fontSizeSetting.get()).toBe(16); // 1rem base
+    expect(app.lineHeightSetting.get()).toBe(1.6);
+    expect(app.readingWidthSetting.get()).toBe(820);
+    app.fontSizeSetting.set(18);
+    expect(localStorage.getItem("mermark.fontSize")).toBe("18");
+  });
+
+  it("declares editor + mermaid settings with defaults", async () => {
+    const app = await import("../src/settings/app");
+    expect(app.defaultModeSetting.get()).toBe("read");
+    expect(app.conflictPolicySetting.get()).toBe("pause");
+    expect(app.panZoomSetting.get()).toBe("on");
+    expect(app.themeForceSetting.get()).toBe("follow");
+  });
+
+  it("renders all five categories in the registry (Theme/Typography/Editor/Mermaid/Plugins)", async () => {
+    await import("../src/settings/app");
+    const { groups } = await import("../src/settings/registry");
+    const names = groups().map((g) => g.name);
+    expect(names).toEqual(["테마", "타이포그래피", "에디터", "Mermaid", "플러그인"]);
+  });
 });

@@ -1,0 +1,134 @@
+// The settings modal: a centered overlay mounted as a sibling of the editor host
+// (outside CodeMirror — it pushes no Specs, adds no decorations). Cold-load
+// rule: the DOM is built LAZILY on first open; boot only pays the ⚙ button.
+// The panel iterates groups() from the registry, so adding a setting never
+// touches this file.
+import { groups, type Group } from "../registry";
+import { RENDER } from "./controls";
+import type { Setting, Control } from "../store";
+
+/** Append a ⚙ status-bar button that opens the settings modal. Boot-cheap: only
+ *  the button is created now; the modal DOM is built on first open. */
+export function mountSettingsButton(bar: HTMLElement): void {
+  const btn = document.createElement("button");
+  btn.className = "status-btn settings-btn";
+  btn.textContent = "⚙";
+  btn.title = "설정";
+  let modal: SettingsModal | null = null;
+  btn.addEventListener("click", () => {
+    if (!modal) modal = buildModal(); // lazy build on first open
+    modal.open();
+  });
+  bar.append(btn);
+}
+
+interface SettingsModal {
+  open(): void;
+  close(): void;
+}
+
+/** Build the modal DOM once (backdrop + 2-pane: sidebar + pane). The sidebar is
+ *  groups() in insertion order; clicking a category swaps the pane. Open/close
+ *  handle ESC, backdrop click, focus restore, and editor inert. */
+function buildModal(): SettingsModal {
+  const backdrop = document.createElement("div");
+  backdrop.className = "settings-backdrop";
+  backdrop.hidden = true;
+
+  const modal = document.createElement("div");
+  modal.className = "settings-modal";
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", "설정");
+
+  const sidebar = document.createElement("div");
+  sidebar.className = "settings-sidebar";
+  const pane = document.createElement("div");
+  pane.className = "settings-pane";
+  modal.append(sidebar, pane);
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+
+  const gs = groups();
+  const catButtons = gs.map((g) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "settings-cat";
+    b.textContent = g.name;
+    b.addEventListener("click", () => selectCategory(g));
+    sidebar.appendChild(b);
+    return { b, group: g };
+  });
+
+  /** Swap the pane to a category's controls and mark its sidebar button active.
+   *  Command/CQS: mutates the DOM, returns nothing. */
+  function selectCategory(g: Group): void {
+    pane.replaceChildren();
+    for (const entry of g.entries) {
+      const renderer = RENDER[entry.ui.control.kind] as (
+        s: Setting<never>,
+        c: Control<unknown>,
+      ) => HTMLElement;
+      const labeled = renderer(entry.setting as Setting<never>, entry.ui.control);
+      // stamp the label into the row's label cell (controls render an empty one)
+      const labelCell = labeled.querySelector(".settings-row-label");
+      if (labelCell) labelCell.textContent = entry.ui.label;
+      pane.appendChild(labeled);
+    }
+    for (const { b, group } of catButtons) b.classList.toggle("active", group === g);
+  }
+
+  // First category ("테마") selected on open.
+  if (gs[0]) selectCategory(gs[0]);
+
+  let lastFocused: Element | null = null;
+  const onKeydown = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      api.close();
+    } else if (e.key === "Tab") {
+      trapFocus(modal, e);
+    }
+  };
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) api.close(); // backdrop click closes; inside doesn't
+  });
+
+  const editorHost = () => document.querySelector<HTMLElement>(".editor-host");
+
+  const api: SettingsModal = {
+    open() {
+      lastFocused = document.activeElement;
+      backdrop.hidden = false;
+      editorHost()?.setAttribute("inert", ""); // editor underneath is non-interactive
+      document.addEventListener("keydown", onKeydown, true);
+      (sidebar.querySelector("button") as HTMLButtonElement | null)?.focus();
+    },
+    close() {
+      backdrop.hidden = true;
+      editorHost()?.removeAttribute("inert");
+      document.removeEventListener("keydown", onKeydown, true);
+      (lastFocused as HTMLElement | null)?.focus?.();
+    },
+  };
+  return api;
+}
+
+/** Keep Tab focus inside the modal (wrap at the ends). The focus trap rule, named
+ *  once so the keydown handler stays a dispatcher, not a tangle of inline ifs. */
+function trapFocus(modal: HTMLElement, e: KeyboardEvent): void {
+  const focusable = modal.querySelectorAll<HTMLElement>(
+    'button, select, textarea, input, a[href], [tabindex]:not([tabindex="-1"])',
+  );
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (e.shiftKey && active === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}

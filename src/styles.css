@@ -14,6 +14,18 @@
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
+  /* Typography panel vars (SSOT: fontSize/readingWidth/lineHeight settings →
+     cssVarSink). Defaults preserve the current visuals exactly:
+       --editor-font-size 1rem (16px), --measure 820px, --line-height 1.6.
+     ZOOM GUARD: --editor-font-size is composed with --font-scale (⌘± zoom) via
+     calc() ONLY on .cm-line / heading lines — never as a fixed font-size on
+     .cm-content (that collapses async mermaid/katex widgets to 0 height). */
+  --editor-font-size: 1rem;
+  --measure: 820px;
+  --line-height: 1.6;
+  /* Reading-column font (Typography fontFamily setting). Falls back to the body
+     sans stack so the editor inherits --font-sans when no preference is set. */
+  --reading-font: var(--font-sans);
 }
 :root[data-theme="light"] {
   /* light = brand editorial default */
@@ -39,7 +51,7 @@ html, body { margin: 0; height: 100%; }
    of clipping the left/start edge. Item `margin: auto` collapses under overflow
    and shoves the column off-screen — don't use it. */
 .cm-scroller { justify-content: safe center; }
-.cm-editor .cm-content { max-width: 820px; padding: 2rem 1rem; }
+.cm-editor .cm-content { max-width: var(--measure, 820px); padding: 2rem 1rem; font-family: var(--reading-font, var(--font-sans)); }
 /* Body text scale: --font-scale (SSOT fontScaleSetting → applyFontScale sink)
    drives the font-size on the LINE elements, NOT on .cm-content. .cm-content is
    CodeMirror's line/widget measure root — a calc()/var() font-size there collapses
@@ -50,7 +62,7 @@ html, body { margin: 0; height: 100%; }
    which render in their own widget containers outside the line, keep their own
    sizing. Headings/code use relative em so they scale together; the status bar's
    fixed px is unaffected. */
-.cm-editor .cm-line { font-size: calc(1rem * var(--font-scale, 1)); line-height: 1.6; }
+.cm-editor .cm-line { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1)); line-height: var(--line-height, 1.6); }
 /* CM hard-codes a black caret; follow the text colour so it shows in dark mode. */
 .cm-editor .cm-content { caret-color: var(--fg); }
 /* fold toggles sit in the gutter, which `justify-content: center` parks right
@@ -143,12 +155,12 @@ html, body { margin: 0; height: 100%; }
    font-size on .cm-content (it collapses async mermaid/katex widgets). h5 = body
    size set apart by weight; h6 drops below body + muted as caption/overline. */
 .cm-editor .cm-line.cm-heading { font-weight: 700; line-height: 1.25; }
-.cm-editor .cm-line.cm-h1 { font-size: calc(1rem * var(--font-scale, 1) * 2.0); }
-.cm-editor .cm-line.cm-h2 { font-size: calc(1rem * var(--font-scale, 1) * 1.6); }
-.cm-editor .cm-line.cm-h3 { font-size: calc(1rem * var(--font-scale, 1) * 1.32); }
-.cm-editor .cm-line.cm-h4 { font-size: calc(1rem * var(--font-scale, 1) * 1.15); }
-.cm-editor .cm-line.cm-h5 { font-size: calc(1rem * var(--font-scale, 1) * 1.0); }
-.cm-editor .cm-line.cm-h6 { font-size: calc(1rem * var(--font-scale, 1) * 0.9); color: var(--muted); }
+.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 2.0); }
+.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 1.6); }
+.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 1.32); }
+.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 1.15); }
+.cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 1.0); }
+.cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 0.9); color: var(--muted); }
 
 /* Bottom status bar — all editor chrome lives here, out of the content. */
 .status-bar { flex: none; height: 28px; display: flex; align-items: center; gap: .35em; padding: 0 .6em; border-top: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--muted); user-select: none; }
@@ -221,3 +233,40 @@ html, body { margin: 0; height: 100%; }
 
 .cm-bullet { display: inline-block; width: .38em; height: .38em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
 .cm-bullet-collapsed { box-shadow: 0 0 0 .3em color-mix(in srgb, var(--muted) 50%, transparent); }
+
+/* ── Settings modal (sibling DOM overlay on <body>, outside CodeMirror) ──────
+   A centered ~720px two-pane dialog: sidebar (categories) + pane (controls).
+   Built lazily on first ⚙ open; the editor underneath is inert while open. */
+.settings-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, #000 45%, transparent); }
+.settings-backdrop[hidden] { display: none; }
+.settings-modal { display: flex; width: min(720px, 92vw); height: min(560px, 86vh); background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; box-shadow: 0 12px 48px color-mix(in srgb, #000 40%, transparent); }
+.settings-sidebar { flex: none; width: 180px; border-right: 1px solid var(--border); padding: .6em .4em; display: flex; flex-direction: column; gap: .15em; overflow-y: auto; background: color-mix(in srgb, var(--bg) 40%, var(--surface)); }
+.settings-cat { text-align: left; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-sm, 6px); padding: .5em .7em; font: inherit; font-size: 13px; cursor: pointer; }
+.settings-cat:hover { background: var(--bg); color: var(--fg); }
+.settings-cat.active { background: var(--bg); color: var(--fg); font-weight: 600; }
+.settings-pane { flex: 1; min-width: 0; padding: 1.2em 1.4em; overflow-y: auto; }
+
+.settings-row { display: flex; align-items: center; gap: 1em; padding: .55em 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.settings-row:last-child { border-bottom: none; }
+.settings-row-label { flex: none; width: 120px; font-size: 13px; color: var(--fg); }
+.settings-row-control { flex: 1; min-width: 0; display: flex; align-items: center; gap: .6em; }
+.settings-row-json { flex-direction: column; align-items: stretch; }
+.settings-row-json .settings-row-label { width: auto; margin-bottom: .4em; }
+.settings-row-info { color: var(--muted); font-size: 13px; }
+
+.settings-segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); overflow: hidden; }
+.settings-seg-btn { background: transparent; color: var(--muted); border: none; padding: .35em .8em; font: inherit; font-size: 12px; cursor: pointer; border-right: 1px solid var(--border); }
+.settings-seg-btn:last-child { border-right: none; }
+.settings-seg-btn:hover { background: var(--bg); color: var(--fg); }
+.settings-seg-btn[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
+
+.settings-select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: .35em .5em; font: inherit; font-size: 13px; }
+.settings-slider { flex: 1; }
+.settings-slider-value { flex: none; width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+
+.settings-json { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: .6em .7em; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; resize: vertical; }
+.settings-json-error { min-height: 1.2em; color: #dc2626; font-size: 12px; margin: .35em 0; }
+.settings-json-actions { display: flex; gap: .5em; }
+.settings-json-btn { background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: .35em .8em; font: inherit; font-size: 12px; cursor: pointer; }
+.settings-json-btn:hover { background: var(--bg); color: var(--fg); }
+.settings-json-btn[data-act="apply"] { color: var(--fg); border-color: var(--accent); }

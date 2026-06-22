@@ -1,6 +1,7 @@
 import { WidgetType } from "@codemirror/view";
 import svgPanZoom from "svg-pan-zoom";
 import { boundedCache } from "./bounded-cache";
+import { panZoomSetting } from "../settings/app";
 import type { Theme } from "../theme";
 
 type Mermaid = typeof import("mermaid").default;
@@ -189,6 +190,9 @@ function whenLaidOut(host: HTMLElement, cb: () => void): void {
  *  wheel stays page scroll). Natural sizing makes fit() a no-op so we only
  *  re-center; no aspect is needed. */
 function initPanZoom(host: HTMLElement, el: SVGSVGElement): void {
+  // Pan/zoom is opt-out via the SSOT setting: when off, the diagram renders
+  // static (no svg-pan-zoom, no wheel/dblclick handlers) so it scrolls like text.
+  if (panZoomSetting.get() === "off") return;
   const pz = svgPanZoom(el, {
     panEnabled: true,
     zoomEnabled: true,

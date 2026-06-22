@@ -4,9 +4,21 @@ export function systemTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
-/** Apply a theme to the DOM (CSS vars switch off [data-theme]). A SSOT sink. */
+/** Apply a theme to the DOM (CSS vars switch off [data-theme]). A SSOT sink.
+ *  Kept as the safety-net layer: the data-theme CSS in styles.css supplies any
+ *  var the JSON theme doesn't carry. The JSON sink (applyThemeVars) sets inline
+ *  vars that WIN over these :root[data-theme] rules. */
 export function applyTheme(t: Theme) {
   document.documentElement.dataset.theme = t;
+}
+
+/** Fan a token map onto documentElement as inline CSS vars. A SSOT sink (the
+ *  command behind themeVarsSink). Inline setProperty beats the :root[data-theme]
+ *  rules, so this map is the effective theme source. Command/CQS: writes the
+ *  DOM, returns nothing. The ~12-var loop is synchronous and cheap. */
+export function applyThemeVars(map: Record<string, string>) {
+  const style = document.documentElement.style;
+  for (const [name, value] of Object.entries(map)) style.setProperty(name, value);
 }
 
 /** Apply the body text scale to the DOM via a CSS var. A SSOT sink, symmetric
