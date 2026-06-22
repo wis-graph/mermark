@@ -117,8 +117,11 @@ html, body { margin: 0; height: 100%; }
 .status-pos { font-variant-numeric: tabular-nums; padding: 0 .3em; }
 .status-btn { background: transparent; color: var(--muted); border: none; border-radius: var(--radius-sm, 6px); height: 22px; padding: 0 .55em; font: inherit; font-size: 12px; cursor: pointer; }
 .status-btn:hover { background: var(--bg); color: var(--fg); }
-.save-status { font-size: 12px; color: var(--muted); }
+.save-status { display: inline-flex; align-items: center; gap: .4em; font-size: 12px; color: var(--muted); }
 .save-status[data-state="error"] { color: #dc2626; }
+.save-status[data-state="conflict"] { color: #d97706; }
+.status-btn.force-save { color: #d97706; border: 1px solid currentColor; height: 20px; }
+.status-btn.force-save:hover { background: #d97706; color: #fff; }
 
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }
 .cm-table { border-collapse: collapse; width: 100%; }

@@ -100,12 +100,14 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
   switch (name) {
     case "read_file": {
       const path = String(a.path ?? "");
-      return (store.get(path) ?? SAMPLE) as T;
+      const text = store.get(path) ?? SAMPLE;
+      return { text, mtime: Date.now() } as T;
     }
     case "write_file": {
       store.set(String(a.path ?? ""), String(a.text ?? ""));
       console.info("[mock] write_file", a.path, `${String(a.text ?? "").length} chars`);
-      return undefined as T;
+      // mirror the real command: return the new mtime (no conflict in-memory)
+      return Date.now() as T;
     }
     case "path_exists":
       return true as T;

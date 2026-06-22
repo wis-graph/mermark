@@ -1,7 +1,9 @@
 # mermark
 
-A lightweight, cross-platform desktop **Markdown + Mermaid viewer**, launched from the
-command line to open a single file. Read-only, fast, built on Tauri 2 + CodeMirror 6.
+A lightweight, cross-platform desktop **Markdown + Mermaid editor**, launched from the
+command line to open a single file. Obsidian-style live preview, fast, built on
+Tauri 2 + CodeMirror 6. Opens in reader mode; `⌘E` toggles editing with debounced
+autosave straight back to the file.
 
 ```
 mermark notes.md
@@ -19,6 +21,7 @@ mermark notes.md
 - **Wikilinks** `[[target]]` / `[[target|alias]]`: active (opens the target in a new window) when the file exists, struck-through when missing.
 - **Theme**: follows the OS light/dark setting with a manual toggle; visual tokens from the ElevenLabs DESIGN.md.
 - One independent **window per invocation** — run `mermark a.md` then `mermark b.md` for two windows.
+- **Edit + autosave**: `⌘E` switches between reader and editor; edits debounce-save to the file. Writes are atomic (temp file + rename, never a half-written file), and if the file changed on disk since it was opened the save is held back with a **강제 저장** (overwrite) escape hatch — your buffer is never silently lost.
 
 ## Build
 
@@ -65,10 +68,10 @@ npm run tauri dev -- docs/sample.md
 
 ## Scope
 
-This is a **viewer**. Editing, autosave, a folder/vault sidebar, and tabs are intentionally
-out of scope for now. The renderer is built on a CodeMirror 6 foundation so that an
-Obsidian-style Live-Preview **editor** can be layered on later without rewriting the render
-layer. See `docs/superpowers/specs/2026-06-10-mermark-design.md`.
+A focused single-file editor. Editing and autosave are in; a folder/vault sidebar, tabs,
+and multi-file search are intentionally out of scope — **multiple documents = multiple
+windows**. The renderer is a CodeMirror 6 foundation; the Obsidian-style live preview is
+layered on top of it. See `docs/superpowers/specs/2026-06-10-mermark-design.md`.
 
 ## Tests
 

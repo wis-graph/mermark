@@ -1,8 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Tauri's invoke is called by image/wikilink widgets and autosave; stub it.
+// Tauri's invoke is called by image/wikilink widgets and autosave; stub it with
+// the real command contracts: read_file -> {text, mtime}, write_file -> mtime,
+// everything else (path_exists, …) -> false.
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(() => Promise.resolve(false)),
+  invoke: vi.fn((cmd: string) =>
+    cmd === "read_file"
+      ? Promise.resolve({ text: "", mtime: 1 })
+      : cmd === "write_file"
+        ? Promise.resolve(1)
+        : Promise.resolve(false),
+  ),
   convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }));
 

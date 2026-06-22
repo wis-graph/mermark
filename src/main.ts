@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { dirOf } from "./path";
 import { mountEditor, type PreviewMode, type SaveStatus } from "./editor";
 import { applyTheme, makeThemeToggle } from "./theme";
@@ -13,23 +14,41 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
   return e;
 };
 
-/** A save-status indicator that lives inline in the status bar. */
-function makeSaveStatus(): { el: HTMLElement; set: (s: SaveStatus, detail?: string) => void } {
+/** A save-status indicator that lives inline in the status bar. On `conflict`
+ *  (the file changed on disk) it offers a one-click overwrite so the user's
+ *  buffer isn't lost — autosave stays paused until they choose. */
+function makeSaveStatus(): {
+  el: HTMLElement;
+  set: (s: SaveStatus, detail?: string) => void;
+  onForceSave: (fn: () => void) => void;
+} {
   const node = el("span", "save-status");
+  const label = el("span", "save-label");
+  const force = el("button", "status-btn force-save") as HTMLButtonElement;
+  force.textContent = "강제 저장";
+  force.title = "디스크의 외부 변경을 덮어쓰고 현재 내용을 저장합니다";
+  force.hidden = true;
+  node.append(label, force);
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   return {
     el: node,
     set(s, detail) {
       clearTimeout(hideTimer);
       node.dataset.state = s;
+      force.hidden = s !== "conflict";
       if (s === "error") {
-        node.textContent = `⚠ 저장 실패: ${detail ?? "unknown error"}`;
+        label.textContent = `⚠ 저장 실패: ${detail ?? "unknown error"}`;
+      } else if (s === "conflict") {
+        label.textContent = "⚠ 파일이 외부에서 변경됨 — 자동저장 중단";
       } else if (s === "saving") {
-        node.textContent = "● 저장 중";
+        label.textContent = "● 저장 중";
       } else {
-        node.textContent = "✓ 저장됨";
-        hideTimer = setTimeout(() => (node.textContent = ""), 1500);
+        label.textContent = "✓ 저장됨";
+        hideTimer = setTimeout(() => (label.textContent = ""), 1500);
       }
+    },
+    onForceSave(fn) {
+      force.addEventListener("click", fn);
     },
   };
 }
@@ -56,7 +75,9 @@ async function boot() {
     return;
   }
   try {
-    const text = await invoke<string>("read_file", { path: file });
+    // mtime is the autosave baseline: handed back on every write so the backend
+    // can refuse to clobber an external change to the file.
+    const { text, mtime } = await invoke<{ text: string; mtime: number }>("read_file", { path: file });
     root.innerHTML = "";
 
     // #app is a flex column: the editor scrolls inside `host`, with a fixed
@@ -87,7 +108,28 @@ async function boot() {
       initialMode,
       onToggleMode: toggleMode,
       onCursor: (line, col) => (pos.textContent = `Ln ${line}, Col ${col}`),
+      baseMtime: mtime,
     });
+    save.onForceSave(() => editor.forceSave());
+    // Don't lose the last keystrokes typed within the autosave debounce window:
+    // intercept the window close, persist the live buffer, then close. Guarded so
+    // it only runs under Tauri (the browser-mock dev mode has no window IPC).
+    // `await` the registration so a close fired right after boot still finds the
+    // handler installed; `beginClose()` stops a late keystroke from scheduling a
+    // timer that destroy() would orphan.
+    if ("__TAURI_INTERNALS__" in window) {
+      const win = getCurrentWindow();
+      await win.onCloseRequested(async (e) => {
+        if (!editor.hasUnsaved()) return;
+        e.preventDefault();
+        editor.beginClose();
+        try {
+          await editor.saveOnClose();
+        } finally {
+          await win.destroy();
+        }
+      });
+    }
     // mermaid bakes theme colors into its SVGs, so a theme change must clear its
     // cache + re-render every block. Change-only sink (no initial work needed).
     themeSetting.subscribe((t) => {
