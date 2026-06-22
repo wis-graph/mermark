@@ -170,7 +170,12 @@ html, body { margin: 0; height: 100%; }
    pins host width/height inline + sets overflow:auto (applyDimensions), so the
    widget overrides this `overflow:hidden` per-axis. */
 .cm-mermaid { display: flex; justify-content: center; padding: .8em 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); }
-.cm-mermaid svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+/* svg-pan-zoom moves the diagram into a viewport <g transform> that can pan/zoom
+   past the svg box (dblclick/wheel zoom). Clipping ON THE SVG keeps the drawing
+   inside its own box so a zoom stays balanced/centered instead of spilling out
+   the left edge (where host `overflow:hidden` would otherwise cut it
+   asymmetrically). Harmless when pan-zoom is off: a static diagram already fits. */
+.cm-mermaid svg { display: block; margin: 0 auto; max-width: 100%; height: auto; overflow: hidden; }
 .cm-mermaid-error { color: #dc2626; white-space: pre-wrap; padding: .75em; }
 .cm-mermaid svg { cursor: grab; }
 .cm-mermaid svg:active { cursor: grabbing; }

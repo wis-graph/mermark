@@ -143,11 +143,12 @@ export class MermaidWidget extends WidgetType {
     // runs BEFORE CM attaches the host, so a synchronous init fits the diagram
     // to a 0-width box and it renders invisible (the re-render-after-edit bug).
     whenLaidOut(host, () => {
-      // Pin the host to the diagram's natural height BEFORE pan-zoom transforms
-      // the SVG, so the reserved placeholder matches AND svg-pan-zoom's height:100%
-      // has a definite box to fill (otherwise the host collapses and the diagram
-      // is clipped).
-      fitHostHeight(host, this.dims);
+      // Pin the host to the diagram's DISPLAYED height BEFORE pan-zoom transforms
+      // the SVG (and strips the viewBox we read from), so the box matches the
+      // actual drawing — no empty band — AND svg-pan-zoom's height:100% has a
+      // definite box to fill (otherwise the host collapses and the diagram is
+      // clipped).
+      fitHostHeight(host, el, this.dims);
       initPanZoom(host, el);
       // Click-to-edit is handled centrally in live-preview/core (a capture-phase
       // listener that beats svg-pan-zoom), so the widget stays mode-agnostic.
@@ -195,17 +196,53 @@ function prepareNaturalSvg(_el: SVGSVGElement): void {
   // intentionally leaves mermaid's inline sizing as-is
 }
 
-/** Pin the host to the diagram's natural rendered height, measured while the SVG
- *  is still at its natural size (before pan-zoom rewrites it to height:100%).
- *  svg-pan-zoom sets the SVG to width/height:100%, so the host MUST carry a
- *  definite height or the SVG resolves 100% against an auto-height parent and
- *  collapses — clipping the diagram. A `dims.height` declaration already pinned
- *  the host (applyDimensions), so leave that case alone. Also records `lastHeight`
- *  so the NEXT async render can reserve a placeholder and not jump the page. */
-function fitHostHeight(host: HTMLElement, dims: MermaidDims): void {
+/** Pure query: the height the diagram actually occupies once the CSS column cap
+ *  (`max-width:100%`) has downscaled it. Computed from the SVG's viewBox aspect
+ *  ratio times the SVG's *actual displayed width* — NOT the host's clientWidth.
+ *
+ *  Why the SVG's width and not the host's: `.cm-mermaid` is `display:flex;
+ *  justify-content:center`, so the host's clientWidth is the full column width.
+ *  A diagram narrower than the column is centered and stays at its natural
+ *  (narrower) width — using the host width would overestimate its height and
+ *  reintroduce the empty band. The SVG's own getBoundingClientRect().width is the
+ *  truth for both cases: downscaled-to-column (wide) and natural (narrow).
+ *
+ *  Fallback when there's no usable viewBox (e.g. pan-zoom already stripped it, or
+ *  a malformed SVG): the host's current rendered height. The result is clamped to
+ *  > 0 so the host never collapses (render-smoke 0-height guard, d16d8e8). */
+export function displayedDiagramHeight(host: HTMLElement, el: SVGSVGElement): number {
+  const vb = parseViewBox(el.getAttribute("viewBox"));
+  const shownWidth = el.getBoundingClientRect().width;
+  if (vb && vb.w > 0 && vb.h > 0 && shownWidth > 0) {
+    return shownWidth * (vb.h / vb.w);
+  }
+  return host.getBoundingClientRect().height;
+}
+
+/** Parse an SVG `viewBox="minX minY w h"` into width/height, or `null` if absent
+ *  or malformed. Only w/h matter for aspect-ratio sizing. */
+function parseViewBox(attr: string | null): { w: number; h: number } | null {
+  if (!attr) return null;
+  const parts = attr.trim().split(/[\s,]+/).map(Number);
+  if (parts.length < 4 || parts.some((n) => Number.isNaN(n))) return null;
+  return { w: parts[2], h: parts[3] };
+}
+
+/** Pin the host to the diagram's *displayed* height so the box matches the actual
+ *  drawing and no empty band remains. svg-pan-zoom sets the SVG to
+ *  width/height:100%, so the host MUST carry a definite height or the SVG resolves
+ *  100% against an auto-height parent and collapses — clipping the diagram. A
+ *  `dims.height` declaration already pinned the host (applyDimensions), so leave
+ *  that case alone. Also records `lastHeight` so the NEXT async render can reserve
+ *  a placeholder and not jump the page.
+ *
+ *  CQS: the displayed height is computed by the pure query displayedDiagramHeight;
+ *  this command only writes it. The viewBox must be read here, BEFORE initPanZoom
+ *  strips it. */
+function fitHostHeight(host: HTMLElement, el: SVGSVGElement, dims: MermaidDims): void {
   host.style.minHeight = ""; // real height present → drop the reserved placeholder
   if (dims.height !== null) return; // explicit px height already set by applyDimensions
-  const h = host.getBoundingClientRect().height;
+  const h = displayedDiagramHeight(host, el);
   if (h > 0) {
     host.style.height = `${h}px`;
     lastHeight = h;

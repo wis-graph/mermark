@@ -29,10 +29,38 @@ await page.setViewportSize({ width: 1200, height: 900 }); // deterministic layou
 await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
 await page.waitForTimeout(2000); // mermaid async render + rAF layout/fit
 
-const fp = await page.evaluate(() => {
-  const round = (n) => Math.round(n);
+// CM6 virtualizes lines: a mermaid block off-screen is never rendered, so
+// .cm-mermaid count stays 0 unless we scroll the block into view. Scroll the
+// scroller to the bottom in steps until at least one .cm-mermaid mounts (or we
+// give up), then settle for the async mermaid render + rAF fit.
+await page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const scroller = document.querySelector(".cm-scroller");
+  if (!scroller) return;
+  for (let step = 0; step < 30; step++) {
+    if (document.querySelector(".cm-mermaid svg")) break;
+    scroller.scrollTop = Math.min(
+      scroller.scrollTop + scroller.clientHeight * 0.8,
+      scroller.scrollHeight,
+    );
+    await sleep(120);
+  }
+});
+await page.waitForTimeout(1500); // mermaid async render after the block mounts
+
+/** Geometry fingerprint of every mounted .cm-mermaid. `contentRect` is the
+ *  painted viewport <g> bbox (in screen px); contentClipLeft/Right measure how
+ *  far the drawing spills past the host box (positive = inside, negative =
+ *  clipped). emptyBand = host style height − painted content height. */
+const fpExpr = () => {
+  const round = (n) => Math.round(n * 10) / 10;
   return [...document.querySelectorAll(".cm-mermaid")].map((host, i) => {
     const svg = host.querySelector("svg");
+    const content = svg?.querySelector(".svg-pan-zoom_viewport") ?? svg?.querySelector("g");
+    const hostRect = host.getBoundingClientRect();
+    const svgRect = svg?.getBoundingClientRect();
+    const contentRect = content?.getBoundingClientRect();
+    const styleH = parseFloat(host.style.height) || 0;
     return {
       i,
       hostClientW: round(host.clientWidth),
@@ -45,10 +73,20 @@ const fp = await page.evaluate(() => {
       svgStyleWidth: svg?.style.width ?? null,
       svgStyleHeight: svg?.style.height ?? null,
       svgStyleMaxWidth: svg?.style.maxWidth ?? null,
+      svgOverflow: svg ? getComputedStyle(svg).overflow : null,
       hasPanZoomViewport: !!svg?.querySelector(".svg-pan-zoom_viewport"),
+      // symptom 1 (clipping): how far the painted content sits inside the host.
+      contentClipLeft: contentRect ? round(contentRect.left - hostRect.left) : null,
+      contentClipRight: contentRect ? round(hostRect.right - contentRect.right) : null,
+      // symptom 2 (empty band): pinned box height vs the painted content height.
+      paintedContentHeight: contentRect ? round(contentRect.height) : null,
+      svgRectHeight: svgRect ? round(svgRect.height) : null,
+      emptyBand: contentRect ? round(styleH - contentRect.height) : null,
     };
   });
-});
+};
+
+const fp = await page.evaluate(fpExpr);
 
 await page
   .locator(".cm-mermaid")
@@ -56,7 +94,23 @@ await page
   .screenshot({ path: shot })
   .catch(() => {});
 
-writeFileSync(out, JSON.stringify({ fp, errors }, null, 2));
-console.log(JSON.stringify({ count: fp.length, fp, errors }, null, 2));
+// Zoom pass (symptom 1 regression): dblclick the first diagram to toggle zoom,
+// then re-measure how far content spills past the host. before-fix: ~±318px out
+// (clipped). after-fix: content clipped at the svg box, stays inside the host.
+await page
+  .locator(".cm-mermaid")
+  .first()
+  .dblclick()
+  .catch(() => {});
+await page.waitForTimeout(400);
+const fpZoom = await page.evaluate(fpExpr);
+await page
+  .locator(".cm-mermaid")
+  .first()
+  .screenshot({ path: shot.replace(/\.png$/, ".zoom.png") })
+  .catch(() => {});
+
+writeFileSync(out, JSON.stringify({ fp, fpZoom, errors }, null, 2));
+console.log(JSON.stringify({ count: fp.length, fp, fpZoom, errors }, null, 2));
 console.log("\nwrote", out, "+", shot);
 await browser.close();
