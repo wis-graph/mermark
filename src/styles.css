@@ -5,6 +5,7 @@
   --bg: #0c0a09;
   --fg: #ffffff;
   --accent: #a8c8e8;            /* gradient-sky — only legible link tint on dark */
+  --link: #a8c8e8;              /* link affordance, distinct from --accent (callout/footnote). on --fg ink ≈ 9.7:1 */
   --surface: #1c1917;           /* surface-dark-elevated */
   --border: rgba(255,255,255,.12);
   --muted: #a8a29e;             /* on-dark-soft / muted-soft */
@@ -19,6 +20,7 @@
   --bg: #f5f5f5;                /* canvas */
   --fg: #0c0a09;                /* ink */
   --accent: #292524;            /* primary — brand's only action color (ink pill) */
+  --link: #1d6fb8;              /* gradient-sky darkened to AA. on #f5f5f5 canvas ≈ 4.6:1, distinct from ink */
   --surface: #ffffff;           /* surface-card */
   --border: #e7e5e4;            /* hairline */
   --muted: #777169;             /* muted */
@@ -48,7 +50,7 @@ html, body { margin: 0; height: 100%; }
    which render in their own widget containers outside the line, keep their own
    sizing. Headings/code use relative em so they scale together; the status bar's
    fixed px is unaffected. */
-.cm-editor .cm-line { font-size: calc(1rem * var(--font-scale, 1)); }
+.cm-editor .cm-line { font-size: calc(1rem * var(--font-scale, 1)); line-height: 1.6; }
 /* CM hard-codes a black caret; follow the text colour so it shows in dark mode. */
 .cm-editor .cm-content { caret-color: var(--fg); }
 /* fold toggles sit in the gutter, which `justify-content: center` parks right
@@ -111,22 +113,31 @@ html, body { margin: 0; height: 100%; }
 .cm-footnote-ref { color: var(--accent); cursor: default; }
 .cm-footnote-def { font-size: .9em; opacity: .8; }
 .cm-image { display: block; max-width: 100%; height: auto; padding: .5em 0; margin: 0 auto; }
-.cm-wikilink-active { color: var(--accent); cursor: pointer; text-decoration: none; }
+.cm-wikilink-active { color: var(--link); cursor: pointer; text-decoration: none; }
 .cm-wikilink-active:hover { text-decoration: underline; }
 .cm-wikilink-missing { color: var(--muted); text-decoration: line-through dotted; cursor: default; }
 .cm-wikilink-pending { color: var(--muted); }
 .cm-wikilink-error { color: #dc2626; text-decoration: underline wavy; }
 
-.cm-link { color: var(--accent); cursor: pointer; }
+.cm-link { color: var(--link); cursor: pointer; }
 .cm-link:hover { text-decoration: underline; }
 
-.cm-heading { font-weight: 700; }
-.cm-h1 { font-size: 1.9em; }
-.cm-h2 { font-size: 1.55em; }
-.cm-h3 { font-size: 1.3em; }
-.cm-h4 { font-size: 1.15em; }
-.cm-h5 { font-size: 1.05em; }
-.cm-h6 { font-size: 1em; color: var(--muted); }
+/* Heading typescale, ratio ~1.25 (major third). The heading class sits ON the
+   .cm-line element, so `.cm-editor .cm-line` (0,2,0) out-specifies a bare .cm-hN
+   (0,1,0) and would win the cascade. So we (a) use a compound `.cm-line.cm-hN`
+   selector to out-specify it, and (b) re-state the --font-scale calc here —
+   overriding font-size drops the .cm-line value, and a bare `2em` resolves against
+   the PARENT (.cm-content, unscaled), which would pin headings at a fixed size and
+   break zoom. calc(... * ratio) keeps them both bigger AND zoom-linked. Never put
+   font-size on .cm-content (it collapses async mermaid/katex widgets). h5 = body
+   size set apart by weight; h6 drops below body + muted as caption/overline. */
+.cm-editor .cm-line.cm-heading { font-weight: 700; line-height: 1.25; }
+.cm-editor .cm-line.cm-h1 { font-size: calc(1rem * var(--font-scale, 1) * 2.0); }
+.cm-editor .cm-line.cm-h2 { font-size: calc(1rem * var(--font-scale, 1) * 1.6); }
+.cm-editor .cm-line.cm-h3 { font-size: calc(1rem * var(--font-scale, 1) * 1.32); }
+.cm-editor .cm-line.cm-h4 { font-size: calc(1rem * var(--font-scale, 1) * 1.15); }
+.cm-editor .cm-line.cm-h5 { font-size: calc(1rem * var(--font-scale, 1) * 1.0); }
+.cm-editor .cm-line.cm-h6 { font-size: calc(1rem * var(--font-scale, 1) * 0.9); color: var(--muted); }
 
 /* Bottom status bar — all editor chrome lives here, out of the content. */
 .status-bar { flex: none; height: 28px; display: flex; align-items: center; gap: .35em; padding: 0 .6em; border-top: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--muted); user-select: none; }
@@ -144,7 +155,53 @@ html, body { margin: 0; height: 100%; }
 .cm-table { border-collapse: collapse; width: 100%; }
 .cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; }
 .cm-table th { background: var(--surface); font-weight: 700; }
-.cm-task-checkbox { margin-right: .4em; vertical-align: middle; }
+/* Task checkbox: a native <input> kept for click/keyboard/:checked semantics,
+   canvas-ized with appearance:none so we draw the box + check ourselves. Sized in
+   em so it rides the .cm-line zoom (--font-scale) instead of the browser's fixed
+   ~13px native box (the old zoom-decoupling bug). Checked fill reuses --link; the
+   ::after tick is two rotated borders that scale/fade in on toggle. */
+.cm-task-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  box-sizing: border-box;
+  /* inherit the scaled .cm-line font so 1em (box + ::after tick) rides the
+     --font-scale zoom; a native <input> otherwise pins ~13px and ignores the
+     parent's zoomed font, decoupling the box from text zoom. */
+  font-size: inherit;
+  width: 1em;
+  height: 1em;
+  margin: 0 .4em 0 0;
+  vertical-align: -.1em;
+  border: 1.5px solid var(--muted);
+  border-radius: var(--radius-xs, 4px);
+  background: transparent;
+  cursor: pointer;
+  flex: none;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+.cm-task-checkbox:checked {
+  background: var(--link);
+  border-color: var(--link);
+}
+.cm-task-checkbox::after {
+  content: "";
+  position: absolute;
+  left: .3em;
+  top: .12em;
+  width: .25em;
+  height: .5em;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) scale(0);
+  transform-origin: center;
+  opacity: 0;
+  transition: transform .15s ease, opacity .15s ease;
+}
+.cm-task-checkbox:checked::after {
+  transform: rotate(45deg) scale(1);
+  opacity: 1;
+}
 
 /* Unordered-list bullet, drawn in CSS so a collapsed item can show a halo ring
    (a state a font glyph can't express). */

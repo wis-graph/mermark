@@ -155,6 +155,21 @@ describe("full-editor render smoke", () => {
     view.destroy();
   });
 
+  it("headings get cm-heading + cm-hN line classes h1..h6 (typescale contract)", () => {
+    const doc = "# A\n## B\n### C\n#### D\n##### E\n###### F";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    (ed.view as unknown as { measure(): void }).measure();
+    for (let n = 1; n <= 6; n++) {
+      const line = ed.view.contentDOM.querySelector(`.cm-h${n}`);
+      expect(line, `expected one .cm-h${n}`).not.toBeNull();
+      expect(line!.classList.contains("cm-heading")).toBe(true);
+    }
+    // exactly one of each level — no duplicate/missing line classes
+    expect(ed.view.contentDOM.querySelectorAll(".cm-h1").length).toBe(1);
+    expect(ed.view.contentDOM.querySelectorAll(".cm-h6").length).toBe(1);
+    ed.view.destroy();
+  });
+
   it("renders a table inside a blockquote without > leaking into cells (D4)", () => {
     const doc = "intro\n\n> | A | B |\n> |---|---|\n> | 1 | 2 |\n\nend";
     const view = mount(host, doc);
@@ -216,6 +231,35 @@ describe("full-editor render smoke", () => {
     expect(ed.view.contentDOM.querySelectorAll(".cm-bullet").length).toBe(0);
     expect(ed.view.contentDOM.querySelector(".cm-task-checkbox")).not.toBeNull();
     ed.view.destroy();
+  });
+
+  it("checkbox stays a native input whose .checked mirrors [x]/[ ] (canvas-ize regression)", () => {
+    const doc = "- [x] done\n- [ ] todo";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    (ed.view as unknown as { measure(): void }).measure();
+    const boxes = ed.view.contentDOM.querySelectorAll(
+      "input.cm-task-checkbox[type=checkbox]",
+    ) as NodeListOf<HTMLInputElement>;
+    expect(boxes.length).toBe(2);
+    expect(boxes[0].checked).toBe(true); // [x] done
+    expect(boxes[1].checked).toBe(false); // [ ] todo
+    ed.view.destroy();
+  });
+
+  it("clicking the checkbox toggles the source marker (dispatch path preserved)", () => {
+    // task on a later line, caret parked at the top → widget stays rendered
+    // (edit-mode reveal would otherwise drop the widget on the caret's own line).
+    const doc = "intro\n\n- [x] done";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const box = view.contentDOM.querySelector(
+      "input.cm-task-checkbox",
+    ) as HTMLInputElement | null;
+    expect(box).not.toBeNull();
+    box!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(view.state.doc.toString()).toBe("intro\n\n- [ ] done"); // [x] → [ ]
+    view.destroy();
   });
 
   it("reveals the raw dash when the caret is on a bullet line (edit mode)", () => {
