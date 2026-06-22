@@ -89,6 +89,8 @@ pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let url = WebviewUrl::App(format!("index.html?file={}", urlencoding::encode(&path)).into());
     WebviewWindowBuilder::new(&app, label, url)
         .title("mermark")
+        .inner_size(crate::DEFAULT_WINDOW.0, crate::DEFAULT_WINDOW.1)
+        .min_inner_size(crate::MIN_WINDOW.0, crate::MIN_WINDOW.1)
         .build()
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -177,5 +179,30 @@ mod tests {
         assert!(write_file(p.clone(), "forced".into(), 0).is_ok());
         assert_eq!(fs::read_to_string(&p).unwrap(), "forced");
         fs::remove_file(&p).ok();
+    }
+
+    // The actual window opening (`inner_size`) needs a live webview runtime, which
+    // headless CI doesn't have. Instead we lock the *constant invariant* that both
+    // window builders depend on: a document window's default must never be smaller
+    // than its minimum, and both must be sane positive sizes. This is what guards
+    // against a magic-number regression when someone tweaks the size later.
+    #[test]
+    fn default_window_is_at_least_the_minimum() {
+        let (dw, dh) = crate::DEFAULT_WINDOW;
+        let (mw, mh) = crate::MIN_WINDOW;
+        assert!(dw >= mw, "default width {dw} must be >= min width {mw}");
+        assert!(dh >= mh, "default height {dh} must be >= min height {mh}");
+    }
+
+    #[test]
+    fn window_sizes_are_sane_positive_values() {
+        let (dw, dh) = crate::DEFAULT_WINDOW;
+        let (mw, mh) = crate::MIN_WINDOW;
+        // Positive and within a plausible desktop range — catches a stray 0,
+        // a negative, or an absurd value slipping into the constants.
+        for (label, v) in [("def-w", dw), ("def-h", dh), ("min-w", mw), ("min-h", mh)] {
+            assert!(v > 0.0, "{label} must be positive, got {v}");
+            assert!(v <= 10_000.0, "{label} looks implausible, got {v}");
+        }
     }
 }

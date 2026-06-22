@@ -9,6 +9,13 @@ export function applyTheme(t: Theme) {
   document.documentElement.dataset.theme = t;
 }
 
+/** Apply the body text scale to the DOM via a CSS var. A SSOT sink, symmetric
+ *  with applyTheme (command/CQS: writes the DOM, returns nothing). styles.css
+ *  reads --font-scale on .cm-line; falls back to 1 when unset. */
+export function applyFontScale(scale: number) {
+  document.documentElement.style.setProperty("--font-scale", String(scale));
+}
+
 /** Status-bar theme toggle. `onToggle` is the writer (flips the setting);
  *  `render` is the label sink the caller binds to the setting. */
 export function makeThemeToggle(onToggle: () => void): {

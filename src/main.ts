@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { dirOf } from "./path";
 import { mountEditor, type PreviewMode, type SaveStatus } from "./editor";
-import { applyTheme, makeThemeToggle } from "./theme";
-import { themeSetting, modeSetting } from "./settings/app";
+import { applyTheme, applyFontScale, makeThemeToggle } from "./theme";
+import { themeSetting, modeSetting, fontScaleSetting, zoomIn, zoomOut, resetZoom } from "./settings/app";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
 import "./styles.css";
@@ -68,6 +68,10 @@ async function boot() {
   // editor mounts (mermaid reads it on its lazy initial load) — and so it also
   // applies on the no-file / error screens below.
   themeSetting.bind(applyTheme);
+  // Body text scale is the SSOT too: bind the CSS-var sink here (same place,
+  // same reason as theme) so the saved scale is on the DOM before the editor
+  // mounts, and so it applies on the no-file / error screens below.
+  fontScaleSetting.bind(applyFontScale);
   const root = document.querySelector<HTMLDivElement>("#app")!;
   const file = new URLSearchParams(location.search).get("file");
   if (!file) {
@@ -146,6 +150,23 @@ async function boot() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
         e.preventDefault();
         toggleMode();
+      }
+    });
+    // Body-text zoom (Cmd =/-/0). Same global-keydown spot as ⌘E so it works in
+    // read mode and when the editor isn't focused. preventDefault intercepts the
+    // webview's built-in page zoom so only the .cm-line text scale changes.
+    // '=' and '+' both zoom in (US layout needs Shift for '+'); '-' and '_' out.
+    window.addEventListener("keydown", (e) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        zoomIn();
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        zoomOut();
+      } else if (e.key === "0") {
+        e.preventDefault();
+        resetZoom();
       }
     });
     // mode is the SSOT: the button label binds to it; the editor reacts to

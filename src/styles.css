@@ -38,6 +38,17 @@ html, body { margin: 0; height: 100%; }
    and shoves the column off-screen — don't use it. */
 .cm-scroller { justify-content: safe center; }
 .cm-editor .cm-content { max-width: 820px; padding: 2rem 1rem; }
+/* Body text scale: --font-scale (SSOT fontScaleSetting → applyFontScale sink)
+   drives the font-size on the LINE elements, NOT on .cm-content. .cm-content is
+   CodeMirror's line/widget measure root — a calc()/var() font-size there collapses
+   async block widgets (mermaid/katex) to zero height during their dynamic-import
+   render pass (silent disappearance, no console error). .cm-line is the per-line
+   text container, so body text + inline decorations (.cm-math-inline, .cm-strong …)
+   scale with the reading column, while block widgets (mermaid/katex-block/table),
+   which render in their own widget containers outside the line, keep their own
+   sizing. Headings/code use relative em so they scale together; the status bar's
+   fixed px is unaffected. */
+.cm-editor .cm-line { font-size: calc(1rem * var(--font-scale, 1)); }
 /* CM hard-codes a black caret; follow the text colour so it shows in dark mode. */
 .cm-editor .cm-content { caret-color: var(--fg); }
 /* fold toggles sit in the gutter, which `justify-content: center` parks right
