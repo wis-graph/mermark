@@ -19,7 +19,7 @@ target/
 .superpowers/
 
 # mermark-dev harness handoff artifacts (audit trail, not source)
-_workspace/
+_workspace*/
 
 # Editor directories and files
 .vscode/*
