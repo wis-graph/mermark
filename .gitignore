@@ -18,6 +18,9 @@ target/
 # superpowers brainstorm scratch (visual companion mockups)
 .superpowers/
 
+# mermark-dev harness handoff artifacts (audit trail, not source)
+_workspace/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
