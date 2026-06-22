@@ -27,6 +27,7 @@ import { themeVarsSink, cssVarSink, headingScaleSink } from "./settings/sinks";
 import { mountSettingsButton } from "./settings/panel/modal";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
+import "./fonts/fonts.css";
 import "./styles.css";
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {

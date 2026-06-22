@@ -1,0 +1,40 @@
+/* Vendored web fonts (latin subset, static woff2) — bundled by Vite as same-origin
+   assets so the desktop app stays fully offline (no CDN/runtime network). Files are
+   copied from @fontsource (SIL OFL); npm is NOT a dependency — only the woff2 files
+   live here. font-display:swap = FOUT not FOIT: system-ui paints first, then the
+   real face swaps in (near-instant for local assets). italic/variable/CJK glyphs are
+   deliberately excluded to keep the cold-load bundle small — .cm-em uses synthetic
+   italic, CJK body falls back to system-ui via --font-sans.
+
+   Inter carries body/nav/captions (400 body, 500 strong/title, 700 .cm-strong).
+   Cormorant Garamond 300 is the display serif (headings only) — a true Light 300
+   face (Waldenburg Light substitute), never bold: the editorial weight signature. */
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./inter-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./inter-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./inter-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("./cormorant-garamond-latin-300-normal.woff2") format("woff2");
+}

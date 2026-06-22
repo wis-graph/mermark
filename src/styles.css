@@ -26,6 +26,29 @@
   /* Reading-column font (Typography fontFamily setting). Falls back to the body
      sans stack so the editor inherits --font-sans when no preference is set. */
   --reading-font: var(--font-sans);
+  /* Display serif for headings only (DESIGN.md "Waldenburg Light at weight 300",
+     editorial signature). Cormorant Garamond 300 is the vendored open-source
+     substitute (true Light 300 display Garamond; fontsource ships no EB Garamond
+     static 300). Body stays Inter (--reading-font) — never serif (DESIGN.md). */
+  --font-display: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  /* Typography tracking tokens (DESIGN.md). These are STATIC design constants, not
+     user-variable settings, so they live in styles.css (single source) — not the
+     SSOT settings store (that is for per-user prefs). Values are in `em` (not the
+     px of DESIGN.md) so letter-spacing scales with --font-scale (⌘± zoom) and the
+     headingRatio scale — the ZOOM GUARD spirit applied to tracking. Body: Inter
+     +0.16px@16px ≈ +0.01em. Headings: DESIGN.md display negative tracking, em-mapped:
+       h1 display-mega/xl (-1.92..-0.96px) → -0.02em
+       h2 display-lg (-0.36px)            → -0.015em
+       h3 display-md (-0.32px)            → -0.01em
+       h4 display-sm                      → -0.005em
+       h5 title / h6 caption              → 0 (no negative tracking) */
+  --body-tracking: 0.01em;
+  --h1-tracking: -0.02em;
+  --h2-tracking: -0.015em;
+  --h3-tracking: -0.01em;
+  --h4-tracking: -0.005em;
+  --h5-tracking: 0;
+  --h6-tracking: 0;
 }
 :root[data-theme="light"] {
   /* light = brand editorial default */
@@ -62,7 +85,11 @@ html, body { margin: 0; height: 100%; }
    which render in their own widget containers outside the line, keep their own
    sizing. Headings/code use relative em so they scale together; the status bar's
    fixed px is unaffected. */
-.cm-editor .cm-line { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1)); line-height: var(--line-height, 1.6); }
+/* DESIGN.md body-md +0.16px@16px ≈ +0.01em editorial tracking. em rides --font-scale
+   zoom; letter-spacing affects horizontal advance only (CM height measure is vertical
+   offsetHeight) so the font-size calc is untouched — ZOOM GUARD holds. Code/table
+   reset it below so the looser body tracking never leaks into monospace/tabular text. */
+.cm-editor .cm-line { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1)); line-height: var(--line-height, 1.6); letter-spacing: var(--body-tracking, 0.01em); }
 /* CM hard-codes a black caret; follow the text colour so it shows in dark mode. */
 .cm-editor .cm-content { caret-color: var(--fg); }
 /* fold toggles sit in the gutter, which `justify-content: center` parks right
@@ -97,7 +124,7 @@ html, body { margin: 0; height: 100%; }
 .cm-strong { font-weight: 700; }
 .cm-em { font-style: italic; }
 .cm-strike { text-decoration: line-through; }
-.cm-inline-code { font-family: ui-monospace, monospace; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface); }
+.cm-inline-code { font-family: ui-monospace, monospace; letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface); }
 /* ==highlight== → a fluorescent <mark>. Pin a dark ink on the highlight so it
    stays legible on dark theme too, where --fg flips to white and white-on-yellow
    would wash out. --highlight-bg gives each theme its own fluorescent tone. */
@@ -106,11 +133,11 @@ html, body { margin: 0; height: 100%; }
    like the mermaid/table/math widgets. Vertical breathing room is padding, not
    margin — CM measures widget height by offsetHeight, which excludes margin. */
 .cm-codeblock { display: block; margin: 0; position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: .7em .9em; overflow-x: auto; font-size: .92em; line-height: 1.5; }
-.cm-codeblock code { font-family: ui-monospace, monospace; white-space: pre; }
+.cm-codeblock code { font-family: ui-monospace, monospace; letter-spacing: normal; white-space: pre; }
 .cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: .6em; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
 /* revealed (editing) fenced code keeps a code background, so it still reads as a
    code block while you edit it. */
-.cm-code-line { background: var(--surface); font-family: ui-monospace, monospace; }
+.cm-code-line { background: var(--surface); font-family: ui-monospace, monospace; letter-spacing: normal; }
 /* Block-widget vertical spacing MUST be padding, not margin: CM measures a
    widget's height via offsetHeight (which excludes margin), so a margin here
    desyncs the height map and makes vertical cursor motion skip lines below. */
@@ -158,13 +185,19 @@ html, body { margin: 0; height: 100%; }
    recompute all six from one ratio (headingScaleSink). The fallback keeps the
    previous hand-tuned constant so pre-sink first paint matches today's visuals.
    ZOOM GUARD: the * var(--font-scale, 1) factor stays so ⌘± still scales headings. */
-.cm-editor .cm-line.cm-heading { font-weight: 700; line-height: 1.25; }
-.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 2.0)); }
-.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.6)); }
-.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.32)); }
-.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.15)); }
-.cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); }
-.cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); color: var(--muted); }
+/* DESIGN.md editorial signature: display serif at weight 300, never bold (the
+   "Waldenburg Light" voice via Cormorant Garamond 300). weight/family/letter-spacing
+   are all measure-inert (CM measures offsetHeight vertically; these affect glyph
+   render + horizontal advance only) so the ZOOM GUARD holds — the font-size calc
+   lines below are unchanged. Per-level negative tracking comes from --hN-tracking
+   (em, so it rides --font-scale zoom + the headingRatio scale). */
+.cm-editor .cm-line.cm-heading { font-weight: 300; font-family: var(--font-display); line-height: 1.25; }
+.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 2.0)); letter-spacing: var(--h1-tracking, 0); }
+.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.6)); letter-spacing: var(--h2-tracking, 0); }
+.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.32)); letter-spacing: var(--h3-tracking, 0); }
+.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.15)); letter-spacing: var(--h4-tracking, 0); }
+.cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); }
+.cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--muted); }
 
 /* Bottom status bar — all editor chrome lives here, out of the content. */
 .status-bar { flex: none; height: 28px; display: flex; align-items: center; gap: .35em; padding: 0 .6em; border-top: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--muted); user-select: none; }
@@ -179,7 +212,7 @@ html, body { margin: 0; height: 100%; }
 .status-btn.force-save:hover { background: #d97706; color: #fff; }
 
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }
-.cm-table { border-collapse: collapse; width: 100%; }
+.cm-table { border-collapse: collapse; width: 100%; letter-spacing: normal; }
 .cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; }
 .cm-table th { background: var(--surface); font-weight: 700; }
 /* Task checkbox: a native <input> kept for click/keyboard/:checked semantics,
