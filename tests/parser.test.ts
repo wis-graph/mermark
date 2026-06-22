@@ -84,6 +84,42 @@ describe("footnote parsing", () => {
   });
 });
 
+describe("highlight parsing", () => {
+  it("parses ==marked== as a Highlight node", () => {
+    expect(nodesOf("a ==marked== b", "Highlight")).toEqual([["Highlight", "==marked=="]]);
+  });
+  it("splits the opening/closing == into HighlightMark children", () => {
+    expect(nodesOf("a ==marked== b", "HighlightMark")).toEqual([
+      ["HighlightMark", "=="],
+      ["HighlightMark", "=="],
+    ]);
+  });
+  it("does NOT parse highlights inside code fences", () => {
+    expect(nodesOf("```\n==x==\n```", "Highlight")).toEqual([]);
+  });
+  it("does NOT parse highlights inside inline code", () => {
+    expect(nodesOf("a `==x==` b", "Highlight")).toEqual([]);
+  });
+  it("leaves prose comparisons alone: a == b", () => {
+    expect(nodesOf("if a == b then", "Highlight")).toEqual([]);
+  });
+  it("does not treat === (setext-ish / triple) as a highlight", () => {
+    expect(nodesOf("x === y", "Highlight")).toEqual([]);
+  });
+  it("does not cross newlines", () => {
+    expect(nodesOf("a ==x\ny== b", "Highlight")).toEqual([]);
+  });
+  it("rejects empty bodies: ====", () => {
+    expect(nodesOf("====", "Highlight")).toEqual([]);
+  });
+  it("coexists with GFM strikethrough", () => {
+    expect(nodesOf("~~struck~~ and ==marked==", "Strikethrough", "Highlight")).toEqual([
+      ["Strikethrough", "~~struck~~"],
+      ["Highlight", "==marked=="],
+    ]);
+  });
+});
+
 describe("GFM still intact", () => {
   it("parses tables, task markers, links, images", () => {
     const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n\n[t](u) ![a](b.png)";

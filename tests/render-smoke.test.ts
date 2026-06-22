@@ -100,6 +100,36 @@ describe("full-editor render smoke", () => {
     view.destroy();
   });
 
+  it("conceals ==highlight== markers off-line, reveals on the line, re-conceals (highlight B1/B2)", () => {
+    const doc = "first line\n\nsee ==marked== here";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    // concealed: body styled, == markers hidden
+    expect(view.contentDOM.querySelector(".cm-highlight")).not.toBeNull();
+    expect(view.contentDOM.textContent).toContain("marked");
+    expect(view.contentDOM.textContent).not.toContain("==marked==");
+    // cursor onto the highlight line → raw source revealed
+    view.dispatch({ selection: { anchor: doc.indexOf("==") + 1 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("==marked==");
+    // cursor away again → re-concealed
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toContain("==marked==");
+    view.destroy();
+  });
+
+  it("does not render ==highlight== inside code fences", () => {
+    const doc = "```\n==x==\n```\n\ntail";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-highlight")).toBeNull();
+    expect(view.contentDOM.textContent).toContain("==x==");
+    view.destroy();
+  });
+
   it("reveals table source when the cursor enters it", () => {
     const doc = "intro\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\noutro";
     const view = mount(host, doc);
@@ -228,6 +258,17 @@ describe("mode toggle", () => {
     (ed.view as unknown as { measure(): void }).measure();
     expect(ed.view.contentDOM.textContent).not.toContain("[[target");
     expect(ed.view.contentDOM.textContent).toContain("Alias");
+    ed.view.destroy();
+  });
+
+  it("read mode never reveals ==highlight== markers, even on the cursor line", () => {
+    const doc = "first line\n\nsee ==marked== here";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    ed.view.dispatch({ selection: { anchor: doc.indexOf("==") + 1 } });
+    (ed.view as unknown as { measure(): void }).measure();
+    expect(ed.view.contentDOM.querySelector(".cm-highlight")).not.toBeNull();
+    expect(ed.view.contentDOM.textContent).toContain("marked");
+    expect(ed.view.contentDOM.textContent).not.toContain("==marked==");
     ed.view.destroy();
   });
 

@@ -12,6 +12,7 @@ const BRACKET_R = 93; // ]
 const BANG = 33; // !
 const PIPE = 124; // |
 const DOLLAR = 36; // $
+const EQUALS = 61; // =
 const CARET = 94; // ^
 const NEWLINE = 10;
 const SPACE = 32;
@@ -163,11 +164,53 @@ const footnoteExt: MarkdownConfig = {
   ],
 };
 
+/**
+ * ==highlight== — the `==` twin of GFM Strikethrough (which `@lezer/markdown`'s
+ * GFM only defines for `~~`). Guards mirror inline math so prose stays plain:
+ * the opener must be a `==` pair followed by a non-space (so `a == b` and the
+ * triple `===` never open), the body must be non-empty and on one line (no
+ * newline crossing). Tree-based, so code fences / inline code disable it for
+ * free. Split into open/close HighlightMark children so the decorator can
+ * conceal just the markers.
+ */
+const highlightExt: MarkdownConfig = {
+  defineNodes: [{ name: "Highlight" }, { name: "HighlightMark" }],
+  parseInline: [
+    {
+      name: "Highlight",
+      before: "Emphasis",
+      parse(cx: InlineContext, next: number, pos: number): number {
+        // opener: exactly a `==` pair (a 3rd `=` → `===`, treated as not a mark)
+        if (next !== EQUALS || cx.char(pos + 1) !== EQUALS) return -1;
+        if (cx.char(pos + 2) === EQUALS) return -1;
+        // opener must be followed by a non-space → `a == b` stays prose
+        const first = cx.char(pos + 2);
+        if (first === SPACE || first === TAB || first === NEWLINE || first < 0) return -1;
+        for (let i = pos + 2; i < cx.end; i++) {
+          const ch = cx.char(i);
+          if (ch === NEWLINE) return -1; // inline only — never cross a line
+          if (ch !== EQUALS || cx.char(i + 1) !== EQUALS) continue;
+          const prev = cx.char(i - 1); // closer must be preceded by a non-space (symmetry)
+          if (prev === SPACE || prev === TAB) continue;
+          return cx.addElement(
+            cx.elt("Highlight", pos, i + 2, [
+              cx.elt("HighlightMark", pos, pos + 2),
+              cx.elt("HighlightMark", i, i + 2),
+            ]),
+          );
+        }
+        return -1;
+      },
+    },
+  ],
+};
+
 export const mermarkExtensions: MarkdownConfig[] = [
   wikilinkExt,
   inlineMathExt,
   blockMathExt,
   footnoteExt,
+  highlightExt,
 ];
 
 /** Markdown language: GFM (tables/strikethrough/tasklists) + mermark syntax. */

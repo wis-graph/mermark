@@ -8,10 +8,11 @@ const STYLE: Record<string, string> = {
   Emphasis: "cm-em",
   InlineCode: "cm-inline-code",
   Strikethrough: "cm-strike",
+  Highlight: "cm-highlight",
 };
 
 export const textStyles: InlineFeature = {
-  nodes: [...Object.keys(STYLE), "EmphasisMark", "CodeMark", "StrikethroughMark"],
+  nodes: [...Object.keys(STYLE), "EmphasisMark", "CodeMark", "StrikethroughMark", "HighlightMark"],
   enter(node, ctx) {
     const cls = STYLE[node.name];
     if (cls) {

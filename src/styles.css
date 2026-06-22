@@ -8,6 +8,7 @@
   --surface: #1c1917;           /* surface-dark-elevated */
   --border: rgba(255,255,255,.12);
   --muted: #a8a29e;             /* on-dark-soft / muted-soft */
+  --highlight-bg: #ffe066;      /* fluorescent mark — saturated to pop on dark canvas */
   --font-sans: "Inter", system-ui, sans-serif;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -21,6 +22,7 @@
   --surface: #ffffff;           /* surface-card */
   --border: #e7e5e4;            /* hairline */
   --muted: #777169;             /* muted */
+  --highlight-bg: #fff3a3;      /* soft pastel mark on the bright editorial canvas */
 }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); margin: 0; }
 
@@ -66,6 +68,10 @@ html, body { margin: 0; height: 100%; }
 .cm-em { font-style: italic; }
 .cm-strike { text-decoration: line-through; }
 .cm-inline-code { font-family: ui-monospace, monospace; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface); }
+/* ==highlight== → a fluorescent <mark>. Pin a dark ink on the highlight so it
+   stays legible on dark theme too, where --fg flips to white and white-on-yellow
+   would wash out. --highlight-bg gives each theme its own fluorescent tone. */
+.cm-highlight { background: var(--highlight-bg, #fff3a3); color: #1a1300; border-radius: var(--radius-xs, 4px); padding: 0 .15em; }
 /* Fenced code rendered as a block widget (a styled box hugging the code),
    like the mermaid/table/math widgets. Vertical breathing room is padding, not
    margin — CM measures widget height by offsetHeight, which excludes margin. */
