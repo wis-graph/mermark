@@ -40,19 +40,33 @@ function listRange(state: EditorState, lineStart: number) {
   return child.to > line.to ? { from: line.to, to: item.to } : null;
 }
 
+/** A single chevron SVG. open vs closed never swaps the glyph — the same SVG is
+ *  rotated 90° by CSS (`.cm-fold-marker-closed svg`), giving a smooth transition.
+ *  The chevron points down (open); rotated it points right (closed). `currentColor`
+ *  inherits the gutter's color/opacity transitions; `pointer-events:none` keeps
+ *  clicks on the <span> so CM's foldGutter toggle still fires. */
+const CHEVRON_SVG =
+  '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor"' +
+  ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' +
+  ' style="pointer-events:none"><path d="M6 9l6 6 6-6"/></svg>';
+
+/** Build the fold-gutter marker: a chevron SVG inside the fold-marker span.
+ *  `open`/closed toggles ONLY the `cm-fold-marker-closed` class (CSS rotates the
+ *  same SVG) — no glyph swap. Exported so a unit test can assert the SVG exists
+ *  and no text glyph leaks back in. */
+export function foldMarkerDOM(open: boolean): HTMLElement {
+  const el = document.createElement("span");
+  el.className = `cm-fold-marker${open ? "" : " cm-fold-marker-closed"}`;
+  el.innerHTML = CHEVRON_SVG;
+  el.title = open ? "접기" : "펼치기";
+  return el;
+}
+
 /** Headings + list items become foldable. CM tries each foldService in turn. */
 export const markdownFolding = [
   codeFolding(),
   foldService.of((state, lineStart) => headingRange(state, lineStart)),
   foldService.of((state, lineStart) => listRange(state, lineStart)),
-  foldGutter({
-    markerDOM(open) {
-      const el = document.createElement("span");
-      el.className = `cm-fold-marker${open ? "" : " cm-fold-marker-closed"}`;
-      el.textContent = open ? "▾" : "▸"; // ▾ / ▸
-      el.title = open ? "접기" : "펼치기";
-      return el;
-    },
-  }),
+  foldGutter({ markerDOM: foldMarkerDOM }),
   keymap.of(foldKeymap),
 ];

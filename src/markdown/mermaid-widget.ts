@@ -48,17 +48,33 @@ export function refreshMermaidTheme(theme: Theme) {
 // jump the page. Cleared once the real height is set.
 let lastHeight = 0;
 
+/** Explicit pixel size declared on the diagram's first line (`300, 400`); `null`
+ *  on an axis means "use natural size". Parsed in features/mermaid.ts. */
+export interface MermaidDims {
+  width: number | null;
+  height: number | null;
+}
+
 export class MermaidWidget extends WidgetType {
   readonly version = themeVersion; // captured at construction; see refreshMermaidTheme
-  constructor(readonly code: string) {
+  constructor(
+    readonly code: string,
+    readonly dims: MermaidDims = { width: null, height: null },
+  ) {
     super();
   }
   eq(o: MermaidWidget) {
-    return o.code === this.code && o.version === this.version;
+    return (
+      o.code === this.code &&
+      o.version === this.version &&
+      o.dims.width === this.dims.width &&
+      o.dims.height === this.dims.height
+    );
   }
   toDOM(): HTMLElement {
     const host = document.createElement("div");
     host.className = "cm-mermaid";
+    applyDimensions(host, this.dims);
     const cached = svgCache.get(this.code);
     if (cached !== undefined) {
       this.applySvg(host, cached);
@@ -87,13 +103,15 @@ export class MermaidWidget extends WidgetType {
     host.innerHTML = svg;
     const el = host.querySelector<SVGSVGElement>("svg");
     if (!el) return;
-    const aspect = normalizeMermaidSvg(el);
+    prepareNaturalSvg(el);
     // svg-pan-zoom must initialize on a host that already has a width. toDOM
     // runs BEFORE CM attaches the host, so a synchronous init fits the diagram
     // to a 0-width box and it renders invisible (the re-render-after-edit bug).
     whenLaidOut(host, () => {
-      fitHostHeight(host, aspect);
-      initPanZoom(host, el, aspect);
+      // Record the natural height BEFORE pan-zoom transforms the SVG, so the
+      // reserved placeholder (next async render) matches the real diagram.
+      recordRenderedHeight(host);
+      initPanZoom(host, el);
       // Click-to-edit is handled centrally in live-preview/core (a capture-phase
       // listener that beats svg-pan-zoom), so the widget stays mode-agnostic.
       host.dispatchEvent(new CustomEvent("mermaid-rendered", { bubbles: true }));
@@ -113,33 +131,41 @@ export class MermaidWidget extends WidgetType {
   }
 }
 
-/** Normalize mermaid's inline SVG sizing so it fills the host, and return the
- *  diagram's aspect ratio (height/width). The viewBox MUST be read here, before
- *  svg-pan-zoom strips it; otherwise the svg collapses to the 150px
- *  replaced-element default and tall diagrams get cropped. */
-function normalizeMermaidSvg(el: SVGSVGElement): number {
-  const vb = (el.getAttribute("viewBox") ?? "").split(/[\s,]+/).map(Number);
-  const aspect = vb.length === 4 && vb[2] > 0 && vb[3] > 0 ? vb[3] / vb[2] : 0.6;
-  el.removeAttribute("height");
-  el.style.width = "100%";
-  el.style.height = "100%";
-  // Mermaid stamps `max-width: <natural width>px` inline on the <svg>, capping
-  // it at the diagram's natural size (small/left in a wide host). Clear it so
-  // the diagram scales to the full container width.
-  el.style.maxWidth = "none";
-  return aspect;
+/** Apply an explicit pixel size declaration to the host. A declared axis pins
+ *  the host to that many px and lets it scroll if the diagram overflows; an
+ *  undeclared axis (`null`) is left to natural sizing + the CSS column cap. */
+function applyDimensions(host: HTMLElement, dims: MermaidDims): void {
+  if (dims.width !== null) {
+    host.style.width = `${dims.width}px`;
+    host.style.overflowX = "auto";
+  }
+  if (dims.height !== null) {
+    host.style.height = `${dims.height}px`;
+    host.style.overflowY = "auto";
+  }
 }
 
-/** Size the host so the whole diagram fits: width-driven height, capped to the
- *  window so huge diagrams scale down instead of overflowing. Records the height
- *  in `lastHeight` so the NEXT widget can reserve it during its async render. */
-function fitHostHeight(host: HTMLElement, aspect: number): void {
-  const w = host.clientWidth || 600;
-  const cap = (window.innerHeight || 800) * 0.85;
-  const h = Math.max(80, Math.min(w * aspect, cap));
-  host.style.height = `${h}px`;
-  host.style.minHeight = ""; // real height set → drop the reserved placeholder
-  lastHeight = h;
+/** Keep mermaid's natural SVG sizing intact for natural-size display. Unlike the
+ *  old stretch-to-fill normalize (which removed height + forced width/height:100%
+ *  + max-width:none), this leaves mermaid's inline width/height/max-width:<natural>px
+ *  untouched, so the diagram renders at its natural size and the CSS column cap
+ *  (`max-width:100%`) downscales only when it's wider than the column.
+ *
+ *  No-op on the SVG today: natural sizing means there's nothing to strip. Kept as
+ *  a named seam so the "prepare the SVG before pan-zoom" step stays explicit and
+ *  any future per-axis fixups (RTL, viewBox repair) land in one place. */
+function prepareNaturalSvg(_el: SVGSVGElement): void {
+  // intentionally leaves mermaid's inline sizing as-is
+}
+
+/** Record the host's rendered height in `lastHeight` so the NEXT widget can
+ *  reserve it as a minHeight placeholder during its async render (prevents the
+ *  box collapsing to 0 and jumping the page after an edit). The natural SVG
+ *  determines the box height, so we only measure and drop the reservation. */
+function recordRenderedHeight(host: HTMLElement): void {
+  const h = host.getBoundingClientRect().height;
+  host.style.minHeight = ""; // real height present → drop the reserved placeholder
+  if (h > 0) lastHeight = h;
 }
 
 /** Run `cb` once the host is connected and laid out (nonzero width). Gives up
@@ -157,31 +183,30 @@ function whenLaidOut(host: HTMLElement, cb: () => void): void {
   requestAnimationFrame(tick);
 }
 
-/** Build the interactive viewer on a laid-out host: svg-pan-zoom, refit on
- *  container resize until the user pans/zooms, dblclick zoom toggle, and
- *  Ctrl/Cmd-wheel zoom (plain wheel stays page scroll). */
-function initPanZoom(host: HTMLElement, el: SVGSVGElement, aspect: number): void {
+/** Build the interactive viewer on a laid-out host: svg-pan-zoom keeping the
+ *  diagram at its natural size (fit:false), re-center on container resize until
+ *  the user pans/zooms, dblclick zoom toggle, and Ctrl/Cmd-wheel zoom (plain
+ *  wheel stays page scroll). Natural sizing makes fit() a no-op so we only
+ *  re-center; no aspect is needed. */
+function initPanZoom(host: HTMLElement, el: SVGSVGElement): void {
   const pz = svgPanZoom(el, {
     panEnabled: true,
     zoomEnabled: true,
     mouseWheelZoomEnabled: false, // wheel zoom gated on Ctrl/Cmd below
     dblClickZoomEnabled: false,
-    fit: true,
+    fit: false, // keep mermaid's natural size; pan-zoom only adds interaction
     center: true,
   });
   (host as unknown as { __pz?: { destroy(): void } }).__pz = pz;
 
-  // Refit on container resize until the user pans/zooms manually.
+  // Re-center on container resize until the user pans/zooms manually. fit() is
+  // dropped: at natural size there's nothing to fit, only to re-center.
   let touched = false;
   el.addEventListener("pointerdown", () => (touched = true), { once: true });
   if (typeof ResizeObserver !== "undefined") {
     const ro = new ResizeObserver(() => {
-      fitHostHeight(host, aspect);
       pz.resize();
-      if (!touched) {
-        pz.fit();
-        pz.center();
-      }
+      if (!touched) pz.center();
     });
     ro.observe(host);
     (host as unknown as { __ro?: ResizeObserver }).__ro = ro;

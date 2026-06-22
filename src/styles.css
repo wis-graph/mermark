@@ -59,7 +59,12 @@ html, body { margin: 0; height: 100%; }
    that otherwise shows as a pale bar down the left edge in dark mode). */
 .cm-editor .cm-gutters { background: transparent; border-right: none; color: var(--muted); }
 .cm-foldGutter { width: 1.1em; }
-.cm-fold-marker { cursor: pointer; color: var(--muted); opacity: 0; transition: opacity .12s, color .12s; font-size: .85em; }
+/* Fold marker: a chevron SVG (foldMarkerDOM) that rotates instead of swapping
+   glyphs. The span owns color/opacity transitions; the SVG owns the rotation. */
+.cm-fold-marker { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--muted); opacity: 0; transition: opacity .12s, color .12s; }
+.cm-fold-marker svg { width: .9em; height: .9em; display: block; transition: transform .15s ease; transform-origin: center; }
+/* open = chevron down (rotate 0); closed = chevron right (rotate -90°). */
+.cm-fold-marker-closed svg { transform: rotate(-90deg); }
 .cm-editor:hover .cm-fold-marker { opacity: .5; }
 .cm-fold-marker:hover { opacity: 1 !important; color: var(--fg); }
 .cm-fold-marker-closed { opacity: .8; } /* a collapsed section always shows its toggle */
@@ -97,8 +102,14 @@ html, body { margin: 0; height: 100%; }
 /* Block-widget vertical spacing MUST be padding, not margin: CM measures a
    widget's height via offsetHeight (which excludes margin), so a margin here
    desyncs the height map and makes vertical cursor motion skip lines below. */
-.cm-mermaid { display: block; padding: .8em 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); }
-.cm-mermaid svg { display: block; width: 100%; height: auto; }
+/* Natural-size mermaid: the diagram renders at its own width/height (mermaid
+   stamps inline max-width:<natural>px on the <svg>), centered in the column. The
+   CSS `max-width:100%` is a second cap so a diagram wider than the column scales
+   down; small diagrams stay natural. A px size declaration (first line `300,400`)
+   pins host width/height inline + sets overflow:auto (applyDimensions), so the
+   widget overrides this `overflow:hidden` per-axis. */
+.cm-mermaid { display: flex; justify-content: center; padding: .8em 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.cm-mermaid svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
 .cm-mermaid-error { color: #dc2626; white-space: pre-wrap; padding: .75em; }
 .cm-mermaid svg { cursor: grab; }
 .cm-mermaid svg:active { cursor: grabbing; }

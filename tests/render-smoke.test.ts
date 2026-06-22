@@ -199,6 +199,37 @@ describe("full-editor render smoke", () => {
     e.view.destroy();
   });
 
+  it("renders a mermaid fence as a block widget (StateField path); reveals raw on caret entry", () => {
+    const doc = "intro\n\n```mermaid\ngraph TD\n  A-->B\n```\n\ntail";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    // the block-widget container exists (proves block decoration came from the
+    // StateField, not a ViewPlugin — CM would throw otherwise)
+    expect(view.contentDOM.querySelector(".cm-mermaid")).not.toBeNull();
+    expect(view.contentDOM.textContent).not.toContain("```mermaid");
+    // caret inside → raw source (fence + body) revealed for editing
+    view.dispatch({ selection: { anchor: doc.indexOf("graph TD") } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-mermaid")).toBeNull();
+    expect(view.contentDOM.textContent).toContain("```mermaid");
+    view.destroy();
+  });
+
+  it("mounts a mermaid fence carrying a px size declaration without throwing (dims path)", () => {
+    // first line `300, 400` is a size declaration stripped by parseDimensions;
+    // the widget must still mount as a block widget (no throw, .cm-mermaid present)
+    const doc = "intro\n\n```mermaid\n300, 400\ngraph TD\n  A-->B\n```\n\ntail";
+    let view!: ReturnType<typeof mount>;
+    expect(() => {
+      view = mount(host, doc);
+      view.dispatch({ selection: { anchor: 0 } });
+      (view as unknown as { measure(): void }).measure();
+    }).not.toThrow();
+    expect(view.contentDOM.querySelector(".cm-mermaid")).not.toBeNull();
+    view.destroy();
+  });
+
   it("renders unordered list markers as CSS bullets; ordered numbers stay", () => {
     const doc = "- Fruit\n- Veg\n\n1. First\n2. Second";
     const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
