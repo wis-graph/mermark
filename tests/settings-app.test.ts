@@ -166,6 +166,25 @@ describe("app settings", () => {
     expect(app.themeForceSetting.get()).toBe("follow");
   });
 
+  it("seedSessionMode seeds the live mode from the boot default (defaultMode=edit → mode=edit)", async () => {
+    localStorage.setItem("mermark.defaultMode", "edit");
+    const { modeSetting, defaultModeSetting, seedSessionMode } = await import("../src/settings/app");
+    expect(defaultModeSetting.get()).toBe("edit");
+    expect(modeSetting.get()).toBe("read"); // unseeded default
+    seedSessionMode();
+    expect(modeSetting.get()).toBe("edit"); // boot mode = the panel default
+  });
+
+  it("seedSessionMode leaves modeSetting as the live session value after boot (toggle ≠ default)", async () => {
+    localStorage.setItem("mermark.defaultMode", "read");
+    const { modeSetting, defaultModeSetting, seedSessionMode } = await import("../src/settings/app");
+    seedSessionMode();
+    expect(modeSetting.get()).toBe("read");
+    modeSetting.set("edit"); // session ⌘E toggle
+    expect(modeSetting.get()).toBe("edit");
+    expect(defaultModeSetting.get()).toBe("read"); // boot source untouched by the toggle
+  });
+
   it("renders all five categories in the registry (Theme/Typography/Editor/Mermaid/Plugins)", async () => {
     await import("../src/settings/app");
     const { groups } = await import("../src/settings/registry");

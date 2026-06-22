@@ -16,8 +16,14 @@ import {
   fontSizeSetting,
   readingWidthSetting,
   lineHeightSetting,
+  headingRatioSetting,
+  autosaveDelaySetting,
+  conflictPolicySetting,
+  panZoomSetting,
+  themeForceSetting,
+  seedSessionMode,
 } from "./settings/app";
-import { themeVarsSink, cssVarSink } from "./settings/sinks";
+import { themeVarsSink, cssVarSink, headingScaleSink } from "./settings/sinks";
 import { mountSettingsButton } from "./settings/panel/modal";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
@@ -99,6 +105,9 @@ async function boot() {
   fontSizeSetting.bind(cssVarSink("--editor-font-size", (px: number) => `${px}px`));
   readingWidthSetting.bind(cssVarSink("--measure", (px: number) => `${px}px`));
   lineHeightSetting.bind(cssVarSink("--line-height"));
+  // Heading typescale: one ratio → six --hN-scale vars (headingScaleSink fans
+  // them; styles.css multiplies each into its line's font-size calc).
+  headingRatioSetting.bind(headingScaleSink());
   const root = document.querySelector<HTMLDivElement>("#app")!;
   const file = new URLSearchParams(location.search).get("file");
   if (!file) {
@@ -119,6 +128,10 @@ async function boot() {
     root.append(host, bar);
 
     const baseDir = dirOf(file);
+    // Boot mode = the panel's defaultMode (seed the live modeSetting from it),
+    // then read it. After boot, ⌘E only moves modeSetting; defaultMode re-seeds
+    // on the next launch. The two settings stay distinct (boot source vs session).
+    seedSessionMode();
     const initialMode = modeSetting.get();
     const toggleMode = () => modeSetting.set(modeSetting.get() === "edit" ? "read" : "edit");
 
@@ -144,6 +157,8 @@ async function boot() {
       onToggleMode: toggleMode,
       onCursor: (line, col) => (pos.textContent = `Ln ${line}, Col ${col}`),
       baseMtime: mtime,
+      autosaveDelay: autosaveDelaySetting.get(),
+      conflictPolicy: conflictPolicySetting.get(),
     });
     save.onForceSave(() => editor.forceSave());
     // Don't lose the last keystrokes typed within the autosave debounce window:
@@ -171,6 +186,18 @@ async function boot() {
       refreshMermaidTheme(t);
       editor.refresh();
     });
+    // Editor-behavior sinks: the settings are the writers, the editor controller
+    // is the single sink for each (no hand fan-out). autosaveDelay/conflictPolicy
+    // were seeded via mountEditor opts above; these keep them live.
+    autosaveDelaySetting.subscribe((ms) => editor.setAutosaveDelay(ms));
+    conflictPolicySetting.subscribe((p) => editor.setConflictPolicy(p));
+    // themeForce re-bake is owned by mermaid-widget (self-subscription); main
+    // only triggers the redraw it alone can dispatch — symmetric with the
+    // themeSetting sink above, minus mermaid's theme knowledge.
+    themeForceSetting.subscribe(() => editor.refresh());
+    // panZoom toggle: re-render blocks so MermaidWidget (which snapshots panZoom
+    // in eq) re-creates and initPanZoom re-runs with the new value.
+    panZoomSetting.subscribe(() => editor.refresh());
     // dev-only: expose the controller so the debug harness can read real editor
     // state (selection offsets, block specs) instead of guessing from the DOM.
     if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)

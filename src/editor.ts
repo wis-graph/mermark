@@ -5,11 +5,22 @@ import { invoke } from "@tauri-apps/api/core";
 import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode } from "./markdown/live-preview";
 import { markdownFolding } from "./markdown/fold";
 import { markdownLang } from "./markdown/parser";
-
-const SAVE_DEBOUNCE_MS = 500;
+import type { ConflictPolicy } from "./settings/app";
 
 export type SaveStatus = "saved" | "saving" | "error" | "conflict";
 export type { PreviewMode };
+
+/** Default autosave debounce used when the caller threads no delay (e.g. tests
+ *  that mount without opts). The live value flows from autosaveDelaySetting. */
+const DEFAULT_AUTOSAVE_DELAY_MS = 800;
+
+/** The conflict-resolution rule in one named place: should a refused write
+ *  (the file changed on disk) clobber the external change with the user's
+ *  buffer? `overwrite` says yes (data-loss risk, opt-in); `pause` (default)
+ *  says no — keep the buffer, halt autosave, rescue on close. Pure (CQS). */
+export function shouldOverwriteOnConflict(policy: ConflictPolicy): boolean {
+  return policy === "overwrite";
+}
 
 export interface EditorController {
   view: EditorView;
@@ -33,6 +44,13 @@ export interface EditorController {
    *  `.mermark-recovered` instead, so neither the edits nor the external change
    *  are lost. Used by the window-close handler. */
   saveOnClose(): Promise<void>;
+  /** Live autosave-debounce sink: the new delay applies from the NEXT debounce
+   *  (already-scheduled timers keep their delay, so no keystroke is lost). */
+  setAutosaveDelay(ms: number): void;
+  /** Live conflict-policy sink: pause (keep buffer) vs overwrite (clobber the
+   *  external change). Read at conflict time, so a change applies to the next
+   *  refused write. */
+  setConflictPolicy(p: ConflictPolicy): void;
 }
 
 /** Debounced autosave to disk. Tracks the file's modification time as a baseline
@@ -43,6 +61,8 @@ function makeAutosave(
   path: string,
   baseMtime: number,
   onStatus: (s: SaveStatus, detail?: string) => void,
+  getDelay: () => number,
+  getPolicy: () => ConflictPolicy,
 ) {
   const recoveryPath = `${path}.mermark-recovered`;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -52,7 +72,31 @@ function makeAutosave(
   let closing = false; // window is closing; stop accepting new autosave work
   let inFlight: Promise<void> | null = null;
 
-  /** Persist `text` to the file, honoring the conflict guard. */
+  /** The debounce in effect right now (read live so a settings change applies
+   *  from the next debounce — already-scheduled timers keep their delay). */
+  const currentDelay = (): number => getDelay();
+
+  /** Overwrite the file with `text` at baseline 0 (discard the external change),
+   *  re-arming autosave. Shared by the conflict `overwrite` policy and the
+   *  manual force-save button so the clobber-and-rebaseline rule lives once. */
+  const overwriteOnDisk = (text: string): Promise<void> => {
+    const p = invoke<number>("write_file", { path, text, baseline: 0 })
+      .then((mtime) => {
+        if (typeof mtime === "number" && mtime > 0) baseline = mtime;
+        conflicted = false;
+        onStatus("saved");
+      })
+      .catch((err) => onStatus("error", String(err)))
+      .finally(() => {
+        if (inFlight === p) inFlight = null;
+      });
+    inFlight = p;
+    return p;
+  };
+
+  /** Persist `text` to the file, honoring the conflict guard. On a refused
+   *  write the conflict policy decides: `overwrite` clobbers the external
+   *  change immediately; `pause` (default) halts autosave and waits. */
   const save = (text: string): Promise<void> => {
     const p = invoke<number>("write_file", { path, text, baseline })
       .then((mtime) => {
@@ -63,6 +107,10 @@ function makeAutosave(
       .catch((err) => {
         const msg = String(err);
         if (msg.startsWith("CONFLICT")) {
+          if (shouldOverwriteOnConflict(getPolicy())) {
+            overwriteOnDisk(text); // policy: discard the external change
+            return;
+          }
           conflicted = true;
           onStatus("conflict", msg);
         } else {
@@ -88,7 +136,7 @@ function makeAutosave(
         const text = pending;
         pending = null;
         if (text !== null) save(text);
-      }, SAVE_DEBOUNCE_MS);
+      }, currentDelay());
     }),
     /** Save the buffered edit now (leaving edit mode). No-op while conflicted —
      *  the buffer stays put and is rescued on close or via forceSave. */
@@ -101,20 +149,10 @@ function makeAutosave(
     },
     hasWork: () => pending !== null || inFlight !== null,
     forceSave(text: string) {
-      clearTimeout(timer);
+      clearTimeout(timer); // absorb any scheduled debounce so it can't fire a duplicate write
       pending = null;
       onStatus("saving");
-      const p = invoke<number>("write_file", { path, text, baseline: 0 })
-        .then((mtime) => {
-          if (typeof mtime === "number" && mtime > 0) baseline = mtime;
-          conflicted = false;
-          onStatus("saved");
-        })
-        .catch((err) => onStatus("error", String(err)))
-        .finally(() => {
-          if (inFlight === p) inFlight = null;
-        });
-      inFlight = p;
+      overwriteOnDisk(text);
     },
     beginClose() {
       closing = true;
@@ -137,7 +175,19 @@ function makeAutosave(
           }
         }
       }
-      // Conflicted: don't clobber the file. Park the buffer beside it instead.
+      // Conflicted on the way out. The overwrite policy clobbers the external
+      // change (discard it); pause (default) parks the buffer beside the file so
+      // neither side is lost.
+      if (shouldOverwriteOnConflict(getPolicy())) {
+        try {
+          const mtime = await invoke<number>("write_file", { path, text, baseline: 0 });
+          if (typeof mtime === "number" && mtime > 0) baseline = mtime;
+          onStatus("saved");
+        } catch (err) {
+          onStatus("error", String(err));
+        }
+        return;
+      }
       try {
         await invoke("write_file", { path: recoveryPath, text, baseline: 0 });
         onStatus("conflict", `편집 내용을 ${recoveryPath} 에 보존했습니다`);
@@ -172,6 +222,10 @@ export function mountEditor(
     onCursor?: (line: number, col: number) => void;
     /** Modification time observed when `doc` was read — the autosave baseline. */
     baseMtime?: number;
+    /** Initial autosave debounce in ms (live value flows via setAutosaveDelay). */
+    autosaveDelay?: number;
+    /** Initial conflict policy (live value flows via setConflictPolicy). */
+    conflictPolicy?: ConflictPolicy;
   } = {},
 ): EditorController {
   const {
@@ -180,8 +234,21 @@ export function mountEditor(
     onToggleMode = () => {},
     onCursor = () => {},
     baseMtime = 0,
+    autosaveDelay = DEFAULT_AUTOSAVE_DELAY_MS,
+    conflictPolicy = "pause",
   } = opts;
-  const autosave = makeAutosave(filePath, baseMtime, onStatus);
+  // The SSOT settings are the writers; these mutable cells are the editor's sink
+  // for them. makeAutosave reads them live via getters so a settings change
+  // reaches in-flight behavior without re-creating the autosave controller.
+  let delay = autosaveDelay;
+  let policy: ConflictPolicy = conflictPolicy;
+  const autosave = makeAutosave(
+    filePath,
+    baseMtime,
+    onStatus,
+    () => delay,
+    () => policy,
+  );
   const modeCompartment = new Compartment();
   let mode: PreviewMode = initialMode;
 
@@ -203,6 +270,12 @@ export function mountEditor(
     },
     beginClose: () => autosave.beginClose(),
     saveOnClose: () => autosave.saveOnClose(controller.view.state.doc.toString()),
+    setAutosaveDelay(ms: number) {
+      delay = ms;
+    },
+    setConflictPolicy(p: ConflictPolicy) {
+      policy = p;
+    },
   };
 
   const state = EditorState.create({

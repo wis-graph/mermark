@@ -146,6 +146,16 @@ export const defaultModeSetting = registerSetting<PreviewMode>({
   },
 });
 
+/** Seed the live session mode from the boot default before the editor reads its
+ *  initial mode. defaultMode is the boot-mode source (panel preference);
+ *  modeSetting is the live ⌘E toggle value. Calling this at boot makes the app
+ *  start in the user's chosen default, after which ⌘E only moves modeSetting —
+ *  the default is re-applied on the next boot. Named so boot doesn't inline-mix
+ *  the two settings. Command/CQS: void. */
+export function seedSessionMode(): void {
+  modeSetting.set(defaultModeSetting.get());
+}
+
 /** Autosave debounce in ms. Round 1: declared + rendered; sink deferred. */
 export const autosaveDelaySetting = registerSetting<number>({
   key: "mermark.autosaveDelay",

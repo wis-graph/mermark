@@ -153,14 +153,18 @@ html, body { margin: 0; height: 100%; }
    the PARENT (.cm-content, unscaled), which would pin headings at a fixed size and
    break zoom. calc(... * ratio) keeps them both bigger AND zoom-linked. Never put
    font-size on .cm-content (it collapses async mermaid/katex widgets). h5 = body
-   size set apart by weight; h6 drops below body + muted as caption/overline. */
+   size set apart by weight; h6 drops below body + muted as caption/overline.
+   The per-level scale is a CSS var (--hN-scale) so the headingRatio setting can
+   recompute all six from one ratio (headingScaleSink). The fallback keeps the
+   previous hand-tuned constant so pre-sink first paint matches today's visuals.
+   ZOOM GUARD: the * var(--font-scale, 1) factor stays so ⌘± still scales headings. */
 .cm-editor .cm-line.cm-heading { font-weight: 700; line-height: 1.25; }
-.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 2.0); }
-.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 1.6); }
-.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 1.32); }
-.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 1.15); }
-.cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 1.0); }
-.cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * 0.9); color: var(--muted); }
+.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 2.0)); }
+.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.6)); }
+.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.32)); }
+.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.15)); }
+.cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); }
+.cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); color: var(--muted); }
 
 /* Bottom status bar — all editor chrome lives here, out of the content. */
 .status-bar { flex: none; height: 28px; display: flex; align-items: center; gap: .35em; padding: 0 .6em; border-top: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--muted); user-select: none; }

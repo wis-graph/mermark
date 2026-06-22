@@ -1,18 +1,40 @@
 import { WidgetType } from "@codemirror/view";
 import svgPanZoom from "svg-pan-zoom";
 import { boundedCache } from "./bounded-cache";
-import { panZoomSetting } from "../settings/app";
+import { panZoomSetting, themeForceSetting } from "../settings/app";
 import type { Theme } from "../theme";
 
 type Mermaid = typeof import("mermaid").default;
+type MermaidTheme = "dark" | "default";
+
+/** The "which mermaid theme do we render with" rule in one named place. The app
+ *  theme is the baseline (light → mermaid "default", dark → "dark"), but the
+ *  themeForce setting overrides it: `dark`/`light` pin the diagram theme
+ *  regardless of the app, `follow` (default) tracks the app. Both loadMermaid
+ *  and refreshMermaidTheme route through here so the rule lives once. Pure. */
+export function effectiveMermaidTheme(appTheme: Theme): MermaidTheme {
+  switch (themeForceSetting.get()) {
+    case "dark":
+      return "dark";
+    case "light":
+      return "default";
+    default:
+      return appTheme === "light" ? "default" : "dark";
+  }
+}
+
+// The last app theme passed to refreshMermaidTheme, remembered so the themeForce
+// self-subscription can re-bake without main.ts handing it the app theme again.
+let lastAppTheme: Theme = "dark";
 
 // Mermaid is ~1.3MB — load it only when the first diagram renders.
 let mermaidLoader: Promise<Mermaid> | null = null;
 function loadMermaid(): Promise<Mermaid> {
   if (!mermaidLoader)
     mermaidLoader = import("mermaid").then(({ default: m }) => {
-      const light = document.documentElement.dataset.theme === "light";
-      m.initialize({ startOnLoad: false, securityLevel: "strict", theme: light ? "default" : "dark" });
+      const appTheme: Theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+      lastAppTheme = appTheme;
+      m.initialize({ startOnLoad: false, securityLevel: "strict", theme: effectiveMermaidTheme(appTheme) });
       return m;
     });
   return mermaidLoader;
@@ -30,18 +52,25 @@ let idSeq = 0;
 let themeVersion = 0;
 
 /** Re-theme mermaid live (no page reload): clear the cache, re-init mermaid with
- *  the given theme, and bump the version so widgets re-render. The theme is
- *  passed in (a SSOT sink) rather than pulled from the DOM. */
+ *  the effective theme, and bump the version so widgets re-render. The app theme
+ *  is passed in (a SSOT sink) rather than pulled from the DOM, and remembered so
+ *  the themeForce self-subscription can re-bake with it. */
 export function refreshMermaidTheme(theme: Theme) {
+  lastAppTheme = theme;
   themeVersion++;
   svgCache.clear();
   if (mermaidLoader) {
-    const light = theme === "light";
     mermaidLoader.then((m) =>
-      m.initialize({ startOnLoad: false, securityLevel: "strict", theme: light ? "default" : "dark" }),
+      m.initialize({ startOnLoad: false, securityLevel: "strict", theme: effectiveMermaidTheme(theme) }),
     );
   }
 }
+
+// themeForce is a mermaid-domain rule, so the widget layer owns its re-bake:
+// when the user pins/unpins the diagram theme, re-bake against the last app
+// theme. The redraw dispatch (refreshBlocks) is main.ts's job since only it
+// holds the editor handle — main stays free of mermaid theme knowledge.
+themeForceSetting.subscribe(() => refreshMermaidTheme(lastAppTheme));
 
 // Height of the most recently rendered diagram. When a re-render misses the
 // cache (the source was edited), we reserve this height on the new host while
@@ -58,6 +87,10 @@ export interface MermaidDims {
 
 export class MermaidWidget extends WidgetType {
   readonly version = themeVersion; // captured at construction; see refreshMermaidTheme
+  // Snapshot the pan/zoom setting at construction so a live toggle makes eq()
+  // false → CM re-creates the host → initPanZoom re-runs with the new value.
+  // (refreshBlocks alone wouldn't redraw an eq()-equal widget.)
+  readonly panZoom = panZoomSetting.get();
   constructor(
     readonly code: string,
     readonly dims: MermaidDims = { width: null, height: null },
@@ -68,6 +101,7 @@ export class MermaidWidget extends WidgetType {
     return (
       o.code === this.code &&
       o.version === this.version &&
+      o.panZoom === this.panZoom &&
       o.dims.width === this.dims.width &&
       o.dims.height === this.dims.height
     );
