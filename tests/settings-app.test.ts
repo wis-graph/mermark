@@ -153,9 +153,34 @@ describe("app settings", () => {
     const app = await import("../src/settings/app");
     expect(app.fontSizeSetting.get()).toBe(16); // 1rem base
     expect(app.lineHeightSetting.get()).toBe(1.6);
-    expect(app.readingWidthSetting.get()).toBe(820);
+    expect(app.readingWidthSetting.get()).toBe(68); // P2: measure is ch-based now
     app.fontSizeSetting.set(18);
     expect(localStorage.getItem("mermark.fontSize")).toBe("18");
+  });
+
+  it("clampReadingWidth holds the 40–90ch measure rule", async () => {
+    const { clampReadingWidth } = await import("../src/settings/app");
+    expect(clampReadingWidth(820)).toBe(90); // px-era saved value → clamp-as-migration ceiling
+    expect(clampReadingWidth(30)).toBe(40); // below the floor
+    expect(clampReadingWidth(68)).toBe(68); // inside the range passes through
+  });
+
+  it("readingWidthSetting clamps a px-era saved value to the ch ceiling (clamp-as-migration)", async () => {
+    localStorage.setItem("mermark.readingWidth", "820"); // a value stored in the px era
+    const { readingWidthSetting } = await import("../src/settings/app");
+    expect(readingWidthSetting.get()).toBe(90); // parse routes through clampReadingWidth → 90ch
+  });
+
+  it("readingWidthSetting reads an in-range saved ch value over the default", async () => {
+    localStorage.setItem("mermark.readingWidth", "72");
+    const { readingWidthSetting } = await import("../src/settings/app");
+    expect(readingWidthSetting.get()).toBe(72);
+  });
+
+  it("readingWidthSetting falls back to the default on a corrupt saved value", async () => {
+    localStorage.setItem("mermark.readingWidth", "abc");
+    const { readingWidthSetting } = await import("../src/settings/app");
+    expect(readingWidthSetting.get()).toBe(68); // NaN → default
   });
 
   it("declares editor + mermaid settings with defaults", async () => {
@@ -190,5 +215,113 @@ describe("app settings", () => {
     const { groups } = await import("../src/settings/registry");
     const names = groups().map((g) => g.name);
     expect(names).toEqual(["테마", "타이포그래피", "에디터", "Mermaid", "플러그인"]);
+  });
+
+  // ── P0: Pretendard bundle — default-value regression guard ──────────────────
+
+  const INTER_STACK = '"Inter", system-ui, sans-serif';
+
+  it("fontFamilySetting still defaults to Inter after adding the Pretendard option (visual regression guard)", async () => {
+    const { fontFamilySetting } = await import("../src/settings/app");
+    // Adding "Pretendard" to FONT_STACKS must NOT flip the default — a user with no
+    // saved preference keeps the current Inter visuals. Pretendard is opt-in only.
+    expect(fontFamilySetting.get()).toBe(INTER_STACK);
+  });
+
+  it("FONT_STACKS exposes a Pretendard option in the 글꼴 select", async () => {
+    await import("../src/settings/app");
+    const { groups } = await import("../src/settings/registry");
+    const typo = groups().find((g) => g.name === "타이포그래피");
+    const font = typo!.entries.find((e) => e.ui.label === "글꼴");
+    const control = font!.ui.control as { kind: "select"; options: { value: string; label: string }[] };
+    expect(control.kind).toBe("select");
+    expect(control.options.some((o) => /Pretendard/.test(String(o.value)))).toBe(true);
+  });
+
+  // ── P0: Google Fonts loader — googleFontHref (sanitization) ─────────────────
+
+  describe("googleFontHref (Google Fonts URL builder + sanitization)", () => {
+    it("builds a CSS2 stylesheet URL for a normal family with %20-encoded spaces", async () => {
+      const { googleFontHref } = await import("../src/settings/app");
+      expect(googleFontHref("Noto Sans KR")).toBe(
+        "https://fonts.googleapis.com/css2?family=Noto%20Sans%20KR&display=swap",
+      );
+    });
+
+    it("returns null for empty/whitespace input (off)", async () => {
+      const { googleFontHref } = await import("../src/settings/app");
+      expect(googleFontHref("")).toBeNull();
+      expect(googleFontHref("   ")).toBeNull();
+    });
+
+    it("rejects every injection vector (null), so no second query param / CRLF / origin can be grafted on", async () => {
+      const { googleFontHref } = await import("../src/settings/app");
+      expect(googleFontHref("Roboto&import=x")).toBeNull(); // extra query param
+      expect(googleFontHref('Roboto" onload="')).toBeNull(); // quote/attr break
+      expect(googleFontHref("Roboto\r\nLocation: http://evil")).toBeNull(); // CRLF split
+      expect(googleFontHref("../../evil")).toBeNull(); // path traversal
+      expect(googleFontHref("Roboto?key=x")).toBeNull(); // '?'
+      expect(googleFontHref("<script>")).toBeNull(); // angle brackets
+      expect(googleFontHref("Roboto:wght@700")).toBeNull(); // colon (axis spec out of scope)
+    });
+
+    it("hardcodes the origin so a non-null result always starts with the Google Fonts host", async () => {
+      const { googleFontHref } = await import("../src/settings/app");
+      const href = googleFontHref("Lato");
+      expect(href).not.toBeNull();
+      expect(href!.startsWith("https://fonts.googleapis.com/")).toBe(true);
+    });
+  });
+
+  // ── P0: Google Fonts loader — effectiveReadingFont (precedence) ─────────────
+
+  describe("effectiveReadingFont (web-font vs select precedence)", () => {
+    it("falls back to the select stack when the web font is empty", async () => {
+      const { effectiveReadingFont } = await import("../src/settings/app");
+      expect(effectiveReadingFont("", INTER_STACK)).toEqual({ family: "", stack: INTER_STACK });
+    });
+
+    it("prepends a non-empty web font and keeps the select stack as fallback", async () => {
+      const { effectiveReadingFont } = await import("../src/settings/app");
+      expect(effectiveReadingFont("Noto Sans KR", INTER_STACK)).toEqual({
+        family: "Noto Sans KR",
+        stack: `"Noto Sans KR", ${INTER_STACK}`,
+      });
+    });
+
+    it("trims a whitespace-only web font to empty (no web font)", async () => {
+      const { effectiveReadingFont } = await import("../src/settings/app");
+      expect(effectiveReadingFont("   ", INTER_STACK)).toEqual({ family: "", stack: INTER_STACK });
+    });
+  });
+
+  // ── P0: Google Fonts loader — webFontSetting declaration ────────────────────
+
+  describe("webFontSetting", () => {
+    it("defaults to an empty string (no web font = prior behavior)", async () => {
+      const { webFontSetting } = await import("../src/settings/app");
+      expect(webFontSetting.get()).toBe("");
+    });
+
+    it("persists a typed family under mermark.webFont", async () => {
+      const { webFontSetting } = await import("../src/settings/app");
+      webFontSetting.set("Roboto");
+      expect(localStorage.getItem("mermark.webFont")).toBe("Roboto");
+    });
+
+    it("reads a saved family on construction", async () => {
+      localStorage.setItem("mermark.webFont", "Lato");
+      const { webFontSetting } = await import("../src/settings/app");
+      expect(webFontSetting.get()).toBe("Lato");
+    });
+
+    it("appears in the 타이포그래피 group as a text control", async () => {
+      await import("../src/settings/app");
+      const { groups } = await import("../src/settings/registry");
+      const typo = groups().find((g) => g.name === "타이포그래피");
+      const entry = typo!.entries.find((e) => e.ui.label === "웹폰트 (Google Fonts)");
+      expect(entry).toBeDefined();
+      expect(entry!.ui.control.kind).toBe("text");
+    });
   });
 });

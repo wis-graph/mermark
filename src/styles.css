@@ -15,13 +15,16 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   /* Typography panel vars (SSOT: fontSize/readingWidth/lineHeight settings →
-     cssVarSink). Defaults preserve the current visuals exactly:
-       --editor-font-size 1rem (16px), --measure 820px, --line-height 1.6.
+     cssVarSink). Defaults:
+       --editor-font-size 1rem (16px), --measure 68ch, --line-height 1.6.
+     --measure is a char-count measure (Butterick/iA Writer 45–75 char), held as a
+     pure <n>ch number by the sink; .cm-content caps it with min(--measure, 100%)
+     so a wide ch never overflows a narrow viewport.
      ZOOM GUARD: --editor-font-size is composed with --font-scale (⌘± zoom) via
      calc() ONLY on .cm-line / heading lines — never as a fixed font-size on
      .cm-content (that collapses async mermaid/katex widgets to 0 height). */
   --editor-font-size: 1rem;
-  --measure: 820px;
+  --measure: 68ch;
   --line-height: 1.6;
   /* Reading-column font (Typography fontFamily setting). Falls back to the body
      sans stack so the editor inherits --font-sans when no preference is set. */
@@ -36,16 +39,17 @@
      SSOT settings store (that is for per-user prefs). Values are in `em` (not the
      px of DESIGN.md) so letter-spacing scales with --font-scale (⌘± zoom) and the
      headingRatio scale — the ZOOM GUARD spirit applied to tracking. Body: Inter
-     +0.16px@16px ≈ +0.01em. Headings: DESIGN.md display negative tracking, em-mapped:
-       h1 display-mega/xl (-1.92..-0.96px) → -0.02em
-       h2 display-lg (-0.36px)            → -0.015em
-       h3 display-md (-0.32px)            → -0.01em
-       h4 display-sm                      → -0.005em
-       h5 title / h6 caption              → 0 (no negative tracking) */
+     +0.16px@16px ≈ +0.01em. Headings: DESIGN.md display negative tracking, em-mapped
+     and tuned to the professional-typography request (tighter display tracking):
+       h1 display-mega/xl  → -0.021em
+       h2 display-lg       → -0.018em
+       h3 display-md       → -0.014em
+       h4 display-sm       → -0.005em
+       h5 title / h6 caption → 0 (no negative tracking) */
   --body-tracking: 0.01em;
-  --h1-tracking: -0.02em;
-  --h2-tracking: -0.015em;
-  --h3-tracking: -0.01em;
+  --h1-tracking: -0.021em;
+  --h2-tracking: -0.018em;
+  --h3-tracking: -0.014em;
   --h4-tracking: -0.005em;
   --h5-tracking: 0;
   --h6-tracking: 0;
@@ -68,13 +72,28 @@ html, body { margin: 0; height: 100%; }
 #app { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 .editor-host { flex: 1; min-height: 0; overflow: hidden; }
 .cm-editor { height: 100%; }
-/* Center the 820px reading column. CM makes .cm-scroller a flex row with the
+/* Center the reading column (width = --measure, a ch count). CM makes .cm-scroller a flex row with the
    content as its only child, so center via the container with `safe`: if any
    line is wider than the viewport it falls back to flex-start (scrolls) instead
    of clipping the left/start edge. Item `margin: auto` collapses under overflow
    and shoves the column off-screen — don't use it. */
 .cm-scroller { justify-content: safe center; }
-.cm-editor .cm-content { max-width: var(--measure, 820px); padding: 2rem 1rem; font-family: var(--reading-font, var(--font-sans)); }
+/* P2: --measure is a ch count; min(…,100%) caps it to the viewport so a wide
+   reading width can't push the column past a narrow window and clip the start
+   edge. P1: glyph-render hints — all font-size-INERT (smoothing/optical-sizing
+   change glyph rendering, kerning/legibility change horizontal advance only), so
+   the ZOOM GUARD holds: no font-size here means async mermaid/katex widgets never
+   collapse to 0 offsetHeight. font-size is forbidden on .cm-content. */
+.cm-editor .cm-content {
+  max-width: min(var(--measure, 68ch), 100%);
+  padding: 2rem 1rem;
+  font-family: var(--reading-font, var(--font-sans));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+  font-optical-sizing: auto;
+}
 /* Body text scale: --font-scale (SSOT fontScaleSetting → applyFontScale sink)
    drives the font-size on the LINE elements, NOT on .cm-content. .cm-content is
    CodeMirror's line/widget measure root — a calc()/var() font-size there collapses
@@ -89,7 +108,10 @@ html, body { margin: 0; height: 100%; }
    zoom; letter-spacing affects horizontal advance only (CM height measure is vertical
    offsetHeight) so the font-size calc is untouched — ZOOM GUARD holds. Code/table
    reset it below so the looser body tracking never leaks into monospace/tabular text. */
-.cm-editor .cm-line { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1)); line-height: var(--line-height, 1.6); letter-spacing: var(--body-tracking, 0.01em); }
+/* P4: text-wrap: pretty re-positions soft-wrap breaks to avoid orphans. It only
+   changes WHERE lines break, not line-height/font-size, and block widgets render
+   in their own containers outside .cm-line, so it's widget-measure-inert. */
+.cm-editor .cm-line { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1)); line-height: var(--line-height, 1.6); letter-spacing: var(--body-tracking, 0.01em); text-wrap: pretty; }
 /* CM hard-codes a black caret; follow the text colour so it shows in dark mode. */
 .cm-editor .cm-content { caret-color: var(--fg); }
 /* fold toggles sit in the gutter, which `justify-content: center` parks right
@@ -298,6 +320,8 @@ html, body { margin: 0; height: 100%; }
 .settings-seg-btn[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
 
 .settings-select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: .35em .5em; font: inherit; font-size: 13px; }
+.settings-text { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: .35em .5em; font: inherit; font-size: 13px; }
+.settings-text-help { margin-top: .35em; font-size: 12px; color: var(--muted); }
 .settings-slider { flex: 1; }
 .settings-slider-value { flex: none; width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
 

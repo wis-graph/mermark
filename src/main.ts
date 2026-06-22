@@ -13,6 +13,8 @@ import {
   loadPreset,
   themeJsonSetting,
   fontFamilySetting,
+  webFontSetting,
+  effectiveReadingFont,
   fontSizeSetting,
   readingWidthSetting,
   lineHeightSetting,
@@ -23,7 +25,7 @@ import {
   themeForceSetting,
   seedSessionMode,
 } from "./settings/app";
-import { themeVarsSink, cssVarSink, headingScaleSink } from "./settings/sinks";
+import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./settings/sinks";
 import { mountSettingsButton } from "./settings/panel/modal";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
@@ -102,9 +104,18 @@ async function boot() {
   // Typography sinks — one setting.bind(sink) line each, no hand fan-out. These
   // drive CSS vars composed in styles.css (--editor-font-size composes with
   // --font-scale; --measure caps the reading column; --line-height the leading).
-  fontFamilySetting.bind(cssVarSink("--reading-font"));
+  // --reading-font has a SINGLE writer: webFontSink. The web font (if any) and the
+  // font-family select are composed by effectiveReadingFont into {family, stack}
+  // and fed to that one sink, so the head <link> + the var never have two writers
+  // racing. webFontSetting.bind does the boot-time first apply; fontFamily only
+  // re-composes on change (subscribe), so they don't double-apply at boot.
+  const applyReadingFont = webFontSink();
+  const composeReadingFont = () =>
+    applyReadingFont(effectiveReadingFont(webFontSetting.get(), fontFamilySetting.get()));
+  webFontSetting.bind(composeReadingFont); // initial + on web-font change
+  fontFamilySetting.subscribe(composeReadingFont); // re-compose when the select changes
   fontSizeSetting.bind(cssVarSink("--editor-font-size", (px: number) => `${px}px`));
-  readingWidthSetting.bind(cssVarSink("--measure", (px: number) => `${px}px`));
+  readingWidthSetting.bind(cssVarSink("--measure", (ch: number) => `${ch}ch`));
   lineHeightSetting.bind(cssVarSink("--line-height"));
   // Heading typescale: one ratio → six --hN-scale vars (headingScaleSink fans
   // them; styles.css multiplies each into its line's font-size calc).

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { headingScales, headingScaleSink } from "../src/settings/sinks";
+import { headingScales, headingScaleSink, cssVarSink, webFontSink } from "../src/settings/sinks";
+import { googleFontHref } from "../src/settings/app";
 
 describe("headingScales (heading typescale rule)", () => {
   it("returns six per-level scales", () => {
@@ -56,5 +57,58 @@ describe("headingScaleSink (one ratio fans six CSS vars)", () => {
       headingScales("1.2")[0],
       5,
     );
+  });
+});
+
+describe("cssVarSink (reading width as ch)", () => {
+  beforeEach(() => {
+    document.documentElement.style.removeProperty("--measure");
+  });
+
+  it("formats the reading width as a ch value (P2 measure unit)", () => {
+    // main.ts binds readingWidthSetting → this formatter; lock the ch unit here so
+    // the px→ch unit transition can't silently regress to "68px".
+    cssVarSink<number>("--measure", (ch) => `${ch}ch`)(68);
+    expect(document.documentElement.style.getPropertyValue("--measure")).toBe("68ch");
+  });
+});
+
+describe("webFontSink (single owner of the <head> link + --reading-font)", () => {
+  const ID = "mermark-webfont";
+  const link = () => document.getElementById(ID) as HTMLLinkElement | null;
+
+  beforeEach(() => {
+    link()?.remove();
+    document.documentElement.style.removeProperty("--reading-font");
+  });
+
+  it("injects exactly one <link> at the googleFontHref URL and writes --reading-font", () => {
+    webFontSink()({ family: "Noto Sans KR", stack: '"X", system-ui' });
+    expect(link()).not.toBeNull();
+    expect(link()!.href).toBe(googleFontHref("Noto Sans KR"));
+    expect(document.querySelectorAll(`#${ID}`)).toHaveLength(1);
+    expect(document.documentElement.style.getPropertyValue("--reading-font")).toBe('"X", system-ui');
+  });
+
+  it("replaces (keeps a single link) when the family changes — no duplicate injection", () => {
+    const sink = webFontSink();
+    sink({ family: "Noto Sans KR", stack: "X" });
+    sink({ family: "Lato", stack: "X" });
+    expect(document.querySelectorAll(`#${ID}`)).toHaveLength(1);
+    expect(link()!.href).toBe(googleFontHref("Lato"));
+  });
+
+  it("removes the link when the family is empty, leaving the stack on --reading-font", () => {
+    webFontSink()({ family: "Lato", stack: "X" });
+    webFontSink()({ family: "", stack: "Y" });
+    expect(link()).toBeNull();
+    expect(document.documentElement.style.getPropertyValue("--reading-font")).toBe("Y");
+  });
+
+  it("removes the link when the family is invalid (googleFontHref → null), still setting the stack", () => {
+    webFontSink()({ family: "Lato", stack: "X" });
+    webFontSink()({ family: "Roboto&evil", stack: "Z" });
+    expect(link()).toBeNull(); // invalid family → no URL → no link
+    expect(document.documentElement.style.getPropertyValue("--reading-font")).toBe("Z");
   });
 });

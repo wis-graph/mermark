@@ -58,19 +58,77 @@ export function loadPreset(name: PresetName): void {
 
 // ── 타이포그래피 (Typography) ─────────────────────────────────────────────────
 
+// The Inter stack is BOTH a select option and the default — pinned by name (not
+// FONT_STACKS[0]) so adding the Pretendard option below can't silently flip the
+// default and regress a no-preference user's visuals (DESIGN: Pretendard is
+// opt-in only).
+const INTER_STACK = '"Inter", system-ui, sans-serif';
+
 const FONT_STACKS = [
-  { value: '"Inter", system-ui, sans-serif', label: "Inter (Sans)" },
+  // Pretendard (bundled woff2): a Korean+Latin sans whose stack ends in system-ui
+  // so glyphs outside the bundled face fall back silently. Opt-in via the select.
+  { value: '"Pretendard Variable", Pretendard, system-ui, sans-serif', label: "Pretendard (Sans · 한글)" },
+  { value: INTER_STACK, label: "Inter (Sans)" },
   { value: "Georgia, 'Times New Roman', serif", label: "Georgia (Serif)" },
   { value: "ui-monospace, monospace", label: "Monospace" },
 ];
 
-/** Font family for the reading column. A CSS font stack (no web-font download). */
+/** Font family for the reading column. A CSS font stack. Default pinned to Inter
+ *  (not FONT_STACKS[0]) so the Pretendard option never shifts the no-preference
+ *  default — Pretendard is opt-in. The web font (webFontSetting) layers on top of
+ *  this via effectiveReadingFont; this stack is the fallback. */
 export const fontFamilySetting = registerSetting<string>({
   key: "mermark.fontFamily",
-  default: FONT_STACKS[0].value,
+  default: INTER_STACK,
   parse: (raw) => (raw == null ? null : raw),
   ui: { label: "글꼴", group: "타이포그래피", control: { kind: "select", options: FONT_STACKS } },
 });
+
+/** User-typed Google Fonts family name. Empty = no web font (the prior behavior);
+ *  a non-empty value loads fonts.googleapis.com and takes over --reading-font (with
+ *  the select stack kept as fallback). The store keeps the raw string the user
+ *  typed; sanitization happens at the URL-build step (googleFontHref), not here. */
+export const webFontSetting = registerSetting<string>({
+  key: "mermark.webFont",
+  default: "",
+  parse: (raw) => (raw == null ? null : raw),
+  ui: {
+    label: "웹폰트 (Google Fonts)",
+    group: "타이포그래피",
+    control: { kind: "text", placeholder: "예: Noto Sans KR", help: "Google Fonts 패밀리 이름. 비우면 사용 안 함." },
+  },
+});
+
+// fonts.googleapis.com is hardcoded here — a user-typed family can NEVER change
+// the origin, so the fetched host is forever exactly what the CSP allowlists.
+const GOOGLE_FONTS_ORIGIN = "https://fonts.googleapis.com";
+// Google family names are letters/digits with internal spaces and hyphens. The
+// allowlist must begin with an alnum, so a leading space/hyphen can't start an
+// injection. Everything else (quotes, CRLF, ?, &, :, /, %, <, >) is rejected.
+const GOOGLE_FAMILY_RE = /^[A-Za-z0-9][A-Za-z0-9 -]*$/;
+
+/** Build a Google Fonts CSS2 stylesheet URL for a user-typed family, or null if
+ *  the family is empty/invalid. The injection allowlist rule lives in ONE named
+ *  place: only [A-Za-z0-9], space, and hyphen survive, so no attacker can graft a
+ *  second query param, a CRLF header split, or an arbitrary origin onto the URL.
+ *  The origin is a hardcoded literal (user input can't move it). CQS: query, pure. */
+export function googleFontHref(family: string): string | null {
+  const trimmed = family.trim();
+  if (trimmed === "") return null; // empty → off
+  if (!GOOGLE_FAMILY_RE.test(trimmed)) return null; // injection gate
+  const enc = encodeURIComponent(trimmed); // "Noto Sans KR" → "Noto%20Sans%20KR"
+  return `${GOOGLE_FONTS_ORIGIN}/css2?family=${enc}&display=swap`;
+}
+
+/** The reading-font precedence rule in ONE named place: a non-empty web font wins
+ *  and is PREPENDED to the chosen select stack (so the local stack stays the
+ *  fallback if the web font fails/offline); an empty web font yields the select
+ *  stack as-is. Returns {family, stack} for webFontSink. CQS: query, pure. */
+export function effectiveReadingFont(webFont: string, stack: string): { family: string; stack: string } {
+  const f = webFont.trim();
+  if (f === "") return { family: "", stack }; // no web font → select stack
+  return { family: f, stack: `"${f}", ${stack}` }; // web font first, stack fallback
+}
 
 /** Base body text size in px → --editor-font-size. Distinct from fontScale (the
  *  transient ⌘± multiplier); styles.css composes them via calc(). Default 16 =
@@ -82,12 +140,34 @@ export const fontSizeSetting = registerSetting<number>({
   ui: { label: "본문 크기", group: "타이포그래피", control: { kind: "slider", min: 12, max: 24, step: 1, unit: "px" } },
 });
 
-/** Reading column width in px → --measure (default 820, the current cap). */
+const READING_WIDTH_MIN_CH = 40; // gradable lower bound (~too narrow below this)
+const READING_WIDTH_MAX_CH = 90; // gradable upper bound (Butterick: lines get too long past ~75–90)
+const READING_WIDTH_DEFAULT_CH = 68; // Butterick/iA Writer measure (45–75 char range)
+
+/** The "valid reading measure (ch)" rule (40–90ch) in one named place. parse and
+ *  the slider bounds both honor it, so the clamp rule lives once (SSOT) — never
+ *  inline Math.min/max scattered around. Same pattern as clampFontScale.
+ *  Doubles as the px→ch migration: a px-era saved value (e.g. 820) clamps to the
+ *  90ch ceiling, monotonically preserving the user's "wide" intent without a
+ *  version flag or a px→ch conversion heuristic. CQS: query, pure. */
+export function clampReadingWidth(n: number): number {
+  return Math.min(READING_WIDTH_MAX_CH, Math.max(READING_WIDTH_MIN_CH, n));
+}
+
+/** Reading column width in ch → --measure (default 68ch; styles.css caps it with
+ *  min(var(--measure), 100%) so a wide ch never overflows a narrow viewport). */
 export const readingWidthSetting = registerSetting<number>({
   key: "mermark.readingWidth",
-  default: 820,
-  parse: numberParse,
-  ui: { label: "본문 너비", group: "타이포그래피", control: { kind: "slider", min: 560, max: 1100, step: 20, unit: "px" } },
+  default: READING_WIDTH_DEFAULT_CH,
+  parse: (raw) => {
+    const n = numberParse(raw);
+    return n == null ? null : clampReadingWidth(n); // corrupt → default; px-era value → clamp
+  },
+  ui: {
+    label: "본문 너비",
+    group: "타이포그래피",
+    control: { kind: "slider", min: READING_WIDTH_MIN_CH, max: READING_WIDTH_MAX_CH, step: 1, unit: "ch" },
+  },
 });
 
 /** Body line-height → --line-height (default 1.6, the current value). */

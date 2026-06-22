@@ -92,6 +92,32 @@ function renderSlider<T>(setting: Setting<T>, control: Extract<Control<T>, { kin
   return r;
 }
 
+/** A free-text input (the web-font family name). Stores the raw typed string —
+ *  validation/sanitization is NOT this renderer's job; it lives downstream in
+ *  googleFontHref (the single URL builder) so the textbox round-trips exactly
+ *  what the user typed. (a) value = setting.get(), (b) input → setting.set(raw),
+ *  (c) subscribe(reflect) for external changes. `help`, if given, renders a
+ *  muted hint node below the input. */
+function renderText(setting: Setting<string>, control: Extract<Control<string>, { kind: "text" }>): HTMLElement {
+  const { row: r, cell } = row("");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "settings-text";
+  if (control.placeholder) input.placeholder = control.placeholder;
+  input.addEventListener("input", () => setting.set(input.value)); // raw; sanitized downstream
+  const reflect = (v: string) => (input.value = v);
+  reflect(setting.get());
+  setting.subscribe(reflect);
+  cell.appendChild(input);
+  if (control.help) {
+    const hint = document.createElement("div");
+    hint.className = "settings-text-help";
+    hint.textContent = control.help;
+    cell.appendChild(hint);
+  }
+  return r;
+}
+
 /** The JSON control owns import (parse-on-적용) and export (copy/download). It is
  *  the only renderer with extra responsibility, all of it routed through the
  *  named theme rules (parseTheme/serializeTheme) — never an inline JSON.parse. A
@@ -182,6 +208,7 @@ export const RENDER: {
   segmented: (s, c) => renderSegmented(s as Setting<unknown>, c),
   select: (s, c) => renderSelect(s as Setting<unknown>, c),
   slider: (s, c) => renderSlider(s as Setting<unknown>, c),
+  text: (s, c) => renderText(s as unknown as Setting<string>, c),
   json: (s) => renderJson(s as unknown as Setting<Theme>),
   info: () => renderInfo(),
 };

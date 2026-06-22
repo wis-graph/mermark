@@ -199,3 +199,36 @@ describe("info control", () => {
     expect(row.textContent).toContain("플러그인");
   });
 });
+
+describe("text control (P0 web-font name input)", () => {
+  it("reflects setting.get() as the text input value", () => {
+    const s = defineSetting<string>({ key: "c.txt", default: "Lato" });
+    const row = RENDER.text(s, { kind: "text" });
+    const input = row.querySelector("input[type=text]") as HTMLInputElement;
+    expect(input.value).toBe("Lato");
+  });
+
+  it("input event writes the raw value via setting.set (sanitization happens downstream)", () => {
+    const s = defineSetting<string>({ key: "c.txt2", default: "" });
+    const row = RENDER.text(s, { kind: "text" });
+    const input = row.querySelector("input[type=text]") as HTMLInputElement;
+    input.value = "Noto Sans KR";
+    fire(input, "input");
+    expect(s.get()).toBe("Noto Sans KR");
+  });
+
+  it("updates live on external change (round-trip)", () => {
+    const s = defineSetting<string>({ key: "c.txt3", default: "" });
+    const row = RENDER.text(s, { kind: "text" });
+    s.set("Roboto");
+    expect((row.querySelector("input[type=text]") as HTMLInputElement).value).toBe("Roboto");
+  });
+
+  it("applies the placeholder and renders the help text when provided", () => {
+    const s = defineSetting<string>({ key: "c.txt4", default: "" });
+    const row = RENDER.text(s, { kind: "text", placeholder: "예: Noto Sans KR", help: "도움말" });
+    const input = row.querySelector("input[type=text]") as HTMLInputElement;
+    expect(input.placeholder).toBe("예: Noto Sans KR");
+    expect(row.textContent).toContain("도움말");
+  });
+});

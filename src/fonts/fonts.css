@@ -38,3 +38,18 @@
   font-display: swap;
   src: url("./cormorant-garamond-latin-300-normal.woff2") format("woff2");
 }
+
+/* Pretendard Variable (SIL OFL) — orioncactus/pretendard official prebuilt
+   variable woff2, vendored verbatim (NOT subset; the official dist file). One
+   variable face covers the whole 45–920 weight range AND the Korean+Latin glyph
+   set, so a Korean body never falls through to system-ui. Same vendoring policy
+   as Inter/Cormorant: the woff2 lives here, npm is not a dependency. Opt-in via
+   the 글꼴 select (default stays Inter). font-display:swap keeps cold paint
+   unblocked (FOUT: system-ui first, Pretendard swaps in). */
+@font-face {
+  font-family: "Pretendard Variable";
+  font-style: normal;
+  font-weight: 45 920;
+  font-display: swap;
+  src: url("./pretendard-variable.woff2") format("woff2-variations");
+}

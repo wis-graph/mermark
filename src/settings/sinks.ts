@@ -3,6 +3,39 @@
 // read here — the value arrives as the argument (main.ts binds setting → sink).
 import { applyThemeVars } from "../theme";
 import { themeToVars, type Theme } from "./theme-schema";
+import { googleFontHref } from "./app";
+
+const WEBFONT_LINK_ID = "mermark-webfont";
+
+/** The web-font sink: given the EFFECTIVE family + reading-font stack, it (1)
+ *  ensures exactly one <link id="mermark-webfont"> in <head> pointing at
+ *  googleFontHref(family) — create or swap href — or removes it when the family
+ *  is empty/invalid, and (2) writes --reading-font. ONE place owns the <head>
+ *  link lifecycle (create/replace/remove) — never N scattered injections, so
+ *  --reading-font keeps a single writer. googleFontHref is the only URL builder
+ *  it calls, so there is no path around the sanitization. Offline: a failed
+ *  <link> load just leaves the fallback stack on --reading-font; the browser
+ *  swallows the 404/timeout silently (no JS fetch, no console-error path).
+ *  Command/CQS: returns void. */
+export function webFontSink(): (effective: { family: string; stack: string }) => void {
+  return ({ family, stack }) => {
+    const href = googleFontHref(family);
+    const existing = document.getElementById(WEBFONT_LINK_ID) as HTMLLinkElement | null;
+    if (href === null) {
+      existing?.remove(); // empty/invalid → no link
+    } else {
+      const link =
+        existing ??
+        (Object.assign(document.createElement("link"), {
+          id: WEBFONT_LINK_ID,
+          rel: "stylesheet",
+        }) as HTMLLinkElement);
+      if (link.href !== href) link.href = href; // create or swap
+      if (!existing) document.head.appendChild(link);
+    }
+    document.documentElement.style.setProperty("--reading-font", stack);
+  };
+}
 
 /** The theme sink: fan a whole token map onto documentElement in one place
  *  (themeJsonSetting.bind(themeVarsSink())). One sink fanning a map — never N
