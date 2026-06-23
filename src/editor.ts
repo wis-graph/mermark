@@ -1,7 +1,7 @@
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView, keymap, highlightActiveLine } from "@codemirror/view";
+import { EditorView, keymap, highlightActiveLine, drawSelection } from "@codemirror/view";
 import { vim } from "@replit/codemirror-vim";
 import { invoke } from "@tauri-apps/api/core";
 import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode } from "./markdown/live-preview";
@@ -355,6 +355,17 @@ export function mountEditor(
         onCursor(line.number, head - line.from + 1);
       }),
       EditorView.lineWrapping,
+      // Render the EditorState selection as CM's own .cm-selectionBackground
+      // overlay layer instead of relying on the browser's native DOM ::selection.
+      // Vim's hideNativeSelection (Prec.highest) forces .cm-vimMode ::selection
+      // transparent, and vim sets visual-mode ranges programmatically as
+      // EditorState selection — with no native selection to paint, the highlight
+      // was invisible. This base layer (outside the vim compartment, always on)
+      // gives every selection range a paintable layer: vim visual mode, edit-mode
+      // drag, and multi-cursor all draw here. Styled via --selection-bg in
+      // styles.css. Measure-inert overlay — it never touches .cm-content/.cm-line
+      // font-size, so the ⌘± zoom guard holds.
+      drawSelection(),
     ],
   });
   controller.view = new EditorView({ state, parent });

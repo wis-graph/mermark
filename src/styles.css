@@ -10,6 +10,11 @@
   --border: rgba(255,255,255,.12);
   --muted: #a8a29e;             /* on-dark-soft / muted-soft */
   --highlight-bg: #ffe066;      /* fluorescent mark — saturated to pop on dark canvas */
+  /* Text-selection background (CM drawSelection .cm-selectionBackground + native
+     ::selection). Selection is an OS/editor affordance, not a brand color, so it
+     uses the standard blue family (the existing --link sky tint) at low alpha so
+     ink stays legible underneath. dark = sky #a8c8e8 over the near-black canvas. */
+  --selection-bg: rgba(168, 200, 232, 0.35);
   --font-sans: "Inter", system-ui, sans-serif;
   /* DESIGN.md border-radius scale (rounded.*). Formalize the xs/sm/pill that the
      rest of the sheet has been reaching for via var(--radius-xs,4px) fallbacks;
@@ -70,6 +75,8 @@
   --border: #e7e5e4;            /* hairline */
   --muted: #777169;             /* muted */
   --highlight-bg: #fff3a3;      /* soft pastel mark on the bright editorial canvas */
+  /* light = link blue (#1d6fb8) tint at low alpha on the bright canvas */
+  --selection-bg: rgba(29, 111, 184, 0.25);
 }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); margin: 0; }
 
@@ -153,6 +160,18 @@ html, body { margin: 0; height: 100%; }
 /* focused line in edit mode — subtle tint so the caret's line is obvious.
    `.cm-editor` prefix beats CM's runtime-injected default `.cm-activeLine` blue. */
 .cm-editor .cm-activeLine { background: color-mix(in srgb, var(--fg) 7%, transparent); border-radius: var(--radius-sm, 6px); }
+/* Text selection. drawSelection() paints the EditorState selection into the
+   .cm-selectionBackground overlay layer (this is what makes vim visual mode
+   visible — vim sets selection ranges programmatically with no native DOM
+   selection to paint, and its hideNativeSelection kills ::selection in vim mode).
+   CM bakes a faint default fill into .cm-selectionBackground via a runtime theme,
+   so the `.cm-editor` prefix + `!important` is needed to substitute our token.
+   Native ::selection mirrors the same token for non-CM text (and edit-mode drag
+   when vim is off); inside vim mode vim forces ::selection transparent and the
+   drawSelection layer takes over. Measure-inert overlay — ZOOM GUARD holds. */
+.cm-editor .cm-selectionBackground { background: var(--selection-bg) !important; }
+.cm-editor .cm-content ::selection,
+.cm-editor .cm-line ::selection { background: var(--selection-bg); }
 /* ZOOM GUARD: these add/replace `color` ONLY (theme-editor per-element colors).
    font-weight/font-style/letter-spacing/padding are untouched — metrics stay put. */
 .cm-strong { font-weight: 700; color: var(--bold-color, inherit); }
