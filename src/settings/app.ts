@@ -56,6 +56,18 @@ export function loadPreset(name: PresetName): void {
   themeSetting.set(name);
 }
 
+/** Sync the JSON theme to a preset that was just selected (e.g. via the panel's
+ *  preset segmented control, which writes themeSetting WITHOUT going through
+ *  loadPreset). The name guard is the loop breaker AND the edit-preserver: it is
+ *  checked BEFORE .set, so (a) re-selecting the same preset never overwrites the
+ *  user's custom edits, and (b) loadPreset's own themeSetting write — fired right
+ *  after it already set themeJson to the matching name — is a no-op here (no
+ *  recursion, no double write). Command/CQS: void. Order is load-bearing: compare
+ *  name first, set only on mismatch. */
+export function syncJsonToPreset(name: PresetName): void {
+  if (themeJsonSetting.get().name !== name) themeJsonSetting.set(builtInTheme(name));
+}
+
 // ── 타이포그래피 (Typography) ─────────────────────────────────────────────────
 
 // The Inter stack is BOTH a select option and the default — pinned by name (not

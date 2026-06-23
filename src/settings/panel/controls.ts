@@ -7,6 +7,30 @@ import type { Setting, Control } from "../store";
 import type { Theme } from "../theme-schema";
 import { parseTheme, serializeTheme } from "../theme-schema";
 
+// Subscription cleanup: a control that calls setting.subscribe must hand back its
+// unsubscribe fns so the modal can tear them down on category swap / close,
+// otherwise stale reflect closures pile up on dead DOM (a memory leak + writes to
+// detached nodes). We stash the fns on the element via a WeakMap (no `any` cast,
+// no DOM-expando typing) keyed by the returned row element. The modal calls
+// runTeardown(el) before discarding a pane's children.
+const teardowns = new WeakMap<HTMLElement, Array<() => void>>();
+
+/** Record a control element's unsubscribe fns so the modal can clean them up
+ *  later. Named so the leak rule isn't an inline expando assignment. */
+export function attachTeardown(el: HTMLElement, unsubs: Array<() => void>): void {
+  teardowns.set(el, unsubs);
+}
+
+/** Run and clear a control element's unsubscribe fns. Idempotent: after running
+ *  once the entry is dropped, so a second call (close after swap) is a no-op.
+ *  Command/CQS: void. */
+export function runTeardown(el: HTMLElement): void {
+  const unsubs = teardowns.get(el);
+  if (!unsubs) return;
+  teardowns.delete(el);
+  for (const u of unsubs) u();
+}
+
 /** Build the labeled row shell every control shares (label cell + control cell).
  *  The control cell is returned for the renderer to fill. */
 function row(label: string): { row: HTMLElement; cell: HTMLElement } {
@@ -123,32 +147,52 @@ function renderText(setting: Setting<string>, control: Extract<Control<string>, 
  *  named theme rules (parseTheme/serializeTheme) — never an inline JSON.parse. A
  *  malformed paste shows an inline error and does NOT call set, so a corrupt
  *  import can't poison the SSOT. */
+// The 18 swatch cards, in render order: the 9 CORE colors first (column 1), then
+// the 9 MARKDOWN element colors (column 2). `key` is a Theme["colors"] field;
+// `label` is the spec's exact Korean text / markdown syntax shown on the card;
+// `previewVar` (markdown cards only) is the CSS var the inline preview's color is
+// bound to, so picking a color live-updates both the panel preview and the editor.
+type SwatchCard = { key: keyof Theme["colors"]; label: string; previewVar?: string };
+
+const CORE_CARDS: SwatchCard[] = [
+  { key: "bg", label: "에디터 배경색" },
+  { key: "fg", label: "기본 본문 글자색" },
+  { key: "surface", label: "카드 영역 배경색" },
+  { key: "border", label: "테두리선 색상" },
+  { key: "accent", label: "강조 요소 색상" },
+  { key: "link", label: "[[위키링크 (Link)]]" },
+  { key: "muted", label: "보조 텍스트 (Muted)" },
+  { key: "highlightBg", label: "==형광펜 배경색 (Highlight Bg)==" },
+  { key: "highlight", label: "==형광펜 글자색 (Highlight Text)==" },
+];
+
+const MARKDOWN_CARDS: SwatchCard[] = [
+  { key: "h1", label: "# 제목 1 (H1)", previewVar: "--h1-color" },
+  { key: "h2", label: "## 제목 2 (H2)", previewVar: "--h2-color" },
+  { key: "h3", label: "### 제목 3 (H3)", previewVar: "--h3-color" },
+  { key: "h4", label: "#### 제목 4 (H4)", previewVar: "--h4-color" },
+  { key: "h5", label: "##### 제목 5 (H5)", previewVar: "--h5-color" },
+  { key: "h6", label: "###### 제목 6 (H6)", previewVar: "--h6-color" },
+  { key: "bold", label: "**굵은 글자 (Bold)**", previewVar: "--bold-color" },
+  { key: "italic", label: "*기울임꼴 (Italic)*", previewVar: "--italic-color" },
+  { key: "code", label: "`인라인 코드 (Code)`", previewVar: "--code-color" },
+];
+
+const ALL_CARDS: SwatchCard[] = [...CORE_CARDS, ...MARKDOWN_CARDS];
+
 function renderJson(setting: Setting<Theme>): HTMLElement {
   const { row: r, cell } = row("");
   r.classList.add("settings-row-json");
   r.classList.add("theme-editor");
 
-  // 1. Swatch Grid Container
+  // 1. Swatch Grid Container (2-column: core column then markdown column)
   const grid = document.createElement("div");
   grid.className = "theme-swatch-grid";
 
-  const colorLabels: Record<keyof Theme["colors"], string> = {
-    bg: "배경색",
-    fg: "글자색",
-    surface: "카드 영역",
-    border: "테두리색",
-    accent: "강조색",
-    link: "링크색",
-    muted: "보조 글자",
-    highlightBg: "형광펜 배경",
-  };
+  const colorInputs: Partial<Record<keyof Theme["colors"], HTMLInputElement>> = {};
+  const swatchColors: Partial<Record<keyof Theme["colors"], HTMLElement>> = {};
 
-  const colorInputs: Record<string, HTMLInputElement> = {};
-  const swatchColors: Record<string, HTMLElement> = {};
-
-  const keys = Object.keys(colorLabels) as Array<keyof Theme["colors"]>;
-
-  keys.forEach((key) => {
+  ALL_CARDS.forEach(({ key, label: cardLabel, previewVar }) => {
     const card = document.createElement("div");
     card.className = "theme-swatch-card";
 
@@ -161,12 +205,12 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
     const input = document.createElement("input");
     input.type = "color";
     input.className = "theme-swatch-input";
-    input.title = colorLabels[key];
+    input.title = cardLabel;
 
     input.addEventListener("input", () => {
       const activeTheme = setting.get();
       const updatedTheme: Theme = {
-        ...activeTheme,
+        ...activeTheme, // preserves `name` so editing never renames the preset
         colors: {
           ...activeTheme.colors,
           [key]: input.value,
@@ -181,7 +225,14 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
 
     const label = document.createElement("span");
     label.className = "theme-swatch-label";
-    label.textContent = colorLabels[key];
+    // Markdown cards show a LIVE preview element whose color inherits the CSS var
+    // (the single color source), so picking updates panel + editor together. Core
+    // cards have no inline preview — the swatch circle IS the preview.
+    if (previewVar) {
+      label.classList.add(`theme-preview-${String(key)}`);
+      label.style.color = `var(${previewVar})`;
+    }
+    label.textContent = cardLabel;
 
     card.append(wrapper, label);
     grid.appendChild(card);
@@ -227,12 +278,18 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
 
   details.append(ta, error, actions);
 
-  // 3. Reflect changes and subscribe
+  // 3. Reflect changes and subscribe. The picker value + swatch fill come from the
+  // resolved 18-key theme (parseTheme/builtInTheme always fill extended keys; the
+  // `?? ""` guards a hand-built 8-key object so an unfilled key just renders blank
+  // rather than throwing). The markdown preview colors are NOT recomputed here —
+  // they inherit their CSS var, whose single writer is themeVarsSink.
   const reflect = (t: Theme) => {
-    keys.forEach((key) => {
-      const colorVal = t.colors[key];
-      colorInputs[key].value = toHex(colorVal);
-      swatchColors[key].style.backgroundColor = colorVal;
+    ALL_CARDS.forEach(({ key }) => {
+      const colorVal = t.colors[key] ?? "";
+      const input = colorInputs[key];
+      const swatch = swatchColors[key];
+      if (input) input.value = toHex(colorVal);
+      if (swatch) swatch.style.backgroundColor = colorVal;
     });
 
     ta.value = serializeTheme(t);
@@ -240,7 +297,9 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
   };
 
   reflect(setting.get());
-  setting.subscribe(reflect);
+  // Collect the unsubscribe so the modal can tear this control down on swap/close
+  // (avoids stale reflect closures writing into detached DOM).
+  attachTeardown(r, [setting.subscribe(reflect)]);
 
   cell.append(grid, details);
   return r;

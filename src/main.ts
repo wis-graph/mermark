@@ -11,6 +11,7 @@ import {
   zoomOut,
   resetZoom,
   loadPreset,
+  syncJsonToPreset,
   themeJsonSetting,
   fontFamilySetting,
   webFontSetting,
@@ -125,6 +126,13 @@ async function boot() {
   // the vars are on the DOM for the editor + the no-file/error screens — and so a
   // saved/custom theme applies on first paint with no flash.
   themeJsonSetting.bind(themeVarsSink());
+  // Preset → JSON sync: when the preset (themeSetting) changes via a path that
+  // does NOT go through loadPreset (the panel's preset segmented control writes
+  // themeSetting only), overwrite the JSON theme with that preset's builtin so
+  // the color pickers + visual editor track the preset in real time. The name
+  // guard inside syncJsonToPreset makes the loadPreset path a no-op (no double
+  // write) and preserves user edits when re-selecting the same preset.
+  themeSetting.subscribe(syncJsonToPreset);
   // Body text scale is the SSOT too: bind the CSS-var sink here (same place,
   // same reason as theme) so the saved scale is on the DOM before the editor
   // mounts, and so it applies on the no-file / error screens below.

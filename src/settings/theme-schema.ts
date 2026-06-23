@@ -19,6 +19,21 @@ export interface Theme {
     border: string;
     muted: string;
     highlightBg: string;
+    // Extended per-element colors. OPTIONAL on the interface so a legacy 8-key
+    // theme (saved by an older build) still type-checks as Theme — backward
+    // compatibility is the reason these are `?`. parseTheme/builtInTheme always
+    // emit them filled (promoteToExtended), so downstream readers can rely on
+    // their presence; the optionality is an INPUT contract, not an output one.
+    h1?: string;
+    h2?: string;
+    h3?: string;
+    h4?: string;
+    h5?: string;
+    h6?: string;
+    bold?: string;
+    italic?: string;
+    code?: string;
+    highlight?: string;
   };
   /** --radius-md/lg/xl. (No --radius-sm: styles.css only fallback-references it.) */
   radii: { md: string; lg: string; xl: string };
@@ -26,6 +41,9 @@ export interface Theme {
   font: { sans: string };
 }
 
+// The 8 CORE color keys. STRICT: parseTheme rejects a value missing any of these
+// (SSOT integrity). NEVER add an extended key here — doing so would make every
+// legacy 8-key localStorage theme fail to parse and silently reset to default.
 const COLOR_KEYS = [
   "bg",
   "fg",
@@ -37,6 +55,62 @@ const COLOR_KEYS = [
   "highlightBg",
 ] as const;
 const RADII_KEYS = ["md", "lg", "xl"] as const;
+
+/** The 10 EXTENDED (per-element) color keys. Optional on input, always filled on
+ *  output. Distinct from COLOR_KEYS so the strict-reject loop never touches them
+ *  (backward compat: a corrupt/absent extended key falls back, never rejects). */
+export const EXTENDED_KEYS = [
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "bold",
+  "italic",
+  "code",
+  "highlight",
+] as const;
+export type ExtendedKey = (typeof EXTENDED_KEYS)[number];
+
+/** The 8 core colors an extended key may derive its fallback from. */
+type CoreColors = Pick<Theme["colors"], (typeof COLOR_KEYS)[number]>;
+
+// The SINGLE source of "what color does a missing/corrupt extended key inherit?"
+// — the promote-legacy-to-extended rule, as data. h1~h5/bold/italic → fg, h6 →
+// muted, code → accent, highlight → a fixed dark ink (matches the .cm-highlight
+// ink in styles.css, legible on both light + dark). promoteToExtended is the
+// ONLY caller, so this rule lives in exactly one place (no scattered fallbacks).
+const HIGHLIGHT_INK = "#1a1300";
+const EXTENDED_FALLBACK: Record<ExtendedKey, (core: CoreColors) => string> = {
+  h1: (c) => c.fg,
+  h2: (c) => c.fg,
+  h3: (c) => c.fg,
+  h4: (c) => c.fg,
+  h5: (c) => c.fg,
+  h6: (c) => c.muted,
+  bold: (c) => c.fg,
+  italic: (c) => c.fg,
+  code: (c) => c.accent,
+  highlight: () => HIGHLIGHT_INK,
+};
+
+/** Promote a 8-key core palette to the full 18-key set: keep any valid explicit
+ *  extended value from `explicit`, fall back per EXTENDED_FALLBACK otherwise. A
+ *  corrupt/empty extended value is treated as absent (fallback) — never a reject,
+ *  so one damaged partial key can't drop the whole theme to default. Pure query;
+ *  the named "upgrade an old theme to extended" rule, in one place. */
+export function promoteToExtended(
+  core: CoreColors,
+  explicit?: Partial<Record<ExtendedKey, unknown>>,
+): Record<ExtendedKey, string> {
+  const out = {} as Record<ExtendedKey, string>;
+  for (const key of EXTENDED_KEYS) {
+    const given = explicit?.[key];
+    out[key] = isToken(given) ? given : EXTENDED_FALLBACK[key](core);
+  }
+  return out;
+}
 
 /** The "valid CSS string token" rule: non-empty string. Used uniformly for every
  *  color/radius/font field so the import-validation rule lives once. */
@@ -74,18 +148,22 @@ export function parseTheme(raw: string | null): Theme | null {
   if (typeof font !== "object" || font === null) return null;
   if (!isToken((font as Record<string, unknown>).sans)) return null;
 
+  // Core 8 are strict-validated above; extended 10 are filled by the single
+  // promotion rule — explicit valid values win, missing/corrupt fall back. The
+  // returned colors are always the full 18-key set (the output invariant).
+  const coreColors: CoreColors = {
+    bg: c.bg as string,
+    fg: c.fg as string,
+    accent: c.accent as string,
+    link: c.link as string,
+    surface: c.surface as string,
+    border: c.border as string,
+    muted: c.muted as string,
+    highlightBg: c.highlightBg as string,
+  };
   return {
     name: t.name,
-    colors: {
-      bg: c.bg as string,
-      fg: c.fg as string,
-      accent: c.accent as string,
-      link: c.link as string,
-      surface: c.surface as string,
-      border: c.border as string,
-      muted: c.muted as string,
-      highlightBg: c.highlightBg as string,
-    },
+    colors: { ...coreColors, ...promoteToExtended(coreColors, c) },
     radii: { md: r.md as string, lg: r.lg as string, xl: r.xl as string },
     font: { sans: (font as { sans: string }).sans },
   };
@@ -102,6 +180,10 @@ export function serializeTheme(t: Theme): string {
  *  --radius-sm (styles.css never defines it; only fallback-references it), so
  *  emitting one would itself be drift. */
 export function themeToVars(t: Theme): Record<string, string> {
+  // Resolve the extended 10 through the SAME promotion rule so a hand-built Theme
+  // (e.g. a test's 8-key object) still emits every --hN-color var. The fallback
+  // logic is NOT re-implemented here — it lives only in promoteToExtended.
+  const ext = promoteToExtended(t.colors, t.colors);
   return {
     "--bg": t.colors.bg,
     "--fg": t.colors.fg,
@@ -111,6 +193,16 @@ export function themeToVars(t: Theme): Record<string, string> {
     "--border": t.colors.border,
     "--muted": t.colors.muted,
     "--highlight-bg": t.colors.highlightBg,
+    "--h1-color": ext.h1,
+    "--h2-color": ext.h2,
+    "--h3-color": ext.h3,
+    "--h4-color": ext.h4,
+    "--h5-color": ext.h5,
+    "--h6-color": ext.h6,
+    "--bold-color": ext.bold,
+    "--italic-color": ext.italic,
+    "--code-color": ext.code,
+    "--highlight-color": ext.highlight,
     "--radius-md": t.radii.md,
     "--radius-lg": t.radii.lg,
     "--radius-xl": t.radii.xl,
@@ -130,6 +222,9 @@ const SHARED_FONT = { sans: '"Inter", system-ui, sans-serif' } as const;
  *  CSS (the zero-drift invariant). */
 export function builtInTheme(name: PresetName): Theme {
   if (name === "light") {
+    // Extended 10 are written explicitly = exactly what promoteToExtended would
+    // derive from this core palette (fg/muted/accent + the highlight ink), so
+    // adopting the preset causes zero visual drift vs the current styles.css.
     return {
       name: "light",
       colors: {
@@ -141,6 +236,16 @@ export function builtInTheme(name: PresetName): Theme {
         border: "#e7e5e4",
         muted: "#777169",
         highlightBg: "#fff3a3",
+        h1: "#0c0a09",
+        h2: "#0c0a09",
+        h3: "#0c0a09",
+        h4: "#0c0a09",
+        h5: "#0c0a09",
+        h6: "#777169",
+        bold: "#0c0a09",
+        italic: "#0c0a09",
+        code: "#292524",
+        highlight: "#1a1300",
       },
       radii: { ...SHARED_RADII },
       font: { ...SHARED_FONT },
@@ -157,6 +262,16 @@ export function builtInTheme(name: PresetName): Theme {
       border: "rgba(255,255,255,.12)",
       muted: "#a8a29e",
       highlightBg: "#ffe066",
+      h1: "#ffffff",
+      h2: "#ffffff",
+      h3: "#ffffff",
+      h4: "#ffffff",
+      h5: "#ffffff",
+      h6: "#a8a29e",
+      bold: "#ffffff",
+      italic: "#ffffff",
+      code: "#a8c8e8",
+      highlight: "#1a1300",
     },
     radii: { ...SHARED_RADII },
     font: { ...SHARED_FONT },

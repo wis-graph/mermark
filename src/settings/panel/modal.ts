@@ -4,7 +4,7 @@
 // The panel iterates groups() from the registry, so adding a setting never
 // touches this file.
 import { groups, type Group } from "../registry";
-import { RENDER } from "./controls";
+import { RENDER, runTeardown } from "./controls";
 import type { Setting, Control } from "../store";
 import { icon } from "../../icons";
 
@@ -84,9 +84,21 @@ function buildModal(): SettingsModal {
     return { b, group: g };
   });
 
+  /** Tear down every control currently in the pane (run their stashed unsubscribe
+   *  fns) before the DOM is discarded, so no stale subscription survives a swap or
+   *  close. Command/CQS: void. */
+  function teardownPane(): void {
+    for (const child of Array.from(pane.children)) runTeardown(child as HTMLElement);
+  }
+
+  // The category currently shown in the pane — re-selected on open() so a reopen
+  // rebuilds it with fresh subscriptions (close() tears the old ones down).
+  let activeGroup: Group | null = null;
+
   /** Swap the pane to a category's controls and mark its sidebar button active.
    *  Command/CQS: mutates the DOM, returns nothing. */
   function selectCategory(g: Group): void {
+    teardownPane(); // drop the outgoing category's subscriptions before replacing
     pane.replaceChildren();
     for (const entry of g.entries) {
       const renderer = RENDER[entry.ui.control.kind] as (
@@ -100,6 +112,7 @@ function buildModal(): SettingsModal {
       pane.appendChild(labeled);
     }
     for (const { b, group } of catButtons) b.classList.toggle("active", group === g);
+    activeGroup = g;
   }
 
   // First category ("테마") selected on open.
@@ -123,12 +136,17 @@ function buildModal(): SettingsModal {
   const api: SettingsModal = {
     open() {
       lastFocused = document.activeElement;
+      // Rebuild the active category so its controls re-subscribe (close() tore the
+      // prior subscriptions down). Guards the reopen-after-close case from showing
+      // a pane whose reflect closures are dead.
+      if (activeGroup) selectCategory(activeGroup);
       backdrop.hidden = false;
       editorHost()?.setAttribute("inert", ""); // editor underneath is non-interactive
       document.addEventListener("keydown", onKeydown, true);
       (sidebar.querySelector("button") as HTMLButtonElement | null)?.focus();
     },
     close() {
+      teardownPane(); // release subscriptions so a reopen doesn't accumulate stale ones
       backdrop.hidden = true;
       editorHost()?.removeAttribute("inert");
       document.removeEventListener("keydown", onKeydown, true);

@@ -153,14 +153,17 @@ html, body { margin: 0; height: 100%; }
 /* focused line in edit mode — subtle tint so the caret's line is obvious.
    `.cm-editor` prefix beats CM's runtime-injected default `.cm-activeLine` blue. */
 .cm-editor .cm-activeLine { background: color-mix(in srgb, var(--fg) 7%, transparent); border-radius: var(--radius-sm, 6px); }
-.cm-strong { font-weight: 700; }
-.cm-em { font-style: italic; }
+/* ZOOM GUARD: these add/replace `color` ONLY (theme-editor per-element colors).
+   font-weight/font-style/letter-spacing/padding are untouched — metrics stay put. */
+.cm-strong { font-weight: 700; color: var(--bold-color, inherit); }
+.cm-em { font-style: italic; color: var(--italic-color, inherit); }
 .cm-strike { text-decoration: line-through; }
-.cm-inline-code { font-family: ui-monospace, monospace; letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface); }
+.cm-inline-code { font-family: ui-monospace, monospace; letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface); color: var(--code-color, inherit); }
 /* ==highlight== → a fluorescent <mark>. Pin a dark ink on the highlight so it
    stays legible on dark theme too, where --fg flips to white and white-on-yellow
-   would wash out. --highlight-bg gives each theme its own fluorescent tone. */
-.cm-highlight { background: var(--highlight-bg, #fff3a3); color: #1a1300; border-radius: var(--radius-xs, 4px); padding: 0 .15em; }
+   would wash out. --highlight-bg gives each theme its own fluorescent tone, and
+   --highlight-color (theme-editor) overrides the ink, defaulting to #1a1300. */
+.cm-highlight { background: var(--highlight-bg, #fff3a3); color: var(--highlight-color, #1a1300); border-radius: var(--radius-xs, 4px); padding: 0 .15em; }
 /* Fenced code rendered as a block widget (a styled box hugging the code),
    like the mermaid/table/math widgets. Vertical breathing room is padding, not
    margin — CM measures widget height by offsetHeight, which excludes margin. */
@@ -241,12 +244,16 @@ html, body { margin: 0; height: 100%; }
    are unchanged. Per-level negative tracking comes from --hN-tracking (em, so it
    rides --font-scale zoom + the headingRatio scale). */
 .cm-editor .cm-line.cm-heading { font-weight: 600; font-family: var(--reading-font, var(--font-sans)); line-height: 1.25; }
-.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 2.0)); letter-spacing: var(--h1-tracking, 0); }
-.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.6)); letter-spacing: var(--h2-tracking, 0); }
-.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.32)); letter-spacing: var(--h3-tracking, 0); }
-.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.15)); letter-spacing: var(--h4-tracking, 0); }
-.cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); }
-.cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--muted); }
+/* ZOOM GUARD: the font-size calc() + letter-spacing are byte-identical to before;
+   only `color: var(--hN-color, …)` is appended (theme-editor per-heading colors,
+   falling back to the prior visual — --fg for h1~h5, --muted for h6 — so an
+   un-promoted theme keeps the exact old look). */
+.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 2.0)); letter-spacing: var(--h1-tracking, 0); color: var(--h1-color, var(--fg)); }
+.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.6)); letter-spacing: var(--h2-tracking, 0); color: var(--h2-color, var(--fg)); }
+.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.32)); letter-spacing: var(--h3-tracking, 0); color: var(--h3-color, var(--fg)); }
+.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.15)); letter-spacing: var(--h4-tracking, 0); color: var(--h4-color, var(--fg)); }
+.cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); }
+.cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); }
 
 /* Bottom status bar — all editor chrome lives here, out of the content. A
    shadcn/Raycast-toned strip: taller (36px) for a comfortable hit area, surface
@@ -489,30 +496,53 @@ html, body { margin: 0; height: 100%; }
   width: 100%;
 }
 
+/* Squeeze fix: the control cell stacks the swatch grid + the JSON accordion
+   vertically (full width) instead of squeezing them side-by-side in the default
+   centered flex row. */
+.theme-editor .settings-row-control {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1.2em;
+  width: 100%;
+}
+
+/* 2-column card grid: core colors fill column 1 top-to-bottom, markdown column 2
+   (grid auto-flow column). Each card pairs a circular picker with its label. */
 .theme-swatch-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1em;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(9, auto);
+  gap: 0.9em 1.4em;
   margin-bottom: 0.5em;
   width: 100%;
 }
 
 .theme-swatch-card {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 0.4em;
+  gap: 0.7em;
 }
 
 .theme-swatch-wrapper {
   position: relative;
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+}
+
+/* :focus-within surfaces keyboard focus on the visually-hidden color input so the
+   picker is tabbable/discoverable. */
+.theme-swatch-wrapper:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .theme-swatch-color {
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: 1px solid var(--border);
   box-shadow: 0 2px 8px color-mix(in srgb, #000 8%, transparent);
@@ -538,10 +568,14 @@ html, body { margin: 0; height: 100%; }
 }
 
 .theme-swatch-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  color: var(--muted);
-  text-align: center;
+  color: var(--fg);
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .theme-advanced {
@@ -552,6 +586,9 @@ html, body { margin: 0; height: 100%; }
 }
 
 .theme-advanced-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
   padding: 0.8em 1em;
   font-size: 12px;
   font-weight: 600;
@@ -565,8 +602,25 @@ html, body { margin: 0; height: 100%; }
   display: none;
 }
 
+/* Chevron so the collapsible affordance is visually discoverable; rotates 90°
+   when the accordion is open. */
+.theme-advanced-summary::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  transition: transform 0.15s ease;
+}
+
 .theme-advanced[open] {
   padding-bottom: 1em;
+}
+
+.theme-advanced[open] .theme-advanced-summary::before {
+  transform: rotate(90deg);
 }
 
 .theme-advanced[open] .theme-advanced-summary {

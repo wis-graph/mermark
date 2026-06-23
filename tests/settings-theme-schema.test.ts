@@ -2,11 +2,14 @@ import { describe, it, expect } from "vitest";
 import {
   builtInTheme,
   parseTheme,
+  promoteToExtended,
   serializeTheme,
   themeToVars,
   type Theme,
 } from "../src/settings/theme-schema";
 
+// An 8-core-key theme (a pre-extension value). parseTheme promotes it to the full
+// 18-key set, so assertions about parse output compare against `promotedTheme`.
 const validTheme: Theme = {
   name: "test",
   colors: {
@@ -23,10 +26,17 @@ const validTheme: Theme = {
   font: { sans: "Inter, sans-serif" },
 };
 
+// The same theme after the extended-key promotion rule fills h1~h6/bold/italic/
+// code/highlight from the core palette — what parseTheme returns for an old theme.
+const promotedTheme: Theme = {
+  ...validTheme,
+  colors: { ...validTheme.colors, ...promoteToExtended(validTheme.colors) },
+};
+
 describe("parseTheme", () => {
-  it("accepts a valid theme JSON string and returns a Theme", () => {
+  it("accepts a valid 8-key theme JSON string and returns a promoted (18-key) Theme", () => {
     const parsed = parseTheme(JSON.stringify(validTheme));
-    expect(parsed).toEqual(validTheme);
+    expect(parsed).toEqual(promotedTheme); // core preserved, extended filled by fallback
   });
 
   it("returns null for invalid JSON", () => {
@@ -66,9 +76,14 @@ describe("parseTheme", () => {
 });
 
 describe("serializeTheme ∘ parseTheme round-trip", () => {
-  it("round-trips a theme through serialize → parse unchanged", () => {
+  it("round-trips an 8-key theme through serialize → parse (promoted to 18)", () => {
     const text = serializeTheme(validTheme);
-    expect(parseTheme(text)).toEqual(validTheme);
+    expect(parseTheme(text)).toEqual(promotedTheme); // re-parse fills extended keys
+  });
+
+  it("round-trips a fully-promoted theme unchanged", () => {
+    const text = serializeTheme(promotedTheme);
+    expect(parseTheme(text)).toEqual(promotedTheme); // already 18-key → stable
   });
 
   it("serializes as 2-space pretty JSON (human-editable textarea)", () => {
@@ -86,8 +101,8 @@ describe("serializeTheme ∘ parseTheme round-trip", () => {
 });
 
 describe("themeToVars maps every field to the right CSS var", () => {
-  it("produces all 12 vars from the mapping table", () => {
-    const vars = themeToVars(validTheme);
+  it("produces all 22 vars (12 base + 10 extended via the fallback rule)", () => {
+    const vars = themeToVars(validTheme); // 8-key input → extended vars come from fallback
     expect(vars).toEqual({
       "--bg": "#111111",
       "--fg": "#eeeeee",
@@ -97,11 +112,31 @@ describe("themeToVars maps every field to the right CSS var", () => {
       "--border": "#333333",
       "--muted": "#999999",
       "--highlight-bg": "#ffff00",
+      // extended: h1~h5/bold/italic → fg, h6 → muted, code → accent, highlight ink
+      "--h1-color": "#eeeeee",
+      "--h2-color": "#eeeeee",
+      "--h3-color": "#eeeeee",
+      "--h4-color": "#eeeeee",
+      "--h5-color": "#eeeeee",
+      "--h6-color": "#999999",
+      "--bold-color": "#eeeeee",
+      "--italic-color": "#eeeeee",
+      "--code-color": "#abcdef",
+      "--highlight-color": "#1a1300",
       "--radius-md": "8px",
       "--radius-lg": "12px",
       "--radius-xl": "16px",
       "--font-sans": "Inter, sans-serif",
     });
+  });
+
+  it("emits an explicit extended color verbatim instead of the fallback", () => {
+    const vars = themeToVars({
+      ...validTheme,
+      colors: { ...validTheme.colors, h1: "#ff0000" },
+    });
+    expect(vars["--h1-color"]).toBe("#ff0000"); // explicit wins
+    expect(vars["--h2-color"]).toBe("#eeeeee"); // others still fall back to fg
   });
 
   it("does not introduce --radius-sm (styles.css never defines it)", () => {
@@ -110,7 +145,7 @@ describe("themeToVars maps every field to the right CSS var", () => {
 });
 
 describe("builtInTheme equals the current styles.css values (zero-drift)", () => {
-  it("dark matches styles.css:4-16 exactly", () => {
+  it("dark matches styles.css:4-16 (core) + the promotion rule (extended)", () => {
     const dark = builtInTheme("dark");
     expect(dark.colors).toEqual({
       bg: "#0c0a09",
@@ -121,12 +156,28 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
       border: "rgba(255,255,255,.12)",
       muted: "#a8a29e",
       highlightBg: "#ffe066",
+      // extended = exactly what promoteToExtended derives (zero drift)
+      h1: "#ffffff",
+      h2: "#ffffff",
+      h3: "#ffffff",
+      h4: "#ffffff",
+      h5: "#ffffff",
+      h6: "#a8a29e",
+      bold: "#ffffff",
+      italic: "#ffffff",
+      code: "#a8c8e8",
+      highlight: "#1a1300",
     });
     expect(dark.radii).toEqual({ md: "8px", lg: "12px", xl: "16px" });
     expect(dark.font).toEqual({ sans: '"Inter", system-ui, sans-serif' });
   });
 
-  it("light matches styles.css:19-27 exactly", () => {
+  it("dark's explicit extended values match the fallback rule applied to its core", () => {
+    const dark = builtInTheme("dark");
+    expect(dark.colors).toEqual({ ...dark.colors, ...promoteToExtended(dark.colors) });
+  });
+
+  it("light matches styles.css:19-27 (core) + the promotion rule (extended)", () => {
     const light = builtInTheme("light");
     expect(light.colors).toEqual({
       bg: "#f5f5f5",
@@ -137,6 +188,16 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
       border: "#e7e5e4",
       muted: "#777169",
       highlightBg: "#fff3a3",
+      h1: "#0c0a09",
+      h2: "#0c0a09",
+      h3: "#0c0a09",
+      h4: "#0c0a09",
+      h5: "#0c0a09",
+      h6: "#777169",
+      bold: "#0c0a09",
+      italic: "#0c0a09",
+      code: "#292524",
+      highlight: "#1a1300",
     });
   });
 
