@@ -1,9 +1,19 @@
 //! LLM context packager: starting from a root markdown file, follow its
 //! wikilinks one hop, collect the linked documents, and wrap them in an XML
-//! envelope a model can read. This is the single source of truth for three
-//! concerns — wikilink scanning, baseDir containment (the CRITICAL security
-//! gate), and the output format — so the CLI (`mermark bundle`) and the
-//! `bundle_doc` IPC command produce identical output by sharing one core.
+//! envelope a model can read. This is the single source of truth for two
+//! concerns — wikilink scanning and the output format — so the CLI
+//! (`mermark bundle`) and the `bundle_doc` IPC command produce identical
+//! output by sharing one core.
+//!
+//! Links are followed exactly like click-navigation: a target resolves relative
+//! to the document's directory, `..` and absolute paths included, so a note in a
+//! leaf folder can still reach `[[../shared/x]]`. There is no path containment —
+//! mermark is a local, offline, single-user editor with no network egress, the
+//! bundle lands in the user's own clipboard/stdout, and `read_file` already
+//! opens any path the user points at; a containment gate here would only break
+//! legitimate parent-folder links without closing any real exfiltration channel.
+//! The bounds that matter are size/termination, not access: the one-hop depth
+//! cap keeps the token budget sane and the visited set stops link cycles.
 //!
 //! Read-only: it never creates or modifies a file.
 
@@ -20,10 +30,10 @@ use std::path::{Path, PathBuf};
 /// later without restructuring.
 const DEFAULT_BUNDLE_DEPTH: usize = 1;
 
-/// A markdown document that survived containment and was read off disk, ready
-/// to be placed in the bundle envelope. `rel` is the baseDir-relative path used
-/// for the `path=` attribute (absolute paths are never leaked); `title` is the
-/// file stem; `body` is the raw markdown, inserted verbatim.
+/// A markdown document read off disk, ready to be placed in the bundle
+/// envelope. `rel` is a label for the `path=` attribute — baseDir-relative when
+/// the file is under base, otherwise its file name; `title` is the file stem;
+/// `body` is the raw markdown, inserted verbatim.
 struct ResolvedDoc {
     rel: String,
     title: String,
@@ -142,7 +152,7 @@ fn scan_line_targets(line: &[u8], out: &mut Vec<String>) {
 }
 
 // ---------------------------------------------------------------------------
-// Target resolution + containment (security gate)
+// Target resolution
 // ---------------------------------------------------------------------------
 
 /// True when an embed target (`![[…]]`) is an image we inline rather than bundle
@@ -163,9 +173,8 @@ pub fn is_image_embed(target: &str) -> bool {
 /// suffix, add `.md` when the target has no extension, and treat a `/`-prefixed
 /// target as an absolute path (joined as-is). Returns `None` for an empty target
 /// (e.g. a bare `[[#heading]]`, which points at the current file, not a new one).
-/// This does NOT enforce containment — that is `is_within_base`'s job, called
-/// after this on the result — so a `..`-laden or absolute target resolves here
-/// and is rejected there.
+/// A `..`-laden or absolute target resolves here and is followed as-is — there is
+/// no containment, matching click-navigation (see the module header).
 fn resolve_target_path(target: &str, base_dir: &Path) -> Option<PathBuf> {
     let file = target.split('#').next().unwrap_or("").trim();
     if file.is_empty() {
@@ -195,33 +204,17 @@ fn has_extension(file: &str) -> bool {
         })
 }
 
-/// **CRITICAL security gate.** True only when `candidate`, after textual
-/// normalization, is contained within `base` (the root file's directory). This
-/// is what blocks a wikilink from escaping the base directory —
-/// `[[../../etc/passwd]]` normalizes to `/etc/passwd`, which is not under
-/// `base`, so it is rejected; an absolute `[[/etc/passwd]]` likewise lands
-/// outside `base`. `normalize_path` collapses `..` purely textually and *can*
-/// rise above `base`, which is exactly why this prefix check is mandatory after
-/// it. A pure query (CQS) — no I/O, no side effects.
-pub fn is_within_base(candidate: &Path, base: &Path) -> bool {
-    let normalized = normalize_path(candidate);
-    let normalized_base = normalize_path(base);
-    normalized.starts_with(&normalized_base)
-}
-
-/// Resolve a scanned target to an existing, *contained* markdown file path, or
-/// `None` if it is an image embed, an empty target, escapes the base directory
-/// (containment failure), or simply doesn't exist on disk. Folding all the
-/// "this link is not bundleable" reasons behind one name keeps `collect` from
-/// scattering the skip rules across inline conditions.
+/// Resolve a scanned target to an existing markdown file path, or `None` if it
+/// is an image embed, an empty target, or simply doesn't exist on disk. Folding
+/// all the "this link is not bundleable" reasons behind one name keeps `collect`
+/// from scattering the skip rules across inline conditions. No containment check:
+/// `..` and absolute targets are followed (module header), bounded only by the
+/// file having to exist and the depth cap.
 fn bundleable_path(target: &str, base_dir: &Path) -> Option<PathBuf> {
     if is_image_embed(target) {
         return None;
     }
     let candidate = resolve_target_path(target, base_dir)?;
-    if !is_within_base(&candidate, base_dir) {
-        return None; // containment: refuse to read outside base_dir
-    }
     let normalized = normalize_path(&candidate);
     if normalized.is_file() {
         Some(normalized)
@@ -239,9 +232,8 @@ fn bundleable_path(target: &str, base_dir: &Path) -> Option<PathBuf> {
 /// file), deduplicated by a `visited` set so a document is bundled at most once
 /// even under link cycles (`[[a]]…[[b]]…[[a]]`). The visited set is mandatory
 /// even at depth 1: a single file can link the same target twice. `base_dir` is
-/// fixed to the root's directory for the whole traversal, so containment is
-/// measured against one stable base; relative `path=` attributes are computed
-/// against it later in `format_document`.
+/// fixed to the root's directory for the whole traversal — it's the anchor for
+/// resolving relative targets and for the `path=` label, not an access boundary.
 fn collect_linked_docs(
     path: &Path,
     base_dir: &Path,
@@ -338,12 +330,11 @@ fn format_bundle(docs: &[ResolvedDoc]) -> String {
 // ---------------------------------------------------------------------------
 
 /// Package `root_path` and its one-hop linked documents into the bundle string.
-/// `base_dir` is the root file's parent directory; all containment is measured
-/// against it, and the root itself is opened as given (the user explicitly
-/// chose it, so it isn't containment-checked — only links it reaches are).
-/// Returns `Err` only when the *root* file can't be read; missing/unreadable
-/// *links* are skipped silently. Single entry point so the CLI and `bundle_doc`
-/// share depth, containment, and format.
+/// `base_dir` is the root file's parent directory — the anchor for resolving
+/// relative links and for `path=` labels, not an access boundary. Returns `Err`
+/// only when the *root* file can't be read; missing/unreadable *links* are
+/// skipped silently. Single entry point so the CLI and `bundle_doc` share depth
+/// and format.
 pub fn bundle_to_string(root_path: &str) -> Result<String, String> {
     let root = normalize_path(Path::new(root_path));
     // Fail loudly only for the root — confirm it's readable before traversal so
@@ -386,79 +377,62 @@ mod tests {
         p
     }
 
-    // ----- A1: containment (CRITICAL) -----
+    // ----- A1: reachability (parent / absolute links are followed) -----
 
     #[test]
-    fn dot_dot_escape_secret_never_appears_in_bundle() {
-        // The headline security test: a `[[../escape]]` link must NOT pull a
-        // file outside the base directory into the bundle.
-        let dir = base_dir("escape");
-        let base = dir.join("base");
+    fn parent_dir_link_is_included() {
+        // A note in a leaf folder linking up to a sibling tree (`[[../shared/x]]`)
+        // must be bundled — there is no containment, matching click-navigation.
+        // (A leaf note whose links all point "up" would otherwise bundle nothing.)
+        let dir = base_dir("parent");
+        let base = dir.join("vault/notes"); // root lives deep in the tree
         fs::create_dir_all(&base).unwrap();
-        write(&base, "root.md", "[[child]] and [[../escape]] and [[deep/leaf]]");
-        write(&base, "child.md", "child body [[root]]"); // cycle back to root
-        write(&base, "deep/leaf.md", "leaf body");
-        // The secret lives OUTSIDE base (a sibling of base/).
-        write(&dir, "escape.md", "SECRET — must NOT appear");
+        write(&base, "root.md", "see [[../shared/ref]] and [[child]]");
+        write(&base, "child.md", "child body");
+        // `../shared/ref` resolves above the root's own directory.
+        write(&dir.join("vault"), "shared/ref.md", "REFERENCED-FROM-PARENT");
 
         let bundle = bundle_to_string(&base.join("root.md").to_string_lossy()).unwrap();
         assert!(
-            !bundle.contains("SECRET"),
-            "`..` escape must be blocked by containment; bundle was:\n{bundle}"
+            bundle.contains("REFERENCED-FROM-PARENT"),
+            "parent-folder link must be followed; bundle was:\n{bundle}"
         );
+        assert!(bundle.contains("child body"), "sibling link still works:\n{bundle}");
     }
 
     #[test]
-    fn is_within_base_blocks_dot_dot_and_allows_child() {
-        let base = base_dir("within").join("base");
-        fs::create_dir_all(&base).unwrap();
-        assert!(
-            !is_within_base(&base.join("../escape.md"), &base),
-            "../escape must be outside base"
-        );
-        assert!(
-            is_within_base(&base.join("deep/leaf.md"), &base),
-            "deep/leaf must be inside base"
-        );
-    }
-
-    #[test]
-    fn absolute_path_target_is_blocked_by_containment() {
-        // `[[/etc/passwd]]` resolves to an absolute path outside base → rejected.
-        let base = base_dir("abs").join("base");
-        fs::create_dir_all(&base).unwrap();
-        // An extensionless absolute target gets `.md` appended (wikilinkPath
-        // mirror) but stays absolute, so it lands outside base → rejected.
-        let resolved = resolve_target_path("/etc/passwd", &base).unwrap();
-        assert!(resolved.is_absolute(), "absolute target stays absolute: {resolved:?}");
-        assert!(
-            !is_within_base(&resolved, &base),
-            "absolute path outside base must be rejected"
-        );
-        // An absolute target that already has an extension is left untouched.
-        assert_eq!(
-            resolve_target_path("/etc/hosts.conf", &base).unwrap(),
-            PathBuf::from("/etc/hosts.conf")
-        );
-    }
-
-    #[test]
-    fn absolute_link_secret_never_appears_in_bundle() {
-        // End-to-end: a root that links an absolute path outside base must not
-        // bundle that file's contents.
-        let dir = base_dir("abs_secret");
+    fn absolute_path_link_is_followed() {
+        // An absolute `[[/abs/path]]` to a real markdown file is bundled — same
+        // reasoning: the output is the user's own clipboard, nothing is exfiltrated.
+        let dir = base_dir("abs");
         let base = dir.join("base");
         fs::create_dir_all(&base).unwrap();
-        let secret = dir.join("secret.md");
-        fs::write(&secret, "ABSOLUTE-SECRET").unwrap();
-        let link = format!("[[{}]]", secret.to_string_lossy());
+        let elsewhere = dir.join("elsewhere.md");
+        fs::write(&elsewhere, "ABSOLUTE-BODY").unwrap();
+        let link = format!("[[{}]]", elsewhere.to_string_lossy());
         write(&base, "root.md", &link);
 
         let bundle = bundle_to_string(&base.join("root.md").to_string_lossy()).unwrap();
         assert!(
-            !bundle.contains("ABSOLUTE-SECRET"),
-            "absolute-path link outside base must be blocked; bundle:\n{bundle}"
+            bundle.contains("ABSOLUTE-BODY"),
+            "absolute-path link must be followed; bundle:\n{bundle}"
         );
+    }
+
+    #[test]
+    fn resolve_target_path_absolute_and_extension() {
+        // resolve_target_path still mirrors wikilinkPath: extensionless gets `.md`,
+        // an absolute target stays absolute, an existing extension is left alone.
+        let base = base_dir("resolve").join("base");
+        fs::create_dir_all(&base).unwrap();
+        let abs_md = resolve_target_path("/etc/passwd", &base).unwrap();
+        assert_eq!(abs_md, PathBuf::from("/etc/passwd.md"), "extensionless → .md, stays absolute");
+        assert_eq!(
+            resolve_target_path("/etc/hosts.conf", &base).unwrap(),
+            PathBuf::from("/etc/hosts.conf"),
+            "existing extension left untouched"
+        );
+        assert_eq!(resolve_target_path("note", &base).unwrap(), base.join("note.md"));
     }
 
     // ----- A2: wikilink scan -----

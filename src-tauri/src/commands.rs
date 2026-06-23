@@ -8,9 +8,8 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// Normalize path components (resolve relative "." and "..") purely textually.
 /// `pub(crate)` so `bundle.rs` reuses the *same* `..`/`.` collapse the file
-/// commands use — the bundler's containment gate (`is_within_base`) depends on
-/// this exact normalization being the single source of truth (no drift between
-/// where a file is read and where a link is allowed to point).
+/// commands use when resolving wikilink targets — one source of truth for path
+/// shape, so a bundled link resolves to the same place the editor would open.
 pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     use std::path::Component;
     let mut normalized = PathBuf::new();
