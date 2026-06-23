@@ -1,14 +1,19 @@
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, highlightActiveLine } from "@codemirror/view";
+import { vim } from "@replit/codemirror-vim";
 import { invoke } from "@tauri-apps/api/core";
 import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode } from "./markdown/live-preview";
 import { markdownFolding } from "./markdown/fold";
 import { markdownLang } from "./markdown/parser";
-import type { ConflictPolicy } from "./settings/app";
+import type { ConflictPolicy, VimMode } from "./settings/app";
 
 export type SaveStatus = "saved" | "saving" | "error" | "conflict";
 export type { PreviewMode };
+
+function vimExtensions(vimEnabled: boolean) {
+  return vimEnabled ? [vim()] : [];
+}
 
 /** Default autosave debounce used when the caller threads no delay (e.g. tests
  *  that mount without opts). The live value flows from autosaveDelaySetting. */
@@ -51,6 +56,7 @@ export interface EditorController {
    *  external change). Read at conflict time, so a change applies to the next
    *  refused write. */
   setConflictPolicy(p: ConflictPolicy): void;
+  setVimMode(enabled: boolean): void;
 }
 
 /** Debounced autosave to disk. Tracks the file's modification time as a baseline
@@ -226,6 +232,7 @@ export function mountEditor(
     autosaveDelay?: number;
     /** Initial conflict policy (live value flows via setConflictPolicy). */
     conflictPolicy?: ConflictPolicy;
+    vimMode?: VimMode;
   } = {},
 ): EditorController {
   const {
@@ -250,6 +257,7 @@ export function mountEditor(
     () => policy,
   );
   const modeCompartment = new Compartment();
+  const vimCompartment = new Compartment();
   let mode: PreviewMode = initialMode;
 
   const controller: EditorController = {
@@ -276,6 +284,9 @@ export function mountEditor(
     setConflictPolicy(p: ConflictPolicy) {
       policy = p;
     },
+    setVimMode(enabled: boolean) {
+      controller.view.dispatch({ effects: vimCompartment.reconfigure(vimExtensions(enabled)) });
+    },
   };
 
   const state = EditorState.create({
@@ -286,6 +297,7 @@ export function mountEditor(
       inlinePreview(baseDir, filePath),
       blockPreview,
       modeCompartment.of(modeExtensions(initialMode)),
+      vimCompartment.of(vimExtensions(opts.vimMode === "on")),
       history(),
       keymap.of([
         { key: "Mod-e", run: () => (onToggleMode(), true) },

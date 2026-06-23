@@ -24,6 +24,7 @@ import {
   panZoomSetting,
   themeForceSetting,
   seedSessionMode,
+  vimModeSetting,
 } from "./settings/app";
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./settings/sinks";
 import { mountSettingsButton } from "./settings/panel/modal";
@@ -171,6 +172,7 @@ async function boot() {
       baseMtime: mtime,
       autosaveDelay: autosaveDelaySetting.get(),
       conflictPolicy: conflictPolicySetting.get(),
+      vimMode: vimModeSetting.get(),
     });
     save.onForceSave(() => editor.forceSave());
     // Don't lose the last keystrokes typed within the autosave debounce window:
@@ -203,6 +205,7 @@ async function boot() {
     // were seeded via mountEditor opts above; these keep them live.
     autosaveDelaySetting.subscribe((ms) => editor.setAutosaveDelay(ms));
     conflictPolicySetting.subscribe((p) => editor.setConflictPolicy(p));
+    vimModeSetting.subscribe((mode) => editor.setVimMode(mode === "on"));
     // themeForce re-bake is owned by mermaid-widget (self-subscription); main
     // only triggers the redraw it alone can dispatch — symmetric with the
     // themeSetting sink above, minus mermaid's theme knowledge.

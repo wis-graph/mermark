@@ -264,10 +264,29 @@ export const conflictPolicySetting = registerSetting<ConflictPolicy>({
   },
 });
 
+export type VimMode = "on" | "off";
+/** Enable or disable Vim emulation mode. */
+export const vimModeSetting = registerSetting<VimMode>({
+  key: "mermark.vimMode",
+  default: "off",
+  parse: (raw) => (raw === "on" || raw === "off" ? raw : null),
+  ui: {
+    label: "Vim 모드",
+    group: "에디터",
+    control: {
+      kind: "segmented",
+      options: [
+        { value: "on", label: "켜기" },
+        { value: "off", label: "끄기" },
+      ],
+    },
+  },
+});
+
 // ── Mermaid (plugin-registered category) ─────────────────────────────────────
 
 export type PanZoom = "on" | "off";
-/** Pan/zoom interaction on mermaid diagrams. Read in initPanZoom (round-1 sink). */
+/** Pan/zoom interaction on mermaid diagrams. Read in attachPanZoom (round-1 sink). */
 export const panZoomSetting = registerSetting<PanZoom>({
   key: "mermark.panZoom",
   default: "on",

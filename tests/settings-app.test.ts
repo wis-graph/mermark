@@ -324,4 +324,34 @@ describe("app settings", () => {
       expect(entry!.ui.control.kind).toBe("text");
     });
   });
+
+  describe("vimModeSetting", () => {
+    it("defaults to off and persists under mermark.vimMode", async () => {
+      const { vimModeSetting } = await import("../src/settings/app");
+      expect(vimModeSetting.get()).toBe("off");
+      vimModeSetting.set("on");
+      expect(localStorage.getItem("mermark.vimMode")).toBe("on");
+    });
+
+    it("reads a saved preference over the default", async () => {
+      localStorage.setItem("mermark.vimMode", "on");
+      const { vimModeSetting } = await import("../src/settings/app");
+      expect(vimModeSetting.get()).toBe("on");
+    });
+
+    it("falls back to default on invalid preference", async () => {
+      localStorage.setItem("mermark.vimMode", "invalid");
+      const { vimModeSetting } = await import("../src/settings/app");
+      expect(vimModeSetting.get()).toBe("off");
+    });
+
+    it("belongs to 에디터 group as segmented control", async () => {
+      await import("../src/settings/app");
+      const { groups } = await import("../src/settings/registry");
+      const editorGroup = groups().find((g) => g.name === "에디터");
+      const entry = editorGroup!.entries.find((e) => e.ui.label === "Vim 모드");
+      expect(entry).toBeDefined();
+      expect(entry!.ui.control.kind).toBe("segmented");
+    });
+  });
 });

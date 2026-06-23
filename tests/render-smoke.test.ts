@@ -378,4 +378,14 @@ describe("mode toggle", () => {
     expect(ed.view.contentDOM.getAttribute("contenteditable")).toBe("false");
     ed.view.destroy();
   });
+
+  it("supports vimMode option and setVimMode dynamically", () => {
+    const ed = mountEditor(host, "hello", "/tmp", "/tmp/doc.md", { initialMode: "edit", vimMode: "on" });
+    // Verify it mounts with vim option
+    expect(() => {
+      ed.setVimMode(false);
+      ed.setVimMode(true);
+    }).not.toThrow();
+    ed.view.destroy();
+  });
 });
