@@ -41,11 +41,31 @@ function buildModal(): SettingsModal {
   modal.setAttribute("aria-modal", "true");
   modal.setAttribute("aria-label", "설정");
 
+  // Editorial header (DESIGN.md): a caption-uppercase title + a transparent close
+  // glyph. Lives ABOVE the sidebar/pane body, so the body stays a flex row while
+  // the modal becomes a flex column. The close button is NOT inside .settings-sidebar,
+  // so open() still lands first focus on the first category (focus-trap unchanged).
+  const header = document.createElement("div");
+  header.className = "settings-header";
+  const heading = document.createElement("span");
+  heading.className = "settings-title";
+  heading.textContent = "설정";
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "settings-close";
+  closeBtn.setAttribute("aria-label", "닫기");
+  closeBtn.textContent = "✕";
+  closeBtn.addEventListener("click", () => api.close());
+  header.append(heading, closeBtn);
+
+  const body = document.createElement("div");
+  body.className = "settings-body";
   const sidebar = document.createElement("div");
   sidebar.className = "settings-sidebar";
   const pane = document.createElement("div");
   pane.className = "settings-pane";
-  modal.append(sidebar, pane);
+  body.append(sidebar, pane);
+  modal.append(header, body);
   backdrop.appendChild(modal);
   document.body.appendChild(backdrop);
 

@@ -11,9 +11,15 @@
   --muted: #a8a29e;             /* on-dark-soft / muted-soft */
   --highlight-bg: #ffe066;      /* fluorescent mark — saturated to pop on dark canvas */
   --font-sans: "Inter", system-ui, sans-serif;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  /* DESIGN.md border-radius scale (rounded.*). Formalize the xs/sm/pill that the
+     rest of the sheet has been reaching for via var(--radius-xs,4px) fallbacks;
+     theme-invariant metric tokens, so they sit once in :root (not the light block). */
+  --radius-xs: 4px;             /* rounded.xs — inline tags */
+  --radius-sm: 6px;             /* rounded.sm — compact rows */
+  --radius-md: 8px;             /* rounded.md — form inputs */
+  --radius-lg: 12px;            /* rounded.lg — compact cards */
+  --radius-xl: 16px;            /* rounded.xl — feature cards / dialogs */
+  --radius-pill: 9999px;        /* rounded.pill — CTAs, badges, segmented */
   /* Typography panel vars (SSOT: fontSize/readingWidth/lineHeight settings →
      cssVarSink). Defaults:
        --editor-font-size 1rem (16px), --measure 68ch, --line-height 1.6.
@@ -310,41 +316,133 @@ html, body { margin: 0; height: 100%; }
 .cm-bullet { display: inline-block; width: .38em; height: .38em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
 .cm-bullet-collapsed { box-shadow: 0 0 0 .3em color-mix(in srgb, var(--muted) 50%, transparent); }
 
+/* ── `[[` wikilink autocomplete popup (CodeMirror tooltip) ───────────────────
+   CM ships a baked LIGHT base theme for the autocomplete tooltip (white plate,
+   black ink, underlined match). Untouched it breaks on the dark canvas. Re-skin
+   it from the DESIGN.md tokens so it reads as an editorial surface-card in both
+   modes. The popup mounts in document.body (outside .cm-content), so none of this
+   touches the ZOOM GUARD — no font-size on .cm-content/.cm-line here. The
+   `.cm-editor` prefix raises specificity above CM's runtime-injected base theme. */
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete {
+  background: var(--surface);
+  border: 1px solid var(--border);                 /* hairline */
+  border-radius: var(--radius-md);                 /* rounded.md form-surface */
+  box-shadow: 0 4px 16px color-mix(in srgb, #000 18%, transparent); /* soft drop */
+  font-family: var(--font-sans);
+  overflow: hidden;
+}
+.cm-editor .cm-tooltip-autocomplete > ul {
+  max-height: 16em;
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+.cm-editor .cm-tooltip-autocomplete > ul > li {
+  display: flex;
+  align-items: center;
+  gap: .5em;
+  padding: .3em .7em;
+  color: var(--fg);
+  line-height: 1.5;
+}
+/* Selected row: a quiet accent tint, NOT a hard fill — ink stays --fg so it's
+   legible in both modes (light ink #292524 tint, dark sky tint). */
+.cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  color: var(--fg);
+}
+.cm-editor .cm-completionLabel { flex: 1; min-width: 0; }
+/* Matched substring: link tint + 600, and DROP CM's default underline. */
+.cm-editor .cm-completionMatchedText {
+  color: var(--link);
+  font-weight: 600;
+  text-decoration: none;
+}
+/* Kind label (note/image) — muted, trailing, not italic. */
+.cm-editor .cm-completionDetail {
+  margin-left: auto;
+  padding-left: .8em;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+/* CM's default kind icons render as ASCII pseudo-glyphs that clash with the
+   editorial plate; hide them (the detail label already carries the kind). */
+.cm-editor .cm-completionIcon { display: none; }
+/* Themed scrollbar for an overflowing popup (matches .cm-scroller). */
+.cm-editor .cm-tooltip-autocomplete > ul::-webkit-scrollbar { width: 9px; }
+.cm-editor .cm-tooltip-autocomplete > ul::-webkit-scrollbar-thumb {
+  background: var(--border); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box;
+}
+.cm-editor .cm-tooltip-autocomplete > ul::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+
 /* ── Settings modal (sibling DOM overlay on <body>, outside CodeMirror) ──────
-   A centered ~720px two-pane dialog: sidebar (categories) + pane (controls).
-   Built lazily on first ⚙ open; the editor underneath is inert while open. */
+   A centered dialog restyled to the DESIGN.md editorial system: surface-card
+   plate, hairline + soft drop, ink-pill primary, quiet accent tints (never hard
+   fills). Built lazily on first ⚙ open; the editor underneath is inert while
+   open. Layout: a flex COLUMN — header on top, then a flex-row body
+   (sidebar | pane). Lives outside CodeMirror, so the ZOOM GUARD doesn't apply. */
 .settings-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, #000 45%, transparent); }
 .settings-backdrop[hidden] { display: none; }
-.settings-modal { display: flex; width: min(720px, 92vw); height: min(560px, 86vh); background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; box-shadow: 0 12px 48px color-mix(in srgb, #000 40%, transparent); }
-.settings-sidebar { flex: none; width: 180px; border-right: 1px solid var(--border); padding: .6em .4em; display: flex; flex-direction: column; gap: .15em; overflow-y: auto; background: color-mix(in srgb, var(--bg) 40%, var(--surface)); }
-.settings-cat { text-align: left; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-sm, 6px); padding: .5em .7em; font: inherit; font-size: 13px; cursor: pointer; }
-.settings-cat:hover { background: var(--bg); color: var(--fg); }
-.settings-cat.active { background: var(--bg); color: var(--fg); font-weight: 600; }
-.settings-pane { flex: 1; min-width: 0; padding: 1.2em 1.4em; overflow-y: auto; }
+/* feature-card geometry: rounded.xl + surface-card + hairline + single soft drop. */
+.settings-modal { display: flex; flex-direction: column; width: min(720px, 92vw); height: min(560px, 86vh); background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-xl); overflow: hidden; box-shadow: 0 12px 48px color-mix(in srgb, #000 24%, transparent); }
 
-.settings-row { display: flex; align-items: center; gap: 1em; padding: .55em 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+/* Header: a caption-uppercase title (12px/600, +0.96px tracking) + a quiet close
+   glyph, separated from the body by a hairline-soft rule. */
+.settings-header { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 1em 1.4em; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+.settings-title { font-size: 12px; font-weight: 600; letter-spacing: .096em; text-transform: uppercase; color: var(--muted); }
+.settings-close { display: inline-flex; align-items: center; justify-content: center; width: 1.8em; height: 1.8em; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-pill); font: inherit; font-size: 14px; line-height: 1; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
+.settings-close:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+
+.settings-body { flex: 1; min-height: 0; display: flex; }
+.settings-sidebar { flex: none; width: 184px; border-right: 1px solid var(--border); padding: .9em .6em; display: flex; flex-direction: column; gap: .15em; overflow-y: auto; background: color-mix(in srgb, var(--bg) 40%, var(--surface)); }
+/* Category = a nav-link (Inter 500, 14px). Active is NOT a hard fill: ink text +
+   a faint surface-strong tint (color-mix(--fg 6%)) + a left accent bar. */
+.settings-cat { position: relative; text-align: left; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-sm); padding: .6em .8em; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
+.settings-cat:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); color: var(--fg); }
+.settings-cat.active { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); font-weight: 600; }
+.settings-cat.active::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 3px; height: 1.1em; border-radius: var(--radius-pill); background: var(--accent); }
+.settings-pane { flex: 1; min-width: 0; padding: 1.4em 1.6em; overflow-y: auto; }
+
+/* Rows: roomier padding + hairline-soft dividers; label in Inter, control right. */
+.settings-row { display: flex; align-items: center; gap: 1em; padding: .8em 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
 .settings-row:last-child { border-bottom: none; }
-.settings-row-label { flex: none; width: 120px; font-size: 13px; color: var(--fg); }
+.settings-row-label { flex: none; width: 124px; font-size: 14px; font-weight: 500; color: var(--fg); }
 .settings-row-control { flex: 1; min-width: 0; display: flex; align-items: center; gap: .6em; }
 .settings-row-json { flex-direction: column; align-items: stretch; }
-.settings-row-json .settings-row-label { width: auto; margin-bottom: .4em; }
-.settings-row-info { color: var(--muted); font-size: 13px; }
+.settings-row-json .settings-row-label { width: auto; margin-bottom: .5em; }
+.settings-row-info { color: var(--muted); font-size: 14px; }
 
-.settings-segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); overflow: hidden; }
-.settings-seg-btn { background: transparent; color: var(--muted); border: none; padding: .35em .8em; font: inherit; font-size: 12px; cursor: pointer; border-right: 1px solid var(--border); }
-.settings-seg-btn:last-child { border-right: none; }
-.settings-seg-btn:hover { background: var(--bg); color: var(--fg); }
+/* Segmented: a pill toggle. Container is a pill with a hairline; the active button
+   is an ink pill (DESIGN.md button-primary: --accent fill, --bg ink → white-on-ink
+   in light, dark-on-sky in dark). Inset padding keeps the active pill off the rim. */
+.settings-segmented { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.settings-seg-btn { background: transparent; color: var(--muted); border: none; border-radius: var(--radius-pill); padding: .35em .9em; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
+.settings-seg-btn:hover { color: var(--fg); }
 .settings-seg-btn[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
 
-.settings-select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: .35em .5em; font: inherit; font-size: 13px; }
-.settings-text { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: .35em .5em; font: inherit; font-size: 13px; }
-.settings-text-help { margin-top: .35em; font-size: 12px; color: var(--muted); }
-.settings-slider { flex: 1; }
+/* Inputs: rounded.md, hairline border, focus → 2px accent border (text-input
+   spec: "border thickens to 2px ink"). The 2px swap is padding-neutral because
+   box-sizing:border-box keeps the box from shifting on focus. */
+.settings-select,
+.settings-text,
+.settings-json { box-sizing: border-box; background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-md); font: inherit; transition: border-color .12s ease; }
+.settings-select { padding: .45em .6em; font-size: 13px; }
+.settings-text { width: 100%; padding: .5em .7em; font-size: 13px; }
+.settings-json { width: 100%; padding: .7em .8em; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; resize: vertical; }
+.settings-select:focus,
+.settings-text:focus,
+.settings-json:focus { outline: none; border-color: var(--accent); border-width: 2px; padding: calc(.5em - 1px) calc(.7em - 1px); }
+.settings-select:focus { padding: calc(.45em - 1px) calc(.6em - 1px); }
+.settings-json:focus { padding: calc(.7em - 1px) calc(.8em - 1px); }
+.settings-text-help { margin-top: .4em; font-size: 12px; color: var(--muted); }
+.settings-slider { flex: 1; accent-color: var(--accent); }
 .settings-slider-value { flex: none; width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
 
-.settings-json { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: .6em .7em; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; resize: vertical; }
-.settings-json-error { min-height: 1.2em; color: #dc2626; font-size: 12px; margin: .35em 0; }
+.settings-json-error { min-height: 1.2em; color: #dc2626; font-size: 12px; margin: .4em 0; }
 .settings-json-actions { display: flex; gap: .5em; }
-.settings-json-btn { background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: .35em .8em; font: inherit; font-size: 12px; cursor: pointer; }
-.settings-json-btn:hover { background: var(--bg); color: var(--fg); }
-.settings-json-btn[data-act="apply"] { color: var(--fg); border-color: var(--accent); }
+/* Default JSON button = outline pill (button-outline: transparent + hairline + ink). */
+.settings-json-btn { background: transparent; color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: .45em 1.1em; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color .12s ease, border-color .12s ease, color .12s ease; }
+.settings-json-btn:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); border-color: var(--muted); }
+/* Apply = ink pill (button-primary: --accent fill, --bg ink). */
+.settings-json-btn[data-act="apply"] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.settings-json-btn[data-act="apply"]:hover { background: color-mix(in srgb, var(--accent) 88%, var(--fg)); border-color: transparent; }
