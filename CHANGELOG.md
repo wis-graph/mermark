@@ -1,0 +1,55 @@
+# Changelog
+
+이 프로젝트의 주요 변경 사항을 기록한다.
+
+형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
+버전은 [유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따른다.
+
+## [0.4.0] - 2026-06-23
+
+`0.1.0`의 읽기 전용 골격에서, Obsidian식 라이브 프리뷰 에디터로 성장한 누적 릴리스다.
+이 구간에는 별도 태그가 없어 0.1.0 이후의 모든 변경을 한 섹션으로 묶었다.
+
+### Added
+
+- **라이브 프리뷰 파이프라인**: 트리(Lezer) 기반에 커서/선택 위치를 인식하는 Obsidian식 라이브 프리뷰. 마크다운 문법 마커는 숨기고(conceal) 캐럿이 들어오면 원문을 드러낸다(reveal). 기능별 모듈을 등록하는 plugin registry 구조로, inline 데코레이션과 block 위젯을 함께 다룬다. block 데코레이션은 CM6 제약에 맞춰 StateField로 분리.
+- **Mermaid 다이어그램**: 펜스 코드 블록을 SVG 위젯으로 렌더(오류 시 폴백 표시). CSS transform 기반 드래그 팬·Ctrl/Cmd-휠 줌·더블클릭 토글 지원, 다이어그램을 자연 크기로 표시하고 줌/팬을 되돌리는 플로팅 리셋 버튼, 펜스 fold(접기) 제공.
+- **수식·코드·표**: KaTeX 인라인/블록 수식, 스타일 적용된 펜스 코드 블록, GFM 표 그리드, 작업 목록 체크박스 렌더.
+- **콜아웃·구분선·하이라이트**: `> [!type]` 블록쿼트 콜아웃 박스, `---` 가로 구분선, `==mark==` 인라인 하이라이트(GFM 확장).
+- **풋노트**: 참조는 위첨자로, 정의는 흐리게 렌더. 참조↔정의 양방향 클릭 내비게이션과 ⌘-hover 정의 프리뷰 지원.
+- **위키링크·이미지**: `[[` 입력 시 파일 피커/자동완성, 대상 존재 시 활성 링크(새 창으로 열기)·없는 링크/asset 링크 처리. 로컬·원격 이미지를 asset protocol로 표시(선택적 title 파싱).
+- **에디터 기능**: edit/read 모드 토글(설정 영속), 헤딩/리스트 항목 fold(Obsidian식), Workflowy식 리스트 불릿과 fold halo, 선택 영역을 `=`·`*` 마크로 감싸기, 괄호 자동 닫기, 본문 줌(⌘ +/-/0), Vim 모드(CM6 Vim 확장), 세션 상태(스크롤·커서 위치) 영속화.
+- **UI 크롬**: 하단 상태 바(Lucide 아이콘 + shadcn/Raycast 스타일 버튼), 테마 적용 스크롤바·fold 거터.
+- **설정(SSOT)**: 의존성 없는 SSOT 설정 프리미티브 위에 theme·mode·vimMode를 선언, 싱크가 구독하는 단일 출처 구조. 설정 패널과 theme-as-JSON, 요소별 색을 라이브 프리뷰로 편집하는 전체 테마 비주얼 에디터(스워치 그리드 + 접이식 고급 JSON 에디터).
+- **타이포그래피/테마**: OS 추종 + 토글 테마, ElevenLabs DESIGN.md 토큰 기반 타입 시스템, 헤딩 스케일·링크 대비·줌 연동 애니메이션 체크박스, Pretendard 번들 + Google Fonts 로더, 읽기 measure/tracking 조정.
+- **번들 CLI**: `mermark bundle` CLI와 `bundle_doc` 커맨드로 LLM 컨텍스트 패키징(부모/절대 위키링크 추종), ⌘⇧C로 LLM 컨텍스트 번들을 클립보드에 복사.
+- **CLI/창 제어**: 단일 파일 인자 열기, 누락된 파일 인자 자동 생성(Vim식), `--right`로 화면 우측 절반에 창 띄우기.
+
+### Changed
+
+- 펜스 코드를 block 위젯으로 렌더하도록 전환하고, 코드 본문 정의를 한 곳으로 통합. 위키링크로 생성된 창에도 capability 부여.
+- 위젯 공통 로직(boundedCache 등)과 mermaid 렌더 단계를 명명 함수로 추출, 중복 클릭 핸들러 제거.
+- 설정 값 변경 시 페이지 리로드 대신 라이브 전환(theme/mode가 SSOT 스토어를 읽고 에디터는 싱크로 동작).
+- 기본 창 크기 확대, 읽기 컬럼 가운데 정렬 및 ⌘± 줌 시 뷰포트 한도 내 확장.
+
+### Fixed
+
+- **숨김(dot-prefix) 디렉토리 내 로컬 이미지가 asset protocol 403으로 안 뜨던 문제 수정**: assetProtocol scope를 객체 형태로 바꾸고 `requireLiteralLeadingDot: false`로 지정해, `.test/`·`.obsidian/`·attachments 등 점으로 시작하는 디렉토리를 거치는 이미지가 렌더되도록 했다.
+  - 보안 고지: 이 변경으로 숨김 폴더 안의 이미지/폰트도 read-only asset으로 webview에 로드될 수 있다(사용자가 연 문서가 해당 경로를 명시적으로 참조하는 경우에 한함).
+- Mermaid 재렌더 시 레이아웃 점프·0-width 호스트로 인한 다이어그램 미표시, 자연 높이 고정으로 키 큰 다이어그램 잘림, 박스 높이/줌 클립 비대칭 등 수정.
+- 코드 펜스 opener의 언어 토큰 conceal, 펜스 라인 read 모드 접힘, 캐럿이 블록 밖일 때 펜스 접힘 처리.
+- 다크 모드에서 보이지 않던 캐럿·흰 fold placeholder·불투명 거터 수정, 읽기 컬럼 정렬/오버플로 보정.
+- 키보드/클릭으로 block 위젯 진입(기하적 모션 + span-overlap), 풋노트 정방향 점프 시 비동기 위젯 정착 후 재중심.
+- 디렉토리 구분자 없는 파일명의 마지막 글자를 baseDir이 잘라먹던 버그, 한국어 자판에서 ⌘+E 신뢰성, 위키링크의 부모 디렉토리 세그먼트 지원 경로 정규화.
+- 코드 블록/인라인 코드 안의 `$` 수식을 트리 인식으로 건너뛰기, 이미지 URL 공백 종료 파싱.
+
+### Security
+
+- 원자적 자동 저장(temp + rename)과 mtime 충돌 가드(read→baseline→write), 충돌 시 'Reload from Disk' 옵션, CSP 하드닝.
+
+## [0.1.0]
+
+초기 베이스라인. Tauri 2 + CodeMirror 6 + TypeScript 골격으로, CLI로 단일 파일을 열어 읽기 전용 CM6 에디터에 마운트하는 최소 마크다운 뷰어.
+
+[0.4.0]: https://github.com/wis-graph/mermark/releases/tag/v0.4.0
+[0.1.0]: https://github.com/wis-graph/mermark/releases/tag/v0.1.0
