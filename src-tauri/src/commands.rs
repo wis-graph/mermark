@@ -78,10 +78,15 @@ pub fn write_file(path: String, text: String, baseline: u64) -> Result<u64, Stri
 pub fn create_markdown_file(path: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     if p.exists() {
+        if p.is_dir() {
+            return Err(format!("A directory already exists at path: {}", path));
+        }
         return Ok(()); // already exists, no-op
     }
     if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create directory: {e}"))?;
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("failed to create directory: {e}"))?;
+        }
     }
     let title = p.file_stem()
         .and_then(|s| s.to_str())
@@ -227,7 +232,10 @@ mod tests {
 
     #[test]
     fn create_markdown_file_creates_file_and_folders() {
-        let parent = temp_path("dir");
+        let parent = std::env::temp_dir()
+            .join(format!("mermark_test_{}_nested", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
         let path = format!("{}/nested/new_file.md", parent);
         assert!(!path_exists(path.clone()));
         
@@ -237,6 +245,38 @@ mod tests {
         let contents = fs::read_to_string(&path).unwrap();
         assert_eq!(contents, "# new_file\n");
         
+        fs::remove_dir_all(&parent).ok();
+    }
+
+    #[test]
+    fn create_markdown_file_relative_path() {
+        let path = "relative_file_test.md".to_string();
+        if std::path::Path::new(&path).exists() {
+            fs::remove_file(&path).ok();
+        }
+        assert!(!path_exists(path.clone()));
+
+        create_markdown_file(path.clone()).unwrap();
+
+        assert!(path_exists(path.clone()));
+        let contents = fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, "# relative_file_test\n");
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn create_markdown_file_fails_if_dir_exists() {
+        let parent = std::env::temp_dir()
+            .join(format!("mermark_test_{}_dir_exists", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        fs::create_dir_all(&parent).unwrap();
+
+        let res = create_markdown_file(parent.clone());
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), format!("A directory already exists at path: {}", parent));
+
         fs::remove_dir_all(&parent).ok();
     }
 }
