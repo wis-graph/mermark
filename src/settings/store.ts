@@ -54,7 +54,12 @@ export interface Setting<T> {
 
 export function defineSetting<T>(def: SettingDef<T>): Setting<T> {
   const { key, default: dflt, parse, serialize } = def;
-  const raw = localStorage.getItem(key);
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(key);
+  } catch (err) {
+    console.error(`Failed to read setting '${key}' from localStorage:`, err);
+  }
   const parsed = parse ? parse(raw) : (raw as T | null);
   let value: T = parsed == null ? dflt : parsed;
 
@@ -71,7 +76,11 @@ export function defineSetting<T>(def: SettingDef<T>): Setting<T> {
     set(v: T) {
       if (Object.is(v, value)) return; // SSOT: no-op when unchanged
       value = v;
-      localStorage.setItem(key, serialize ? serialize(v) : String(v));
+      try {
+        localStorage.setItem(key, serialize ? serialize(v) : String(v));
+      } catch (err) {
+        console.error(`Failed to save setting '${key}' to localStorage:`, err);
+      }
       listeners.forEach((fn) => fn(v));
     },
     subscribe,

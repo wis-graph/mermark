@@ -176,12 +176,28 @@ async function boot() {
     mountSettingsButton(bar);
 
     const sessionKey = `mermark.session.${file}`;
-    const saveSessionState = () => {
-      if (!editor) return;
-      const scroller = host.querySelector(".cm-scroller");
-      const scroll = scroller ? scroller.scrollTop : 0;
-      const cursor = editor.view.state.selection.main.anchor;
-      localStorage.setItem(sessionKey, JSON.stringify({ scroll, cursor }));
+    let sessionSaveTimeout: ReturnType<typeof setTimeout> | undefined;
+    const saveSessionState = (immediate = false) => {
+      if (sessionSaveTimeout) {
+        clearTimeout(sessionSaveTimeout);
+        sessionSaveTimeout = undefined;
+      }
+      const doSave = () => {
+        if (!editor) return;
+        const scroller = host.querySelector(".cm-scroller");
+        const scroll = scroller ? scroller.scrollTop : 0;
+        const cursor = editor.view.state.selection.main.anchor;
+        try {
+          localStorage.setItem(sessionKey, JSON.stringify({ scroll, cursor }));
+        } catch (err) {
+          console.error("Failed to save session state to localStorage", err);
+        }
+      };
+      if (immediate) {
+        doSave();
+      } else {
+        sessionSaveTimeout = setTimeout(doSave, 150);
+      }
     };
 
     let editor: ReturnType<typeof mountEditor>;
@@ -207,11 +223,16 @@ async function boot() {
     }
 
     // Restore session state
-    const savedSession = localStorage.getItem(sessionKey);
+    let savedSession: string | null = null;
+    try {
+      savedSession = localStorage.getItem(sessionKey);
+    } catch (err) {
+      console.error("Failed to read session state from localStorage", err);
+    }
     if (savedSession) {
       try {
         const { scroll, cursor } = JSON.parse(savedSession);
-        if (typeof cursor === "number" && cursor <= text.length) {
+        if (typeof cursor === "number" && cursor >= 0 && cursor <= text.length) {
           editor.view.dispatch({
             selection: { anchor: cursor, head: cursor }
           });
@@ -247,7 +268,7 @@ async function boot() {
     if ("__TAURI_INTERNALS__" in window) {
       const win = getCurrentWindow();
       await win.onCloseRequested(async (e) => {
-        saveSessionState();
+        saveSessionState(true);
         if (!editor.hasUnsaved()) return;
         e.preventDefault();
         editor.beginClose();

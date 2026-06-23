@@ -88,6 +88,9 @@ describe("Session State Persistence", () => {
     // Trigger cursor movement to update storage
     mermark.view.dispatch({ selection: { anchor: 20 } });
     
+    // Wait for the debounced saveSessionState (150ms)
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
     // Check that localStorage got updated
     const saved = JSON.parse(localStorage.getItem(sessionKey) || "{}");
     expect(saved.cursor).toBe(20);
