@@ -248,17 +248,45 @@ html, body { margin: 0; height: 100%; }
 .cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); }
 .cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--muted); }
 
-/* Bottom status bar — all editor chrome lives here, out of the content. */
-.status-bar { flex: none; height: 28px; display: flex; align-items: center; gap: .35em; padding: 0 .6em; border-top: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--muted); user-select: none; }
+/* Bottom status bar — all editor chrome lives here, out of the content. A
+   shadcn/Raycast-toned strip: taller (36px) for a comfortable hit area, surface
+   bg under a hairline top, 13px body. The status bar sits OUTSIDE the CM measure
+   root, so none of this touches the ZOOM GUARD (no .cm-content/.cm-line here). */
+.status-bar { flex: none; height: 36px; display: flex; align-items: center; gap: .25em; padding: 0 .5em; border-top: 1px solid var(--border); background: var(--surface); font-size: 13px; color: var(--muted); user-select: none; }
 .status-spacer { flex: 1; }
-.status-pos { font-variant-numeric: tabular-nums; padding: 0 .3em; }
-.status-btn { background: transparent; color: var(--muted); border: none; border-radius: var(--radius-sm, 6px); height: 22px; padding: 0 .55em; font: inherit; font-size: 12px; cursor: pointer; }
-.status-btn:hover { background: var(--bg); color: var(--fg); }
-.save-status { display: inline-flex; align-items: center; gap: .4em; font-size: 12px; color: var(--muted); }
+.status-pos { font-variant-numeric: tabular-nums; padding: 0 .5em; color: var(--muted); }
+
+/* shadcn/Raycast ghost button: 16px monochrome icon + 13px-medium label, generous
+   hit area, subtle ghost hover (no border, no fill at rest). Icon + label inherit
+   `color`, so a single var swap (--muted → --fg on hover) carries both, in light and
+   dark, off the currentColor SVGs — no per-icon theming. */
+.status-btn { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-md, 8px); height: 28px; padding: 0 10px; font: inherit; font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
+.status-btn .icon { flex: none; width: 16px; height: 16px; display: block; }
+.status-btn-label { white-space: nowrap; }
+.status-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
+.status-btn:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.status-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent); }
+/* Icon-only buttons (theme toggle): square so the glyph sits centered, not lopsided. */
+.status-btn.icon-only { padding: 0; width: 28px; justify-content: center; }
+
+/* Save status: icon + label, color states preserved from the old emoji version
+   (saved/saving muted, error red, conflict amber). The status word lives in
+   .save-label (an inline-flex icon+text); the conflict actions follow it. */
+.save-status { display: inline-flex; align-items: center; gap: .25em; font-size: 13px; color: var(--muted); }
+.save-label { display: inline-flex; align-items: center; gap: 6px; padding: 0 .25em; white-space: nowrap; }
+.save-label .icon { flex: none; width: 16px; height: 16px; }
 .save-status[data-state="error"] { color: #dc2626; }
 .save-status[data-state="conflict"] { color: #d97706; }
-.status-btn.force-save { color: #d97706; border: 1px solid currentColor; height: 20px; }
-.status-btn.force-save:hover { background: #d97706; color: #fff; }
+/* Spinner: the loader-circle icon rotates while a write is in flight. */
+.save-status[data-state="saving"] .save-label .icon { animation: status-spin .8s linear infinite; }
+@keyframes status-spin { to { transform: rotate(360deg); } }
+
+/* Conflict actions (shown only on conflict). force-save = destructive/warning tone
+   (amber pill outline that fills on hover); reload = secondary ghost. */
+.status-btn.force-save { color: #d97706; border: 1px solid color-mix(in srgb, #d97706 55%, transparent); border-radius: var(--radius-md, 8px); height: 26px; padding: 0 10px; }
+.status-btn.force-save:hover { background: #d97706; color: #fff; border-color: #d97706; }
+.status-btn.reload-disk { color: var(--muted); height: 26px; }
+.status-btn.reload-disk:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
 
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }
 .cm-table { border-collapse: collapse; width: 100%; letter-spacing: normal; }
@@ -394,8 +422,10 @@ html, body { margin: 0; height: 100%; }
    glyph, separated from the body by a hairline-soft rule. */
 .settings-header { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 1em 1.4em; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
 .settings-title { font-size: 12px; font-weight: 600; letter-spacing: .096em; text-transform: uppercase; color: var(--muted); }
-.settings-close { display: inline-flex; align-items: center; justify-content: center; width: 1.8em; height: 1.8em; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-pill); font: inherit; font-size: 14px; line-height: 1; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
+.settings-close { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-pill); line-height: 1; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
+.settings-close .icon { width: 16px; height: 16px; }
 .settings-close:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.settings-close:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent); }
 
 .settings-body { flex: 1; min-height: 0; display: flex; }
 .settings-sidebar { flex: none; width: 184px; border-right: 1px solid var(--border); padding: .9em .6em; display: flex; flex-direction: column; gap: .15em; overflow-y: auto; background: color-mix(in srgb, var(--bg) 40%, var(--surface)); }

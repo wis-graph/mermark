@@ -6,13 +6,17 @@
 import { groups, type Group } from "../registry";
 import { RENDER } from "./controls";
 import type { Setting, Control } from "../store";
+import { icon } from "../../icons";
 
 /** Append a ⚙ status-bar button that opens the settings modal. Boot-cheap: only
  *  the button is created now; the modal DOM is built on first open. */
 export function mountSettingsButton(bar: HTMLElement): void {
   const btn = document.createElement("button");
   btn.className = "status-btn settings-btn";
-  btn.textContent = "⚙";
+  const label = document.createElement("span");
+  label.className = "status-btn-label";
+  label.textContent = "설정";
+  btn.append(icon("settings"), label);
   btn.title = "설정";
   let modal: SettingsModal | null = null;
   btn.addEventListener("click", () => {
@@ -54,7 +58,7 @@ function buildModal(): SettingsModal {
   closeBtn.type = "button";
   closeBtn.className = "settings-close";
   closeBtn.setAttribute("aria-label", "닫기");
-  closeBtn.textContent = "✕";
+  closeBtn.append(icon("x"));
   closeBtn.addEventListener("click", () => api.close());
   header.append(heading, closeBtn);
 

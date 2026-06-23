@@ -29,6 +29,7 @@ import {
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./settings/sinks";
 import { mountSettingsButton } from "./settings/panel/modal";
 import { installBundleShortcut } from "./bundle";
+import { icon, type IconName } from "./icons";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
 import "./fonts/fonts.css";
@@ -39,6 +40,20 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
   if (cls) e.className = cls;
   return e;
 };
+
+/** Set a status-bar button to a Lucide icon + (optional) label, replacing whatever
+ *  it held. The shadcn/Raycast button shape: a 16px monochrome icon followed by a
+ *  13px-medium label, both inheriting the button's `color`. Replaces the old emoji
+ *  `textContent =` calls — same render-on-state pattern, DOM shape only. The label
+ *  rides in its own <span> so the icon stays a clean flex item (gap from CSS). */
+function setButtonContent(btn: HTMLElement, name: IconName, label?: string): void {
+  btn.replaceChildren(icon(name));
+  if (label) {
+    const text = el("span", "status-btn-label");
+    text.textContent = label;
+    btn.append(text);
+  }
+}
 
 /** A save-status indicator that lives inline in the status bar. On `conflict`
  *  (the file changed on disk) it offers a one-click overwrite so the user's
@@ -52,12 +67,12 @@ function makeSaveStatus(): {
   const node = el("span", "save-status");
   const label = el("span", "save-label");
   const force = el("button", "status-btn force-save") as HTMLButtonElement;
-  force.textContent = "강제 저장";
+  setButtonContent(force, "save", "강제 저장");
   force.title = "디스크의 외부 변경을 덮어쓰고 현재 내용을 저장합니다";
   force.hidden = true;
 
   const reload = el("button", "status-btn reload-disk") as HTMLButtonElement;
-  reload.textContent = "디스크에서 다시 읽기";
+  setButtonContent(reload, "rotate-ccw", "디스크에서 다시 읽기");
   reload.title = "로컬 편집 내용을 버리고 디스크 파일 내용으로 새로고침합니다";
   reload.hidden = true;
 
@@ -71,14 +86,14 @@ function makeSaveStatus(): {
       force.hidden = s !== "conflict";
       reload.hidden = s !== "conflict";
       if (s === "error") {
-        label.textContent = `⚠ 저장 실패: ${detail ?? "unknown error"}`;
+        setButtonContent(label, "triangle-alert", `저장 실패: ${detail ?? "unknown error"}`);
       } else if (s === "conflict") {
-        label.textContent = "⚠ 파일이 외부에서 변경됨 — 자동저장 중단";
+        setButtonContent(label, "triangle-alert", "파일이 외부에서 변경됨 — 자동저장 중단");
       } else if (s === "saving") {
-        label.textContent = "● 저장 중";
+        setButtonContent(label, "loader-circle", "저장 중");
       } else {
-        label.textContent = "✓ 저장됨";
-        hideTimer = setTimeout(() => (label.textContent = ""), 1500);
+        setButtonContent(label, "check", "저장됨");
+        hideTimer = setTimeout(() => label.replaceChildren(), 1500);
       }
     },
     onForceSave(fn) {
@@ -94,7 +109,7 @@ function makeSaveStatus(): {
 function makeModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode) => void } {
   const btn = el("button", "status-btn mode-toggle");
   const render = (m: PreviewMode) => {
-    btn.textContent = m === "edit" ? "✎ 편집" : "👁 리더";
+    setButtonContent(btn, m === "edit" ? "square-pen" : "eye", m === "edit" ? "편집" : "리더");
     btn.title = m === "edit" ? "편집 모드 (⌘E: 리더 모드로)" : "리더 모드 (⌘E: 편집 모드로)";
   };
   return { btn, render };

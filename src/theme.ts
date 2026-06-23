@@ -1,3 +1,5 @@
+import { icon } from "./icons";
+
 export type Theme = "dark" | "light";
 
 export function systemTheme(): Theme {
@@ -35,9 +37,12 @@ export function makeThemeToggle(onToggle: () => void): {
   render: (t: Theme) => void;
 } {
   const btn = document.createElement("button");
-  btn.className = "status-btn theme-toggle";
+  btn.className = "status-btn theme-toggle icon-only";
   const render = (t: Theme) => {
-    btn.textContent = t === "dark" ? "☾" : "☀";
+    // Show the CURRENT theme's icon (moon in dark, sun in light) — same mapping the
+    // old ☾/☀ glyphs used and what the title says ("다크 모드 (클릭: 라이트)"), so the
+    // swap to Lucide changes the glyph, not the behavior.
+    btn.replaceChildren(icon(t === "dark" ? "moon" : "sun"));
     btn.title = t === "dark" ? "다크 모드 (클릭: 라이트)" : "라이트 모드 (클릭: 다크)";
   };
   btn.addEventListener("click", onToggle);
