@@ -63,6 +63,23 @@ fn right_half_geometry(logical_width: f64, logical_height: f64) -> (f64, f64, f6
     (half, logical_height, half)
 }
 
+/// Ensure a `Target::File` path is openable before launch: when it doesn't exist
+/// yet, create it (vim's `:e newfile.md` convention — a missing path is intent to
+/// *create*, not an error); when it already exists, no-op. An existing path is
+/// never written over, so user content is safe even if a directory somehow
+/// reaches here (rejecting a directory target is `resolve_target`'s job upstream,
+/// via `CliError::IsDirectory`). Reuses the IPC command's pure helper directly
+/// (no `invoke` round-trip) so the on-disk shape — recursive parent dirs and a
+/// `# {stem}\n` header — stays identical to wikilink-created files. Named so the
+/// "missing target file is born on launch" rule lives behind one verb instead of
+/// an inline `if !exists` in the setup closure.
+fn ensure_file_target(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    commands::create_markdown_file(path.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -85,7 +102,19 @@ pub fn run() {
                     // parser deferred. Both converge here so the url/geometry/
                     // builder code below runs once for either source.
                     let target = match target {
-                        cli::Target::File(path) => path,
+                        cli::Target::File(path) => {
+                            // Create the file if it doesn't exist yet (vim-style)
+                            // before opening; an existing file is opened as-is.
+                            // A creation failure (e.g. unwritable parent dir) is a
+                            // launch error: report it and exit gracefully with the
+                            // same code/style as the other CLI failures below
+                            // rather than panicking out of `setup`.
+                            if let Err(e) = ensure_file_target(&path) {
+                                eprintln!("mermark: cannot open {}: {e}", path.display());
+                                std::process::exit(2);
+                            }
+                            path
+                        }
                         cli::Target::Stdin => {
                             if !stdin_is_piped() {
                                 eprintln!(
@@ -141,8 +170,11 @@ pub fn run() {
                         cli::CliError::Missing => {
                             eprintln!("mermark: no file given.\nusage: mermark <file.md>");
                         }
-                        cli::CliError::NotFound(p) => {
-                            eprintln!("mermark: file not found: {}", p.display());
+                        cli::CliError::IsDirectory(p) => {
+                            eprintln!(
+                                "mermark: {} is a directory, not a file.\nusage: mermark <file.md>",
+                                p.display()
+                            );
                         }
                     }
                     std::process::exit(2);
@@ -196,6 +228,48 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(fs::read_to_string(&a).unwrap(), "a");
         assert_eq!(fs::read_to_string(&b).unwrap(), "b");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- ensure_file_target (vim-style create-on-launch) ---
+
+    #[test]
+    fn ensure_creates_missing_target_with_header() {
+        // A missing path is created with the same `# {stem}\n` shape as
+        // wikilink-spawned files, including any missing parent directories.
+        let dir = scratch_dir("ensure_missing");
+        let path = dir.join("sub").join("fresh.md");
+        assert!(!path.exists());
+        ensure_file_target(&path).unwrap();
+        assert!(path.is_file());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "# fresh\n");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn ensure_leaves_existing_file_untouched() {
+        // The data-safety invariant: an existing file is never overwritten —
+        // ensure_file_target no-ops and the user's content survives verbatim.
+        let dir = scratch_dir("ensure_existing");
+        let path = dir.join("keep.md");
+        fs::write(&path, "# my notes\nkeep me").unwrap();
+        ensure_file_target(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "# my notes\nkeep me");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn ensure_noops_on_existing_directory_without_clobber() {
+        // ensure_file_target treats an *existing* path (file or dir) as nothing to
+        // do, so a directory survives untouched — it never creates a file over it.
+        // Rejecting a directory as a target is resolve_target's job (IsDirectory),
+        // upstream of here; this test just documents that ensure never clobbers.
+        let dir = scratch_dir("ensure_dir");
+        let child = dir.join("inside.md");
+        fs::write(&child, "x").unwrap();
+        ensure_file_target(&dir).unwrap(); // no-op: the dir already exists
+        assert!(dir.is_dir());
+        assert!(child.is_file(), "the directory's contents must survive");
         fs::remove_dir_all(&dir).ok();
     }
 }

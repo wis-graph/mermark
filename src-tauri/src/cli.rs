@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, PartialEq)]
 pub enum CliError {
     Missing,
-    NotFound(PathBuf),
+    IsDirectory(PathBuf),
 }
 
 /// Where the editor should read its document from. `parse_args` classifies the
@@ -50,7 +50,8 @@ fn is_stdin_token(arg: &str) -> bool {
 /// arguments, then classify the first positional. If it is the stdin token
 /// (`-`) the target is `Target::Stdin` and `resolve_target` is *not* called (no
 /// filesystem access for a token that isn't a real path); otherwise the first
-/// positional is resolved to an existing file. The flag may appear anywhere
+/// positional is resolved to a file path (existing or to-be-created; a directory
+/// is rejected). The flag may appear anywhere
 /// (`mermark --right f.md` and `mermark f.md --right` are equivalent); unknown
 /// `--xxx` flags are dropped silently so the scope stays limited to `--right`.
 /// This stays a pure query (no I/O) — stdin reading is the caller's effect in
@@ -78,16 +79,20 @@ pub fn parse_args(args: &[String], cwd: &Path) -> Result<LaunchArgs, CliError> {
     Ok(LaunchArgs { target: Target::File(path), right })
 }
 
-/// Resolve the first file argument to an absolute, existing file path.
-/// `cwd` is injected for testability.
+/// Resolve the first positional argument to an absolute *file* path to open.
+/// The path may already exist or be created on launch (vim's `:e newfile`
+/// convention), so a missing path is a valid target — only a directory is
+/// rejected, since a directory can't be opened as a document. `cwd` is injected
+/// for testability. No file is created here; `lib.rs` performs that effect after
+/// resolution, keeping this a pure (read-only) classification.
 pub fn resolve_target(args: &[String], cwd: &Path) -> Result<PathBuf, CliError> {
     let raw = args.first().ok_or(CliError::Missing)?;
     let p = Path::new(raw);
     let abs = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
-    if abs.is_file() {
-        Ok(abs)
+    if abs.is_dir() {
+        Err(CliError::IsDirectory(abs))
     } else {
-        Err(CliError::NotFound(abs))
+        Ok(abs)
     }
 }
 
@@ -116,11 +121,35 @@ mod tests {
     }
 
     #[test]
-    fn nonexistent_file_errors() {
+    fn nonexistent_file_resolves_for_creation() {
+        // vim `:e newfile.md`: a path that doesn't exist yet is a valid target;
+        // lib.rs creates it on launch. resolve_target must return the absolute
+        // path (joined against cwd) rather than erroring.
         let cwd = std::env::temp_dir();
-        match resolve_target(&["nope_xyz.md".into()], &cwd) {
-            Err(CliError::NotFound(_)) => {}
-            other => panic!("expected NotFound, got {other:?}"),
+        let got = resolve_target(&["nope_xyz.md".into()], &cwd).unwrap();
+        assert_eq!(got, cwd.join("nope_xyz.md"));
+    }
+
+    #[test]
+    fn existing_file_resolves() {
+        // An existing file stays a valid target (no regression): it resolves to
+        // its absolute path so lib.rs's create call no-ops and opens it as-is.
+        let dir = std::env::temp_dir().join("mermark_test_existing");
+        fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("here.md");
+        fs::write(&f, "# hi").unwrap();
+        assert_eq!(resolve_target(&["here.md".into()], &dir).unwrap(), f);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn directory_is_rejected() {
+        // A directory can't be opened as a document, so it's the one path kind
+        // resolve_target refuses (the temp dir itself always exists as a dir).
+        let cwd = std::env::temp_dir();
+        match resolve_target(&[cwd.to_string_lossy().into_owned()], &cwd) {
+            Err(CliError::IsDirectory(_)) => {}
+            other => panic!("expected IsDirectory, got {other:?}"),
         }
     }
 
@@ -177,11 +206,34 @@ mod tests {
     }
 
     #[test]
-    fn nonexistent_positional_is_not_found() {
+    fn nonexistent_positional_is_a_file_target() {
+        // A to-be-created file flows through parse_args as a File target (lib.rs
+        // creates it on launch); it is no longer a fatal error.
         let cwd = std::env::temp_dir();
-        match parse_args(&["nope_xyz.md".into()], &cwd) {
-            Err(CliError::NotFound(_)) => {}
-            other => panic!("expected NotFound, got {other:?}"),
+        let got = parse_args(&["nope_xyz.md".into()], &cwd).unwrap();
+        assert_eq!(got.target, Target::File(cwd.join("nope_xyz.md")));
+        assert!(!got.right);
+    }
+
+    #[test]
+    fn nonexistent_positional_with_right_flag() {
+        // `mermark --right newfile.md`: window geometry is orthogonal to whether
+        // the file already exists, so --right rides along with a to-be-created
+        // File target.
+        let cwd = std::env::temp_dir();
+        let got = parse_args(&["--right".into(), "nope_xyz.md".into()], &cwd).unwrap();
+        assert_eq!(got.target, Target::File(cwd.join("nope_xyz.md")));
+        assert!(got.right);
+    }
+
+    #[test]
+    fn directory_positional_is_rejected() {
+        // parse_args delegates directory rejection to resolve_target: opening a
+        // directory as a document is impossible, so it surfaces as IsDirectory.
+        let cwd = std::env::temp_dir();
+        match parse_args(&[cwd.to_string_lossy().into_owned()], &cwd) {
+            Err(CliError::IsDirectory(_)) => {}
+            other => panic!("expected IsDirectory, got {other:?}"),
         }
     }
 
