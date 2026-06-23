@@ -142,7 +142,8 @@ pub fn run() {
             commands::open_path,
             commands::path_exists,
             commands::create_markdown_file,
-            commands::bundle_doc
+            commands::bundle_doc,
+            commands::list_link_targets
         ])
         .setup(|app| {
             let args: Vec<String> = std::env::args().skip(1).collect();

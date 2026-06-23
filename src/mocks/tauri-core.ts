@@ -121,6 +121,19 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       console.info("[mock] bundle_doc", path);
       return `<documents>\n<document path="${rel}" title="${title}">\n${body}\n</document>\n</documents>` as T;
     }
+    case "list_link_targets": {
+      // Mirrors the real `list_link_targets(dir) -> Result<Vec<LinkTarget>>`:
+      // markdown notes (name = basename, no `.md`) and inlineable images
+      // (name = full file name) in the given dir, sorted markdown-first then by
+      // name. Deterministic so the `[[` picker golden is stable; the values line
+      // up with the SAMPLE body's `[[some-note]]` and `[[diagram.png]]`. The
+      // browser mock can't read a real FS, so `dir` is accepted but ignored.
+      console.info("[mock] list_link_targets", a.dir);
+      return [
+        { name: "some-note", rel: "some-note.md", kind: "markdown" },
+        { name: "diagram.png", rel: "diagram.png", kind: "image" },
+      ] as T;
+    }
     case "path_exists":
       return true as T;
     case "open_path":

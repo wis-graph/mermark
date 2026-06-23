@@ -1,3 +1,4 @@
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, highlightActiveLine } from "@codemirror/view";
@@ -6,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode } from "./markdown/live-preview";
 import { markdownFolding } from "./markdown/fold";
 import { markdownLang } from "./markdown/parser";
+import { wikilinkCompletionSource } from "./markdown/wikilink-complete";
 import type { ConflictPolicy, VimMode } from "./settings/app";
 
 export type SaveStatus = "saved" | "saving" | "error" | "conflict";
@@ -309,11 +311,21 @@ export function mountEditor(
       markdownFolding,
       inlinePreview(baseDir, filePath),
       blockPreview,
+      // input-UX layer (not decoration): auto-close brackets and the [[ file
+      // picker. Defaults are fine; closeBrackets gives [→[], [[→[[]], overtype,
+      // and selection-wrap. The completion source owns the `[[ ]]` flow.
+      closeBrackets(),
+      autocompletion({ override: [wikilinkCompletionSource(baseDir)], activateOnTyping: true }),
       modeCompartment.of(modeExtensions(initialMode)),
       vimCompartment.of(vimExtensions(opts.vimMode === "on")),
       history(),
+      // closeBrackets/completion keymaps sit before defaultKeymap so an active
+      // popup grabs Enter/Tab first; both pass through when no popup is open, so
+      // default Enter/Tab and the app's Mod-chord shortcuts are untouched.
       keymap.of([
         { key: "Mod-e", run: () => (onToggleMode(), true) },
+        ...closeBracketsKeymap,
+        ...completionKeymap,
         ...defaultKeymap,
         ...historyKeymap,
       ]),

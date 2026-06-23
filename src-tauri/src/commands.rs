@@ -160,6 +160,111 @@ pub fn bundle_doc(path: String) -> Result<String, String> {
     crate::bundle::bundle_to_string(&path)
 }
 
+/// A `[[`-pickable target in a directory: a markdown note or an inlineable image.
+/// `name` is the insertion label, `rel` is the directory-relative path (always the
+/// file name today — non-recursive — but kept so a future recursive scan can fill
+/// `sub/note.md` without changing the shape), and `kind` lets the frontend branch
+/// its insertion rule. The frontend mirrors this exact shape in
+/// `src/mocks/tauri-core.ts` and its `invoke<LinkTarget[]>("list_link_targets")`.
+#[derive(serde::Serialize)]
+pub struct LinkTarget {
+    /// Insertion label: a markdown note's basename (no `.md`), or an image's full
+    /// file name (extension included, Obsidian embed convention).
+    pub name: String,
+    /// Path relative to the listed directory. Equals the file name today (current
+    /// folder only); reserved for a future recursive scan / duplicate-name split.
+    pub rel: String,
+    /// `"markdown"` or `"image"` — the frontend's `![[…]]`-vs-`[[…]]` branch.
+    pub kind: String,
+}
+
+/// Whether `ext` (without the dot) names an image mermark can inline. This is the
+/// Rust half of one truth shared with `wikilink.ts`'s `isImageTarget` regex
+/// (`png|jpe?g|gif|webp|svg|avif|bmp`); the two sets must stay identical so the
+/// picker and the embed renderer agree on what counts as an image. Case-insensitive
+/// to match the TS `/i` flag.
+fn is_image_ext(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "avif" | "bmp"
+    )
+}
+
+/// Whether a file name is a mermark scratch/recovery artifact that must never be
+/// offered as a link target. Mirrors the autosave temp suffix (`.mermark-tmp.`)
+/// and the recovery marker (`.mermark-recovered`) so the picker doesn't surface
+/// the editor's own working files. Named so the exclusion rule reads as one fact.
+fn is_mermark_artifact(file_name: &str) -> bool {
+    file_name.contains(".mermark-tmp.") || file_name.contains(".mermark-recovered")
+}
+
+/// Classify a single directory entry into a `LinkTarget`, or `None` when it isn't
+/// a pickable target. The domain rule lives here as one named function instead of
+/// being scattered through `list_link_targets`: a `.md` file becomes a markdown
+/// target labeled by its stem; a file with an image extension becomes an image
+/// target labeled by its full name; everything else — directories, dotfiles,
+/// mermark artifacts, and non-target files — is excluded. `path` is expected to be
+/// directory-local (a single entry name); `rel` is set to that file name.
+fn classify_link_target(path: &Path) -> Option<LinkTarget> {
+    if path.is_dir() {
+        return None;
+    }
+    let file_name = path.file_name()?.to_str()?.to_owned();
+    // Hidden dotfiles and the editor's own scratch/recovery files are never targets.
+    if file_name.starts_with('.') || is_mermark_artifact(&file_name) {
+        return None;
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.eq_ignore_ascii_case("md") {
+        let stem = path.file_stem()?.to_str()?.to_owned();
+        return Some(LinkTarget { name: stem, rel: file_name, kind: "markdown".into() });
+    }
+    if is_image_ext(ext) {
+        return Some(LinkTarget { name: file_name.clone(), rel: file_name, kind: "image".into() });
+    }
+    None
+}
+
+/// Display rank for the "markdown first, then images" ordering. Encoded as an
+/// explicit ordinal rather than relying on the alphabetical order of the `kind`
+/// string — `"image"` sorts *before* `"markdown"` lexically, which is the opposite
+/// of what we want, so the intent ("notes before images") gets its own number.
+fn link_target_kind_rank(kind: &str) -> u8 {
+    match kind {
+        "markdown" => 0,
+        _ => 1, // images (and any future kinds) after notes
+    }
+}
+
+/// Sort key for a deterministic picker list: markdown targets before images
+/// (by `link_target_kind_rank`), then case-insensitively by `name`. Pulled out so
+/// the "markdown first, then name" ordering is one named rule, not an inline closure.
+fn link_target_sort_key(t: &LinkTarget) -> (u8, String) {
+    (link_target_kind_rank(&t.kind), t.name.to_ascii_lowercase())
+}
+
+/// List the markdown notes and inlineable images directly inside `dir` (current
+/// folder only — non-recursive) as `[[`-pickable targets. Read-only: enumerates,
+/// never writes, so the atomic-write/conflict-guard machinery doesn't apply.
+///
+/// Graceful by design: a missing/unreadable directory returns `Err(String)`
+/// (never panics), while an individual unreadable entry (broken symlink, permission
+/// hiccup) is skipped via `filter_map(ok)` so one bad entry can't sink the whole
+/// list. An empty directory yields `Ok(vec![])`. Output is sorted (markdown first,
+/// then case-insensitive name) for stable tests and golden snapshots.
+#[tauri::command]
+pub fn list_link_targets(dir: String) -> Result<Vec<LinkTarget>, String> {
+    let normalized = normalize_path(Path::new(&dir));
+    let entries = std::fs::read_dir(&normalized)
+        .map_err(|e| format!("list {}: {e}", normalized.display()))?;
+    let mut targets: Vec<LinkTarget> = entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| classify_link_target(&entry.path()))
+        .collect();
+    targets.sort_by_key(link_target_sort_key);
+    Ok(targets)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +453,107 @@ mod tests {
             normalize_path(std::path::Path::new("a/b/c/../../d")),
             std::path::PathBuf::from("a/d")
         );
+    }
+
+    // --- list_link_targets (`[[` file picker enumeration) ---
+
+    /// A fresh, isolated directory for picker tests, PID- and tag-keyed so
+    /// concurrent test binaries don't collide.
+    fn temp_dir(tag: &str) -> PathBuf {
+        let n = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir()
+            .join(format!("mermark_links_{}_{}_{tag}", std::process::id(), n));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn lists_md_and_image_targets() {
+        let dir = temp_dir("md_and_img");
+        fs::write(dir.join("a.md"), "x").unwrap();
+        fs::write(dir.join("note.md"), "x").unwrap();
+        fs::write(dir.join("pic.png"), "x").unwrap();
+        let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(got.len(), 3, "two md + one image");
+        // markdown is labeled by stem (no `.md`); image by full file name.
+        let a = got.iter().find(|t| t.rel == "a.md").unwrap();
+        assert_eq!(a.name, "a");
+        assert_eq!(a.kind, "markdown");
+        let pic = got.iter().find(|t| t.rel == "pic.png").unwrap();
+        assert_eq!(pic.name, "pic.png");
+        assert_eq!(pic.kind, "image");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn excludes_non_targets() {
+        let dir = temp_dir("non_targets");
+        fs::write(dir.join("data.json"), "x").unwrap();
+        fs::write(dir.join("script.ts"), "x").unwrap();
+        fs::write(dir.join("readme.txt"), "x").unwrap();
+        let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
+        assert!(got.is_empty(), "non-md/non-image files are excluded, got {:?}", got.iter().map(|t| &t.rel).collect::<Vec<_>>());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn excludes_dirs_and_dotfiles_and_artifacts() {
+        let dir = temp_dir("excludes");
+        fs::create_dir_all(dir.join("sub")).unwrap(); // a subdirectory
+        fs::write(dir.join("sub/buried.md"), "x").unwrap(); // not recursed into
+        fs::write(dir.join(".hidden.md"), "x").unwrap(); // dotfile
+        fs::write(dir.join("x.md.mermark-tmp.1"), "x").unwrap(); // autosave temp
+        fs::write(dir.join("y.md.mermark-recovered"), "x").unwrap(); // recovery marker
+        fs::write(dir.join("real.md"), "x").unwrap(); // the only valid target
+        let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(got.len(), 1, "only real.md survives, got {:?}", got.iter().map(|t| &t.rel).collect::<Vec<_>>());
+        assert_eq!(got[0].name, "real");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn empty_dir_returns_empty() {
+        let dir = temp_dir("empty");
+        let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
+        assert!(got.is_empty(), "an empty directory yields an empty vec");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn missing_dir_is_graceful_err() {
+        // A path that doesn't exist must return Err (graceful), never panic.
+        let missing = std::env::temp_dir()
+            .join(format!("mermark_links_missing_{}", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        let res = list_link_targets(missing);
+        assert!(res.is_err(), "missing directory is a graceful error");
+    }
+
+    #[test]
+    fn sorted_markdown_first_then_name() {
+        let dir = temp_dir("sorted");
+        fs::write(dir.join("z.md"), "x").unwrap();
+        fs::write(dir.join("a.png"), "x").unwrap();
+        fs::write(dir.join("b.md"), "x").unwrap();
+        let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
+        // kind asc (markdown before image), then name asc (case-insensitive).
+        let order: Vec<&str> = got.iter().map(|t| t.rel.as_str()).collect();
+        assert_eq!(order, vec!["b.md", "z.md", "a.png"], "markdown first, then by name");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn image_ext_set_matches_isimagetarget() {
+        // Every extension wikilink.ts's isImageTarget accepts must classify as an
+        // image here too, case-insensitively — one shared truth across the boundary.
+        let dir = temp_dir("img_exts");
+        for name in ["t.PNG", "t.jpeg", "t.webp", "t.svg", "t.avif", "t.bmp", "t.gif", "t.jpg"] {
+            fs::write(dir.join(name), "x").unwrap();
+        }
+        let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(got.len(), 8, "all eight image extensions are recognized");
+        assert!(got.iter().all(|t| t.kind == "image"), "all classify as image kind");
+        fs::remove_dir_all(&dir).ok();
     }
 }
