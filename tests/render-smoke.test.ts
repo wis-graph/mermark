@@ -255,6 +255,79 @@ describe("full-editor render smoke", () => {
     view.destroy();
   });
 
+  // ── callout head: icon + title widget, reveal-on-entry ──────────────────────
+  it("renders a callout head as an icon + title widget, conceals the raw marker", () => {
+    const doc = "intro\n\n> [!tip] Pro move\n> body";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } }); // caret away from the callout
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-callout-icon svg")).not.toBeNull();
+    expect(view.contentDOM.querySelector(".cm-callout-title")?.textContent).toBe("Pro move");
+    expect(view.contentDOM.textContent).not.toContain("[!tip]"); // raw marker concealed
+    expect(view.contentDOM.querySelector(".cm-callout-tip")).not.toBeNull(); // body line class
+  });
+
+  it("reveals the raw callout head when the caret enters its line, re-conceals on leave", () => {
+    const doc = "intro\n\n> [!tip] Pro move\n> body";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toContain("[!tip]");
+    // caret onto the head line → raw source revealed
+    view.dispatch({ selection: { anchor: doc.indexOf("[!tip]") + 1 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("[!tip] Pro move");
+    // caret away again → re-concealed
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toContain("[!tip]");
+    view.destroy();
+  });
+
+  it("uses the type label as the title when the head has none", () => {
+    const doc = "intro\n\n> [!note]\n> x";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-callout-title")?.textContent).toBe("Note");
+    view.destroy();
+  });
+
+  it("resolves an alias to its canonical line class, an unknown type falls back to note", () => {
+    const aliasDoc = "intro\n\n> [!caution] !\n> x";
+    const av = mount(host, aliasDoc);
+    av.dispatch({ selection: { anchor: 0 } });
+    (av as unknown as { measure(): void }).measure();
+    expect(av.contentDOM.querySelector(".cm-callout-warning")).not.toBeNull(); // caution → warning
+    av.destroy();
+    const unknownDoc = "intro\n\n> [!xyz] !\n> x";
+    const uv = mount(host, unknownDoc);
+    uv.dispatch({ selection: { anchor: 0 } });
+    (uv as unknown as { measure(): void }).measure();
+    expect(uv.contentDOM.querySelector(".cm-callout-note")).not.toBeNull(); // xyz → note
+    uv.destroy();
+  });
+
+  it("never reveals the callout head in read mode (caret on its line)", () => {
+    const doc = "intro\n\n> [!tip] Pro move\n> body";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    ed.view.dispatch({ selection: { anchor: doc.indexOf("[!tip]") + 1 } });
+    (ed.view as unknown as { measure(): void }).measure();
+    expect(ed.view.contentDOM.textContent).not.toContain("[!tip]"); // stays concealed
+    expect(ed.view.contentDOM.querySelector(".cm-callout-icon svg")).not.toBeNull();
+    ed.view.destroy();
+  });
+
+  it("leaves a plain blockquote as cm-blockquote with no callout widget (regression)", () => {
+    const doc = "intro\n\n> just a quote";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-blockquote")).not.toBeNull();
+    expect(view.contentDOM.querySelector(".cm-callout-icon")).toBeNull();
+    view.destroy();
+  });
+
   it("task items keep the checkbox and get no bullet", () => {
     const doc = "- [x] done\n- [ ] todo";
     const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });

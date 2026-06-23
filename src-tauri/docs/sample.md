@@ -70,6 +70,17 @@ $$
 > [!danger] Danger
 > So do danger callouts.
 
+> [!tip] Pro move
+> Each type now ships an icon and a title.
+
+> [!success] Done
+> Aliases resolve too: `done` → success.
+
+> [!question]
+> No title? The type name is shown instead.
+
+> [!xyz] Unknown types fall back to note styling
+
 ## Images
 
 A local image (place `pic.png` next to this file to see it):

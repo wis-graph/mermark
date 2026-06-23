@@ -206,8 +206,56 @@ html, body { margin: 0; height: 100%; }
 .cm-blockquote { border-left: 3px solid var(--border); background: color-mix(in srgb, var(--muted) 9%, transparent); padding-left: .75em; }
 .cm-callout { background: var(--surface); border-left: 3px solid var(--accent); padding-left: .75em; }
 .cm-callout-head { font-weight: 700; }
+/* head widget: icon + title chip rendered in place of the `[!type] title` source.
+   Colours come from currentColor (icon stroke=currentColor), so each type's head
+   colour below drives the icon for free. No font-size/calc on cm-content/cm-line
+   (zoom guard) — the icon sizes itself in em. */
+.cm-callout-head-widget { display: inline-flex; align-items: center; gap: .4em; }
+.cm-callout-icon { display: inline-flex; align-items: center; }
+.cm-callout-icon .icon { width: 1.1em; height: 1.1em; }
+.cm-callout-title { font-weight: 700; }
+/* Per-type colour: soft tint background + accent left rule + head text colour.
+   Existing warning/danger colours preserved verbatim. */
+/* Backgrounds/border accents are theme-invariant (low-alpha tints read on both
+   canvases). Head text colour: base = dark-canvas-readable (light tints, since
+   :root is the dark theme); [data-theme="light"] overrides with darker AA values. */
+.cm-callout-note { background: color-mix(in srgb, var(--muted) 9%, transparent); border-left-color: var(--muted); }
+.cm-callout-note.cm-callout-head { color: var(--fg); }
+.cm-callout-abstract { background: rgba(20,184,166,.12); border-left-color: #14b8a6; }
+.cm-callout-abstract.cm-callout-head { color: #5eead4; }
+.cm-callout-info { background: rgba(59,130,246,.12); border-left-color: #3b82f6; }
+.cm-callout-info.cm-callout-head { color: #93c5fd; }
+.cm-callout-todo { background: rgba(14,165,233,.12); border-left-color: #0ea5e9; }
+.cm-callout-todo.cm-callout-head { color: #7dd3fc; }
+.cm-callout-tip { background: rgba(6,182,212,.12); border-left-color: #06b6d4; }
+.cm-callout-tip.cm-callout-head { color: #67e8f9; }
+.cm-callout-success { background: rgba(34,197,94,.12); border-left-color: #22c55e; }
+.cm-callout-success.cm-callout-head { color: #86efac; }
+.cm-callout-question { background: rgba(168,85,247,.12); border-left-color: #a855f7; }
+.cm-callout-question.cm-callout-head { color: #d8b4fe; }
 .cm-callout-warning { background: rgba(255,180,0,.12); border-left-color: #ffb400; }
+.cm-callout-warning.cm-callout-head { color: #fcd34d; }
+.cm-callout-failure { background: rgba(239,68,68,.12); border-left-color: #ef4444; }
+.cm-callout-failure.cm-callout-head { color: #fca5a5; }
 .cm-callout-danger { background: rgba(220,38,38,.12); border-left-color: #dc2626; }
+.cm-callout-danger.cm-callout-head { color: #fca5a5; }
+.cm-callout-bug { background: rgba(190,18,60,.12); border-left-color: #be123c; }
+.cm-callout-bug.cm-callout-head { color: #fda4af; }
+.cm-callout-example { background: rgba(99,102,241,.12); border-left-color: #6366f1; }
+.cm-callout-example.cm-callout-head { color: #a5b4fc; }
+.cm-callout-quote { background: color-mix(in srgb, var(--muted) 10%, transparent); border-left-color: var(--border); }
+.cm-callout-quote.cm-callout-head { color: var(--muted); }
+:root[data-theme="light"] .cm-callout-abstract.cm-callout-head { color: #0d9488; }
+:root[data-theme="light"] .cm-callout-info.cm-callout-head { color: #2563eb; }
+:root[data-theme="light"] .cm-callout-todo.cm-callout-head { color: #0284c7; }
+:root[data-theme="light"] .cm-callout-tip.cm-callout-head { color: #0891b2; }
+:root[data-theme="light"] .cm-callout-success.cm-callout-head { color: #16a34a; }
+:root[data-theme="light"] .cm-callout-question.cm-callout-head { color: #9333ea; }
+:root[data-theme="light"] .cm-callout-warning.cm-callout-head { color: #b45309; }
+:root[data-theme="light"] .cm-callout-failure.cm-callout-head { color: #dc2626; }
+:root[data-theme="light"] .cm-callout-danger.cm-callout-head { color: #b91c1c; }
+:root[data-theme="light"] .cm-callout-bug.cm-callout-head { color: #9f1239; }
+:root[data-theme="light"] .cm-callout-example.cm-callout-head { color: #4f46e5; }
 .cm-footnote-ref { color: var(--accent); cursor: pointer; }
 .cm-footnote-def { font-size: .9em; opacity: .8; }
 .cm-footnote-def-marker { cursor: pointer; color: var(--link); }
