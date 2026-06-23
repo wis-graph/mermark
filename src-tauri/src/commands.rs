@@ -7,7 +7,11 @@ static WINDOW_SEQ: AtomicU32 = AtomicU32::new(1);
 static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// Normalize path components (resolve relative "." and "..") purely textually.
-fn normalize_path(path: &Path) -> PathBuf {
+/// `pub(crate)` so `bundle.rs` reuses the *same* `..`/`.` collapse the file
+/// commands use — the bundler's containment gate (`is_within_base`) depends on
+/// this exact normalization being the single source of truth (no drift between
+/// where a file is read and where a link is allowed to point).
+pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     use std::path::Component;
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -146,6 +150,15 @@ pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Package the file at `path` plus its one-hop wikilinked documents into an XML
+/// bundle string for an LLM (⌘⇧C in the editor). A thin wrapper over
+/// `bundle::bundle_to_string`, which owns the scan/containment/format spec so
+/// this command and the `mermark bundle` CLI produce identical output. Read-only.
+#[tauri::command]
+pub fn bundle_doc(path: String) -> Result<String, String> {
+    crate::bundle::bundle_to_string(&path)
 }
 
 #[cfg(test)]
@@ -306,6 +319,20 @@ mod tests {
         assert_eq!(res.unwrap_err(), format!("A directory already exists at path: {}", parent));
 
         fs::remove_dir_all(&parent).ok();
+    }
+
+    #[test]
+    fn bundle_doc_wraps_a_file_in_an_envelope() {
+        // Smoke test for the IPC wrapper: a real file round-trips through the
+        // shared bundle core and comes back wrapped in the <documents> envelope
+        // with a root-relative path attribute.
+        let p = temp_path("bundledoc");
+        fs::write(&p, "# solo\nbody, no links").unwrap();
+        let out = bundle_doc(p.clone()).unwrap();
+        assert!(out.starts_with("<documents>"), "got: {out}");
+        assert!(out.contains("<document "), "got: {out}");
+        assert!(out.contains("body, no links"), "got: {out}");
+        fs::remove_file(&p).ok();
     }
 
     #[test]

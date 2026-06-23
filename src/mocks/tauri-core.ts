@@ -109,6 +109,18 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // mirror the real command: return the new mtime (no conflict in-memory)
       return Date.now() as T;
     }
+    case "bundle_doc": {
+      // Mirrors the real `bundle_doc(path) -> Result<String, String>`: returns
+      // the LLM bundle envelope as a string. Deterministic so golden/clipboard
+      // checks are stable. The browser mock can't traverse a real FS, so it
+      // wraps just the requested doc (root-only) in the same <documents> shape.
+      const path = String(a.path ?? "");
+      const title = (path.split("/").pop() ?? path).replace(/\.md$/i, "");
+      const rel = path.split("/").pop() ?? path;
+      const body = store.get(path) ?? SAMPLE;
+      console.info("[mock] bundle_doc", path);
+      return `<documents>\n<document path="${rel}" title="${title}">\n${body}\n</document>\n</documents>` as T;
+    }
     case "path_exists":
       return true as T;
     case "open_path":

@@ -2,6 +2,7 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod bundle;
 pub mod cli;
 mod commands;
 
@@ -80,8 +81,59 @@ fn ensure_file_target(path: &Path) -> Result<(), String> {
     commands::create_markdown_file(path.to_string_lossy().into_owned())
 }
 
+/// True when the process argv selects the headless `bundle` subcommand: the
+/// first positional token is exactly `"bundle"`. Named so `run` reads the
+/// subcommand rule as one fact and the window arg parser (`cli::parse_args`)
+/// stays unaware of `bundle` — keeping its tests regression-free. A file literally
+/// named `bundle` is still openable as `mermark ./bundle.md` (first token isn't
+/// `"bundle"`).
+fn is_bundle_subcommand(argv: &[String]) -> bool {
+    argv.first().is_some_and(|first| first == "bundle")
+}
+
+/// Pure core of the `bundle` subcommand: turn the tokens *after* `bundle` plus a
+/// cwd into the bundle string, with no process exit so it is unit-testable.
+/// The first remaining token is the file path, resolved to an absolute path
+/// against `cwd` (cli.rs convention) before handing to the shared bundle core.
+/// `mermark bundle` with no path is a usage error.
+fn bundle_argv_to_output(rest: &[String], cwd: &Path) -> Result<String, String> {
+    let raw = rest
+        .first()
+        .ok_or_else(|| "usage: mermark bundle <file.md>".to_string())?;
+    let p = Path::new(raw);
+    let abs = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+    bundle::bundle_to_string(&abs.to_string_lossy())
+}
+
+/// Headless dispatch for `mermark bundle <file.md>`: print the bundle to stdout
+/// and exit, never touching the webview/invoke_handler/setup path. Runs *before*
+/// `tauri::Builder` so the LLM pipe gets an immediate answer with no window.
+/// Exit codes match the other CLI failures (`2`).
+fn dispatch_bundle(rest: &[String]) -> ! {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    match bundle_argv_to_output(rest, &cwd) {
+        Ok(output) => {
+            println!("{output}");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("mermark: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Headless subcommand split: `mermark bundle <file.md>` prints an LLM bundle
+    // and exits before any window/webview is created. The window arg parser
+    // never sees the `bundle` token (separation of concerns: subcommand detection
+    // here, window args in cli::parse_args).
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if is_bundle_subcommand(&argv) {
+        dispatch_bundle(&argv[1..]); // never returns (always exits)
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -89,7 +141,8 @@ pub fn run() {
             commands::write_file,
             commands::open_path,
             commands::path_exists,
-            commands::create_markdown_file
+            commands::create_markdown_file,
+            commands::bundle_doc
         ])
         .setup(|app| {
             let args: Vec<String> = std::env::args().skip(1).collect();
@@ -270,6 +323,51 @@ mod tests {
         ensure_file_target(&dir).unwrap(); // no-op: the dir already exists
         assert!(dir.is_dir());
         assert!(child.is_file(), "the directory's contents must survive");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- bundle subcommand dispatch (testable core; dispatch_bundle exits) ---
+
+    #[test]
+    fn is_bundle_subcommand_matches_only_the_bundle_token() {
+        assert!(is_bundle_subcommand(&["bundle".into(), "f.md".into()]));
+        assert!(!is_bundle_subcommand(&["./bundle.md".into()]));
+        assert!(!is_bundle_subcommand(&[]));
+        assert!(!is_bundle_subcommand(&["f.md".into()]));
+    }
+
+    #[test]
+    fn bundle_argv_resolves_relative_path_and_wraps() {
+        // `mermark bundle a.md` from a cwd → reads a.md under that cwd and
+        // returns the envelope (relative path resolved against cwd).
+        let dir = scratch_dir("bundle_rel");
+        fs::write(dir.join("a.md"), "# hi\nbody").unwrap();
+        let out = bundle_argv_to_output(&["a.md".into()], &dir).unwrap();
+        assert!(out.starts_with("<documents>"), "got: {out}");
+        assert!(out.contains("path=\"a.md\""), "relative root path:\n{out}");
+        assert!(out.contains("body"), "got: {out}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bundle_argv_without_path_is_a_usage_error() {
+        // `mermark bundle` with no file → usage error (dispatch exits 2).
+        let cwd = std::env::temp_dir();
+        let err = bundle_argv_to_output(&[], &cwd).unwrap_err();
+        assert!(err.contains("usage"), "got: {err}");
+    }
+
+    #[test]
+    fn bundle_argv_absolute_path_is_used_as_is() {
+        let dir = scratch_dir("bundle_abs");
+        let f = dir.join("doc.md");
+        fs::write(&f, "absolute body").unwrap();
+        let out = bundle_argv_to_output(
+            &[f.to_string_lossy().into_owned()],
+            &std::env::temp_dir(), // cwd irrelevant for an absolute path
+        )
+        .unwrap();
+        assert!(out.contains("absolute body"), "got: {out}");
         fs::remove_dir_all(&dir).ok();
     }
 }
