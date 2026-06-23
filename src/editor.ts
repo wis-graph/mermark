@@ -8,6 +8,7 @@ import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode
 import { markdownFolding } from "./markdown/fold";
 import { markdownLang } from "./markdown/parser";
 import { wikilinkCompletionSource } from "./markdown/wikilink-complete";
+import { markupWrap } from "./markdown/markup-wrap";
 import type { ConflictPolicy, VimMode } from "./settings/app";
 
 export type SaveStatus = "saved" | "saving" | "error" | "conflict";
@@ -314,6 +315,9 @@ export function mountEditor(
       // input-UX layer (not decoration): auto-close brackets and the [[ file
       // picker. Defaults are fine; closeBrackets gives [→[], [[→[[]], overtype,
       // and selection-wrap. The completion source owns the `[[ ]]` flow.
+      // markupWrap is the doubled-mark analogue: `=` over a selection toggles
+      // ==highlight==, `*` cycles *italic*→**bold**→***both***.
+      markupWrap(),
       closeBrackets(),
       autocompletion({ override: [wikilinkCompletionSource(baseDir)], activateOnTyping: true }),
       modeCompartment.of(modeExtensions(initialMode)),
