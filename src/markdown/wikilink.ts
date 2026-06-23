@@ -1,5 +1,10 @@
 import { EditorView, WidgetType } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
+import { openPath as openAsset } from "@tauri-apps/plugin-opener";
+
+function isMarkdownPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".md");
+}
 
 /**
  * Resolve a wikilink target to an absolute path under baseDir.
@@ -36,19 +41,52 @@ export class WikilinkWidget extends WidgetType {
       a.classList.add("cm-wikilink-active");
       return a;
     }
+    
+    const isMd = isMarkdownPath(this.path);
+
     invoke<boolean>("path_exists", { path: this.path }).then((exists) => {
       a.classList.remove("cm-wikilink-pending");
       a.classList.add(exists ? "cm-wikilink-active" : "cm-wikilink-missing");
-      if (exists) {
-        a.addEventListener("click", (e) => {
-          e.preventDefault();
-          invoke("open_path", { path: this.path }).catch((err) => {
+      
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        
+        if (exists) {
+          if (isMd) {
+            invoke("open_path", { path: this.path }).catch((err: any) => {
+              a.classList.add("cm-wikilink-error");
+              a.title = `Failed to open: ${String(err)}`;
+            });
+          } else {
+            openAsset(this.path).catch((err: any) => {
+              a.classList.add("cm-wikilink-error");
+              a.title = `Failed to open asset: ${String(err)}`;
+            });
+          }
+        } else {
+          // File does not exist
+          if (isMd) {
+            invoke("create_markdown_file", { path: this.path })
+              .then(() => {
+                a.classList.remove("cm-wikilink-missing");
+                a.classList.add("cm-wikilink-active");
+                // update state so subsequent clicks don't re-create it
+                exists = true;
+                return invoke("open_path", { path: this.path });
+              })
+              .catch((err: any) => {
+                a.classList.add("cm-wikilink-error");
+                a.title = `Failed to create file: ${String(err)}`;
+              });
+          } else {
+            // Cannot auto-create non-markdown assets
             a.classList.add("cm-wikilink-error");
-            a.title = `Failed to open: ${String(err)}`;
-          });
-        });
-      }
+            a.title = "파일이 존재하지 않습니다 (마크다운 파일만 자동 생성 가능)";
+          }
+        }
+      });
     });
+
     // Alt+click → edit the raw [[wikilink]]
     a.addEventListener("mousedown", (e) => {
       if (!e.altKey) return;
