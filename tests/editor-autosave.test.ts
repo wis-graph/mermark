@@ -120,6 +120,54 @@ describe("conflictPolicy branch", () => {
   });
 });
 
+describe("reloadFromFile branch", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    invokeMock.mockClear();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("resets conflicted state, updates editor text, sets new baseline, and clears pending", async () => {
+    let status: string = "";
+    writeHandler = () => Promise.reject("CONFLICT: file changed on disk");
+    const ed = mountEditor(host, "a", "/tmp", "/tmp/doc.md", {
+      initialMode: "edit",
+      autosaveDelay: 100,
+      conflictPolicy: "pause",
+      baseMtime: 1,
+      onStatus: (s) => {
+        status = s;
+      },
+    });
+
+    ed.view.dispatch({ changes: { from: 1, insert: "b" } });
+    await vi.advanceTimersByTimeAsync(150); // fire the debounce -> CONFLICT
+    expect(status).toBe("conflict");
+
+    // Reload from disk
+    ed.reloadFromFile("external content", 42);
+    expect(ed.view.state.doc.toString()).toBe("external content");
+    expect(status).toBe("saved");
+
+    // Make a new edit and ensure it autosaves successfully using the new baseline
+    let receivedBaseline: number | null = null;
+    writeHandler = (args) => {
+      receivedBaseline = args.baseline;
+      return Promise.resolve(43);
+    };
+    ed.view.dispatch({ changes: { from: ed.view.state.doc.length, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+    expect(writes().length).toBe(2); // first conflict write + this new write
+    expect(receivedBaseline).toBe(42);
+    expect(status).toBe("saved");
+
+    ed.view.destroy();
+  });
+});
+
 describe("forceSave absorbs the pending debounce", () => {
   let host: HTMLElement;
   beforeEach(() => {

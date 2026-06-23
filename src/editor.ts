@@ -57,6 +57,7 @@ export interface EditorController {
    *  refused write. */
   setConflictPolicy(p: ConflictPolicy): void;
   setVimMode(enabled: boolean): void;
+  reloadFromFile(text: string, mtime: number): void;
 }
 
 /** Debounced autosave to disk. Tracks the file's modification time as a baseline
@@ -201,6 +202,12 @@ function makeAutosave(
         onStatus("error", String(err));
       }
     },
+    resetBaseline(mtime: number) {
+      baseline = mtime;
+      conflicted = false;
+      pending = null;
+      onStatus("saved");
+    },
   };
 }
 
@@ -286,6 +293,12 @@ export function mountEditor(
     },
     setVimMode(enabled: boolean) {
       controller.view.dispatch({ effects: vimCompartment.reconfigure(vimExtensions(enabled)) });
+    },
+    reloadFromFile(text: string, mtime: number) {
+      controller.view.dispatch({
+        changes: { from: 0, to: controller.view.state.doc.length, insert: text }
+      });
+      autosave.resetBaseline(mtime);
     },
   };
 

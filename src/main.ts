@@ -46,6 +46,7 @@ function makeSaveStatus(): {
   el: HTMLElement;
   set: (s: SaveStatus, detail?: string) => void;
   onForceSave: (fn: () => void) => void;
+  onReloadDisk: (fn: () => void) => void;
 } {
   const node = el("span", "save-status");
   const label = el("span", "save-label");
@@ -53,7 +54,13 @@ function makeSaveStatus(): {
   force.textContent = "강제 저장";
   force.title = "디스크의 외부 변경을 덮어쓰고 현재 내용을 저장합니다";
   force.hidden = true;
-  node.append(label, force);
+
+  const reload = el("button", "status-btn reload-disk") as HTMLButtonElement;
+  reload.textContent = "디스크에서 다시 읽기";
+  reload.title = "로컬 편집 내용을 버리고 디스크 파일 내용으로 새로고침합니다";
+  reload.hidden = true;
+
+  node.append(label, force, reload);
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   return {
     el: node,
@@ -61,6 +68,7 @@ function makeSaveStatus(): {
       clearTimeout(hideTimer);
       node.dataset.state = s;
       force.hidden = s !== "conflict";
+      reload.hidden = s !== "conflict";
       if (s === "error") {
         label.textContent = `⚠ 저장 실패: ${detail ?? "unknown error"}`;
       } else if (s === "conflict") {
@@ -74,6 +82,9 @@ function makeSaveStatus(): {
     },
     onForceSave(fn) {
       force.addEventListener("click", fn);
+    },
+    onReloadDisk(fn) {
+      reload.addEventListener("click", fn);
     },
   };
 }
@@ -175,6 +186,14 @@ async function boot() {
       vimMode: vimModeSetting.get(),
     });
     save.onForceSave(() => editor.forceSave());
+    save.onReloadDisk(async () => {
+      try {
+        const { text, mtime } = await invoke<{ text: string; mtime: number }>("read_file", { path: file });
+        editor.reloadFromFile(text, mtime);
+      } catch (err: any) {
+        save.set("error", String(err));
+      }
+    });
     // Don't lose the last keystrokes typed within the autosave debounce window:
     // intercept the window close, persist the live buffer, then close. Guarded so
     // it only runs under Tauri (the browser-mock dev mode has no window IPC).
