@@ -1,5 +1,4 @@
 import { WidgetType } from "@codemirror/view";
-import svgPanZoom from "svg-pan-zoom";
 import { boundedCache } from "./bounded-cache";
 import { panZoomSetting, themeForceSetting } from "../settings/app";
 import type { Theme } from "../theme";
@@ -88,7 +87,7 @@ export interface MermaidDims {
 export class MermaidWidget extends WidgetType {
   readonly version = themeVersion; // captured at construction; see refreshMermaidTheme
   // Snapshot the pan/zoom setting at construction so a live toggle makes eq()
-  // false → CM re-creates the host → initPanZoom re-runs with the new value.
+  // false → CM re-creates the host → attachPanZoom re-runs with the new value.
   // (refreshBlocks alone wouldn't redraw an eq()-equal widget.)
   readonly panZoom = panZoomSetting.get();
   constructor(
@@ -138,28 +137,23 @@ export class MermaidWidget extends WidgetType {
     host.innerHTML = svg;
     const el = host.querySelector<SVGSVGElement>("svg");
     if (!el) return;
-    prepareNaturalSvg(el);
-    // svg-pan-zoom must initialize on a host that already has a width. toDOM
-    // runs BEFORE CM attaches the host, so a synchronous init fits the diagram
-    // to a 0-width box and it renders invisible (the re-render-after-edit bug).
-    whenLaidOut(host, () => {
-      // Pin the host to the diagram's DISPLAYED height BEFORE pan-zoom transforms
-      // the SVG (and strips the viewBox we read from), so the box matches the
-      // actual drawing — no empty band — AND svg-pan-zoom's height:100% has a
-      // definite box to fill (otherwise the host collapses and the diagram is
-      // clipped).
-      fitHostHeight(host, el, this.dims);
-      initPanZoom(host, el);
-      // Click-to-edit is handled centrally in live-preview/core (a capture-phase
-      // listener that beats svg-pan-zoom), so the widget stays mode-agnostic.
-      host.dispatchEvent(new CustomEvent("mermaid-rendered", { bubbles: true }));
-    });
+    // CSS transform doesn't change the layout box, so the SVG keeps its natural
+    // (or column-capped) size and the host auto-fits it: no height pin needed.
+    // Attach the pan/zoom handler synchronously (no laid-out gate required — the
+    // handler reads geometry lazily per-event, not at attach time).
+    (host as unknown as { __pz?: { destroy(): void } }).__pz = attachPanZoom(host, el);
+    // One rAF later the host has laid out: record its rendered height as the
+    // anti-jump placeholder for the NEXT async render, and drop any reserved
+    // minHeight now that the real diagram is present.
+    requestAnimationFrame(() => recordRenderedHeight(host));
+    // Click-to-edit is handled centrally in live-preview/core (a capture-phase
+    // listener), so the widget stays mode-agnostic.
+    host.dispatchEvent(new CustomEvent("mermaid-rendered", { bubbles: true }));
   }
   ignoreEvent() {
     return true;
   }
   destroy(dom: HTMLElement): void {
-    (dom as unknown as { __ro?: ResizeObserver }).__ro?.disconnect();
     const pz = (dom as unknown as { __pz?: { destroy(): void } }).__pz;
     try {
       pz?.destroy();
@@ -183,137 +177,143 @@ function applyDimensions(host: HTMLElement, dims: MermaidDims): void {
   }
 }
 
-/** Keep mermaid's natural SVG sizing intact for natural-size display. Unlike the
- *  old stretch-to-fill normalize (which removed height + forced width/height:100%
- *  + max-width:none), this leaves mermaid's inline width/height/max-width:<natural>px
- *  untouched, so the diagram renders at its natural size and the CSS column cap
- *  (`max-width:100%`) downscales only when it's wider than the column.
- *
- *  No-op on the SVG today: natural sizing means there's nothing to strip. Kept as
- *  a named seam so the "prepare the SVG before pan-zoom" step stays explicit and
- *  any future per-axis fixups (RTL, viewBox repair) land in one place. */
-function prepareNaturalSvg(_el: SVGSVGElement): void {
-  // intentionally leaves mermaid's inline sizing as-is
+// ---------------------------------------------------------------------------
+// CSS-transform pan/zoom (replaces svg-pan-zoom). Events bind to the host
+// (.cm-mermaid); the CSS `transform` is applied to the svg with
+// transform-origin 0 0 — so the layout box (and thus the host's offsetHeight /
+// CM's height map) never changes while panning or zooming. Ported from the
+// modern-mermaid PanZoomHandler, trimmed to mermark's (host, svg) pair.
+// ---------------------------------------------------------------------------
+
+/** Double-click toggles between this magnification and 1×. A named constant
+ *  (not a new SSOT setting): scope-minimal, matching the old `zoomBy(2)`. */
+const DOUBLE_CLICK_ZOOM = 2;
+
+interface PanZoomState {
+  scale: number;
+  translateX: number;
+  translateY: number;
 }
 
-/** Pure query: the height the diagram actually occupies once the CSS column cap
- *  (`max-width:100%`) has downscaled it. Computed from the SVG's viewBox aspect
- *  ratio times the SVG's *actual displayed width* — NOT the host's clientWidth.
- *
- *  Why the SVG's width and not the host's: `.cm-mermaid` is `display:flex;
- *  justify-content:center`, so the host's clientWidth is the full column width.
- *  A diagram narrower than the column is centered and stays at its natural
- *  (narrower) width — using the host width would overestimate its height and
- *  reintroduce the empty band. The SVG's own getBoundingClientRect().width is the
- *  truth for both cases: downscaled-to-column (wide) and natural (narrow).
- *
- *  Fallback when there's no usable viewBox (e.g. pan-zoom already stripped it, or
- *  a malformed SVG): the host's current rendered height. The result is clamped to
- *  > 0 so the host never collapses (render-smoke 0-height guard, d16d8e8). */
-export function displayedDiagramHeight(host: HTMLElement, el: SVGSVGElement): number {
-  const vb = parseViewBox(el.getAttribute("viewBox"));
-  const shownWidth = el.getBoundingClientRect().width;
-  if (vb && vb.w > 0 && vb.h > 0 && shownWidth > 0) {
-    return shownWidth * (vb.h / vb.w);
-  }
-  return host.getBoundingClientRect().height;
+/** The zoom-bound rule in one place: never shrink below natural size (1×) and
+ *  never magnify past 3×. Pure query. */
+export function clampZoom(scale: number): number {
+  return Math.min(Math.max(1, scale), 3);
 }
 
-/** Parse an SVG `viewBox="minX minY w h"` into width/height, or `null` if absent
- *  or malformed. Only w/h matter for aspect-ratio sizing. */
-function parseViewBox(attr: string | null): { w: number; h: number } | null {
-  if (!attr) return null;
-  const parts = attr.trim().split(/[\s,]+/).map(Number);
-  if (parts.length < 4 || parts.some((n) => Number.isNaN(n))) return null;
-  return { w: parts[2], h: parts[3] };
+/** Cursor-anchored zoom: recompute translate so the diagram point under the
+ *  cursor stays under the cursor after scaling to `newScale`. Mutates the passed
+ *  state's scale/translate in place (the shared math for wheel + dblclick zoom).
+ *  `cursorX/Y` are relative to the transform origin (svg's top-left, since
+ *  transform-origin is 0 0). Same formula as modern-mermaid:
+ *    cursorInSvg = (cursor − translate) / oldScale
+ *    translate   = cursor − cursorInSvg × newScale */
+export function zoomAtCursor(
+  state: PanZoomState,
+  cursorX: number,
+  cursorY: number,
+  newScale: number,
+): void {
+  const old = state.scale;
+  const cursorXInSvg = (cursorX - state.translateX) / old;
+  const cursorYInSvg = (cursorY - state.translateY) / old;
+  state.scale = newScale;
+  state.translateX = cursorX - cursorXInSvg * newScale;
+  state.translateY = cursorY - cursorYInSvg * newScale;
 }
 
-/** Pin the host to the diagram's *displayed* height so the box matches the actual
- *  drawing and no empty band remains. svg-pan-zoom sets the SVG to
- *  width/height:100%, so the host MUST carry a definite height or the SVG resolves
- *  100% against an auto-height parent and collapses — clipping the diagram. A
- *  `dims.height` declaration already pinned the host (applyDimensions), so leave
- *  that case alone. Also records `lastHeight` so the NEXT async render can reserve
- *  a placeholder and not jump the page.
- *
- *  CQS: the displayed height is computed by the pure query displayedDiagramHeight;
- *  this command only writes it. The viewBox must be read here, BEFORE initPanZoom
- *  strips it. */
-function fitHostHeight(host: HTMLElement, el: SVGSVGElement, dims: MermaidDims): void {
-  host.style.minHeight = ""; // real height present → drop the reserved placeholder
-  if (dims.height !== null) return; // explicit px height already set by applyDimensions
-  const h = displayedDiagramHeight(host, el);
-  if (h > 0) {
-    host.style.height = `${h}px`;
-    lastHeight = h;
-  }
+/** Command: write the current pan/zoom state onto the svg as a CSS transform.
+ *  transform-origin stays 0 0 (set once at attach). `withTransition` animates
+ *  the dblclick toggle; pan/wheel pass false for instant feedback. */
+function updateTransform(svg: SVGElement, state: PanZoomState, withTransition = false): void {
+  svg.style.transition = withTransition ? "transform 0.2s ease-out" : "";
+  svg.style.transform = `translate(${state.translateX}px, ${state.translateY}px) scale(${state.scale})`;
 }
 
-/** Run `cb` once the host is connected and laid out (nonzero width). Gives up
- *  after ~120 frames if the host never lays out. */
-function whenLaidOut(host: HTMLElement, cb: () => void): void {
-  let frames = 0;
-  const tick = () => {
-    if (!host.isConnected) return; // widget dropped before it ever laid out
-    if (host.clientWidth === 0 && frames++ < 120) {
-      requestAnimationFrame(tick);
-      return;
-    }
-    cb();
-  };
-  requestAnimationFrame(tick);
-}
+/** Attach CSS-transform pan/zoom to a rendered diagram: drag to pan, Ctrl/Cmd
+ *  +wheel to cursor-zoom (plain wheel stays page scroll), dblclick to toggle
+ *  zoom. Returns a `destroy()` that removes every listener (host + window). When
+ *  the panZoom setting is off the diagram stays fully static (no transform,
+ *  no listeners) and destroy() is a safe no-op. Defensive in jsdom: never
+ *  throws (getBoundingClientRect/transform are tolerated as missing). */
+export function attachPanZoom(host: HTMLElement, svg: SVGElement): { destroy(): void } {
+  if (panZoomSetting.get() === "off") return { destroy() {} };
 
-/** Build the interactive viewer on a laid-out host: svg-pan-zoom keeping the
- *  diagram at its natural size (fit:false), re-center on container resize until
- *  the user pans/zooms, dblclick zoom toggle, and Ctrl/Cmd-wheel zoom (plain
- *  wheel stays page scroll). Natural sizing makes fit() a no-op so we only
- *  re-center; no aspect is needed. */
-function initPanZoom(host: HTMLElement, el: SVGSVGElement): void {
-  // Pan/zoom is opt-out via the SSOT setting: when off, the diagram renders
-  // static (no svg-pan-zoom, no wheel/dblclick handlers) so it scrolls like text.
-  if (panZoomSetting.get() === "off") return;
-  const pz = svgPanZoom(el, {
-    panEnabled: true,
-    zoomEnabled: true,
-    mouseWheelZoomEnabled: false, // wheel zoom gated on Ctrl/Cmd below
-    dblClickZoomEnabled: false,
-    fit: false, // keep mermaid's natural size; pan-zoom only adds interaction
-    center: true,
-  });
-  (host as unknown as { __pz?: { destroy(): void } }).__pz = pz;
+  svg.style.transformOrigin = "0 0";
+  const state: PanZoomState = { scale: 1, translateX: 0, translateY: 0 };
+  let panning = false;
+  let startX = 0;
+  let startY = 0;
 
-  // Re-center on container resize until the user pans/zooms manually. fit() is
-  // dropped: at natural size there's nothing to fit, only to re-center.
-  let touched = false;
-  el.addEventListener("pointerdown", () => (touched = true), { once: true });
-  if (typeof ResizeObserver !== "undefined") {
-    const ro = new ResizeObserver(() => {
-      pz.resize();
-      if (!touched) pz.center();
-    });
-    ro.observe(host);
-    (host as unknown as { __ro?: ResizeObserver }).__ro = ro;
-  }
-  let zoomed = false;
-  host.addEventListener("dblclick", (e) => {
+  const onMouseMove = (e: MouseEvent) => {
+    if (!panning) return;
     e.preventDefault();
-    if (zoomed) {
-      pz.reset();
-      zoomed = false;
+    state.translateX = e.clientX - startX;
+    state.translateY = e.clientY - startY;
+    updateTransform(svg, state);
+  };
+  const onMouseUp = () => {
+    panning = false;
+    host.style.cursor = "grab";
+    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mouseup", onMouseUp);
+  };
+  const onMouseDown = (e: MouseEvent) => {
+    e.preventDefault();
+    startX = e.clientX - state.translateX;
+    startY = e.clientY - state.translateY;
+    panning = true;
+    host.style.cursor = "grabbing";
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+  const onWheel = (e: WheelEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return; // plain wheel = page scroll
+    e.preventDefault();
+    const newScale = clampZoom(state.scale + -Math.sign(e.deltaY) * 0.05);
+    if (newScale === state.scale) return;
+    const rect = host.getBoundingClientRect();
+    zoomAtCursor(state, e.clientX - rect.left, e.clientY - rect.top, newScale);
+    updateTransform(svg, state);
+  };
+  const onDblClick = (e: MouseEvent) => {
+    e.preventDefault();
+    if (state.scale === 1) {
+      const rect = svg.getBoundingClientRect();
+      zoomAtCursor(state, e.clientX - rect.left, e.clientY - rect.top, clampZoom(DOUBLE_CLICK_ZOOM));
     } else {
-      pz.zoomBy(2);
-      zoomed = true;
+      state.scale = 1;
+      state.translateX = 0;
+      state.translateY = 0;
     }
-  });
-  host.addEventListener(
-    "wheel",
-    (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return; // plain wheel = page scroll
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      pz.zoomAtPointBy(e.deltaY < 0 ? 1.15 : 0.87, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+    updateTransform(svg, state, true);
+  };
+
+  host.addEventListener("mousedown", onMouseDown);
+  host.addEventListener("wheel", onWheel, { passive: false });
+  host.addEventListener("dblclick", onDblClick);
+
+  return {
+    destroy() {
+      host.removeEventListener("mousedown", onMouseDown);
+      host.removeEventListener("wheel", onWheel);
+      host.removeEventListener("dblclick", onDblClick);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
     },
-    { passive: false },
-  );
+  };
+}
+
+/** Command: once the diagram has laid out, drop the reserved anti-jump
+ *  placeholder (minHeight) and record the host's rendered height so the NEXT
+ *  async render (cache miss after an edit) can reserve it and not jump the page.
+ *  If offsetHeight is still 0 (jsdom / not yet painted) the placeholder is kept,
+ *  preserving the render-smoke 0-height guard. CSS transform doesn't change the
+ *  layout box, so host.offsetHeight is the diagram's displayed height. */
+export function recordRenderedHeight(host: HTMLElement): void {
+  const h = host.offsetHeight;
+  if (h > 0) {
+    lastHeight = h;
+    host.style.minHeight = "";
+  }
 }

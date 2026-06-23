@@ -50,6 +50,7 @@ describe("Session State Persistence", () => {
   });
 
   afterEach(() => {
+    delete (window as any).__mermark;
     document.body.removeChild(app);
     vi.unstubAllGlobals();
     vi.resetModules();

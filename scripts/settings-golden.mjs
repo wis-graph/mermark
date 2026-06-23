@@ -42,7 +42,9 @@ const snap = (label) =>
       lsMode: localStorage.getItem("mermark.mode"),
       editable: content?.getAttribute("contenteditable") ?? null,
       mermaidViewBox: m?.getAttribute("viewBox") ?? null,
-      mermaidHasPanZoom: !!document.querySelector(".cm-mermaid .svg-pan-zoom_viewport"),
+      // CSS-transform pan/zoom is attached when the svg carries transform-origin
+      // 0 0 (handler ran); off mode leaves it unset → "" (no svg-pan-zoom node).
+      mermaidPanZoomOrigin: m ? getComputedStyle(m).transformOrigin : null,
       themeBtn: document.querySelector(".theme-toggle")?.textContent ?? null,
       modeBtn: document.querySelector(".mode-toggle")?.textContent ?? null,
     };

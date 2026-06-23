@@ -2,66 +2,134 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   MermaidWidget,
   effectiveMermaidTheme,
-  displayedDiagramHeight,
+  clampZoom,
+  zoomAtCursor,
+  attachPanZoom,
 } from "../src/markdown/mermaid-widget";
 import { panZoomSetting, themeForceSetting } from "../src/settings/app";
 
-/** Build a fake host + svg with stubbed geometry, since jsdom has no real layout.
- *  `viewBox` is the svg's aspect source; `shownWidth` is the svg's displayed
- *  width (what getBoundingClientRect().width returns after the CSS column cap);
- *  `hostHeight` is the host's rendered height used as the no-viewBox fallback. */
-function fakeHostAndSvg(opts: {
-  viewBox: string | null;
-  shownWidth: number;
-  hostHeight: number;
-}): { host: HTMLElement; el: SVGSVGElement } {
+/** Build a host + a minimal svg-like element with stubbed geometry, since jsdom
+ *  has no real layout. `rect` is what both host and svg return from
+ *  getBoundingClientRect (so the cursor-anchored zoom math is deterministic). */
+function fakeHostAndSvg(rect: { left: number; top: number } = { left: 0, top: 0 }): {
+  host: HTMLElement;
+  svg: SVGElement;
+} {
   const host = document.createElement("div");
-  (host as unknown as { getBoundingClientRect(): { height: number; width: number } }).getBoundingClientRect =
-    () => ({ height: opts.hostHeight, width: opts.shownWidth }) as DOMRect;
-  const el = {
-    getAttribute: (name: string) => (name === "viewBox" ? opts.viewBox : null),
-    getBoundingClientRect: () => ({ width: opts.shownWidth }) as DOMRect,
-  } as unknown as SVGSVGElement;
-  return { host, el };
+  (host as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
+    ({ left: rect.left, top: rect.top, width: 0, height: 0 }) as DOMRect;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  (svg as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
+    ({ left: rect.left, top: rect.top, width: 0, height: 0 }) as DOMRect;
+  return { host, svg };
 }
 
-describe("displayedDiagramHeight (empty-band fix — symptom 2)", () => {
-  it("uses viewBox aspect × the SVG's displayed width (downscaled wide diagram)", () => {
-    // wide diagram downscaled to the column: viewBox 1534×294, svg shown at 652
-    const { host, el } = fakeHostAndSvg({ viewBox: "0 0 1534 294", shownWidth: 652, hostHeight: 153 });
-    // 652 * (294/1534) ≈ 124.96
-    expect(displayedDiagramHeight(host, el)).toBeCloseTo(652 * (294 / 1534), 1);
+describe("clampZoom (zoom-bound rule: never below natural, never past 3×)", () => {
+  it("clamps below 1 up to 1 (no shrinking below natural size)", () => {
+    expect(clampZoom(0.5)).toBe(1);
+  });
+  it("passes a value within range through unchanged", () => {
+    expect(clampZoom(2)).toBe(2);
+  });
+  it("clamps above 3 down to 3 (3× upper bound)", () => {
+    expect(clampZoom(5)).toBe(3);
+  });
+  it("keeps natural size (1) as 1", () => {
+    expect(clampZoom(1)).toBe(1);
+  });
+});
+
+describe("zoomAtCursor (cursor-anchored zoom keeps the point under the cursor fixed)", () => {
+  it("scaling 1→2 at cursor (100,50) sets translate = cursor − cursorInSvg×newScale", () => {
+    const state = { scale: 1, translateX: 0, translateY: 0 };
+    zoomAtCursor(state, 100, 50, 2);
+    // cursorInSvg = (100−0)/1 = 100; translate = 100 − 100×2 = −100
+    expect(state.scale).toBe(2);
+    expect(state.translateX).toBe(-100);
+    expect(state.translateY).toBe(-50);
   });
 
-  it("uses the SVG width, not the host's column width, for a narrow centered diagram", () => {
-    // small diagram centered in a wide column: viewBox 200×100, svg natural 200,
-    // but host (flex justify-center) is 652 wide. Height must follow the svg (200),
-    // not the column (652) — else the box gets an empty band.
-    const { host, el } = fakeHostAndSvg({ viewBox: "0 0 200 100", shownWidth: 200, hostHeight: 100 });
-    expect(displayedDiagramHeight(host, el)).toBeCloseTo(200 * (100 / 200), 1); // 100
-    expect(displayedDiagramHeight(host, el)).not.toBeCloseTo(652 * (100 / 200), 1); // not 326
+  it("the diagram point under the cursor maps back to the same screen point", () => {
+    const state = { scale: 1.5, translateX: 30, translateY: 10 };
+    const cx = 120;
+    const cy = 80;
+    const cursorInSvgX = (cx - state.translateX) / state.scale;
+    zoomAtCursor(state, cx, cy, 3);
+    // after: screenX = cursorInSvgX*scale + translateX should equal cx
+    expect(cursorInSvgX * state.scale + state.translateX).toBeCloseTo(cx, 6);
+  });
+});
+
+describe("attachPanZoom (CSS-transform pan/zoom handler — state transitions)", () => {
+  afterEach(() => panZoomSetting.set("on"));
+
+  it("does not throw in jsdom (defensive geometry reads)", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    expect(() => {
+      const pz = attachPanZoom(host, svg);
+      pz.destroy();
+    }).not.toThrow();
   });
 
-  it("parses comma-separated viewBox values", () => {
-    const { host, el } = fakeHostAndSvg({ viewBox: "0,0,1000,500", shownWidth: 400, hostHeight: 999 });
-    expect(displayedDiagramHeight(host, el)).toBeCloseTo(400 * (500 / 1000), 1); // 200
+  it("sets transform-origin 0 0 on attach when panZoom is on", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    expect(svg.style.transformOrigin).toBe("0 0");
+    pz.destroy();
   });
 
-  it("falls back to the host's rendered height when there is no viewBox", () => {
-    const { host, el } = fakeHostAndSvg({ viewBox: null, shownWidth: 300, hostHeight: 142 });
-    expect(displayedDiagramHeight(host, el)).toBe(142);
+  it("mousedown → window mousemove → mouseup pans (svg transform translates) then ends", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    host.dispatchEvent(new MouseEvent("mousedown", { clientX: 10, clientY: 20 }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 40, clientY: 70 }));
+    // translate = client − start = (40−10, 70−20) = (30, 50)
+    expect(svg.style.transform).toContain("translate(30px, 50px)");
+    window.dispatchEvent(new MouseEvent("mouseup", {}));
+    // after mouseup, further mousemove must not pan (window listener removed)
+    const after = svg.style.transform;
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 200, clientY: 200 }));
+    expect(svg.style.transform).toBe(after);
+    pz.destroy();
   });
 
-  it("falls back when the viewBox is malformed", () => {
-    const { host, el } = fakeHostAndSvg({ viewBox: "garbage", shownWidth: 300, hostHeight: 88 });
-    expect(displayedDiagramHeight(host, el)).toBe(88);
+  it("dblclick toggles scale(1) → scale(2) → scale(1)+translate0", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    host.dispatchEvent(new MouseEvent("dblclick", { clientX: 0, clientY: 0 }));
+    expect(svg.style.transform).toContain("scale(2)");
+    host.dispatchEvent(new MouseEvent("dblclick", { clientX: 0, clientY: 0 }));
+    expect(svg.style.transform).toContain("scale(1)");
+    expect(svg.style.transform).toContain("translate(0px, 0px)");
+    pz.destroy();
   });
 
-  it("CQS: it is a pure query — it does not mutate host.style.height", () => {
-    const { host, el } = fakeHostAndSvg({ viewBox: "0 0 1534 294", shownWidth: 652, hostHeight: 153 });
-    const before = host.style.height;
-    displayedDiagramHeight(host, el);
-    expect(host.style.height).toBe(before);
+  it("destroy() removes window listeners so a dangling drag can't pan", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    host.dispatchEvent(new MouseEvent("mousedown", { clientX: 0, clientY: 0 }));
+    pz.destroy();
+    const before = svg.style.transform;
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 99, clientY: 99 }));
+    expect(svg.style.transform).toBe(before);
+  });
+
+  it("panZoom off: no transform, no transform-origin, no listeners (static)", () => {
+    panZoomSetting.set("off");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    expect(svg.style.transformOrigin).toBe("");
+    host.dispatchEvent(new MouseEvent("mousedown", { clientX: 0, clientY: 0 }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 50, clientY: 50 }));
+    expect(svg.style.transform).toBe("");
+    host.dispatchEvent(new MouseEvent("dblclick", { clientX: 0, clientY: 0 }));
+    expect(svg.style.transform).toBe("");
+    expect(() => pz.destroy()).not.toThrow(); // off destroy is a safe no-op
   });
 });
 

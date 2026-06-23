@@ -19,11 +19,11 @@
     "@codemirror/view": "^6.43.1",
     "@lezer/highlight": "^1.2.3",
     "@lezer/markdown": "^1.6.4",
+    "@replit/codemirror-vim": "^6.3.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "katex": "^0.17.0",
-    "mermaid": "^11.15.0",
-    "svg-pan-zoom": "^3.6.2"
+    "mermaid": "^11.15.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

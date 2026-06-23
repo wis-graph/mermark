@@ -170,12 +170,13 @@ html, body { margin: 0; height: 100%; }
    pins host width/height inline + sets overflow:auto (applyDimensions), so the
    widget overrides this `overflow:hidden` per-axis. */
 .cm-mermaid { display: flex; justify-content: center; padding: .8em 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); }
-/* svg-pan-zoom moves the diagram into a viewport <g transform> that can pan/zoom
-   past the svg box (dblclick/wheel zoom). Clipping ON THE SVG keeps the drawing
-   inside its own box so a zoom stays balanced/centered instead of spilling out
-   the left edge (where host `overflow:hidden` would otherwise cut it
-   asymmetrically). Harmless when pan-zoom is off: a static diagram already fits. */
-.cm-mermaid svg { display: block; margin: 0 auto; max-width: 100%; height: auto; overflow: hidden; }
+/* Pan/zoom is a CSS `transform` on the svg (transform-origin 0 0). At rest
+   (scale 1, translate 0) the svg's top-left aligns with the host's, so nothing
+   is clipped and centering is symmetric (margin:0 auto). On zoom-in the enlarged
+   svg is clipped by the HOST's `overflow:hidden` (one place), keeping the zoomed
+   drawing inside the box and out of neighbouring lines. The svg itself needs no
+   `overflow` — clipping is the host's job. */
+.cm-mermaid svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
 .cm-mermaid-error { color: #dc2626; white-space: pre-wrap; padding: .75em; }
 .cm-mermaid svg { cursor: grab; }
 .cm-mermaid svg:active { cursor: grabbing; }
@@ -212,13 +213,17 @@ html, body { margin: 0; height: 100%; }
    recompute all six from one ratio (headingScaleSink). The fallback keeps the
    previous hand-tuned constant so pre-sink first paint matches today's visuals.
    ZOOM GUARD: the * var(--font-scale, 1) factor stays so ⌘± still scales headings. */
-/* DESIGN.md editorial signature: display serif at weight 300, never bold (the
-   "Waldenburg Light" voice via Cormorant Garamond 300). weight/family/letter-spacing
-   are all measure-inert (CM measures offsetHeight vertically; these affect glyph
-   render + horizontal advance only) so the ZOOM GUARD holds — the font-size calc
-   lines below are unchanged. Per-level negative tracking comes from --hN-tracking
-   (em, so it rides --font-scale zoom + the headingRatio scale). */
-.cm-editor .cm-line.cm-heading { font-weight: 300; font-family: var(--font-display); line-height: 1.25; }
+/* Headings follow the reading-column font (--reading-font, the Typography
+   fontFamily setting) so a font change applies to headings too — and a sans/CJK
+   stack carries the Korean glyphs the old display serif (Cormorant Garamond) lacked
+   (it shipped no Hangul, so Korean headings broke). Weight is 600: weight 300 was
+   the Cormorant *Light* display voice; in a sans it reads anemic, so a semibold
+   gives the hierarchy without going full bold. weight/family/letter-spacing are all
+   measure-inert (CM measures offsetHeight vertically; these affect glyph render +
+   horizontal advance only) so the ZOOM GUARD holds — the font-size calc lines below
+   are unchanged. Per-level negative tracking comes from --hN-tracking (em, so it
+   rides --font-scale zoom + the headingRatio scale). */
+.cm-editor .cm-line.cm-heading { font-weight: 600; font-family: var(--reading-font, var(--font-sans)); line-height: 1.25; }
 .cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 2.0)); letter-spacing: var(--h1-tracking, 0); }
 .cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.6)); letter-spacing: var(--h2-tracking, 0); }
 .cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.32)); letter-spacing: var(--h3-tracking, 0); }

@@ -1,4 +1,4 @@
-# mermark sample
+# Mermark sample
 
 This document exercises every renderer in **mermark**. Open it with:
 
@@ -12,8 +12,8 @@ Here is **bold**, _italic_, ~~strikethrough~~, and `inline code`. A [normal link
 
 ## GFM table + task list
 
-| Feature   | Status | Notes              |
-|-----------|--------|--------------------|
+| Feature   | Status | Notes              | ㅁㄴㅇ|
+|-----------|--------|--------------------|---|
 | Markdown  | done   | CommonMark + GFM   |
 | Mermaid   | done   | zoom + pan         |
 | Math      | done   | KaTeX              |
@@ -87,6 +87,8 @@ Link to an existing note: [[sample]] (resolves to this file — active).
 Link to a missing note: [[does-not-exist]] (renders struck-through, not clickable).
 
 Aliased: [[sample|click me]].
+
+[[
 
 ---
 

@@ -6,12 +6,26 @@ pub enum CliError {
     NotFound(PathBuf),
 }
 
-/// The launch intent parsed from the process argv: which file to open and
-/// whether the window should claim the right half of the screen (`--right`).
-/// Geometry decisions live in `lib.rs`; this struct only carries the facts.
+/// Where the editor should read its document from. `parse_args` classifies the
+/// launch intent into one of these without performing any I/O: `Stdin` means the
+/// first positional was the `-` token (vim's piped-stdin convention) and the
+/// caller must read piped stdin into a scratch file; `File` is a path already
+/// resolved against the cwd by `resolve_target`. Keeping the intent in an enum
+/// rather than a sentinel `PathBuf` lets `lib.rs` branch on a name (`match`)
+/// instead of inspecting magic path values.
+#[derive(Debug, PartialEq)]
+pub enum Target {
+    Stdin,
+    File(PathBuf),
+}
+
+/// The launch intent parsed from the process argv: where to read the document
+/// from and whether the window should claim the right half of the screen
+/// (`--right`). Geometry and stdin I/O decisions live in `lib.rs`; this struct
+/// only carries the facts.
 #[derive(Debug, PartialEq)]
 pub struct LaunchArgs {
-    pub target: PathBuf,
+    pub target: Target,
     pub right: bool,
 }
 
@@ -23,11 +37,24 @@ fn is_flag(arg: &str) -> bool {
     arg.starts_with("--")
 }
 
+/// True when an argv token is the single-dash stdin marker (`-`). By the vim
+/// convention, `mermark -` means "read the document from piped stdin" rather
+/// than open a file literally named `-`. Sits next to `is_flag` so the whole
+/// argv-token classification rule lives in one place; named so `parse_args`
+/// reads "first positional is the stdin token" instead of an inline `== "-"`.
+fn is_stdin_token(arg: &str) -> bool {
+    arg == "-"
+}
+
 /// Split argv into the recognized `--right` flag plus positional file
-/// arguments, then resolve the first positional via `resolve_target`. The flag
-/// may appear anywhere (`mermark --right f.md` and `mermark f.md --right` are
-/// equivalent); unknown `--xxx` flags are dropped silently so the scope stays
-/// limited to `--right`. `cwd` is injected for testability.
+/// arguments, then classify the first positional. If it is the stdin token
+/// (`-`) the target is `Target::Stdin` and `resolve_target` is *not* called (no
+/// filesystem access for a token that isn't a real path); otherwise the first
+/// positional is resolved to an existing file. The flag may appear anywhere
+/// (`mermark --right f.md` and `mermark f.md --right` are equivalent); unknown
+/// `--xxx` flags are dropped silently so the scope stays limited to `--right`.
+/// This stays a pure query (no I/O) — stdin reading is the caller's effect in
+/// `lib.rs`. `cwd` is injected for testability.
 pub fn parse_args(args: &[String], cwd: &Path) -> Result<LaunchArgs, CliError> {
     let mut right = false;
     let mut positionals: Vec<String> = Vec::new();
@@ -41,8 +68,14 @@ pub fn parse_args(args: &[String], cwd: &Path) -> Result<LaunchArgs, CliError> {
             positionals.push(arg.clone());
         }
     }
-    let target = resolve_target(&positionals, cwd)?;
-    Ok(LaunchArgs { target, right })
+    // First positional wins (matching resolve_target's `.first()` contract). If
+    // it is the stdin token, the intent is piped stdin and we skip path
+    // resolution entirely; any further positionals are ignored as before.
+    if positionals.first().is_some_and(|a| is_stdin_token(a)) {
+        return Ok(LaunchArgs { target: Target::Stdin, right });
+    }
+    let path = resolve_target(&positionals, cwd)?;
+    Ok(LaunchArgs { target: Target::File(path), right })
 }
 
 /// Resolve the first file argument to an absolute, existing file path.
@@ -107,7 +140,7 @@ mod tests {
     fn file_only_defaults_right_false() {
         let dir = fixture_dir("file_only");
         let got = parse_args(&["a.md".into()], &dir).unwrap();
-        assert_eq!(got.target, dir.join("a.md"));
+        assert_eq!(got.target, Target::File(dir.join("a.md")));
         assert!(!got.right);
         fs::remove_dir_all(&dir).ok();
     }
@@ -116,7 +149,7 @@ mod tests {
     fn flag_before_file_sets_right() {
         let dir = fixture_dir("flag_before");
         let got = parse_args(&["--right".into(), "a.md".into()], &dir).unwrap();
-        assert_eq!(got.target, dir.join("a.md"));
+        assert_eq!(got.target, Target::File(dir.join("a.md")));
         assert!(got.right);
         fs::remove_dir_all(&dir).ok();
     }
@@ -126,7 +159,7 @@ mod tests {
         // Flag position is irrelevant: `mermark a.md --right`.
         let dir = fixture_dir("flag_after");
         let got = parse_args(&["a.md".into(), "--right".into()], &dir).unwrap();
-        assert_eq!(got.target, dir.join("a.md"));
+        assert_eq!(got.target, Target::File(dir.join("a.md")));
         assert!(got.right);
         fs::remove_dir_all(&dir).ok();
     }
@@ -158,7 +191,7 @@ mod tests {
         // `--right` is absent so right stays false.
         let dir = fixture_dir("unknown_flag");
         let got = parse_args(&["--unknown".into(), "a.md".into()], &dir).unwrap();
-        assert_eq!(got.target, dir.join("a.md"));
+        assert_eq!(got.target, Target::File(dir.join("a.md")));
         assert!(!got.right);
         fs::remove_dir_all(&dir).ok();
     }
@@ -172,8 +205,49 @@ mod tests {
             &std::env::temp_dir(),
         )
         .unwrap();
-        assert_eq!(got.target, abs);
+        assert_eq!(got.target, Target::File(abs));
         assert!(got.right);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- stdin token classification (`-`) ---
+
+    #[test]
+    fn stdin_token_yields_stdin_target() {
+        // `mermark -` classifies as piped stdin; no filesystem access happens,
+        // so a real cwd fixture isn't needed (and `-` is never a real file).
+        let cwd = std::env::temp_dir();
+        let got = parse_args(&["-".into()], &cwd).unwrap();
+        assert_eq!(got.target, Target::Stdin);
+        assert!(!got.right);
+    }
+
+    #[test]
+    fn stdin_with_right_flag() {
+        // `cat x | mermark - --right`: stdin target is orthogonal to --right.
+        let cwd = std::env::temp_dir();
+        let got = parse_args(&["-".into(), "--right".into()], &cwd).unwrap();
+        assert_eq!(got.target, Target::Stdin);
+        assert!(got.right);
+    }
+
+    #[test]
+    fn stdin_first_positional_wins() {
+        // `mermark - a.md`: first positional is `-`, so the trailing file is
+        // ignored (mirrors the existing "second positional ignored" rule).
+        let dir = fixture_dir("stdin_first");
+        let got = parse_args(&["-".into(), "a.md".into()], &dir).unwrap();
+        assert_eq!(got.target, Target::Stdin);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn file_after_dash_is_file() {
+        // `mermark a.md -`: first positional is the file, so `-` is ignored and
+        // this resolves to a normal File target (no stdin).
+        let dir = fixture_dir("file_after_dash");
+        let got = parse_args(&["a.md".into(), "-".into()], &dir).unwrap();
+        assert_eq!(got.target, Target::File(dir.join("a.md")));
         fs::remove_dir_all(&dir).ok();
     }
 }

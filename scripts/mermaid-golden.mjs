@@ -48,19 +48,21 @@ await page.evaluate(async () => {
 });
 await page.waitForTimeout(1500); // mermaid async render after the block mounts
 
-/** Geometry fingerprint of every mounted .cm-mermaid. `contentRect` is the
- *  painted viewport <g> bbox (in screen px); contentClipLeft/Right measure how
- *  far the drawing spills past the host box (positive = inside, negative =
- *  clipped). emptyBand = host style height − painted content height. */
+/** Geometry fingerprint of every mounted .cm-mermaid. The diagram is the svg
+ *  itself now (no svg-pan-zoom viewport <g>); pan/zoom is a CSS `transform` on
+ *  the svg. `svgRect` is the painted svg bbox (in screen px); contentClipLeft/
+ *  Right measure how far the drawing spills past the host box (positive = inside,
+ *  negative = clipped). emptyBand = host rendered height − painted svg height. */
 const fpExpr = () => {
   const round = (n) => Math.round(n * 10) / 10;
   return [...document.querySelectorAll(".cm-mermaid")].map((host, i) => {
     const svg = host.querySelector("svg");
-    const content = svg?.querySelector(".svg-pan-zoom_viewport") ?? svg?.querySelector("g");
+    // The drawing's own content box: prefer mermaid's root <g>, else the svg.
+    const content = svg?.querySelector("g") ?? svg;
     const hostRect = host.getBoundingClientRect();
     const svgRect = svg?.getBoundingClientRect();
     const contentRect = content?.getBoundingClientRect();
-    const styleH = parseFloat(host.style.height) || 0;
+    const cs = svg ? getComputedStyle(svg) : null;
     return {
       i,
       hostClientW: round(host.clientWidth),
@@ -73,15 +75,17 @@ const fpExpr = () => {
       svgStyleWidth: svg?.style.width ?? null,
       svgStyleHeight: svg?.style.height ?? null,
       svgStyleMaxWidth: svg?.style.maxWidth ?? null,
-      svgOverflow: svg ? getComputedStyle(svg).overflow : null,
-      hasPanZoomViewport: !!svg?.querySelector(".svg-pan-zoom_viewport"),
+      svgOverflow: cs?.overflow ?? null,
+      // CSS-transform pan/zoom snapshot (replaces hasPanZoomViewport).
+      svgTransform: cs?.transform ?? null, // "none" at rest, matrix(...) when zoomed
+      svgTransformOrigin: cs?.transformOrigin ?? null, // "0px 0px" when handler attached
       // symptom 1 (clipping): how far the painted content sits inside the host.
       contentClipLeft: contentRect ? round(contentRect.left - hostRect.left) : null,
       contentClipRight: contentRect ? round(hostRect.right - contentRect.right) : null,
-      // symptom 2 (empty band): pinned box height vs the painted content height.
+      // symptom 2 (empty band): host rendered height vs the painted content height.
       paintedContentHeight: contentRect ? round(contentRect.height) : null,
       svgRectHeight: svgRect ? round(svgRect.height) : null,
-      emptyBand: contentRect ? round(styleH - contentRect.height) : null,
+      emptyBand: contentRect ? round(hostRect.height - contentRect.height) : null,
     };
   });
 };

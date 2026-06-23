@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { mountEditor } from "../src/editor";
-import { vimModeSetting } from "../src/settings/app";
+import { getCM } from "@replit/codemirror-vim";
 
 describe("Editor state config & Vim setting tests", () => {
   let host: HTMLElement;
@@ -27,7 +27,7 @@ describe("Editor state config & Vim setting tests", () => {
       vimMode: "on",
     });
     // Check if the vim extension has been loaded inside editor state
-    expect(editor.view.state.facet(vimModeSetting as any)).toBeUndefined(); // CM doesn't crash
+    expect(getCM(editor.view)).not.toBeNull();
     editor.view.destroy();
   });
 
