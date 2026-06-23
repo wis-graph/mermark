@@ -208,20 +208,26 @@ async function boot() {
     // themeSetting sink above, minus mermaid's theme knowledge.
     themeForceSetting.subscribe(() => editor.refresh());
     // panZoom toggle: re-render blocks so MermaidWidget (which snapshots panZoom
-    // in eq) re-creates and initPanZoom re-runs with the new value.
+    // in eq) re-creates and attachPanZoom re-runs with the new value.
     panZoomSetting.subscribe(() => editor.refresh());
     // dev-only: expose the controller so the debug harness can read real editor
     // state (selection offsets, block specs) instead of guessing from the DOM.
     if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
       (window as unknown as { __mermark?: unknown }).__mermark = editor;
     mode.btn.addEventListener("click", toggleMode);
-    // global fallback so ⌘E works even when the editor isn't focused
-    window.addEventListener("keydown", (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
-        e.preventDefault();
-        toggleMode();
-      }
-    });
+    // global capture-phase listener so ⌘E works reliably even under different
+    // keyboard layouts (like Korean) and regardless of editor focus states
+    window.addEventListener(
+      "keydown",
+      (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.code === "KeyE") {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleMode();
+        }
+      },
+      { capture: true }
+    );
     // Body-text zoom (Cmd =/-/0). Same global-keydown spot as ⌘E so it works in
     // read mode and when the editor isn't focused. preventDefault intercepts the
     // webview's built-in page zoom so only the .cm-line text scale changes.
