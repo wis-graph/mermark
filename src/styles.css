@@ -392,6 +392,33 @@ html, body { margin: 0; height: 100%; }
   color: var(--fg);
 }
 .cm-editor .cm-completionLabel { flex: 1; min-width: 0; }
+
+/* ── footnote ⌘+hover preview popup ──────────────────────────────────────────
+   A single reused floating card showing a footnote definition. Mounts under
+   view.dom (outside .cm-content), placed by position:fixed against the chip
+   rect — so, like the autocomplete tooltip above, it's exempt from the ZOOM
+   GUARD (no font-size on .cm-content/.cm-line here; its font is a fixed scale).
+   Same surface processing as .cm-tooltip-autocomplete: surface plate, hairline
+   border, soft drop. pointer-events:none so moving onto the card can't fire a
+   mouseout flicker — hit-testing stays on the chip. */
+.cm-footnote-preview {
+  position: fixed;
+  z-index: 50;
+  display: none;
+  max-width: 320px;
+  padding: .4em .7em;
+  background: var(--surface);
+  border: 1px solid var(--border);                 /* hairline */
+  border-radius: var(--radius-sm);                 /* compact, chip-adjacent */
+  box-shadow: 0 4px 16px color-mix(in srgb, #000 18%, transparent); /* soft drop */
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;                           /* preserve continuation newlines */
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
 /* Matched substring: link tint + 600, and DROP CM's default underline. */
 .cm-editor .cm-completionMatchedText {
   color: var(--link);

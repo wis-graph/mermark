@@ -6,6 +6,7 @@ import { vim } from "@replit/codemirror-vim";
 import { invoke } from "@tauri-apps/api/core";
 import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode } from "./markdown/live-preview";
 import { footnoteNav } from "./markdown/footnote-nav";
+import { footnoteHover } from "./markdown/footnote-hover";
 import { markdownFolding } from "./markdown/fold";
 import { markdownLang } from "./markdown/parser";
 import { wikilinkCompletionSource } from "./markdown/wikilink-complete";
@@ -317,6 +318,10 @@ export function mountEditor(
       // reference. Capture-phase mousedown (like core's clickEntry); same
       // document, so no baseDir/filePath needed.
       footnoteNav,
+      // Footnote hover preview: ⌘/Ctrl + mouseover a ref chip pops a small
+      // floating card with the definition text. Read-only overlay (no dispatch,
+      // no preventDefault), so it coexists with footnoteNav's mousedown.
+      footnoteHover,
       // input-UX layer (not decoration): auto-close brackets and the [[ file
       // picker. Defaults are fine; closeBrackets gives [→[], [[→[[]], overtype,
       // and selection-wrap. The completion source owns the `[[ ]]` flow.

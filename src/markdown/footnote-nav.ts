@@ -14,7 +14,7 @@ import type { EditorState } from "@codemirror/state";
 // ---------------------------------------------------------------------------
 
 /** Escape a footnote label so it can be embedded literally in a RegExp. */
-function escapeLabel(label: string): string {
+export function escapeLabel(label: string): string {
   return label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 

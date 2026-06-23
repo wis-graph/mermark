@@ -316,6 +316,88 @@ describe("full-editor render smoke", () => {
     expect(view.contentDOM.textContent).toContain("[[x]]");
     view.destroy();
   });
+
+  // ── footnote ⌘+hover preview (overlay, not decoration) ──────────────────────
+  // The chip render is unchanged; the preview is a separate ViewPlugin overlay.
+  // jsdom has no layout, so getBoundingClientRect returns zeros — we assert the
+  // popup's existence + text, not its position (position is covered by CDP).
+  // Caret parks on line 1; the chip lives on line 3 so edit-mode reveal never
+  // drops the conceal on the chip's own line (raw [^1] would show otherwise).
+  const footnoteHoverDoc = "top\n\nbody [^1] here\n\n[^1]: hover definition body";
+
+  function footnoteChip(view: ReturnType<typeof mount>): HTMLElement {
+    const chip = view.contentDOM.querySelector(".cm-footnote-ref") as HTMLElement | null;
+    expect(chip, "expected a rendered .cm-footnote-ref chip").not.toBeNull();
+    return chip!;
+  }
+
+  it("still renders the footnote chip (no regression from the hover overlay)", () => {
+    const view = mount(host, footnoteHoverDoc);
+    view.dispatch({ selection: { anchor: 0 } }); // caret away from the chip line
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-footnote-ref")?.textContent).toBe("1");
+    view.destroy();
+  });
+
+  it("⌘+hover over the chip pops a preview carrying the definition text", () => {
+    const view = mount(host, footnoteHoverDoc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const chip = footnoteChip(view);
+    chip.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, metaKey: true }));
+    const popup = view.dom.querySelector(".cm-footnote-preview") as HTMLElement | null;
+    expect(popup).not.toBeNull();
+    expect(popup!.style.display).toBe("block");
+    expect(popup!.textContent).toContain("hover definition body");
+    view.destroy();
+  });
+
+  it("hover without the modifier does not show a preview", () => {
+    const view = mount(host, footnoteHoverDoc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const chip = footnoteChip(view);
+    chip.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })); // no metaKey
+    const popup = view.dom.querySelector(".cm-footnote-preview") as HTMLElement | null;
+    // either never created, or created-but-hidden — both mean "no preview shown"
+    expect(popup === null || popup.style.display === "none").toBe(true);
+    view.destroy();
+  });
+
+  it("releasing the modifier (keyup) hides an open preview", () => {
+    const view = mount(host, footnoteHoverDoc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const chip = footnoteChip(view);
+    chip.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, metaKey: true }));
+    const popup = view.dom.querySelector(".cm-footnote-preview") as HTMLElement;
+    expect(popup.style.display).toBe("block");
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta" })); // modifier released
+    expect(popup.style.display).toBe("none");
+    view.destroy();
+  });
+
+  it("⌘+hover over a chip with no definition is a no-op", () => {
+    const view = mount(host, "top\n\nbody [^x] here\n\nno definition for x");
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const chip = footnoteChip(view);
+    chip.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, metaKey: true }));
+    const popup = view.dom.querySelector(".cm-footnote-preview") as HTMLElement | null;
+    expect(popup === null || popup.style.display === "none").toBe(true);
+    view.destroy();
+  });
+
+  it("removes the preview element and listeners on destroy (no leak)", () => {
+    const view = mount(host, footnoteHoverDoc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const chip = footnoteChip(view);
+    chip.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, metaKey: true }));
+    expect(view.dom.querySelector(".cm-footnote-preview")).not.toBeNull();
+    view.destroy();
+    expect(view.dom.querySelector(".cm-footnote-preview")).toBeNull();
+  });
 });
 
 describe("mode toggle", () => {
