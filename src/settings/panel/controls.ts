@@ -126,10 +126,79 @@ function renderText(setting: Setting<string>, control: Extract<Control<string>, 
 function renderJson(setting: Setting<Theme>): HTMLElement {
   const { row: r, cell } = row("");
   r.classList.add("settings-row-json");
+  r.classList.add("theme-editor");
+
+  // 1. Swatch Grid Container
+  const grid = document.createElement("div");
+  grid.className = "theme-swatch-grid";
+
+  const colorLabels: Record<keyof Theme["colors"], string> = {
+    bg: "배경색",
+    fg: "글자색",
+    surface: "카드 영역",
+    border: "테두리색",
+    accent: "강조색",
+    link: "링크색",
+    muted: "보조 글자",
+    highlightBg: "형광펜 배경",
+  };
+
+  const colorInputs: Record<string, HTMLInputElement> = {};
+  const swatchColors: Record<string, HTMLElement> = {};
+
+  const keys = Object.keys(colorLabels) as Array<keyof Theme["colors"]>;
+
+  keys.forEach((key) => {
+    const card = document.createElement("div");
+    card.className = "theme-swatch-card";
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "theme-swatch-wrapper";
+
+    const swatch = document.createElement("div");
+    swatch.className = "theme-swatch-color";
+
+    const input = document.createElement("input");
+    input.type = "color";
+    input.className = "theme-swatch-input";
+    input.title = colorLabels[key];
+
+    input.addEventListener("input", () => {
+      const activeTheme = setting.get();
+      const updatedTheme: Theme = {
+        ...activeTheme,
+        colors: {
+          ...activeTheme.colors,
+          [key]: input.value,
+        },
+      };
+      setting.set(updatedTheme);
+    });
+
+    wrapper.append(swatch, input);
+    colorInputs[key] = input;
+    swatchColors[key] = swatch;
+
+    const label = document.createElement("span");
+    label.className = "theme-swatch-label";
+    label.textContent = colorLabels[key];
+
+    card.append(wrapper, label);
+    grid.appendChild(card);
+  });
+
+  // 2. Collapsible Advanced JSON Editor Accordion
+  const details = document.createElement("details");
+  details.className = "theme-advanced";
+  const summary = document.createElement("summary");
+  summary.className = "theme-advanced-summary";
+  summary.textContent = "JSON 직접 편집";
+  details.appendChild(summary);
+
   const ta = document.createElement("textarea");
   ta.className = "settings-json";
   ta.spellcheck = false;
-  ta.rows = 16;
+  ta.rows = 8;
   const error = document.createElement("div");
   error.className = "settings-json-error";
 
@@ -144,24 +213,36 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
     const parsed = parseTheme(ta.value);
     if (parsed === null) {
       error.textContent = "유효하지 않은 테마 JSON입니다.";
-      return; // no set — corrupt paste can't poison the SSOT
+      return;
     }
     error.textContent = "";
     setting.set(parsed);
   });
+
   copy.addEventListener("click", () => {
     void navigator.clipboard?.writeText(serializeTheme(setting.get()));
   });
+
   download.addEventListener("click", () => downloadTheme(setting.get()));
 
+  details.append(ta, error, actions);
+
+  // 3. Reflect changes and subscribe
   const reflect = (t: Theme) => {
+    keys.forEach((key) => {
+      const colorVal = t.colors[key];
+      colorInputs[key].value = toHex(colorVal);
+      swatchColors[key].style.backgroundColor = colorVal;
+    });
+
     ta.value = serializeTheme(t);
     error.textContent = "";
   };
+
   reflect(setting.get());
   setting.subscribe(reflect);
 
-  cell.append(ta, error, actions);
+  cell.append(grid, details);
   return r;
 }
 
@@ -212,3 +293,27 @@ export const RENDER: {
   json: (s) => renderJson(s as unknown as Setting<Theme>),
   info: () => renderInfo(),
 };
+
+/** Convert a CSS color string (hex, rgb, rgba) to '#rrggbb' hex format required by <input type="color">. */
+function toHex(color: string): string {
+  const trimmed = color.trim().toLowerCase();
+  if (trimmed.startsWith("#")) {
+    if (trimmed.length === 4) {
+      return "#" + trimmed[1] + trimmed[1] + trimmed[2] + trimmed[2] + trimmed[3] + trimmed[3];
+    }
+    if (trimmed.length >= 7) {
+      return trimmed.slice(0, 7);
+    }
+    return trimmed;
+  }
+  const match = trimmed.match(/\d+/g);
+  if (match && match.length >= 3) {
+    const r = Math.min(255, Math.max(0, parseInt(match[0], 10))).toString(16).padStart(2, "0");
+    const g = Math.min(255, Math.max(0, parseInt(match[1], 10))).toString(16).padStart(2, "0");
+    const b = Math.min(255, Math.max(0, parseInt(match[2], 10))).toString(16).padStart(2, "0");
+    return `#${r}${g}${b}`;
+  }
+  // Default fallback if color is transparent or named
+  if (trimmed === "transparent") return "#000000";
+  return "#000000";
+}
