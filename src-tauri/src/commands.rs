@@ -72,6 +72,25 @@ pub fn write_file(path: String, text: String, baseline: u64) -> Result<u64, Stri
     Ok(mtime_ms(&path))
 }
 
+/// Create a new markdown file and any missing parent directories recursively.
+/// Writes a default title header `# [filename]\n`.
+#[tauri::command]
+pub fn create_markdown_file(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if p.exists() {
+        return Ok(()); // already exists, no-op
+    }
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create directory: {e}"))?;
+    }
+    let title = p.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Untitled");
+    let content = format!("# {title}\n");
+    std::fs::write(p, content).map_err(|e| format!("failed to write file: {e}"))?;
+    Ok(())
+}
+
 /// Check whether a path points to an existing file (used by wikilink rendering).
 #[tauri::command]
 pub fn path_exists(path: String) -> bool {
@@ -204,5 +223,20 @@ mod tests {
             assert!(v > 0.0, "{label} must be positive, got {v}");
             assert!(v <= 10_000.0, "{label} looks implausible, got {v}");
         }
+    }
+
+    #[test]
+    fn create_markdown_file_creates_file_and_folders() {
+        let parent = temp_path("dir");
+        let path = format!("{}/nested/new_file.md", parent);
+        assert!(!path_exists(path.clone()));
+        
+        create_markdown_file(path.clone()).unwrap();
+        
+        assert!(path_exists(path.clone()));
+        let contents = fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, "# new_file\n");
+        
+        fs::remove_dir_all(&parent).ok();
     }
 }
