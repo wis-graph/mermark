@@ -84,14 +84,18 @@ html, body { margin: 0; height: 100%; }
    of clipping the left/start edge. Item `margin: auto` collapses under overflow
    and shoves the column off-screen — don't use it. */
 .cm-scroller { justify-content: safe center; }
-/* P2: --measure is a ch count; min(…,100%) caps it to the viewport so a wide
-   reading width can't push the column past a narrow window and clip the start
-   edge. P1: glyph-render hints — all font-size-INERT (smoothing/optical-sizing
-   change glyph rendering, kerning/legibility change horizontal advance only), so
-   the ZOOM GUARD holds: no font-size here means async mermaid/katex widgets never
-   collapse to 0 offsetHeight. font-size is forbidden on .cm-content. */
+/* P2: --measure is a ch count. We scale it by --font-scale so the reading column
+   widens in step with ⌘± zoom — `ch` here is measured against .cm-content's own
+   (unscaled) font, since the zoom lives on .cm-line, so without this factor the
+   column would stay a fixed width while the text grows, leaving a weird fat
+   margin. min(…,100%) still caps it to the viewport so a zoomed-up column never
+   spills past the window edge. P1: glyph-render hints — all font-size-INERT
+   (smoothing/optical-sizing change glyph rendering, kerning/legibility change
+   horizontal advance only). ZOOM GUARD holds: max-width (even a calc) is not
+   font-size, so async mermaid/katex widgets never collapse to 0 offsetHeight —
+   font-size remains forbidden on .cm-content. */
 .cm-editor .cm-content {
-  max-width: min(var(--measure, 68ch), 100%);
+  max-width: min(calc(var(--measure, 68ch) * var(--font-scale, 1)), 100%);
   padding: 2rem 1rem;
   font-family: var(--reading-font, var(--font-sans));
   -webkit-font-smoothing: antialiased;
