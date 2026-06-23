@@ -28,6 +28,7 @@ import {
 } from "./settings/app";
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./settings/sinks";
 import { mountSettingsButton } from "./settings/panel/modal";
+import { installBundleShortcut } from "./bundle";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
 import "./fonts/fonts.css";
@@ -303,6 +304,18 @@ async function boot() {
     if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
       (window as unknown as { __mermark?: unknown }).__mermark = editor;
     mode.btn.addEventListener("click", toggleMode);
+    // ⌘⇧C: copy the LLM context bundle (this doc + 1-hop wikilinks) to the
+    // clipboard. Self-contained in ./bundle (own capture-phase listener, like
+    // ⌘E); main only supplies the current file + a transient status-bar flash.
+    installBundleShortcut(() => file, {
+      onResult: (copied) => {
+        const prev = pos.textContent;
+        pos.textContent = copied ? "✓ 번들 복사됨" : "⚠ 번들 복사 실패";
+        setTimeout(() => {
+          if (pos.textContent !== prev) pos.textContent = prev;
+        }, 1200);
+      },
+    });
     // global capture-phase listener so ⌘E works reliably even under different
     // keyboard layouts (like Korean) and regardless of editor focus states
     window.addEventListener(
