@@ -175,16 +175,60 @@ async function boot() {
     // built lazily on first open (cold-load constraint).
     mountSettingsButton(bar);
 
-    const editor = mountEditor(host, text, baseDir, file, {
+    const sessionKey = `mermark.session.${file}`;
+    const saveSessionState = () => {
+      if (!editor) return;
+      const scroller = host.querySelector(".cm-scroller");
+      const scroll = scroller ? scroller.scrollTop : 0;
+      const cursor = editor.view.state.selection.main.anchor;
+      localStorage.setItem(sessionKey, JSON.stringify({ scroll, cursor }));
+    };
+
+    let editor: ReturnType<typeof mountEditor>;
+    editor = mountEditor(host, text, baseDir, file, {
       onStatus: save.set,
       initialMode,
       onToggleMode: toggleMode,
-      onCursor: (line, col) => (pos.textContent = `Ln ${line}, Col ${col}`),
+      onCursor: (line, col) => {
+        pos.textContent = `Ln ${line}, Col ${col}`;
+        saveSessionState();
+      },
       baseMtime: mtime,
       autosaveDelay: autosaveDelaySetting.get(),
       conflictPolicy: conflictPolicySetting.get(),
       vimMode: vimModeSetting.get(),
     });
+
+    const scroller = host.querySelector(".cm-scroller");
+    if (scroller) {
+      scroller.addEventListener("scroll", () => {
+        saveSessionState();
+      }, { passive: true });
+    }
+
+    // Restore session state
+    const savedSession = localStorage.getItem(sessionKey);
+    if (savedSession) {
+      try {
+        const { scroll, cursor } = JSON.parse(savedSession);
+        if (typeof cursor === "number" && cursor <= text.length) {
+          editor.view.dispatch({
+            selection: { anchor: cursor, head: cursor }
+          });
+        }
+        if (typeof scroll === "number") {
+          requestAnimationFrame(() => {
+            const scroller = host.querySelector(".cm-scroller");
+            if (scroller) {
+              scroller.scrollTop = scroll;
+            }
+          });
+        }
+      } catch (err: any) {
+        console.error("Failed to restore session state", err);
+      }
+    }
+
     save.onForceSave(() => editor.forceSave());
     save.onReloadDisk(async () => {
       try {
@@ -203,6 +247,7 @@ async function boot() {
     if ("__TAURI_INTERNALS__" in window) {
       const win = getCurrentWindow();
       await win.onCloseRequested(async (e) => {
+        saveSessionState();
         if (!editor.hasUnsaved()) return;
         e.preventDefault();
         editor.beginClose();
