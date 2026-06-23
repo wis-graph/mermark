@@ -213,6 +213,28 @@ html, body { margin: 0; height: 100%; }
 .cm-footnote-def-marker { cursor: pointer; color: var(--link); }
 .cm-footnote-def-marker:hover { text-decoration: underline; }
 .cm-image { display: block; max-width: 100%; height: auto; padding: .5em 0; margin: 0 auto; }
+
+/* Inline video + YouTube embeds. 16:9 facade with a centered play badge; the
+   thumbnail and the iframe (after click) both fill the box. Widget-owned sizes —
+   never touch .cm-content/.cm-line font-size (measure root). */
+.cm-video { display: block; max-width: 100%; height: auto; padding: .5em 0; margin: 0 auto; border-radius: var(--radius-md, 8px); }
+.cm-youtube-facade {
+  position: relative; display: block; width: 100%; max-width: 560px; aspect-ratio: 16 / 9;
+  margin: .5em auto; cursor: pointer; border-radius: var(--radius-md, 8px); overflow: hidden;
+  background: var(--surface, #000);
+}
+.cm-youtube-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cm-youtube-play {
+  position: absolute; inset: 0; margin: auto; width: 68px; height: 48px;
+  border-radius: 14px; background: rgba(0, 0, 0, .65);
+  transition: background .15s ease;
+}
+.cm-youtube-play::after {
+  content: ""; position: absolute; inset: 0; margin: auto; width: 0; height: 0;
+  border-style: solid; border-width: 11px 0 11px 19px; border-color: transparent transparent transparent #fff;
+}
+.cm-youtube-facade:hover .cm-youtube-play { background: #f00; }
+.cm-youtube-iframe { width: 100%; height: 100%; border: 0; display: block; }
 .cm-wikilink-active { color: var(--link); cursor: pointer; text-decoration: none; }
 .cm-wikilink-active:hover { text-decoration: underline; }
 .cm-wikilink-missing { color: var(--muted); text-decoration: line-through dotted; cursor: default; }

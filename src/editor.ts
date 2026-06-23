@@ -11,6 +11,7 @@ import { markdownFolding } from "./markdown/fold";
 import { markdownLang } from "./markdown/parser";
 import { wikilinkCompletionSource } from "./markdown/wikilink-complete";
 import { markupWrap } from "./markdown/markup-wrap";
+import { pasteLinkWrap } from "./markdown/paste-link";
 import type { ConflictPolicy, VimMode } from "./settings/app";
 
 export type SaveStatus = "saved" | "saving" | "error" | "conflict";
@@ -328,6 +329,9 @@ export function mountEditor(
       // markupWrap is the doubled-mark analogue: `=` over a selection toggles
       // ==highlight==, `*` cycles *italic*→**bold**→***both***.
       markupWrap(),
+      // Paste a URL over a non-empty selection → wrap it as [selection](url)
+      // (Obsidian-style auto-linking). Falls back to a normal paste otherwise.
+      pasteLinkWrap(),
       closeBrackets(),
       autocompletion({ override: [wikilinkCompletionSource(baseDir)], activateOnTyping: true }),
       modeCompartment.of(modeExtensions(initialMode)),

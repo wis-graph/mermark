@@ -1,6 +1,7 @@
 import { Decoration } from "@codemirror/view";
 import { type InlineFeature } from "../core";
 import { ImageWidget, resolveImageUrl } from "../../image";
+import { embedWidgetFor } from "../../embed";
 import { WikilinkWidget, wikilinkPath, isImageTarget } from "../../wikilink";
 
 export const wikilink: InlineFeature = {
@@ -14,8 +15,13 @@ export const wikilink: InlineFeature = {
     const alias = aliasNode ? ctx.state.sliceDoc(aliasNode.from, aliasNode.to).trim() : target;
     if (!target) return false;
     const embed = node.name === "WikilinkEmbed";
-    const deco =
-      embed && isImageTarget(target)
+    // `![[…]]` embeds, in priority: youtube/video (embedWidgetFor) → image → a
+    // plain wikilink. `[[…]]` (no `!`) is always a wikilink. Same youtube→video
+    // priority as the `![](…)` path (shared embedWidgetFor).
+    const embedWidget = embed ? embedWidgetFor(target, alias, ctx.baseDir) : null;
+    const deco = embedWidget
+      ? Decoration.replace({ widget: embedWidget })
+      : embed && isImageTarget(target)
         ? Decoration.replace({ widget: new ImageWidget(resolveImageUrl(target, ctx.baseDir), alias) })
         : Decoration.replace({
             widget: new WikilinkWidget(alias, wikilinkPath(target, ctx.baseDir, ctx.currentFile)),

@@ -13,7 +13,7 @@
     "withGlobalTauri": false,
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: asset: http://asset.localhost https://asset.localhost https://fonts.gstatic.com; img-src 'self' data: https: asset: http://asset.localhost https://asset.localhost; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https://asset.localhost; object-src 'none'; base-uri 'self'",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: asset: http://asset.localhost https://asset.localhost https://fonts.gstatic.com; img-src 'self' data: https: asset: http://asset.localhost https://asset.localhost; media-src 'self' asset: http://asset.localhost https://asset.localhost https: data:; frame-src https://www.youtube-nocookie.com https://www.youtube.com; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https://asset.localhost; object-src 'none'; base-uri 'self'",
       "devCsp": null,
       "assetProtocol": { "enable": true, "scope": { "allow": ["**"], "requireLiteralLeadingDot": false } }
     }
