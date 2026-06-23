@@ -208,8 +208,10 @@ html, body { margin: 0; height: 100%; }
 .cm-callout-head { font-weight: 700; }
 .cm-callout-warning { background: rgba(255,180,0,.12); border-left-color: #ffb400; }
 .cm-callout-danger { background: rgba(220,38,38,.12); border-left-color: #dc2626; }
-.cm-footnote-ref { color: var(--accent); cursor: default; }
+.cm-footnote-ref { color: var(--accent); cursor: pointer; }
 .cm-footnote-def { font-size: .9em; opacity: .8; }
+.cm-footnote-def-marker { cursor: pointer; color: var(--link); }
+.cm-footnote-def-marker:hover { text-decoration: underline; }
 .cm-image { display: block; max-width: 100%; height: auto; padding: .5em 0; margin: 0 auto; }
 .cm-wikilink-active { color: var(--link); cursor: pointer; text-decoration: none; }
 .cm-wikilink-active:hover { text-decoration: underline; }
