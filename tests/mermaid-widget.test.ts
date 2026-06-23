@@ -133,6 +133,77 @@ describe("attachPanZoom (CSS-transform pan/zoom handler — state transitions)",
   });
 });
 
+describe("attachPanZoom reset button (explicit return-to-natural-size affordance)", () => {
+  afterEach(() => panZoomSetting.set("on"));
+
+  it("appends a .cm-mermaid-reset button to the host when panZoom is on", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    const btn = host.querySelector<HTMLButtonElement>(".cm-mermaid-reset");
+    expect(btn).not.toBeNull();
+    expect(btn?.type).toBe("button");
+    pz.destroy();
+  });
+
+  it("does NOT create a reset button when panZoom is off (static diagram)", () => {
+    panZoomSetting.set("off");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    expect(host.querySelector(".cm-mermaid-reset")).toBeNull();
+    pz.destroy();
+  });
+
+  it("toggles host.is-transformed: off at rest, on after a pan, off after reset", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    // at rest: not transformed
+    expect(host.classList.contains("is-transformed")).toBe(false);
+    // pan → transformed
+    host.dispatchEvent(new MouseEvent("mousedown", { clientX: 10, clientY: 20 }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 40, clientY: 70 }));
+    expect(host.classList.contains("is-transformed")).toBe(true);
+    window.dispatchEvent(new MouseEvent("mouseup", {}));
+    // reset click → back to natural, not transformed
+    host.querySelector<HTMLButtonElement>(".cm-mermaid-reset")!.dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(host.classList.contains("is-transformed")).toBe(false);
+    pz.destroy();
+  });
+
+  it("reset click restores scale 1 / translate 0 on the svg transform", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    // zoom in first via dblclick
+    host.dispatchEvent(new MouseEvent("dblclick", { clientX: 0, clientY: 0 }));
+    expect(svg.style.transform).toContain("scale(2)");
+    // reset
+    host.querySelector<HTMLButtonElement>(".cm-mermaid-reset")!.dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(svg.style.transform).toContain("scale(1)");
+    expect(svg.style.transform).toContain("translate(0px, 0px)");
+    pz.destroy();
+  });
+
+  it("reset button mousedown is swallowed (does not start a host pan)", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    const btn = host.querySelector<HTMLButtonElement>(".cm-mermaid-reset")!;
+    // mousedown on the button must not pan: stopPropagation prevents host's
+    // onMouseDown from arming a drag, so a subsequent window mousemove is inert.
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 5, clientY: 5 }));
+    const before = svg.style.transform;
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 99, clientY: 99 }));
+    expect(svg.style.transform).toBe(before);
+    pz.destroy();
+  });
+});
+
 describe("MermaidWidget.eq with dimensions", () => {
   it("is equal when code and dims match (px declared)", () => {
     const a = new MermaidWidget("graph TD", { width: 300, height: null });

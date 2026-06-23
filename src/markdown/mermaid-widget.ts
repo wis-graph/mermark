@@ -222,12 +222,28 @@ export function zoomAtCursor(
   state.translateY = cursorY - cursorYInSvg * newScale;
 }
 
-/** Command: write the current pan/zoom state onto the svg as a CSS transform.
+/** Whether the diagram is currently zoomed or panned away from its resting
+ *  state (scale 1, translate 0). The reset button only shows when this is true,
+ *  so the rule lives in one named place rather than inline in updateTransform. */
+function isTransformed(state: PanZoomState): boolean {
+  return state.scale !== 1 || state.translateX !== 0 || state.translateY !== 0;
+}
+
+/** Command: write the current pan/zoom state onto the svg as a CSS transform,
+ *  and reflect "is this diagram transformed?" onto the host so the reset button
+ *  can show/hide via CSS. The single write path for transform, so the
+ *  `is-transformed` toggle stays in sync with every pan/zoom/dblclick/reset.
  *  transform-origin stays 0 0 (set once at attach). `withTransition` animates
- *  the dblclick toggle; pan/wheel pass false for instant feedback. */
-function updateTransform(svg: SVGElement, state: PanZoomState, withTransition = false): void {
+ *  the dblclick + reset toggle; pan/wheel pass false for instant feedback. */
+function updateTransform(
+  host: HTMLElement,
+  svg: SVGElement,
+  state: PanZoomState,
+  withTransition = false,
+): void {
   svg.style.transition = withTransition ? "transform 0.2s ease-out" : "";
   svg.style.transform = `translate(${state.translateX}px, ${state.translateY}px) scale(${state.scale})`;
+  host.classList.toggle("is-transformed", isTransformed(state));
 }
 
 /** Attach CSS-transform pan/zoom to a rendered diagram: drag to pan, Ctrl/Cmd
@@ -245,12 +261,23 @@ export function attachPanZoom(host: HTMLElement, svg: SVGElement): { destroy(): 
   let startX = 0;
   let startY = 0;
 
+  // Explicit affordance for returning to natural size: a small floating button
+  // shown (via the host's `is-transformed` class + CSS) only while zoomed/panned.
+  // Absolutely positioned, so it lives outside the layout box and never changes
+  // host.offsetHeight / CM's height map (ZOOM GUARD).
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "cm-mermaid-reset";
+  resetBtn.type = "button";
+  resetBtn.title = "원래 크기로";
+  resetBtn.textContent = "⟲";
+  host.appendChild(resetBtn);
+
   const onMouseMove = (e: MouseEvent) => {
     if (!panning) return;
     e.preventDefault();
     state.translateX = e.clientX - startX;
     state.translateY = e.clientY - startY;
-    updateTransform(svg, state);
+    updateTransform(host, svg, state);
   };
   const onMouseUp = () => {
     panning = false;
@@ -274,7 +301,7 @@ export function attachPanZoom(host: HTMLElement, svg: SVGElement): { destroy(): 
     if (newScale === state.scale) return;
     const rect = host.getBoundingClientRect();
     zoomAtCursor(state, e.clientX - rect.left, e.clientY - rect.top, newScale);
-    updateTransform(svg, state);
+    updateTransform(host, svg, state);
   };
   const onDblClick = (e: MouseEvent) => {
     e.preventDefault();
@@ -286,18 +313,34 @@ export function attachPanZoom(host: HTMLElement, svg: SVGElement): { destroy(): 
       state.translateX = 0;
       state.translateY = 0;
     }
-    updateTransform(svg, state, true);
+    updateTransform(host, svg, state, true);
+  };
+  // Swallow the button's own mousedown so it can't start a host pan drag, and on
+  // click snap back to natural size (animated). updateTransform clears the host's
+  // `is-transformed` class, so the button hides itself again — no extra wiring.
+  const onResetMouseDown = (e: MouseEvent) => e.stopPropagation();
+  const onResetClick = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    state.scale = 1;
+    state.translateX = 0;
+    state.translateY = 0;
+    updateTransform(host, svg, state, true);
   };
 
   host.addEventListener("mousedown", onMouseDown);
   host.addEventListener("wheel", onWheel, { passive: false });
   host.addEventListener("dblclick", onDblClick);
+  resetBtn.addEventListener("mousedown", onResetMouseDown);
+  resetBtn.addEventListener("click", onResetClick);
 
   return {
     destroy() {
       host.removeEventListener("mousedown", onMouseDown);
       host.removeEventListener("wheel", onWheel);
       host.removeEventListener("dblclick", onDblClick);
+      resetBtn.removeEventListener("mousedown", onResetMouseDown);
+      resetBtn.removeEventListener("click", onResetClick);
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     },

@@ -169,7 +169,7 @@ html, body { margin: 0; height: 100%; }
    down; small diagrams stay natural. A px size declaration (first line `300,400`)
    pins host width/height inline + sets overflow:auto (applyDimensions), so the
    widget overrides this `overflow:hidden` per-axis. */
-.cm-mermaid { display: flex; justify-content: center; padding: .8em 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.cm-mermaid { position: relative; display: flex; justify-content: center; padding: .8em 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); }
 /* Pan/zoom is a CSS `transform` on the svg (transform-origin 0 0). At rest
    (scale 1, translate 0) the svg's top-left aligns with the host's, so nothing
    is clipped and centering is symmetric (margin:0 auto). On zoom-in the enlarged
@@ -180,6 +180,13 @@ html, body { margin: 0; height: 100%; }
 .cm-mermaid-error { color: #dc2626; white-space: pre-wrap; padding: .75em; }
 .cm-mermaid svg { cursor: grab; }
 .cm-mermaid svg:active { cursor: grabbing; }
+/* Floating "reset to natural size" button. Absolutely positioned (outside the
+   layout box → host.offsetHeight / CM height map unchanged, ZOOM GUARD). Hidden
+   at rest (opacity 0 + no pointer events); revealed only when the diagram is
+   zoomed/panned via the host's `is-transformed` class. */
+.cm-mermaid-reset { position: absolute; top: .4em; right: .4em; width: 1.6em; height: 1.6em; display: inline-flex; align-items: center; justify-content: center; padding: 0; line-height: 1; background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease, color .12s ease; }
+.cm-mermaid.is-transformed .cm-mermaid-reset { opacity: .6; pointer-events: auto; }
+.cm-mermaid.is-transformed .cm-mermaid-reset:hover { opacity: 1; color: var(--fg); }
 .cm-math-block { display: block; padding: .5em 0; text-align: center; }
 .cm-math-inline { padding: 0 .15em; }
 /* blockquote: a left rule + soft tint, kept whether focused or not. */
