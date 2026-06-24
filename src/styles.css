@@ -386,6 +386,17 @@ html, body { margin: 0; height: 100%; }
 .status-btn.reload-disk { color: var(--muted); height: 26px; }
 .status-btn.reload-disk:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
 
+/* Open-by-path input row: a thin bar pinned just above the status bar (lives
+   outside #app's scroll host, so no .cm-content/.cm-line involved → ZOOM GUARD
+   holds). Hidden until the footer "경로 열기" button toggles it. The input
+   stretches; the error message sits to its right in a warning tone. */
+.open-path-row { flex: none; display: flex; align-items: center; gap: .5em; padding: .35em .5em; border-top: 1px solid var(--border); background: var(--surface); font-size: 13px; }
+.open-path-row[hidden] { display: none; }
+.open-path-input { flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 10px; font: inherit; font-size: 13px; color: var(--fg); background: var(--bg, var(--surface)); border: 1px solid var(--border); border-radius: var(--radius-md, 8px); }
+.open-path-input:focus-visible { outline: none; border-color: color-mix(in srgb, var(--accent) 70%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.open-path-error { flex: none; color: #dc2626; white-space: nowrap; }
+.open-path-error[hidden] { display: none; }
+
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }
 .cm-table { border-collapse: collapse; width: 100%; letter-spacing: normal; }
 .cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; }

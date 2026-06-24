@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { dirOf } from "./path";
-import { mountEditor, type PreviewMode, type SaveStatus } from "./editor";
+import { dirOf, resolveOpenPath } from "./path";
+import { createOpenPathPrompt } from "./open-file/path-prompt";
+import { mountEditor, type EditorController, type PreviewMode, type SaveStatus } from "./editor";
 import { applyTheme, applyFontScale, makeThemeToggle } from "./theme";
 import {
   themeSetting,
@@ -162,72 +163,138 @@ async function boot() {
     root.textContent = "No file specified.";
     return;
   }
-  try {
-    // mtime is the autosave baseline: handed back on every write so the backend
-    // can refuse to clobber an external change to the file.
-    const { text, mtime } = await invoke<{ text: string; mtime: number }>("read_file", { path: file });
-    root.innerHTML = "";
 
-    // #app is a flex column: the editor scrolls inside `host`, with a fixed
-    // status bar pinned below it that holds all the chrome (toggles, save state,
-    // cursor position) — no more controls floating over the content.
-    const host = el("div", "editor-host");
-    const bar = el("div", "status-bar");
-    root.append(host, bar);
+  // #app is a flex column: the editor scrolls inside `host`, with a fixed
+  // status bar pinned below it that holds all the chrome (toggles, save state,
+  // cursor position) — no more controls floating over the content. host + bar
+  // are built ONCE; re-opening a file swaps only the editor inside host.
+  root.innerHTML = "";
+  const host = el("div", "editor-host");
+  const bar = el("div", "status-bar");
+  root.append(host, bar);
 
-    const baseDir = dirOf(file);
-    // Boot mode = the panel's defaultMode (seed the live modeSetting from it),
-    // then read it. After boot, ⌘E only moves modeSetting; defaultMode re-seeds
-    // on the next launch. The two settings stay distinct (boot source vs session).
-    seedSessionMode();
-    const initialMode = modeSetting.get();
-    const toggleMode = () => modeSetting.set(modeSetting.get() === "edit" ? "read" : "edit");
+  // Boot mode = the panel's defaultMode (seed the live modeSetting from it),
+  // then read it. After boot, ⌘E only moves modeSetting; defaultMode re-seeds
+  // on the next launch. The two settings stay distinct (boot source vs session).
+  // Seeding runs ONCE here, not on every re-open — re-opening preserves the
+  // current session mode/vim (matches vim `:e`, which keeps the editor's mode).
+  seedSessionMode();
+  const toggleMode = () => modeSetting.set(modeSetting.get() === "edit" ? "read" : "edit");
 
-    const mode = makeModeToggle();
-    const pos = el("span", "status-pos");
-    const spacer = el("span", "status-spacer");
-    const save = makeSaveStatus();
-    // live theme switch: flip the preset (loadPreset writes themeJson + themeSetting
-    // in one place, keeping them coherent) → vars + data-theme + mermaid re-bake
-    // track together, no page reload, so the layout never flashes/re-mounts.
-    const themeBtn = makeThemeToggle(() =>
-      loadPreset(themeSetting.get() === "dark" ? "light" : "dark"),
-    );
-    themeSetting.bind(themeBtn.render); // initial icon + on change
-    bar.append(mode.btn, pos, spacer, save.el, themeBtn.btn);
-    // ⚙ settings: append after the theme toggle. Boot-cheap — the modal DOM is
-    // built lazily on first open (cold-load constraint).
-    mountSettingsButton(bar);
+  // Status-bar chrome is persistent across re-mounts; its callbacks read the
+  // mutable `current` (set by openInWindow), so they always reach the live editor.
+  const mode = makeModeToggle();
+  const pos = el("span", "status-pos");
+  const spacer = el("span", "status-spacer");
+  const save = makeSaveStatus();
+  // live theme switch: flip the preset (loadPreset writes themeJson + themeSetting
+  // in one place, keeping them coherent) → vars + data-theme + mermaid re-bake
+  // track together, no page reload, so the layout never flashes/re-mounts.
+  const themeBtn = makeThemeToggle(() =>
+    loadPreset(themeSetting.get() === "dark" ? "light" : "dark"),
+  );
+  themeSetting.bind(themeBtn.render); // initial icon + on change
+  bar.append(mode.btn, pos, spacer, save.el, themeBtn.btn);
+  // ⚙ settings: append after the theme toggle. Boot-cheap — the modal DOM is
+  // built lazily on first open (cold-load constraint).
+  mountSettingsButton(bar);
 
-    const sessionKey = `mermark.session.${file}`;
-    let sessionSaveTimeout: ReturnType<typeof setTimeout> | undefined;
-    const saveSessionState = (immediate = false) => {
-      if (sessionSaveTimeout) {
-        clearTimeout(sessionSaveTimeout);
-        sessionSaveTimeout = undefined;
-      }
-      const doSave = () => {
-        if (!editor) return;
-        const scroller = host.querySelector(".cm-scroller");
-        const scroll = scroller ? scroller.scrollTop : 0;
-        const cursor = editor.view.state.selection.main.anchor;
-        try {
-          localStorage.setItem(sessionKey, JSON.stringify({ scroll, cursor }));
-        } catch (err) {
-          console.error("Failed to save session state to localStorage", err);
-        }
-      };
-      if (immediate) {
-        doSave();
-      } else {
-        sessionSaveTimeout = setTimeout(doSave, 150);
+  // "Currently open document" — the single source of truth for which editor /
+  // file / baseDir is live. All window-global sinks and listeners read this
+  // mutable cell; openInWindow re-points it. No second copy of "which file".
+  let current: EditorController;
+  let currentFile = file;
+  let currentBaseDir = dirOf(file);
+  // The per-file teardown closures the previous openInWindow installed (scroll
+  // listener, pending session timer). teardownCurrent runs them before swap.
+  let detachScroll: (() => void) | undefined;
+  let cancelSessionTimer: (() => void) | undefined;
+
+  // ── Open-by-path footer chrome (lazy input row). The button toggles a row;
+  //    onOpen resolves the typed path against the live baseDir, guards unsaved
+  //    work, then re-mounts. A read failure rejects → the row shows the error
+  //    and stays open; the current editor is untouched. ────────────────────────
+  const prompt = createOpenPathPrompt({
+    onOpen: async (raw) => {
+      const target = resolveOpenPath(raw, currentBaseDir);
+      if (!target) throw new Error("경로를 입력하세요");
+      // read_file first: if it fails (missing/unreadable) we throw BEFORE any
+      // teardown, so the switch only happens after a successful read.
+      const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: target });
+      await commitBeforeSwitch();
+      openInWindow(target, fresh);
+    },
+  });
+  // Left corner: the right end is the settings/theme zone, so the open-path
+  // button lives at the far left (prepend → first child, before the mode toggle).
+  bar.prepend(prompt.button);
+  root.append(prompt.row);
+
+  // ── Per-file session persistence. The key is recomputed per open; the timer
+  //    is scoped to the live editor and cancelled on teardown. ────────────────
+  function saveSessionState(immediate = false): void {
+    cancelSessionTimer?.();
+    const doSave = () => {
+      if (!current) return;
+      const scroller = host.querySelector(".cm-scroller");
+      const scroll = scroller ? scroller.scrollTop : 0;
+      const cursor = current.view.state.selection.main.anchor;
+      try {
+        localStorage.setItem(`mermark.session.${currentFile}`, JSON.stringify({ scroll, cursor }));
+      } catch (err) {
+        console.error("Failed to save session state to localStorage", err);
       }
     };
+    if (immediate) {
+      cancelSessionTimer = undefined;
+      doSave();
+    } else {
+      const t = setTimeout(doSave, 150);
+      cancelSessionTimer = () => {
+        clearTimeout(t);
+        cancelSessionTimer = undefined;
+      };
+    }
+  }
 
-    let editor: ReturnType<typeof mountEditor>;
-    editor = mountEditor(host, text, baseDir, file, {
+  /** Persist any unsaved buffer BEFORE switching files, so a re-open never
+   *  drops edits. On conflict, saveOnClose writes the `.mermark-recovered`
+   *  sibling, so neither the edits nor the external change are lost. Named so
+   *  the "don't lose work on switch" rule lives in one place. */
+  async function commitBeforeSwitch(): Promise<void> {
+    if (!current.hasUnsaved()) return;
+    current.beginClose();
+    await current.saveOnClose();
+  }
+
+  /** Tear down the live editor before a swap: persist its session immediately,
+   *  stop its autosave (beginClose), detach its scroll listener + session timer,
+   *  then drop its CM DOM. Leaves host empty for the next mount. */
+  function teardownCurrent(): void {
+    if (!current) return;
+    saveSessionState(true);
+    current.beginClose();
+    detachScroll?.();
+    detachScroll = undefined;
+    cancelSessionTimer?.();
+    cancelSessionTimer = undefined;
+    host.replaceChildren();
+  }
+
+  /** Mount `file`'s content as the live editor in `host`, re-pointing every
+   *  per-file binding (doc, baseDir for images/wikilinks, autosave target +
+   *  mtime baseline, session key) by going through the verified mountEditor
+   *  boot path. Tears down any previous editor first. Mode/vim are preserved
+   *  from the live settings (a re-open keeps your edit/read + vim state). */
+  function openInWindow(file: string, fresh: { text: string; mtime: number }): void {
+    teardownCurrent();
+    currentFile = file;
+    currentBaseDir = dirOf(file);
+    const { text, mtime } = fresh;
+
+    current = mountEditor(host, text, currentBaseDir, file, {
       onStatus: save.set,
-      initialMode,
+      initialMode: modeSetting.get(),
       onToggleMode: toggleMode,
       onCursor: (line, col) => {
         pos.textContent = `Ln ${line}, Col ${col}`;
@@ -241,15 +308,15 @@ async function boot() {
 
     const scroller = host.querySelector(".cm-scroller");
     if (scroller) {
-      scroller.addEventListener("scroll", () => {
-        saveSessionState();
-      }, { passive: true });
+      const onScroll = () => saveSessionState();
+      scroller.addEventListener("scroll", onScroll, { passive: true });
+      detachScroll = () => scroller.removeEventListener("scroll", onScroll);
     }
 
-    // Restore session state
+    // Restore session state for this file's key.
     let savedSession: string | null = null;
     try {
-      savedSession = localStorage.getItem(sessionKey);
+      savedSession = localStorage.getItem(`mermark.session.${file}`);
     } catch (err) {
       console.error("Failed to read session state from localStorage", err);
     }
@@ -257,16 +324,12 @@ async function boot() {
       try {
         const { scroll, cursor } = JSON.parse(savedSession);
         if (typeof cursor === "number" && cursor >= 0 && cursor <= text.length) {
-          editor.view.dispatch({
-            selection: { anchor: cursor, head: cursor }
-          });
+          current.view.dispatch({ selection: { anchor: cursor, head: cursor } });
         }
         if (typeof scroll === "number") {
           requestAnimationFrame(() => {
-            const scroller = host.querySelector(".cm-scroller");
-            if (scroller) {
-              scroller.scrollTop = scroll;
-            }
+            const sc = host.querySelector(".cm-scroller");
+            if (sc) sc.scrollTop = scroll;
           });
         }
       } catch (err: any) {
@@ -274,108 +337,110 @@ async function boot() {
       }
     }
 
-    save.onForceSave(() => editor.forceSave());
-    save.onReloadDisk(async () => {
-      try {
-        const { text, mtime } = await invoke<{ text: string; mtime: number }>("read_file", { path: file });
-        editor.reloadFromFile(text, mtime);
-      } catch (err: any) {
-        save.set("error", String(err));
-      }
-    });
-    // Don't lose the last keystrokes typed within the autosave debounce window:
-    // intercept the window close, persist the live buffer, then close. Guarded so
-    // it only runs under Tauri (the browser-mock dev mode has no window IPC).
-    // `await` the registration so a close fired right after boot still finds the
-    // handler installed; `beginClose()` stops a late keystroke from scheduling a
-    // timer that destroy() would orphan.
-    if ("__TAURI_INTERNALS__" in window) {
-      const win = getCurrentWindow();
-      await win.onCloseRequested(async (e) => {
-        saveSessionState(true);
-        if (!editor.hasUnsaved()) return;
-        e.preventDefault();
-        editor.beginClose();
-        try {
-          await editor.saveOnClose();
-        } finally {
-          await win.destroy();
-        }
-      });
-    }
-    // mermaid bakes theme colors into its SVGs, so a theme change must clear its
-    // cache + re-render every block. Change-only sink (no initial work needed).
-    themeSetting.subscribe((t) => {
-      refreshMermaidTheme(t);
-      editor.refresh();
-    });
-    // Editor-behavior sinks: the settings are the writers, the editor controller
-    // is the single sink for each (no hand fan-out). autosaveDelay/conflictPolicy
-    // were seeded via mountEditor opts above; these keep them live.
-    autosaveDelaySetting.subscribe((ms) => editor.setAutosaveDelay(ms));
-    conflictPolicySetting.subscribe((p) => editor.setConflictPolicy(p));
-    vimModeSetting.subscribe((mode) => editor.setVimMode(mode === "on"));
-    // themeForce re-bake is owned by mermaid-widget (self-subscription); main
-    // only triggers the redraw it alone can dispatch — symmetric with the
-    // themeSetting sink above, minus mermaid's theme knowledge.
-    themeForceSetting.subscribe(() => editor.refresh());
-    // panZoom toggle: re-render blocks so MermaidWidget (which snapshots panZoom
-    // in eq) re-creates and attachPanZoom re-runs with the new value.
-    panZoomSetting.subscribe(() => editor.refresh());
-    // dev-only: expose the controller so the debug harness can read real editor
-    // state (selection offsets, block specs) instead of guessing from the DOM.
+    // dev-only: expose the live controller so the debug harness can read real
+    // editor state (selection offsets, block specs) instead of guessing.
     if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
-      (window as unknown as { __mermark?: unknown }).__mermark = editor;
-    mode.btn.addEventListener("click", toggleMode);
-    // ⌘⇧C: copy the LLM context bundle (this doc + 1-hop wikilinks) to the
-    // clipboard. Self-contained in ./bundle (own capture-phase listener, like
-    // ⌘E); main only supplies the current file + a transient status-bar flash.
-    installBundleShortcut(() => file, {
-      onResult: (copied) => {
-        const prev = pos.textContent;
-        pos.textContent = copied ? "✓ 번들 복사됨" : "⚠ 번들 복사 실패";
-        setTimeout(() => {
-          if (pos.textContent !== prev) pos.textContent = prev;
-        }, 1200);
-      },
-    });
-    // global capture-phase listener so ⌘E works reliably even under different
-    // keyboard layouts (like Korean) and regardless of editor focus states
-    window.addEventListener(
-      "keydown",
-      (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.code === "KeyE") {
-          e.preventDefault();
-          e.stopPropagation();
-          toggleMode();
-        }
-      },
-      { capture: true }
-    );
-    // Body-text zoom (Cmd =/-/0). Same global-keydown spot as ⌘E so it works in
-    // read mode and when the editor isn't focused. preventDefault intercepts the
-    // webview's built-in page zoom so only the .cm-line text scale changes.
-    // '=' and '+' both zoom in (US layout needs Shift for '+'); '-' and '_' out.
-    window.addEventListener("keydown", (e) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "=" || e.key === "+") {
-        e.preventDefault();
-        zoomIn();
-      } else if (e.key === "-" || e.key === "_") {
-        e.preventDefault();
-        zoomOut();
-      } else if (e.key === "0") {
-        e.preventDefault();
-        resetZoom();
+      (window as unknown as { __mermark?: unknown }).__mermark = current;
+  }
+
+  // ── Window-global wiring (installed ONCE; reads `current` so it always
+  //    reaches the live editor after a re-mount). ─────────────────────────────
+  save.onForceSave(() => current.forceSave());
+  save.onReloadDisk(async () => {
+    try {
+      const { text, mtime } = await invoke<{ text: string; mtime: number }>("read_file", { path: currentFile });
+      current.reloadFromFile(text, mtime);
+    } catch (err: any) {
+      save.set("error", String(err));
+    }
+  });
+  // Don't lose the last keystrokes typed within the autosave debounce window:
+  // intercept the window close, persist the live buffer, then close. Guarded so
+  // it only runs under Tauri (the browser-mock dev mode has no window IPC).
+  if ("__TAURI_INTERNALS__" in window) {
+    const win = getCurrentWindow();
+    await win.onCloseRequested(async (e) => {
+      saveSessionState(true);
+      if (!current.hasUnsaved()) return;
+      e.preventDefault();
+      current.beginClose();
+      try {
+        await current.saveOnClose();
+      } finally {
+        await win.destroy();
       }
     });
-    // mode is the SSOT: the button label binds to it; the editor reacts to
-    // changes (reconfigure CM + flush autosave on leaving edit). Persistence is
-    // handled by the store.
-    modeSetting.bind(mode.render); // initial label + on change
-    modeSetting.subscribe((m) => editor.setMode(m));
+  }
+  // mermaid bakes theme colors into its SVGs, so a theme change must clear its
+  // cache + re-render every block. Change-only sink (no initial work needed).
+  themeSetting.subscribe((t) => {
+    refreshMermaidTheme(t);
+    current.refresh();
+  });
+  // Editor-behavior sinks: the settings are the writers, the live editor is the
+  // single sink for each (no hand fan-out). autosaveDelay/conflictPolicy were
+  // seeded via mountEditor opts; these keep them live across re-mounts.
+  autosaveDelaySetting.subscribe((ms) => current.setAutosaveDelay(ms));
+  conflictPolicySetting.subscribe((p) => current.setConflictPolicy(p));
+  vimModeSetting.subscribe((mode) => current.setVimMode(mode === "on"));
+  // themeForce re-bake is owned by mermaid-widget (self-subscription); main
+  // only triggers the redraw it alone can dispatch.
+  themeForceSetting.subscribe(() => current.refresh());
+  // panZoom toggle: re-render blocks so MermaidWidget (which snapshots panZoom
+  // in eq) re-creates and attachPanZoom re-runs with the new value.
+  panZoomSetting.subscribe(() => current.refresh());
+  mode.btn.addEventListener("click", toggleMode);
+  // ⌘⇧C: copy the LLM context bundle (this doc + 1-hop wikilinks) to the
+  // clipboard. Reads the live file via the `current*` cell so it tracks re-opens.
+  installBundleShortcut(() => currentFile, {
+    onResult: (copied) => {
+      const prev = pos.textContent;
+      pos.textContent = copied ? "✓ 번들 복사됨" : "⚠ 번들 복사 실패";
+      setTimeout(() => {
+        if (pos.textContent !== prev) pos.textContent = prev;
+      }, 1200);
+    },
+  });
+  // global capture-phase listener so ⌘E works reliably even under different
+  // keyboard layouts (like Korean) and regardless of editor focus states
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.code === "KeyE") {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleMode();
+      }
+    },
+    { capture: true }
+  );
+  // Body-text zoom (Cmd =/-/0). Same global-keydown spot as ⌘E so it works in
+  // read mode and when the editor isn't focused.
+  window.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    if (e.key === "=" || e.key === "+") {
+      e.preventDefault();
+      zoomIn();
+    } else if (e.key === "-" || e.key === "_") {
+      e.preventDefault();
+      zoomOut();
+    } else if (e.key === "0") {
+      e.preventDefault();
+      resetZoom();
+    }
+  });
+  // mode is the SSOT: the button label binds to it; the live editor reacts to
+  // changes. Persistence is handled by the store.
+  modeSetting.bind(mode.render); // initial label + on change
+  modeSetting.subscribe((m) => current.setMode(m));
+
+  // First load: read + mount. A read failure here means the launch file is
+  // gone — show the error in place of the editor (the bar stays).
+  try {
+    const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: file });
+    openInWindow(file, fresh);
   } catch (e) {
-    root.textContent = `Failed to open: ${String(e)}`;
+    host.textContent = `Failed to open: ${String(e)}`;
   }
 }
 

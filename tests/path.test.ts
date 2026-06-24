@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dirOf } from "../src/path";
+import { dirOf, resolveOpenPath, isBlankPath } from "../src/path";
 
 describe("dirOf", () => {
   it("returns the parent directory of an absolute posix path", () => {
@@ -19,5 +19,47 @@ describe("dirOf", () => {
   });
   it("handles empty input", () => {
     expect(dirOf("")).toBe("");
+  });
+});
+
+describe("isBlankPath", () => {
+  it("is true for empty and whitespace-only input", () => {
+    expect(isBlankPath("")).toBe(true);
+    expect(isBlankPath("   ")).toBe(true);
+    expect(isBlankPath("\t\n")).toBe(true);
+  });
+  it("is false for any non-whitespace input", () => {
+    expect(isBlankPath("a.md")).toBe(false);
+    expect(isBlankPath("  x  ")).toBe(false);
+  });
+});
+
+describe("resolveOpenPath", () => {
+  it("returns an absolute posix path unchanged", () => {
+    expect(resolveOpenPath("/a/b.md", "/home/n")).toBe("/a/b.md");
+  });
+  it("joins a relative path against baseDir (no normalization — backend does that)", () => {
+    expect(resolveOpenPath("child.md", "/home/n")).toBe("/home/n/child.md");
+    expect(resolveOpenPath("../sib.md", "/home/n/sub")).toBe("/home/n/sub/../sib.md");
+    expect(resolveOpenPath("./child.md", "/home/n")).toBe("/home/n/./child.md");
+  });
+  it("leaves a ~ home path unchanged — the backend expands it, not the frontend", () => {
+    expect(resolveOpenPath("~/notes/x.md", "/home/n")).toBe("~/notes/x.md");
+    expect(resolveOpenPath("~", "/home/n")).toBe("~");
+  });
+  it("returns a Windows drive path unchanged", () => {
+    expect(resolveOpenPath("C:\\notes\\x.md", "/home/n")).toBe("C:\\notes\\x.md");
+    expect(resolveOpenPath("C:/notes/x.md", "/home/n")).toBe("C:/notes/x.md");
+  });
+  it("trims surrounding whitespace before resolving", () => {
+    expect(resolveOpenPath("  child.md  ", "/home/n")).toBe("/home/n/child.md");
+    expect(resolveOpenPath("  /a/b.md ", "/home/n")).toBe("/a/b.md");
+  });
+  it("returns null for blank input (refuse to open)", () => {
+    expect(resolveOpenPath("", "/home/n")).toBeNull();
+    expect(resolveOpenPath("   ", "/home/n")).toBeNull();
+  });
+  it("falls back to the bare relative path when baseDir is empty", () => {
+    expect(resolveOpenPath("child.md", "")).toBe("child.md");
   });
 });

@@ -6,6 +6,46 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 static WINDOW_SEQ: AtomicU32 = AtomicU32::new(1);
 static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
+/// Expand a leading `~` (bare `~` or `~/…`) to the user's home directory, then
+/// hand the rest off to `normalize_path`. This exists because the path-shape
+/// pipeline (`normalize_path`) treats `~` as a *literal* component, so a typed
+/// path like `~/notes/x.md` would otherwise resolve to a directory named `~`
+/// and fail. The footer "open path" feature lets users type `~/…`, so the
+/// tilde rule belongs here as one named function rather than an inline branch.
+///
+/// Conservative by design:
+/// - `~` alone → the home directory.
+/// - `~/rest` → `<home>/rest` (the `~` is the *whole* first component).
+/// - `~user/…` (tilde immediately followed by a non-separator, i.e. a named
+///   account like `~bob/…`) is left **untouched** — we don't resolve other
+///   users' homes, so we never over-expand a path we can't safely interpret.
+/// - Anything not starting with `~`, and the fallback when the home directory
+///   is unknown (e.g. headless test env with no `$HOME`), is returned verbatim.
+///
+/// Returns an absolute, normalized `PathBuf` (the home dir is itself absolute),
+/// so this opens no new write surface and can't be used to escape via `..`:
+/// `normalize_path` collapses `..`/`.` exactly as it does for every other path.
+fn expand_home(path: &str) -> PathBuf {
+    let expanded = if path == "~" {
+        home_dir().map(|h| h.to_string_lossy().into_owned())
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        // `~/rest`: the tilde is its own first component → safe to expand.
+        home_dir().map(|h| h.join(rest).to_string_lossy().into_owned())
+    } else {
+        // `~user/…` or no leading tilde at all → leave verbatim.
+        None
+    };
+    normalize_path(Path::new(expanded.as_deref().unwrap_or(path)))
+}
+
+/// The current user's home directory, or `None` when the environment can't
+/// report it. Reads `$HOME` (set on every macOS/Linux desktop session) via the
+/// standard library so no extra crate is pulled in just for one lookup; `None`
+/// makes `expand_home` fall back to leaving the path verbatim.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
 /// Normalize path components (resolve relative "." and "..") purely textually.
 /// `pub(crate)` so `bundle.rs` reuses the *same* `..`/`.` collapse the file
 /// commands use when resolving wikilink targets — one source of truth for path
@@ -56,7 +96,7 @@ pub struct FileContent {
 /// Read a file's UTF-8 contents and its modification time. Used at startup.
 #[tauri::command]
 pub fn read_file(path: String) -> Result<FileContent, String> {
-    let normalized = normalize_path(Path::new(&path)).to_string_lossy().into_owned();
+    let normalized = expand_home(&path).to_string_lossy().into_owned();
     let text = std::fs::read_to_string(&normalized).map_err(|e| format!("read {normalized}: {e}"))?;
     Ok(FileContent { text, mtime: mtime_ms(&normalized) })
 }
@@ -128,7 +168,7 @@ pub fn create_markdown_file(path: String) -> Result<(), String> {
 /// Check whether a path points to an existing file (used by wikilink rendering).
 #[tauri::command]
 pub fn path_exists(path: String) -> bool {
-    let normalized = normalize_path(Path::new(&path));
+    let normalized = expand_home(&path);
     normalized.is_file()
 }
 
@@ -452,6 +492,60 @@ mod tests {
         assert_eq!(
             normalize_path(std::path::Path::new("a/b/c/../../d")),
             std::path::PathBuf::from("a/d")
+        );
+    }
+
+    // --- expand_home (`~` tilde expansion for typed open-path) ---
+    //
+    // These tests set `$HOME` to a known value so home expansion is
+    // deterministic regardless of the machine running them. `expand_home` reads
+    // `$HOME` through `home_dir()`, so they assert against that exact root.
+
+    #[test]
+    fn expand_home_replaces_leading_tilde_slash() {
+        std::env::set_var("HOME", "/home/tester");
+        assert_eq!(
+            expand_home("~/notes/x.md"),
+            PathBuf::from("/home/tester/notes/x.md")
+        );
+    }
+
+    #[test]
+    fn expand_home_bare_tilde_is_the_home_dir() {
+        std::env::set_var("HOME", "/home/tester");
+        assert_eq!(expand_home("~"), PathBuf::from("/home/tester"));
+    }
+
+    #[test]
+    fn expand_home_leaves_absolute_path_unchanged() {
+        std::env::set_var("HOME", "/home/tester");
+        // No leading tilde → returned verbatim (only normalized).
+        assert_eq!(expand_home("/abs/x.md"), PathBuf::from("/abs/x.md"));
+    }
+
+    #[test]
+    fn expand_home_leaves_relative_path_unchanged() {
+        std::env::set_var("HOME", "/home/tester");
+        // Relative paths carry no tilde → normalized but not anchored to home.
+        assert_eq!(expand_home("sub/x.md"), PathBuf::from("sub/x.md"));
+    }
+
+    #[test]
+    fn expand_home_does_not_expand_named_user_tilde() {
+        std::env::set_var("HOME", "/home/tester");
+        // `~bob/…` is a *different* user's home, which we never resolve — left
+        // verbatim so we don't over-expand a path we can't safely interpret.
+        assert_eq!(expand_home("~bob/x.md"), PathBuf::from("~bob/x.md"));
+    }
+
+    #[test]
+    fn expand_home_normalizes_after_expansion() {
+        std::env::set_var("HOME", "/home/tester");
+        // `..` inside an expanded path is collapsed by normalize_path, so a
+        // tilde path can't escape via `..` any more than a literal one can.
+        assert_eq!(
+            expand_home("~/notes/../x.md"),
+            PathBuf::from("/home/tester/x.md")
         );
     }
 
