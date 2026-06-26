@@ -471,6 +471,73 @@ describe("full-editor render smoke", () => {
     view.destroy();
     expect(view.dom.querySelector(".cm-footnote-preview")).toBeNull();
   });
+
+  // ── frontmatter (top YAML) → key/value table, reveal-on-entry ───────────────
+  const frontmatterDoc = "---\ntitle: Hello\ntags: a\n---\n\nbody\n\n---\n\ntail";
+
+  it("renders top frontmatter as a key/value table; mid --- stays a HR", () => {
+    const view = mount(host, frontmatterDoc);
+    view.dispatch({ selection: { anchor: view.state.doc.length } }); // caret far away
+    (view as unknown as { measure(): void }).measure();
+    const table = view.contentDOM.querySelector(".cm-frontmatter-table");
+    expect(table).not.toBeNull();
+    expect(table?.querySelector("th")?.textContent).toBe("title");
+    expect(view.contentDOM.textContent).not.toContain("title: Hello"); // raw YAML concealed
+    expect(view.contentDOM.querySelector(".cm-hr")).not.toBeNull(); // mid --- still HR
+    view.destroy();
+  });
+
+  it("reveals raw frontmatter on caret entry, re-conceals on leave (3-stage)", () => {
+    const view = mount(host, frontmatterDoc);
+    // 1. caret away → table, no raw
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-frontmatter")).not.toBeNull();
+    expect(view.contentDOM.textContent).not.toContain("title: Hello");
+    // 2. caret inside → raw YAML revealed, table gone
+    view.dispatch({ selection: { anchor: frontmatterDoc.indexOf("title") } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-frontmatter")).toBeNull();
+    expect(view.contentDOM.textContent).toContain("title: Hello");
+    // 3. caret away again → re-rendered as table
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-frontmatter")).not.toBeNull();
+    expect(view.contentDOM.textContent).not.toContain("title: Hello");
+    view.destroy();
+  });
+
+  it("never reveals frontmatter in read mode (caret on its line)", () => {
+    const ed = mountEditor(host, frontmatterDoc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    ed.view.dispatch({ selection: { anchor: frontmatterDoc.indexOf("title") } });
+    (ed.view as unknown as { measure(): void }).measure();
+    expect(ed.view.contentDOM.querySelector(".cm-frontmatter-table")).not.toBeNull();
+    expect(ed.view.contentDOM.textContent).not.toContain("title: Hello");
+    ed.view.destroy();
+  });
+
+  // ── table cells render inline marks (bold/italic/code/strike) ───────────────
+  it("renders inline marks inside table cells (bold/italic/code)", () => {
+    const doc = "intro\n\n| **H** | b |\n|---|---|\n| *i* | `c` |\n\noutro";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } }); // caret away → table rendered
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-table th strong.cm-strong")?.textContent).toBe("H");
+    expect(view.contentDOM.querySelector(".cm-table td em.cm-em")?.textContent).toBe("i");
+    expect(view.contentDOM.querySelector(".cm-table td code.cm-inline-code")?.textContent).toBe("c");
+    view.destroy();
+  });
+
+  it("keeps table alignment + header after inline-mark cells (regression)", () => {
+    const doc = "intro\n\n| A | B |\n|:--|--:|\n| **x** | 2 |\n\noutro";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const td = view.contentDOM.querySelector(".cm-table td") as HTMLElement | null;
+    expect(td?.style.textAlign).toBe("left");
+    expect(td?.querySelector("strong.cm-strong")?.textContent).toBe("x");
+    view.destroy();
+  });
 });
 
 describe("mode toggle", () => {

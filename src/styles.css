@@ -401,6 +401,15 @@ html, body { margin: 0; height: 100%; }
 .cm-table { border-collapse: collapse; width: 100%; letter-spacing: normal; }
 .cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; }
 .cm-table th { background: var(--surface); font-weight: 700; }
+
+/* Frontmatter (Obsidian-style properties): a 2-column key/value table from the
+   document's top YAML block. Customize via these tokens (no new setting). */
+.cm-frontmatter { padding: .5em 0 1em; }
+.cm-frontmatter-table { border-collapse: collapse; width: 100%; letter-spacing: normal; }
+.cm-frontmatter-key,
+.cm-frontmatter-value { border: 1px solid var(--border); padding: .35em .6em; text-align: left; vertical-align: top; }
+.cm-frontmatter-key { background: var(--surface); font-weight: 600; white-space: nowrap; width: 1%; color: var(--muted, inherit); }
+.cm-frontmatter-value { color: var(--text, inherit); }
 /* Task checkbox: a native <input> kept for click/keyboard/:checked semantics,
    canvas-ized with appearance:none so we draw the box + check ourselves. Sized in
    em so it rides the .cm-line zoom (--font-scale) instead of the browser's fixed

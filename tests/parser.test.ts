@@ -129,3 +129,38 @@ describe("GFM still intact", () => {
     expect(nodesOf(doc, "Image").length).toBe(1);
   });
 });
+
+describe("frontmatter parsing (top --- vs mid --- HR)", () => {
+  it("parses a top --- … --- block as Frontmatter", () => {
+    const doc = "---\ntitle: Hi\ntags: a\n---\nbody";
+    const fm = nodesOf(doc, "Frontmatter");
+    expect(fm.length).toBe(1);
+    expect(fm[0][1]).toBe("---\ntitle: Hi\ntags: a\n---");
+  });
+
+  it("leaves a mid-document --- as a HorizontalRule, not Frontmatter", () => {
+    const doc = "above\n\n---\n\nbelow";
+    expect(nodesOf(doc, "Frontmatter")).toEqual([]);
+    expect(nodesOf(doc, "HorizontalRule").length).toBe(1);
+  });
+
+  it("does not steal a --- that follows body text from the HR (offset-0 guard)", () => {
+    const doc = "intro line\n---\nmore";
+    // `---` after a paragraph line is a Setext heading underline, never frontmatter
+    expect(nodesOf(doc, "Frontmatter")).toEqual([]);
+  });
+
+  it("parses an empty frontmatter ---\\n---", () => {
+    const doc = "---\n---\nbody";
+    const fm = nodesOf(doc, "Frontmatter");
+    expect(fm.length).toBe(1);
+    expect(fm[0][1]).toBe("---\n---");
+  });
+
+  it("accepts ... as a closing fence", () => {
+    const doc = "---\nk: v\n...\nbody";
+    const fm = nodesOf(doc, "Frontmatter");
+    expect(fm.length).toBe(1);
+    expect(fm[0][1]).toBe("---\nk: v\n...");
+  });
+});

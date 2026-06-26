@@ -1,4 +1,5 @@
 import { WidgetType } from "@codemirror/view";
+import { renderInlineMarkdown } from "./inline-render";
 
 /** Split a GFM table row into trimmed cells (strip leading/trailing pipes). */
 function splitRow(line: string): string[] {
@@ -45,7 +46,7 @@ export class TableWidget extends WidgetType {
     const htr = document.createElement("tr");
     headerCells.forEach((cell, i) => {
       const th = document.createElement("th");
-      th.textContent = cell;
+      th.appendChild(renderInlineMarkdown(cell));
       const a = aligns[i];
       if (a) th.style.textAlign = a;
       htr.appendChild(th);
@@ -59,7 +60,7 @@ export class TableWidget extends WidgetType {
       const tr = document.createElement("tr");
       cells.forEach((cell, i) => {
         const td = document.createElement("td");
-        td.textContent = cell;
+        td.appendChild(renderInlineMarkdown(cell));
         const a = aligns[i];
         if (a) td.style.textAlign = a;
         tr.appendChild(td);

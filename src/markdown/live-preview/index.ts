@@ -18,6 +18,7 @@ import { codeBlock, codeLines } from "./features/code-block";
 import { inlineMath, blockMath } from "./features/math";
 import { mermaid } from "./features/mermaid";
 import { table } from "./features/table";
+import { frontmatter } from "./features/frontmatter";
 
 export { modeFacet, selectionTouches, refreshBlocks } from "./core";
 export type { PreviewMode } from "./core";
@@ -39,7 +40,7 @@ const INLINE_FEATURES: InlineFeature[] = [
   inlineMath,
 ];
 
-const BLOCK_FEATURES: BlockFeature[] = [mermaid, codeBlock, table, blockMath];
+const BLOCK_FEATURES: BlockFeature[] = [mermaid, codeBlock, table, blockMath, frontmatter];
 
 /** Inline decorations (conceal/style/line-class) for the registered features. */
 export function inlinePreview(baseDir: string, currentFile: string) {

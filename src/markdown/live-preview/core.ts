@@ -405,7 +405,7 @@ export function blockPreview(features: BlockFeature[]): Extension {
   // root runs before CM's default caret placement; we stop the event so it
   // doesn't fight our caret. Mermaid is intentionally EXCLUDED — a click there
   // pans/zooms the diagram instead (enter it with the arrow keys to edit).
-  const BLOCK_SEL = ".cm-table, .cm-math-block";
+  const BLOCK_SEL = ".cm-table, .cm-math-block, .cm-frontmatter";
   const clickEntry = ViewPlugin.fromClass(
     class {
       readonly onDown: (e: MouseEvent) => void;

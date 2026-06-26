@@ -141,6 +141,56 @@ const blockMathExt: MarkdownConfig = {
   ],
 };
 
+/** True only for the document's opening `---` fence (offset 0, exactly `---`).
+ *  This single rule is what separates a frontmatter block from a mid-document
+ *  thematic break: a `---` anywhere but the very first line stays an
+ *  `HorizontalRule` (rendered by features/hr.ts). */
+function isDocumentTopFence(cx: BlockContext, line: Line): boolean {
+  return cx.lineStart === 0 && line.text.trim() === "---";
+}
+
+/** A closing frontmatter fence: a line of exactly `---` or `...`. */
+function isFrontmatterClose(text: string): boolean {
+  const t = text.trim();
+  return t === "---" || t === "...";
+}
+
+/**
+ * YAML frontmatter: the document's opening `---` … `---` block (Obsidian-style
+ * properties). Only the very first line may open it (`isDocumentTopFence`), so
+ * mid-document `---` is left to lezer's HorizontalRule and stays an HR — the
+ * offset-0 guard is the whole conflict-resolution rule. The block runs to the
+ * next closing fence (`---` or `...`); an unterminated top fence absorbs the
+ * rest of the document, the same way an unclosed code fence does.
+ *
+ * Note: lezer block parsers may not advance and then return false, so once the
+ * top fence is matched we always commit (return true) — we can't peek the whole
+ * document to pre-check for a close without consuming.
+ */
+const frontmatterExt: MarkdownConfig = {
+  defineNodes: [{ name: "Frontmatter", block: true }],
+  parseBlock: [
+    {
+      name: "Frontmatter",
+      before: "HorizontalRule",
+      parse(cx: BlockContext, line: Line): boolean {
+        if (!isDocumentTopFence(cx, line)) return false;
+        const from = cx.lineStart;
+        let to = cx.lineStart + line.text.length;
+        while (cx.nextLine()) {
+          to = cx.lineStart + line.text.length;
+          if (isFrontmatterClose(line.text)) {
+            cx.nextLine();
+            break;
+          }
+        }
+        cx.addElement(cx.elt("Frontmatter", from, to));
+        return true;
+      },
+    },
+  ],
+};
+
 /** [^ref] footnote references (definitions are detected in the decorator). */
 const footnoteExt: MarkdownConfig = {
   defineNodes: [{ name: "FootnoteRef" }],
@@ -206,6 +256,7 @@ const highlightExt: MarkdownConfig = {
 };
 
 export const mermarkExtensions: MarkdownConfig[] = [
+  frontmatterExt,
   wikilinkExt,
   inlineMathExt,
   blockMathExt,
