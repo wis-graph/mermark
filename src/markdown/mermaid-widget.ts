@@ -260,6 +260,29 @@ export function attachPanZoom(host: HTMLElement, svg: SVGElement): { destroy(): 
   let panning = false;
   let startX = 0;
   let startY = 0;
+  let rafId = 0;
+
+  // Pan emits a mousemove stream faster than the 16.7ms frame, so writing the
+  // transform on every event repaints the (often large) svg multiple times per
+  // frame. These two named commands hold the rAF-coalescing rule in one place
+  // (intent-review): mousemove updates `state` synchronously and only SCHEDULES
+  // the write, so a burst of moves collapses to one transform write per frame
+  // (the rAF reads the LATEST state). mouseup/destroy CANCEL any pending frame
+  // so no rAF dangles after the host is gone. Both are void commands (CQS) —
+  // state is mutated by the caller, not by these.
+  const scheduleTransform = (): void => {
+    if (rafId) return; // a frame is already pending → don't double-book
+    rafId = requestAnimationFrame(() => {
+      rafId = 0;
+      updateTransform(host, svg, state); // one write per frame, latest state
+    });
+  };
+  const cancelScheduledTransform = (): void => {
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+  };
 
   // Explicit affordance for returning to natural size: a small floating button
   // shown (via the host's `is-transformed` class + CSS) only while zoomed/panned.
@@ -275,13 +298,18 @@ export function attachPanZoom(host: HTMLElement, svg: SVGElement): { destroy(): 
   const onMouseMove = (e: MouseEvent) => {
     if (!panning) return;
     e.preventDefault();
-    state.translateX = e.clientX - startX;
+    state.translateX = e.clientX - startX; // state synchronously, write coalesced
     state.translateY = e.clientY - startY;
-    updateTransform(host, svg, state);
+    scheduleTransform();
   };
   const onMouseUp = () => {
     panning = false;
     host.style.cursor = "grab";
+    // Cancel any pending frame (no leak) and flush the final position once
+    // synchronously so the diagram lands exactly where the cursor released, even
+    // if mouseup beat the last scheduled frame.
+    cancelScheduledTransform();
+    updateTransform(host, svg, state);
     window.removeEventListener("mousemove", onMouseMove);
     window.removeEventListener("mouseup", onMouseUp);
   };
@@ -336,6 +364,7 @@ export function attachPanZoom(host: HTMLElement, svg: SVGElement): { destroy(): 
 
   return {
     destroy() {
+      cancelScheduledTransform(); // no rAF dangles past the widget's life
       host.removeEventListener("mousedown", onMouseDown);
       host.removeEventListener("wheel", onWheel);
       host.removeEventListener("dblclick", onDblClick);

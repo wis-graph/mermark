@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   MermaidWidget,
   effectiveMermaidTheme,
@@ -22,6 +22,31 @@ function fakeHostAndSvg(rect: { left: number; top: number } = { left: 0, top: 0 
   (svg as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
     ({ left: rect.left, top: rect.top, width: 0, height: 0 }) as DOMRect;
   return { host, svg };
+}
+
+/** Controllable requestAnimationFrame so the rAF-coalesced pan can be driven
+ *  deterministically: scheduled callbacks queue up, `flushRaf()` runs them, and
+ *  cancelAnimationFrame removes a pending one (so we can assert no leak). The
+ *  queue length is the "frames pending" count used to prove coalescing (a burst
+ *  of mousemoves books exactly one frame, not N). */
+let rafQueue: Array<{ id: number; cb: FrameRequestCallback }>;
+let rafSeq: number;
+function installRafStub() {
+  rafQueue = [];
+  rafSeq = 0;
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    const id = ++rafSeq;
+    rafQueue.push({ id, cb });
+    return id;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+    rafQueue = rafQueue.filter((f) => f.id !== id);
+  });
+}
+function flushRaf() {
+  const pending = rafQueue;
+  rafQueue = [];
+  for (const f of pending) f.cb(0);
 }
 
 describe("clampZoom (zoom-bound rule: never below natural, never past 3×)", () => {
@@ -61,7 +86,11 @@ describe("zoomAtCursor (cursor-anchored zoom keeps the point under the cursor fi
 });
 
 describe("attachPanZoom (CSS-transform pan/zoom handler — state transitions)", () => {
-  afterEach(() => panZoomSetting.set("on"));
+  beforeEach(() => installRafStub());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    panZoomSetting.set("on");
+  });
 
   it("does not throw in jsdom (defensive geometry reads)", () => {
     panZoomSetting.set("on");
@@ -86,13 +115,47 @@ describe("attachPanZoom (CSS-transform pan/zoom handler — state transitions)",
     const pz = attachPanZoom(host, svg);
     host.dispatchEvent(new MouseEvent("mousedown", { clientX: 10, clientY: 20 }));
     window.dispatchEvent(new MouseEvent("mousemove", { clientX: 40, clientY: 70 }));
+    // pan now coalesces via rAF: the write lands on the next frame, not inline.
+    flushRaf();
     // translate = client − start = (40−10, 70−20) = (30, 50)
     expect(svg.style.transform).toContain("translate(30px, 50px)");
     window.dispatchEvent(new MouseEvent("mouseup", {}));
     // after mouseup, further mousemove must not pan (window listener removed)
     const after = svg.style.transform;
     window.dispatchEvent(new MouseEvent("mousemove", { clientX: 200, clientY: 200 }));
+    flushRaf();
     expect(svg.style.transform).toBe(after);
+    pz.destroy();
+  });
+
+  it("coalesces a burst of mousemoves into one frame, drawing the latest position", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    host.dispatchEvent(new MouseEvent("mousedown", { clientX: 10, clientY: 20 }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 20, clientY: 30 }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 40, clientY: 60 }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 70, clientY: 90 }));
+    // three moves → exactly one frame booked (coalesced), nothing written yet
+    expect(rafQueue.length).toBe(1);
+    flushRaf();
+    // the single frame draws the LATEST position: (70−10, 90−20) = (60, 70)
+    expect(svg.style.transform).toContain("translate(60px, 70px)");
+    window.dispatchEvent(new MouseEvent("mouseup", {}));
+    pz.destroy();
+  });
+
+  it("mouseup cancels the pending frame (no leak) and flushes the final position", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    host.dispatchEvent(new MouseEvent("mousedown", { clientX: 10, clientY: 20 }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 40, clientY: 70 }));
+    expect(rafQueue.length).toBe(1); // a frame is pending
+    window.dispatchEvent(new MouseEvent("mouseup", {}));
+    expect(rafQueue.length).toBe(0); // mouseup cancelled it → no dangling rAF
+    // and the final position was flushed synchronously on mouseup
+    expect(svg.style.transform).toContain("translate(30px, 50px)");
     pz.destroy();
   });
 
@@ -116,6 +179,21 @@ describe("attachPanZoom (CSS-transform pan/zoom handler — state transitions)",
     pz.destroy();
     const before = svg.style.transform;
     window.dispatchEvent(new MouseEvent("mousemove", { clientX: 99, clientY: 99 }));
+    flushRaf();
+    expect(svg.style.transform).toBe(before);
+  });
+
+  it("destroy() cancels a pending pan frame (no rAF outlives the widget)", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    const pz = attachPanZoom(host, svg);
+    host.dispatchEvent(new MouseEvent("mousedown", { clientX: 10, clientY: 20 }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 40, clientY: 70 }));
+    expect(rafQueue.length).toBe(1); // a frame is pending
+    const before = svg.style.transform;
+    pz.destroy();
+    expect(rafQueue.length).toBe(0); // destroy cancelled it
+    flushRaf(); // even if something lingered, it must not redraw
     expect(svg.style.transform).toBe(before);
   });
 
@@ -134,7 +212,11 @@ describe("attachPanZoom (CSS-transform pan/zoom handler — state transitions)",
 });
 
 describe("attachPanZoom reset button (explicit return-to-natural-size affordance)", () => {
-  afterEach(() => panZoomSetting.set("on"));
+  beforeEach(() => installRafStub());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    panZoomSetting.set("on");
+  });
 
   it("appends a .cm-mermaid-reset button to the host when panZoom is on", () => {
     panZoomSetting.set("on");
@@ -160,9 +242,10 @@ describe("attachPanZoom reset button (explicit return-to-natural-size affordance
     const pz = attachPanZoom(host, svg);
     // at rest: not transformed
     expect(host.classList.contains("is-transformed")).toBe(false);
-    // pan → transformed
+    // pan → transformed (the class flips when the coalesced frame writes)
     host.dispatchEvent(new MouseEvent("mousedown", { clientX: 10, clientY: 20 }));
     window.dispatchEvent(new MouseEvent("mousemove", { clientX: 40, clientY: 70 }));
+    flushRaf();
     expect(host.classList.contains("is-transformed")).toBe(true);
     window.dispatchEvent(new MouseEvent("mouseup", {}));
     // reset click → back to natural, not transformed

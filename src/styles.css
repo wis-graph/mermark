@@ -25,6 +25,13 @@
   --radius-lg: 12px;            /* rounded.lg — compact cards */
   --radius-xl: 16px;            /* rounded.xl — feature cards / dialogs */
   --radius-pill: 9999px;        /* rounded.pill — CTAs, badges, segmented */
+  /* Caret colour. A theme-invariant affordance (like the radius/tracking tokens
+     above): the editing caret must read against BOTH canvases (light #f5f5f5 /
+     dark #0c0a09), so it sits once in :root, not in the per-theme blocks. iOS
+     systemRed has ample contrast on both. drawSelection paints `.cm-cursor` (a
+     border-left, ignoring caret-color), so this token drives both that rule and
+     the native caret-color below — one source for "what colour is the caret". */
+  --caret: #ff3b30;
   /* Typography panel vars (SSOT: fontSize/readingWidth/lineHeight settings →
      cssVarSink). Defaults:
        --editor-font-size 1rem (16px), --measure 68ch, --line-height 1.6.
@@ -35,6 +42,15 @@
      calc() ONLY on .cm-line / heading lines — never as a fixed font-size on
      .cm-content (that collapses async mermaid/katex widgets to 0 height). */
   --editor-font-size: 1rem;
+  /* Block-widget body font size (code/table/…). Block widgets render OUTSIDE
+     .cm-line, so they don't inherit the ⌘± zoom that .cm-line composes via
+     --font-scale. This single derived token composes editor-font-size with the
+     zoom so the widgets track ⌘± in lockstep with the body — defined once here
+     (SSOT) and referenced by every block widget, never re-calc'd per widget.
+     ZOOM GUARD-safe: this is only a value declaration; it's applied to widget
+     HOSTS (.cm-codeblock/.cm-table), never to .cm-content/.cm-line (which would
+     collapse async mermaid/katex widgets to 0 height). */
+  --block-font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1));
   --measure: 68ch;
   --line-height: 1.6;
   /* Reading-column font (Typography fontFamily setting). Falls back to the body
@@ -129,8 +145,13 @@ html, body { margin: 0; height: 100%; }
    changes WHERE lines break, not line-height/font-size, and block widgets render
    in their own containers outside .cm-line, so it's widget-measure-inert. */
 .cm-editor .cm-line { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1)); line-height: var(--line-height, 1.6); letter-spacing: var(--body-tracking, 0.01em); text-wrap: pretty; }
-/* CM hard-codes a black caret; follow the text colour so it shows in dark mode. */
-.cm-editor .cm-content { caret-color: var(--fg); }
+/* Caret colour (both paths). drawSelection (enabled for vim visual-selection)
+   paints its own `.cm-cursor` element via border-left and ignores caret-color,
+   so we colour that border directly; the `.cm-editor` prefix beats CM's runtime
+   black default. The native caret-color path (non-vim drag) gets the same token
+   so the caret is the SAME red whichever path renders it. */
+.cm-editor .cm-cursor { border-left-color: var(--caret); }
+.cm-editor .cm-content { caret-color: var(--caret); }
 /* fold toggles sit in the gutter, which `justify-content: center` parks right
    beside the centered column. Markers stay faint until you hover the editor. */
 /* `.cm-editor` prefix beats CM's runtime gutter theme (a light-grey bg + border
@@ -186,7 +207,7 @@ html, body { margin: 0; height: 100%; }
 /* Fenced code rendered as a block widget (a styled box hugging the code),
    like the mermaid/table/math widgets. Vertical breathing room is padding, not
    margin — CM measures widget height by offsetHeight, which excludes margin. */
-.cm-codeblock { display: block; margin: 0; position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: .7em .9em; overflow-x: auto; font-size: .92em; line-height: 1.5; }
+.cm-codeblock { display: block; margin: 0; position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: .7em .9em; overflow-x: auto; font-size: var(--block-font-size); line-height: 1.5; }
 .cm-codeblock code { font-family: ui-monospace, monospace; letter-spacing: normal; white-space: pre; }
 .cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: .6em; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
 /* revealed (editing) fenced code keeps a code background, so it still reads as a
@@ -212,6 +233,12 @@ html, body { margin: 0; height: 100%; }
 .cm-mermaid-error { color: #dc2626; white-space: pre-wrap; padding: .75em; }
 .cm-mermaid svg { cursor: grab; }
 .cm-mermaid svg:active { cursor: grabbing; }
+/* GPU-promote the svg to a compositor layer ONLY while panning/zooming, so the
+   transform writes don't repaint a large diagram on the main thread. Gated on
+   the existing `is-transformed` class (toggled by updateTransform) so idle
+   diagrams don't each hold a permanent layer — memory stays bounded (cold-load
+   is a first-class constraint). The class drops on reset → will-change auto-off. */
+.cm-mermaid.is-transformed svg { will-change: transform; }
 /* Floating "reset to natural size" button. Absolutely positioned (outside the
    layout box → host.offsetHeight / CM height map unchanged, ZOOM GUARD). Hidden
    at rest (opacity 0 + no pointer events); revealed only when the diagram is
@@ -435,7 +462,7 @@ html, body { margin: 0; height: 100%; }
 .open-path-error[hidden] { display: none; }
 
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }
-.cm-table { border-collapse: collapse; width: 100%; letter-spacing: normal; }
+.cm-table { border-collapse: collapse; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); }
 .cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; }
 .cm-table th { background: var(--surface); font-weight: 700; }
 
