@@ -1,6 +1,6 @@
 import { icon } from "./icons";
 
-export type Theme = "dark" | "light";
+export type Theme = "dark" | "light" | "claude";
 
 export function systemTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
@@ -39,11 +39,16 @@ export function makeThemeToggle(onToggle: () => void): {
   const btn = document.createElement("button");
   btn.className = "status-btn theme-toggle icon-only";
   const render = (t: Theme) => {
-    // Show the CURRENT theme's icon (moon in dark, sun in light) — same mapping the
-    // old ☾/☀ glyphs used and what the title says ("다크 모드 (클릭: 라이트)"), so the
-    // swap to Lucide changes the glyph, not the behavior.
-    btn.replaceChildren(icon(t === "dark" ? "moon" : "sun"));
-    btn.title = t === "dark" ? "다크 모드 (클릭: 라이트)" : "라이트 모드 (클릭: 다크)";
+    // Show the CURRENT theme's icon + the NEXT one in the title (the toggle now
+    // cycles dark→light→claude→dark via nextPreset, so each label names where a
+    // click lands). moon=dark, sun=light, palette=claude.
+    btn.replaceChildren(icon(t === "dark" ? "moon" : t === "light" ? "sun" : "palette"));
+    btn.title =
+      t === "dark"
+        ? "다크 모드 (클릭: 라이트)"
+        : t === "light"
+          ? "라이트 모드 (클릭: 클로드)"
+          : "클로드 테마 (클릭: 다크)";
   };
   btn.addEventListener("click", onToggle);
   return { btn, render };

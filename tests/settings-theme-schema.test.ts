@@ -93,7 +93,7 @@ describe("serializeTheme ∘ parseTheme round-trip", () => {
   });
 
   it("round-trips the built-in themes byte-for-byte", () => {
-    for (const name of ["dark", "light"] as const) {
+    for (const name of ["dark", "light", "claude"] as const) {
       const t = builtInTheme(name);
       expect(parseTheme(serializeTheme(t))).toEqual(t);
     }
@@ -206,5 +206,41 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
     const light = builtInTheme("light");
     expect(light.radii).toEqual(dark.radii);
     expect(light.font).toEqual(dark.font);
+  });
+
+  it("claude matches styles.css :root[data-theme=claude] (the editorial cream/coral palette)", () => {
+    const claude = builtInTheme("claude");
+    expect(claude.colors).toEqual({
+      bg: "#faf9f5",
+      fg: "#141413",
+      accent: "#cc785c",
+      link: "#a9583e",
+      surface: "#efe9de",
+      border: "#e6dfd8",
+      muted: "#6c6a64",
+      highlightBg: "#f0d9a8",
+      // extended: headings ink (coral scarce), code coral-active, hand-tuned
+      // body-strong/body/highlight — NOT all the promoteToExtended fallback.
+      h1: "#141413",
+      h2: "#141413",
+      h3: "#141413",
+      h4: "#141413",
+      h5: "#141413",
+      h6: "#6c6a64",
+      bold: "#252523",
+      italic: "#3d3d3a",
+      code: "#a9583e",
+      highlight: "#141413",
+    });
+    expect(claude.radii).toEqual({ md: "8px", lg: "12px", xl: "16px" });
+    expect(claude.font).toEqual({ sans: '"Inter", system-ui, sans-serif' });
+  });
+
+  it("claude is a complete 18-key theme that survives strict parse (core 8 non-empty)", () => {
+    const claude = builtInTheme("claude");
+    // round-trip through serialize→parse leaves it unchanged: the explicit extended
+    // values are preserved (not re-derived to the fallback), proving claude carries
+    // its own editorial tones, not promoteToExtended echoes.
+    expect(parseTheme(serializeTheme(claude))).toEqual(claude);
   });
 });

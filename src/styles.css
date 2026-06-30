@@ -94,6 +94,51 @@
   /* light = link blue (#1d6fb8) tint at low alpha on the bright canvas */
   --selection-bg: rgba(29, 111, 184, 0.25);
 }
+/* claude = the Anthropic editorial palette: tinted-cream canvas + warm-ink text,
+   coral reserved for action/link/code (coral is scarce). These 18 color values are
+   byte-identical to builtInTheme("claude") in theme-schema.ts (the zero-drift
+   invariant); the JSON sink's inline vars override these, so this block is the
+   safety net + the source for the two claude-only tokens the JSON theme doesn't
+   carry: --selection-bg (warm coral tint, never the cool blue) and --font-heading
+   (system serif for the headings). --caret is NOT redeclared: it stays the
+   theme-invariant red (#ff3b30) from :root, an affordance not a brand color. */
+:root[data-theme="claude"] {
+  --bg: #faf9f5;                /* canvas — tinted cream, the brand floor */
+  --fg: #141413;                /* ink — warm dark, ≈16.5:1 on cream */
+  --accent: #cc785c;            /* primary coral — UI action (active pill / focus ring) */
+  --link: #a9583e;              /* coral-active — link/body text, AA on cream (≈4.7:1) */
+  --surface: #efe9de;           /* surface-card — feature-card cream */
+  --border: #e6dfd8;            /* hairline — one elevation step, not an ink line */
+  --muted: #6c6a64;             /* muted — sub-headings / h6 / captions, AA */
+  --highlight-bg: #f0d9a8;      /* amber tint — ==mark== background, ink legible over it */
+  --h1-color: #141413;          /* headings are ink, not coral (coral scarce) */
+  --h2-color: #141413;
+  --h3-color: #141413;
+  --h4-color: #141413;
+  --h5-color: #141413;
+  --h6-color: #6c6a64;          /* muted caption tone */
+  --bold-color: #252523;        /* body-strong — a touch darker than ink */
+  --italic-color: #3d3d3a;      /* body tone (italic keeps body color) */
+  --code-color: #a9583e;        /* coral-active — inline code, AA on the cream card */
+  --highlight-color: #141413;   /* ink over the amber highlight */
+  /* warm coral tint (coral #cc785c @ 22%) — lower alpha than light's 25% so the
+     warm wash isn't heavy and ink stays legible under a selection. */
+  --selection-bg: rgba(204, 120, 92, 0.22);
+  /* Headings only → system serif (the Copernicus/Tiempos slab approximation, zero
+     bundle). Body stays the humanist sans (--reading-font is NOT overridden). The
+     `serif` generic catches last, so Korean headings fall back to the OS Hangul
+     sans rather than breaking (the Cormorant-no-Hangul history). */
+  --font-heading: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+}
+/* Heading font swap for claude only. Same specificity tier as
+   `.cm-editor .cm-line.cm-heading` (the --reading-font rule) but with the
+   data-theme attribute lifting it one step, so it wins. font-family is
+   measure-inert (CM measures offsetHeight vertically; family only changes glyph
+   render + horizontal advance), so the ZOOM GUARD holds — the font-size calc lines
+   are untouched. */
+:root[data-theme="claude"] .cm-editor .cm-line.cm-heading {
+  font-family: var(--font-heading);
+}
 body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); margin: 0; }
 
 html, body { margin: 0; height: 100%; }

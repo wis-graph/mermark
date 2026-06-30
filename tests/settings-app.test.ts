@@ -162,6 +162,46 @@ describe("app settings", () => {
     expect(theme!.entries.some((e) => e.ui.label === "테마 JSON")).toBe(true);
   });
 
+  // ── Claude preset: parse, dropdown control, toggle cycle ────────────────────
+
+  it("themeSetting accepts a saved claude preference (parse allows the third built-in)", async () => {
+    localStorage.setItem("mermark.theme", "claude");
+    const { themeSetting } = await import("../src/settings/app");
+    expect(themeSetting.get()).toBe("claude"); // parse("claude") = "claude", not null→default
+  });
+
+  it("themeSetting still rejects an unknown saved value (parse strictness unchanged)", async () => {
+    localStorage.setItem("mermark.theme", "nope");
+    const { themeSetting } = await import("../src/settings/app");
+    expect(themeSetting.get()).toBe("dark"); // invalid → null → system default (matchMedia:false)
+  });
+
+  it("themeSetting renders as a 3-option select (dark/light/claude), not a segmented pill", async () => {
+    await import("../src/settings/app");
+    const { groups } = await import("../src/settings/registry");
+    const theme = groups().find((g) => g.name === "테마");
+    const preset = theme!.entries.find((e) => e.ui.label === "프리셋");
+    const control = preset!.ui.control as { kind: string; options: { value: string }[] };
+    expect(control.kind).toBe("select");
+    expect(control.options).toHaveLength(3);
+    expect(control.options.map((o) => o.value)).toEqual(["dark", "light", "claude"]);
+  });
+
+  it("loadPreset('claude') writes BOTH settings coherently (the claude rides the dark/light path)", async () => {
+    const { themeSetting, themeJsonSetting, loadPreset } = await import("../src/settings/app");
+    const { builtInTheme } = await import("../src/settings/theme-schema");
+    loadPreset("claude");
+    expect(themeSetting.get()).toBe("claude");
+    expect(themeJsonSetting.get()).toEqual(builtInTheme("claude"));
+  });
+
+  it("nextPreset cycles dark→light→claude→dark (the status-bar toggle order, SSOT)", async () => {
+    const { nextPreset } = await import("../src/settings/app");
+    expect(nextPreset("dark")).toBe("light");
+    expect(nextPreset("light")).toBe("claude");
+    expect(nextPreset("claude")).toBe("dark");
+  });
+
   it("declares the typography settings with defaults and persistence", async () => {
     const app = await import("../src/settings/app");
     expect(app.fontSizeSetting.get()).toBe(16); // 1rem base

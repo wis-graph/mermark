@@ -29,6 +29,16 @@ describe("status-bar icons (Lucide SVG, no emoji)", () => {
     render("light");
     expect(btn.querySelector("svg.icon-sun")).not.toBeNull();
     expect(btn.textContent ?? "").not.toMatch(EMOJI);
+    render("claude");
+    expect(btn.querySelector("svg.icon-palette")).not.toBeNull();
+    expect(btn.textContent ?? "").not.toMatch(EMOJI);
+  });
+
+  it("palette icon is a Lucide-canvas SVG (claude theme glyph)", () => {
+    const svg = icon("palette");
+    expect(svg.getAttribute("viewBox")).toBe("0 0 24 24");
+    expect(svg.getAttribute("stroke")).toBe("currentColor");
+    expect(svg.querySelector("path, circle")).not.toBeNull();
   });
 
   it("settings button renders the gear SVG plus a '설정' label, no emoji", () => {

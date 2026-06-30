@@ -22,15 +22,19 @@ const numberParse = (raw: string | null): number | null => {
 export const themeSetting = registerSetting<Theme>({
   key: "mermark.theme",
   default: systemTheme(),
-  parse: (raw) => (raw === "light" || raw === "dark" ? raw : null),
+  parse: (raw) => (raw === "light" || raw === "dark" || raw === "claude" ? raw : null),
   ui: {
     label: "프리셋",
     group: "테마",
+    // select (not segmented): three presets no longer fit a pill row comfortably,
+    // and renderSelect shares the same string round-trip + setting.set/subscribe
+    // contract as renderSegmented (fontFamily/headingRatio already use it).
     control: {
-      kind: "segmented",
+      kind: "select",
       options: [
         { value: "dark", label: "다크" },
         { value: "light", label: "라이트" },
+        { value: "claude", label: "클로드" },
       ],
     },
   },
@@ -47,6 +51,14 @@ export const themeJsonSetting = registerSetting<ThemeJson>({
   serialize: serializeTheme,
   ui: { label: "테마 JSON", group: "테마", control: { kind: "json" } },
 });
+
+/** The "what preset does the status-bar toggle land on next" rule, in ONE named
+ *  place: dark→light→claude→dark. A named function (not an inline ternary at the
+ *  click site) so the cycle order lives in one spot and reads as intent. Pure
+ *  query. */
+export function nextPreset(cur: PresetName): PresetName {
+  return cur === "dark" ? "light" : cur === "light" ? "claude" : "dark";
+}
 
 /** Load a built-in preset: write BOTH settings in one place so they stay
  *  coherent — themeJsonSetting (the effective vars) AND themeSetting (the

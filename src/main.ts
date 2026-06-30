@@ -13,6 +13,7 @@ import {
   zoomOut,
   resetZoom,
   loadPreset,
+  nextPreset,
   syncJsonToPreset,
   themeJsonSetting,
   fontFamilySetting,
@@ -172,12 +173,11 @@ async function boot() {
   const pos = el("span", "status-pos");
   const spacer = el("span", "status-spacer");
   const save = makeSaveStatus();
-  // live theme switch: flip the preset (loadPreset writes themeJson + themeSetting
-  // in one place, keeping them coherent) → vars + data-theme + mermaid re-bake
-  // track together, no page reload, so the layout never flashes/re-mounts.
-  const themeBtn = makeThemeToggle(() =>
-    loadPreset(themeSetting.get() === "dark" ? "light" : "dark"),
-  );
+  // live theme switch: cycle the preset (nextPreset = dark→light→claude→dark, the
+  // SSOT for the toggle order) via loadPreset, which writes themeJson + themeSetting
+  // in one place, keeping them coherent → vars + data-theme + mermaid re-bake track
+  // together, no page reload, so the layout never flashes/re-mounts.
+  const themeBtn = makeThemeToggle(() => loadPreset(nextPreset(themeSetting.get())));
   themeSetting.bind(themeBtn.render); // initial icon + on change
   bar.append(mode.btn, pos, spacer, save.el, themeBtn.btn);
   // ⚙ settings: append after the theme toggle. Boot-cheap — the modal DOM is

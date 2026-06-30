@@ -4,8 +4,8 @@
 // built-in dark/light presets are copied verbatim from styles.css:1-28 so
 // adopting the JSON model causes zero visual drift.
 
-/** The names of the two built-in presets (distinct from the JSON Theme below). */
-export type PresetName = "dark" | "light";
+/** The names of the built-in presets (distinct from the JSON Theme below). */
+export type PresetName = "dark" | "light" | "claude";
 
 export interface Theme {
   /** "dark" | "light" | a user name — free-form identity for the theme. */
@@ -246,6 +246,42 @@ export function builtInTheme(name: PresetName): Theme {
         italic: "#0c0a09",
         code: "#292524",
         highlight: "#1a1300",
+      },
+      radii: { ...SHARED_RADII },
+      font: { ...SHARED_FONT },
+    };
+  }
+  if (name === "claude") {
+    // The Claude editorial palette: tinted-cream canvas + warm-ink text, coral
+    // reserved for action/link/code (the brand's "coral is scarce" rule). The 18
+    // keys are written explicitly and mirror styles.css :root[data-theme="claude"]
+    // byte-for-byte (the zero-drift invariant). NOTE: unlike dark/light, claude's
+    // extended keys are NOT all what promoteToExtended would derive — headings are
+    // ink (#141413), bold/italic/highlight are hand-tuned editorial tones — so the
+    // explicit values are load-bearing, not a fallback echo. Body sans stays the
+    // shared Inter stack; the serif HEADING is a styles.css-only --font-heading
+    // token (not a schema field), so it isn't carried in the JSON theme.
+    return {
+      name: "claude",
+      colors: {
+        bg: "#faf9f5",
+        fg: "#141413",
+        accent: "#cc785c",
+        link: "#a9583e",
+        surface: "#efe9de",
+        border: "#e6dfd8",
+        muted: "#6c6a64",
+        highlightBg: "#f0d9a8",
+        h1: "#141413",
+        h2: "#141413",
+        h3: "#141413",
+        h4: "#141413",
+        h5: "#141413",
+        h6: "#6c6a64",
+        bold: "#252523",
+        italic: "#3d3d3a",
+        code: "#a9583e",
+        highlight: "#141413",
       },
       radii: { ...SHARED_RADII },
       font: { ...SHARED_FONT },
