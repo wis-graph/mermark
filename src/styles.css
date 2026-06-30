@@ -461,6 +461,43 @@ html, body { margin: 0; height: 100%; }
 .open-path-error { flex: none; color: #dc2626; white-space: nowrap; }
 .open-path-error[hidden] { display: none; }
 
+/* Outline (table of contents) panel. A sibling of .status-bar under #app — it
+   lives OUTSIDE the editor's scroll host, so it never touches .cm-content /
+   .cm-line: the ⌘± zoom measure guard holds and its own font-size is free.
+   Floats above the 36px status bar as a bottom-left popover (fixed → no #app
+   positioning change needed), scrolls when the tree is tall. */
+.outline-row {
+  position: fixed; left: .5em; bottom: 40px; z-index: 30;
+  width: min(320px, calc(100vw - 1em)); max-height: min(60vh, 480px);
+  overflow-y: auto; padding: .35em;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--fg) 18%, transparent);
+  font-size: 13px;
+}
+.outline-row[hidden] { display: none; }
+.outline-tree { display: flex; flex-direction: column; }
+.outline-empty { padding: .5em; color: var(--muted); }
+.outline-empty[hidden] { display: none; }
+.outline-item {
+  display: block; width: 100%; text-align: left;
+  background: transparent; border: none; border-radius: var(--radius-sm, 6px);
+  color: var(--fg); font: inherit; font-size: 13px; line-height: 1.4;
+  padding: 3px 8px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background-color .12s ease;
+}
+.outline-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.outline-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.outline-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+/* Depth indent: each level steps in; h1 is the trunk. */
+.outline-h1 { padding-left: 8px; font-weight: 600; }
+.outline-h2 { padding-left: 20px; }
+.outline-h3 { padding-left: 32px; }
+.outline-h4 { padding-left: 44px; color: var(--muted); }
+.outline-h5 { padding-left: 56px; color: var(--muted); }
+.outline-h6 { padding-left: 68px; color: var(--muted); }
+
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }
 .cm-table { border-collapse: collapse; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); }
 .cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; }

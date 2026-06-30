@@ -1,6 +1,6 @@
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { Compartment, EditorState } from "@codemirror/state";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap, highlightActiveLine, drawSelection } from "@codemirror/view";
 import { vim } from "@replit/codemirror-vim";
 import { invoke } from "@tauri-apps/api/core";
@@ -246,6 +246,10 @@ export function mountEditor(
     /** Initial conflict policy (live value flows via setConflictPolicy). */
     conflictPolicy?: ConflictPolicy;
     vimMode?: VimMode;
+    /** Editor-adjacent chrome extensions that aren't part of the core editing
+     *  setup (e.g. the outline panel's docChanged listener). Threaded in so they
+     *  re-attach on every re-mount, tracking the new document automatically. */
+    extraExtensions?: Extension;
   } = {},
 ): EditorController {
   const {
@@ -256,6 +260,7 @@ export function mountEditor(
     baseMtime = 0,
     autosaveDelay = DEFAULT_AUTOSAVE_DELAY_MS,
     conflictPolicy = "pause",
+    extraExtensions = [],
   } = opts;
   // The SSOT settings are the writers; these mutable cells are the editor's sink
   // for them. makeAutosave reads them live via getters so a settings change
@@ -366,6 +371,9 @@ export function mountEditor(
       // styles.css. Measure-inert overlay — it never touches .cm-content/.cm-line
       // font-size, so the ⌘± zoom guard holds.
       drawSelection(),
+      // Editor-adjacent chrome (outline panel listener, …). Last so it can't
+      // shadow core editing extensions; it only observes (updateListener).
+      extraExtensions,
     ],
   });
   controller.view = new EditorView({ state, parent });

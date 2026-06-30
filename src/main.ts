@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { dirOf, resolveOpenPath } from "./path";
 import { createOpenPathPrompt } from "./open-file/path-prompt";
+import { createOutlinePanel } from "./outline/outline-panel";
 import { mountEditor, type EditorController, type PreviewMode, type SaveStatus } from "./editor";
 import { applyTheme, applyFontScale, makeThemeToggle } from "./theme";
 import {
@@ -209,10 +210,21 @@ async function boot() {
       openInWindow(target, fresh);
     },
   });
+  // ── Outline (table of contents) footer chrome. Same toggle shape as open-path
+  //    but a vertical heading tree; clicking a heading jumps via the shared
+  //    jumpTo landing. getView is a closure over `current` so it follows
+  //    re-opens. Its listener is threaded into every mount (extraExtensions)
+  //    so the outline tracks the live document. ────────────────────────────────
+  const outline = createOutlinePanel({ getView: () => current.view });
+
   // Left corner: the right end is the settings/theme zone, so the open-path
-  // button lives at the far left (prepend → first child, before the mode toggle).
+  // button lives at the far left (prepend → first child, before the mode toggle),
+  // with the outline button just to its right (left nav group, nav siblings).
+  // Prepend outline first, then open-path, so open-path ends up leftmost.
+  bar.prepend(outline.button);
   bar.prepend(prompt.button);
   root.append(prompt.row);
+  root.append(outline.row);
 
   // ── Per-file session persistence. The key is recomputed per open; the timer
   //    is scoped to the live editor and cancelled on teardown. ────────────────
@@ -292,6 +304,9 @@ async function boot() {
       autosaveDelay: autosaveDelaySetting.get(),
       conflictPolicy: conflictPolicySetting.get(),
       vimMode: vimModeSetting.get(),
+      // Outline panel's docChanged listener — re-attaches per mount, so the
+      // outline tracks whichever document is currently live.
+      extraExtensions: outline.listener,
     });
 
     const scroller = host.querySelector(".cm-scroller");
@@ -329,6 +344,11 @@ async function boot() {
     // the watch teardownCurrent just released). Non-fatal: the editor works even
     // if the watcher fails to arm.
     void watchFile(file);
+
+    // Re-opening swaps the document without firing docChanged on the new editor,
+    // so an open outline panel would show the previous file's headings. Refresh
+    // explicitly here (no-op when the panel is closed) so it tracks the swap.
+    outline.refresh();
 
     // dev-only: expose the live controller so the debug harness can read real
     // editor state (selection offsets, block specs) instead of guessing.

@@ -91,6 +91,10 @@ const PATHS = {
   list:
     '<path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/>' +
     '<path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/>',
+  // list-tree — outline / table of contents
+  "list-tree":
+    '<path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/>' +
+    '<path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/>',
   // quote — callout: quote
   quote:
     '<path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/>' +
