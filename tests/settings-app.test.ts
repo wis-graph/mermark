@@ -59,6 +59,19 @@ describe("app settings", () => {
     expect(fontScaleSetting.get()).toBe(0.8); // MIN
   });
 
+  // Autosave is invisible (no save button): a brief typing-pause debounce. The
+  // SSOT for that pause is autosaveDelaySetting.default — guard it at 200ms and
+  // keep the slider floor at 200 so the default is selectable in the panel.
+  it("autosaveDelaySetting defaults to 200ms with a 200ms slider floor", async () => {
+    const { autosaveDelaySetting } = await import("../src/settings/app");
+    expect(autosaveDelaySetting.get()).toBe(200);
+    const { groups } = await import("../src/settings/registry");
+    const editorGroup = groups().find((g) => g.name === "에디터");
+    const entry = editorGroup!.entries.find((e) => e.ui.label === "자동 저장 지연");
+    expect(entry).toBeDefined();
+    expect((entry!.ui.control as { min: number }).min).toBe(200);
+  });
+
   it("fontScaleSetting falls back to the default on a corrupt saved scale", async () => {
     localStorage.setItem("mermark.fontScale", "abc");
     const { fontScaleSetting } = await import("../src/settings/app");

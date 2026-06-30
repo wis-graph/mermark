@@ -31,6 +31,8 @@ import {
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./settings/sinks";
 import { mountSettingsButton } from "./settings/panel/modal";
 import { installBundleShortcut } from "./bundle";
+import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./file-watch";
+import { openConflictModal } from "./conflict/conflict-modal";
 import { icon, type IconName } from "./icons";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
@@ -57,52 +59,34 @@ function setButtonContent(btn: HTMLElement, name: IconName, label?: string): voi
   }
 }
 
-/** A save-status indicator that lives inline in the status bar. On `conflict`
- *  (the file changed on disk) it offers a one-click overwrite so the user's
- *  buffer isn't lost — autosave stays paused until they choose. */
+/** A save-status indicator that lives inline in the status bar. Autosave runs
+ *  invisibly (200ms typing-pause debounce) so there are no manual save/reload
+ *  buttons — this is just a trust signal ("저장됨"/"저장 중"). On `conflict` the
+ *  external-change modal owns the actual choice; here the label only reports the
+ *  state ("외부 변경 감지 — 선택 필요"). */
 function makeSaveStatus(): {
   el: HTMLElement;
   set: (s: SaveStatus, detail?: string) => void;
-  onForceSave: (fn: () => void) => void;
-  onReloadDisk: (fn: () => void) => void;
 } {
   const node = el("span", "save-status");
   const label = el("span", "save-label");
-  const force = el("button", "status-btn force-save") as HTMLButtonElement;
-  setButtonContent(force, "save", "강제 저장");
-  force.title = "디스크의 외부 변경을 덮어쓰고 현재 내용을 저장합니다";
-  force.hidden = true;
-
-  const reload = el("button", "status-btn reload-disk") as HTMLButtonElement;
-  setButtonContent(reload, "rotate-ccw", "디스크에서 다시 읽기");
-  reload.title = "로컬 편집 내용을 버리고 디스크 파일 내용으로 새로고침합니다";
-  reload.hidden = true;
-
-  node.append(label, force, reload);
+  node.append(label);
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   return {
     el: node,
     set(s, detail) {
       clearTimeout(hideTimer);
       node.dataset.state = s;
-      force.hidden = s !== "conflict";
-      reload.hidden = s !== "conflict";
       if (s === "error") {
         setButtonContent(label, "triangle-alert", `저장 실패: ${detail ?? "unknown error"}`);
       } else if (s === "conflict") {
-        setButtonContent(label, "triangle-alert", "파일이 외부에서 변경됨 — 자동저장 중단");
+        setButtonContent(label, "triangle-alert", "외부 변경 감지 — 선택 필요");
       } else if (s === "saving") {
         setButtonContent(label, "loader-circle", "저장 중");
       } else {
         setButtonContent(label, "check", "저장됨");
         hideTimer = setTimeout(() => label.replaceChildren(), 1500);
       }
-    },
-    onForceSave(fn) {
-      force.addEventListener("click", fn);
-    },
-    onReloadDisk(fn) {
-      reload.addEventListener("click", fn);
     },
   };
 }
@@ -278,6 +262,10 @@ async function boot() {
     detachScroll = undefined;
     cancelSessionTimer?.();
     cancelSessionTimer = undefined;
+    // Stop watching the outgoing file: the watcher is a single slot, so a stale
+    // watch would deliver file-changed events for the wrong file after a switch.
+    // openInWindow re-arms the watch for the new file below.
+    void unwatchFile();
     host.replaceChildren();
   }
 
@@ -337,6 +325,11 @@ async function boot() {
       }
     }
 
+    // Watch the newly mounted file for external changes (single slot — replaces
+    // the watch teardownCurrent just released). Non-fatal: the editor works even
+    // if the watcher fails to arm.
+    void watchFile(file);
+
     // dev-only: expose the live controller so the debug harness can read real
     // editor state (selection offsets, block specs) instead of guessing.
     if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
@@ -345,15 +338,36 @@ async function boot() {
 
   // ── Window-global wiring (installed ONCE; reads `current` so it always
   //    reaches the live editor after a re-mount). ─────────────────────────────
-  save.onForceSave(() => current.forceSave());
-  save.onReloadDisk(async () => {
-    try {
-      const { text, mtime } = await invoke<{ text: string; mtime: number }>("read_file", { path: currentFile });
+
+  /** Resolve an external (on-disk) change against the live buffer. The branch
+   *  rule lives in decideExternalChange (pure): with no unsaved work the disk
+   *  version is adopted silently (reloadFromFile); otherwise the two diverged so
+   *  the conflict modal lets the user pick — keep local (forceSave = clobber +
+   *  rebaseline) or use external (reloadFromFile). Named so the "auto-reload vs
+   *  conflict" decision isn't an inline if at the listener site. Command: void. */
+  let openConflict: { close(): void } | null = null;
+  function resolveExternalChange(text: string, mtime: number): void {
+    if (decideExternalChange(current.hasUnsaved()) === "reload") {
       current.reloadFromFile(text, mtime);
-    } catch (err: any) {
-      save.set("error", String(err));
+      return;
     }
-  });
+    // Don't stack modals if a second change arrives while one is open.
+    openConflict?.close();
+    openConflict = openConflictModal({
+      local: current.view.state.doc.toString(),
+      external: text,
+      onKeepLocal: () => current.forceSave(),
+      onUseExternal: () => current.reloadFromFile(text, mtime),
+      onDismiss: () => {
+        openConflict = null;
+      },
+    });
+  }
+  // Subscribe ONCE to the backend's external-change event; the callback reads the
+  // live `current` cell, so it tracks re-opens without re-subscribing. Self-writes
+  // are filtered in the backend (mtime baseline), so this only fires on real
+  // external edits. Guarded to Tauri/browser-mock environments that emit events.
+  void onFileChanged(({ text, mtime }) => resolveExternalChange(text, mtime));
   // Don't lose the last keystrokes typed within the autosave debounce window:
   // intercept the window close, persist the live buffer, then close. Guarded so
   // it only runs under Tauri (the browser-mock dev mode has no window IPC).

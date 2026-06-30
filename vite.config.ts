@@ -16,6 +16,9 @@ export default defineConfig(async ({ mode }) => ({
             "@tauri-apps/api/core": fileURLToPath(
               new URL("./src/mocks/tauri-core.ts", import.meta.url),
             ),
+            "@tauri-apps/api/event": fileURLToPath(
+              new URL("./src/mocks/tauri-event.ts", import.meta.url),
+            ),
           },
         }
       : undefined,

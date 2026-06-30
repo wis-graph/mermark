@@ -248,10 +248,12 @@ export function seedSessionMode(): void {
   modeSetting.set(defaultModeSetting.get());
 }
 
-/** Autosave debounce in ms. Round 1: declared + rendered; sink deferred. */
+/** Autosave debounce in ms. Default 200ms — autosave runs invisibly on a brief
+ *  typing pause (Obsidian-style), so the manual save button is gone. The slider
+ *  floor is already 200ms (the SSOT for "fast but not per-keystroke"). */
 export const autosaveDelaySetting = registerSetting<number>({
   key: "mermark.autosaveDelay",
-  default: 800,
+  default: 200,
   parse: numberParse,
   ui: { label: "자동 저장 지연", group: "에디터", control: { kind: "slider", min: 200, max: 3000, step: 100, unit: "ms" } },
 });

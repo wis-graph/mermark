@@ -30,6 +30,12 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }));
 
+// main.ts subscribes to the backend's "file-changed" event (fs watcher). Stub
+// the event API so boot() doesn't hit the real Tauri internals (absent in jsdom).
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+}));
+
 describe("Session State Persistence", () => {
   let app: HTMLDivElement;
 

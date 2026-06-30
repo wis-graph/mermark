@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod bundle;
 pub mod cli;
 mod commands;
+mod watcher;
 
 /// Process-unique counter for scratch-file names. Kept separate from
 /// `commands::TMP_SEQ` (which names autosave temp files) so the two concerns
@@ -136,6 +137,10 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // The single-file fs watcher's slot + self-write mute baseline. Managed
+        // state so `write_file` can record its own mtime and `watch_file` /
+        // `unwatch_file` can swap the one live watcher.
+        .manage(watcher::WatchState::default())
         .invoke_handler(tauri::generate_handler![
             commands::read_file,
             commands::write_file,
@@ -143,7 +148,9 @@ pub fn run() {
             commands::path_exists,
             commands::create_markdown_file,
             commands::bundle_doc,
-            commands::list_link_targets
+            commands::list_link_targets,
+            commands::watch_file,
+            commands::unwatch_file
         ])
         .setup(|app| {
             let args: Vec<String> = std::env::args().skip(1).collect();

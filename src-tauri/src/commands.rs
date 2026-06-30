@@ -75,7 +75,10 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
 
 /// Milliseconds since the UNIX epoch for a path's last modification, or 0 when
 /// the filesystem can't report it (in which case conflict detection is skipped).
-fn mtime_ms(path: &str) -> u64 {
+/// `pub(crate)` so the fs watcher reuses the *same* mtime computation the write
+/// conflict-guard uses — self-write detection compares against this exact value,
+/// so a second definition would risk the two drifting apart.
+pub(crate) fn mtime_ms(path: &str) -> u64 {
     std::fs::metadata(path)
         .ok()
         .and_then(|m| m.modified().ok())
@@ -114,9 +117,33 @@ pub fn read_file(path: String) -> Result<FileContent, String> {
 ///
 /// `baseline` is a single-word arg name on purpose: it maps identically under
 /// every JS↔Rust naming convention, avoiding camelCase/snake_case surprises.
+///
+/// After a successful write it records the new mtime as a self-write on the fs
+/// watcher's `WatchState`, so the watcher event our own rename provokes is muted
+/// instead of being mistaken for an external change (the auto-reload loop guard).
+/// The signature the frontend sees is unchanged — `WatchState` is injected by
+/// Tauri's managed state, not passed from JS — so the existing mock stays valid.
 #[tauri::command]
-pub fn write_file(path: String, text: String, baseline: u64) -> Result<u64, String> {
-    let normalized = normalize_path(Path::new(&path)).to_string_lossy().into_owned();
+pub fn write_file(
+    path: String,
+    text: String,
+    baseline: u64,
+    watch: tauri::State<'_, crate::watcher::WatchState>,
+) -> Result<u64, String> {
+    write_file_with_state(&path, &text, baseline, &watch)
+}
+
+/// Pure core of `write_file`, threading the `WatchState` explicitly so tests can
+/// inject a fresh one and assert the self-write was recorded. The atomic
+/// temp-rename and `CONFLICT:` conflict-guard live here unchanged; the only added
+/// behaviour over the old body is `record_self_write` right before returning.
+fn write_file_with_state(
+    path: &str,
+    text: &str,
+    baseline: u64,
+    watch: &crate::watcher::WatchState,
+) -> Result<u64, String> {
+    let normalized = normalize_path(Path::new(path)).to_string_lossy().into_owned();
     if baseline != 0 {
         // `>` (strictly newer) flags an external change without false-positiving
         // on our own writes. Caveat: on coarse-resolution filesystems (HFS+ 1s,
@@ -133,12 +160,34 @@ pub fn write_file(path: String, text: String, baseline: u64) -> Result<u64, Stri
     }
 
     let tmp = format!("{normalized}.mermark-tmp.{}", TMP_SEQ.fetch_add(1, Ordering::Relaxed));
-    std::fs::write(&tmp, &text).map_err(|e| format!("write {tmp}: {e}"))?;
+    std::fs::write(&tmp, text).map_err(|e| format!("write {tmp}: {e}"))?;
     std::fs::rename(&tmp, &normalized).map_err(|e| {
         let _ = std::fs::remove_file(&tmp); // don't leave the temp behind on failure
         format!("rename {tmp} -> {normalized}: {e}")
     })?;
-    Ok(mtime_ms(&normalized))
+    let new_mtime = mtime_ms(&normalized);
+    // Mute the watcher event this write is about to trigger: record our own
+    // post-write mtime so `is_self_write(new_mtime)` returns true on the callback.
+    watch.record_self_write(new_mtime);
+    Ok(new_mtime)
+}
+
+/// Begin watching the single open file at `path` for external changes, replacing
+/// any previously watched file (single slot). Thin command wrapper over
+/// `watcher::set_watch`; the security-relevant invariant — exactly one file, never
+/// a folder or arbitrary path tree — lives there. `path` is a single-word arg for
+/// the same JS↔Rust mapping reason as `write_file`'s `baseline`.
+#[tauri::command]
+pub fn watch_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    crate::watcher::set_watch(&app, path)
+}
+
+/// Stop watching the current file (teardown, or before re-watching a new path).
+/// Idempotent: unwatching when nothing is watched is a harmless no-op.
+#[tauri::command]
+pub fn unwatch_file(app: tauri::AppHandle) -> Result<(), String> {
+    crate::watcher::clear_watch(&app);
+    Ok(())
 }
 
 /// Create a new markdown file and any missing parent directories recursively.
@@ -328,13 +377,32 @@ mod tests {
         fs::remove_file(&p).ok();
     }
 
+    /// A fresh `WatchState` for tests: `write_file_with_state` records its
+    /// self-write into it, but with no live watcher attached nothing else fires.
+    fn fresh_watch_state() -> crate::watcher::WatchState {
+        crate::watcher::WatchState::default()
+    }
+
     #[test]
     fn write_persists_and_returns_mtime() {
         let p = temp_path("write");
         fs::write(&p, "old").unwrap();
-        let m = write_file(p.clone(), "new".into(), 0).unwrap();
+        let m = write_file_with_state(&p, "new", 0, &fresh_watch_state()).unwrap();
         assert!(m > 0);
         assert_eq!(fs::read_to_string(&p).unwrap(), "new");
+        fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn write_records_its_mtime_as_a_self_write() {
+        // After a successful write, the returned mtime is recorded on the
+        // WatchState so the watcher mutes the event our own rename triggers.
+        let p = temp_path("selfwrite");
+        fs::write(&p, "old").unwrap();
+        let state = fresh_watch_state();
+        let m = write_file_with_state(&p, "new", 0, &state).unwrap();
+        assert!(state.is_self_write(m), "the write's own mtime must be muted as a self-write");
+        assert!(!state.is_self_write(m + 1), "a strictly-newer mtime is still external");
         fs::remove_file(&p).ok();
     }
 
@@ -342,7 +410,7 @@ mod tests {
     fn write_leaves_no_temp_file() {
         let p = temp_path("atomic");
         fs::write(&p, "x").unwrap();
-        write_file(p.clone(), "y".into(), 0).unwrap();
+        write_file_with_state(&p, "y", 0, &fresh_watch_state()).unwrap();
         let dir = std::path::Path::new(&p).parent().unwrap();
         let stem = std::path::Path::new(&p).file_name().unwrap().to_string_lossy();
         let leftovers: Vec<_> = fs::read_dir(dir)
@@ -362,7 +430,7 @@ mod tests {
         let p = temp_path("conflict");
         fs::write(&p, "disk").unwrap();
         // baseline=1ms is far older than any real file mtime → external change.
-        let err = write_file(p.clone(), "mine".into(), 1).unwrap_err();
+        let err = write_file_with_state(&p, "mine", 1, &fresh_watch_state()).unwrap_err();
         assert!(err.starts_with("CONFLICT"), "got: {err}");
         // the refused write must NOT have touched the file
         assert_eq!(fs::read_to_string(&p).unwrap(), "disk");
@@ -374,7 +442,7 @@ mod tests {
         let p = temp_path("match");
         fs::write(&p, "v1").unwrap();
         let base = read_file(p.clone()).unwrap().mtime; // baseline == disk mtime
-        let m = write_file(p.clone(), "v2".into(), base).unwrap();
+        let m = write_file_with_state(&p, "v2", base, &fresh_watch_state()).unwrap();
         assert!(m >= base);
         assert_eq!(fs::read_to_string(&p).unwrap(), "v2");
         fs::remove_file(&p).ok();
@@ -385,7 +453,7 @@ mod tests {
         let p = temp_path("zero");
         fs::write(&p, "disk").unwrap();
         // baseline=0 means "no baseline" → always allowed to write.
-        assert!(write_file(p.clone(), "forced".into(), 0).is_ok());
+        assert!(write_file_with_state(&p, "forced", 0, &fresh_watch_state()).is_ok());
         assert_eq!(fs::read_to_string(&p).unwrap(), "forced");
         fs::remove_file(&p).ok();
     }

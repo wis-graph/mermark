@@ -90,6 +90,19 @@ Local image (won't load in a plain browser — expected): ![local](./pic.png)
 // in-memory FS so write_file -> read_file round-trips during a session
 const store = new Map<string, string>();
 
+// The path the (mock) watcher is currently armed on. Shared with the event mock
+// (tauri-event.ts) so __mockExternalChange writes the simulated disk content
+// into the in-memory store and emits a file-changed event for that path.
+export let mockWatchedPath: string | null = null;
+/** Simulate an external edit landing on the watched file: update the in-memory
+ *  store so a subsequent read_file sees it, and return the payload the event
+ *  mock should emit. Returns null when nothing is being watched. */
+export function applyMockExternalChange(text: string): { text: string; mtime: number } | null {
+  if (mockWatchedPath == null) return null;
+  store.set(mockWatchedPath, text);
+  return { text, mtime: Date.now() };
+}
+
 type Args = Record<string, unknown> | undefined;
 
 export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> {
@@ -134,6 +147,17 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
         { name: "diagram.png", rel: "diagram.png", kind: "image" },
       ] as T;
     }
+    case "watch_file":
+      // Single-slot fs watcher. No real watcher in the browser — record the
+      // path so __mockExternalChange (in the event mock) can target it, and
+      // no-op otherwise. The real backend replaces any prior watch here.
+      mockWatchedPath = String(a.path ?? "");
+      console.info("[mock] watch_file", mockWatchedPath);
+      return undefined as T;
+    case "unwatch_file":
+      mockWatchedPath = null;
+      console.info("[mock] unwatch_file");
+      return undefined as T;
     case "path_exists":
       return true as T;
     case "open_path":

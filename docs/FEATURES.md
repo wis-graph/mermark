@@ -10,7 +10,8 @@
 
 ### 1.1 파일 IO
 - **read_file / write_file** — 원자적 쓰기(temp + rename)로 부분 저장 손상 방지.
-- **conflict guard** — read 시 mtime baseline 기록 → write 시 디스크 변경 감지(`CONFLICT:`), 충돌 시 'Reload from Disk' / `.mermark-recovered` 복구.
+- **conflict guard** — read 시 mtime baseline 기록 → write 시 디스크 변경 감지(`CONFLICT:`), `.mermark-recovered` 복구.
+- **fs 와처** — `notify` 크레이트로 **열린 파일 1개만** watch(`watch_file`/`unwatch_file`, 경로 전환 시 슬롯 교체). 외부 변경 시 `file-changed` 이벤트(`{text,mtime}`) emit. 자기 쓰기 self-trigger 방지(mtime baseline `record_self_write`/`is_self_write`).
 - **path_exists** — 위키링크 대상 존재 확인.
 - **경로 정규화** — `normalize_path`(`..` collapse) + `expand_home`(선두 `~`/`~/` 홈 확장, `~user` 과확장 금지).
 
@@ -40,6 +41,7 @@
 - **모드 / Vim compartment** — 런타임 재구성(edit↔read, vim on/off).
 - **drawSelection** — EditorState 셀렉션 레이어(Vim 비주얼·멀티커서 가시화, `--selection-bg` 토큰).
 - **경로 열기 re-point** — `openInWindow` + `current` SSOT로 새 파일을 현재 창에 재마운트(baseDir/filePath/autosave/세션 전수 갱신).
+- **저장/리로드 자동화** — 자동저장(타이핑 멈춤 200ms debounce, 수동 저장 버튼 없음). 외부 변경 감지 시 미저장 없으면 자동 리로드, **충돌(미저장+외부변경)이면 VSCode식 diff 모달**(라인 LCS, 로컬 유지 / 외부 채택 선택). 저장 상태 인디케이터로 신호.
 
 ### 2.3 설정 SSOT
 - **`defineSetting` 프리미티브** — 의존성 없는 단일 출처 설정.
@@ -95,7 +97,7 @@
 ---
 
 ## L5 · UI 크롬 계층
-- **상태바** — 경로열기(좌) · 모드 토글 · 커서/위치 · 저장 · reload · 테마 토글 · 설정(우). Lucide 아이콘.
+- **상태바** — 경로열기(좌) · 모드 토글 · 커서/위치 · 저장 상태 인디케이터(저장됨/저장중/충돌, 수동 저장·리로드 버튼 없음) · 테마 토글 · 설정(우). Lucide 아이콘.
 - **설정 패널** — 테마 비주얼 에디터(스워치 그리드 + JSON), 모드/Vim/타이포그래피.
 - **타이포그래피** — DESIGN.md(ElevenLabs) 타입 시스템, Pretendard 번들, 헤딩 스케일·트래킹.
 
