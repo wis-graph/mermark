@@ -14,7 +14,9 @@ export const image: InlineFeature = {
     // A YouTube link or a video file embeds as its own widget; anything else is
     // an image. embedWidgetFor owns the youtube→video priority (shared with the
     // `![[…]]` path).
-    const widget = embedWidgetFor(raw, alt, ctx.baseDir) ?? new ImageWidget(resolveImageUrl(raw, ctx.baseDir), alt);
+    const widget =
+      embedWidgetFor(raw, alt, ctx.baseDir) ??
+      new ImageWidget(resolveImageUrl(raw, ctx.baseDir), alt, raw, ctx.baseDir);
     ctx.push({
       from: node.from,
       to: node.to,

@@ -13,6 +13,7 @@
 - **conflict guard** — read 시 mtime baseline 기록 → write 시 디스크 변경 감지(`CONFLICT:`), `.mermark-recovered` 복구.
 - **fs 와처** — `notify` 크레이트로 **열린 파일 1개만** watch(`watch_file`/`unwatch_file`, 경로 전환 시 슬롯 교체). 외부 변경 시 `file-changed` 이벤트(`{text,mtime}`) emit. 자기 쓰기 self-trigger 방지(mtime baseline `record_self_write`/`is_self_write`).
 - **path_exists** — 위키링크 대상 존재 확인.
+- **resolve_image** — 리터럴 경로에서 못 찾은 이미지를 baseDir 가두리(≤3 depth) 안에서 read-only 재귀 스캔해 basename 일치 파일의 절대경로를 반환(`Option<String>`). 경로 탈출/심링크 가드, 확장자 화이트리스트, 깊이·엔트리 상한. 못 찾으면 `None`(graceful).
 - **경로 정규화** — `normalize_path`(`..` collapse) + `expand_home`(선두 `~`/`~/` 홈 확장, `~user` 과확장 금지).
 
 ### 1.2 CLI / 창
@@ -71,7 +72,7 @@
 
 ### 3.3 임베드 / 위젯
 - **Mermaid** — 펜스 다이어그램 SVG, CSS-transform 팬/줌, 더블클릭 토글, 플로팅 리셋, fold, 자연 크기.
-- **이미지** — 로컬(asset protocol·숨김폴더)·원격·data. `![]()` / `![[…]]`.
+- **이미지** — 로컬(asset protocol·숨김폴더)·원격·data. `![]()` / `![[…]]`. 리터럴 경로 로드 실패 시 **재귀 검색 폴백**(`resolve_image` invoke → 발견 경로로 src 교체, `이미지 재귀 검색` 설정 on일 때만, 리터럴 우선·정상 경로 비용 0).
 - **비디오 / 유튜브** — `![[url]]`/`![](url)`: 유튜브=썸네일 facade→클릭 시 nocookie iframe, 비디오파일=`<video>`.
 
 ---

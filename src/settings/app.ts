@@ -297,6 +297,29 @@ export const vimModeSetting = registerSetting<VimMode>({
   },
 });
 
+export type RecursiveImageSearch = "on" | "off";
+/** When a markdown image's literal path fails to load, recursively scan baseDir
+ *  (≤3 depth) for a basename match and swap it in. Default on (Obsidian-grade
+ *  convenience). No sink/fan-out: ImageWidget.toDOM's onerror handler reads this
+ *  via .get() at fallback time (query only) — off→on takes effect on the next
+ *  document change / remount, which is sufficient (no live refreshBlocks). */
+export const recursiveImageSearchSetting = registerSetting<RecursiveImageSearch>({
+  key: "mermark.recursiveImageSearch",
+  default: "on",
+  parse: (raw) => (raw === "on" || raw === "off" ? raw : null),
+  ui: {
+    label: "이미지 재귀 검색",
+    group: "에디터",
+    control: {
+      kind: "segmented",
+      options: [
+        { value: "on", label: "켜기" },
+        { value: "off", label: "끄기" },
+      ],
+    },
+  },
+});
+
 // ── Mermaid (plugin-registered category) ─────────────────────────────────────
 
 export type PanZoom = "on" | "off";

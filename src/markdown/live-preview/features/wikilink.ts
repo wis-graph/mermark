@@ -22,7 +22,9 @@ export const wikilink: InlineFeature = {
     const deco = embedWidget
       ? Decoration.replace({ widget: embedWidget })
       : embed && isImageTarget(target)
-        ? Decoration.replace({ widget: new ImageWidget(resolveImageUrl(target, ctx.baseDir), alias) })
+        ? Decoration.replace({
+            widget: new ImageWidget(resolveImageUrl(target, ctx.baseDir), alias, target, ctx.baseDir),
+          })
         : Decoration.replace({
             widget: new WikilinkWidget(alias, wikilinkPath(target, ctx.baseDir, ctx.currentFile)),
           });

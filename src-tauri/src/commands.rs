@@ -279,6 +279,186 @@ fn is_image_ext(ext: &str) -> bool {
     )
 }
 
+/// The basename (final path component) of a possibly-pathful image reference.
+/// `foo/bar.png` → `bar.png`, `./pic.png` → `pic.png`, bare `pic.png` → `pic.png`.
+/// One named place for the "what filename are we hunting for" rule, so the scan
+/// never re-derives it inline. Works for both `/` and the platform separator via
+/// `Path::file_name`; falls back to the whole string if there is no final
+/// component (e.g. a trailing separator), which simply won't match any real file.
+fn image_basename(name: &str) -> &str {
+    Path::new(name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(name)
+}
+
+/// Case-insensitive basename equality, the single matching rule for the recursive
+/// image scan. ASCII fold (`eq_ignore_ascii_case`) matches `is_image_ext`'s own
+/// case policy and the APFS reality that `Photo.PNG` and `photo.png` are the same
+/// file — a case-*sensitive* match would miss files the OS itself considers equal.
+/// Unicode case-folding is deliberately out of scope (YAGNI for filenames).
+fn basename_matches(entry: &str, target: &str) -> bool {
+    entry.eq_ignore_ascii_case(target)
+}
+
+/// The path-escape guard: is `candidate` contained within `base`? Both are
+/// normalized (`..`/`.` collapsed) before a prefix check, so a candidate can never
+/// resolve above the base directory. This is the single source of truth for the
+/// "anti-vault / no parent escape" invariant — the BFS only ever descends into
+/// children, but this prefix check is the structural second line of defence (and
+/// the one that catches a symlink target pointing outside the base).
+fn is_within_base(base: &Path, candidate: &Path) -> bool {
+    let base = normalize_path(base);
+    let candidate = normalize_path(candidate);
+    candidate.starts_with(&base)
+}
+
+/// Whether a *matched file candidate* truly stays inside `base`, accounting for
+/// symlinks. The lexical `is_within_base` is enough for a real file (its path is
+/// already where it lives), but a **file symlink** can name a path lexically under
+/// `base` while pointing at a target outside it (`base/evil.png` → `/etc/secret`).
+/// The directory walk refuses to follow directory symlinks; this is the symmetric
+/// guard for file symlinks, closing the one remaining escape: when the candidate is
+/// a symlink we `canonicalize` it and re-check the *resolved target* against `base`.
+/// A broken/unreadable symlink (canonicalize fails) is treated as outside — fail
+/// closed. A plain file skips the extra syscall (lexical containment suffices).
+/// `meta` is the candidate's `symlink_metadata`, already fetched by the caller.
+fn file_target_is_within_base(base: &Path, candidate: &Path, meta: &std::fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        // Resolve the link's real target and pen *that* inside base; a link whose
+        // target escapes (or can't be resolved) is rejected. The base is
+        // canonicalized too so both sides are compared in fully-resolved form —
+        // otherwise an OS-level symlinked ancestor (e.g. macOS `/var` →
+        // `/private/var`) would make an in-base target spuriously fail the prefix
+        // check. If the base itself can't be canonicalized, fail closed.
+        match (std::fs::canonicalize(candidate), std::fs::canonicalize(base)) {
+            (Ok(resolved), Ok(real_base)) => resolved.starts_with(&real_base),
+            _ => false, // broken/dangling symlink or unresolvable base → fail closed
+        }
+    } else {
+        // A real file lives exactly where its path says; lexical check is enough.
+        is_within_base(base, candidate)
+    }
+}
+
+/// Hard ceiling on directory entries visited in one `scan_match` call. Paired with
+/// `max_depth`, this caps the cost of a fallback scan over a pathologically large
+/// folder: once this many entries have been inspected the scan gives up and returns
+/// whatever (if anything) it has found. A bounded best-effort search, never a
+/// runaway walk. 2000 is comfortably above any realistic note folder's image count
+/// while still bounding worst-case latency to a few milliseconds.
+const MAX_ENTRIES: u32 = 2000;
+
+/// Deterministic, bounded, children-only recursive search for an image file whose
+/// basename matches `target_basename`, rooted at `base` and descending at most
+/// `max_depth` levels (clamped to 3). Returns the first match in a stable order:
+/// shallower directories first, then path-ascending within a level (so the same
+/// tree always yields the same hit). Read-only; never follows directory symlinks
+/// (which could escape `base`) and never follows a file symlink whose target lands
+/// outside `base` (`is_within_base`). Any unreadable directory is silently skipped
+/// rather than aborting the whole scan — this is a best-effort fallback, not a
+/// command the user explicitly invoked, so it degrades to `None` instead of erroring.
+fn scan_match(base: &Path, target_basename: &str, max_depth: u8) -> Option<PathBuf> {
+    // Clamp depth to the documented ceiling so a caller can never request an
+    // unbounded walk. `max_depth` counts levels *below* `base` (depth 1 = direct
+    // children).
+    let max_depth = max_depth.min(3);
+    if target_basename.is_empty() {
+        return None;
+    }
+    let base = normalize_path(base);
+
+    // BFS by level so "shallower first" is structural, not a post-sort. Each queue
+    // entry is (directory, depth-of-that-directory). `base` itself is depth 0.
+    let mut queue: std::collections::VecDeque<(PathBuf, u8)> =
+        std::collections::VecDeque::new();
+    queue.push_back((base.clone(), 0));
+    let mut visited: u32 = 0;
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue, // unreadable dir → skip, don't abort the scan
+        };
+        // Collect + sort this directory's entries so iteration order is stable
+        // regardless of the filesystem's native read_dir ordering.
+        let mut children: Vec<PathBuf> =
+            entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+        children.sort();
+
+        // First pass: look for a matching image file at this level (so a hit in a
+        // shallower directory always wins over one deeper down).
+        for path in &children {
+            visited += 1;
+            if visited > MAX_ENTRIES {
+                return None; // cost ceiling reached → bounded best-effort gives up
+            }
+            // A symlink whose metadata says "file" is fine *if* its resolved path
+            // stays within base; `symlink_metadata` avoids following it blindly.
+            let meta = match std::fs::symlink_metadata(path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if !meta.file_type().is_dir() {
+                let file_name = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if is_image_ext(ext)
+                    && basename_matches(file_name, target_basename)
+                    && file_target_is_within_base(&base, path, &meta)
+                {
+                    return Some(path.clone());
+                }
+            }
+        }
+
+        // Second pass: enqueue child directories for the next level, unless we're
+        // already at the depth ceiling. Directory *symlinks* are never followed —
+        // they're the one way a children-only walk could still escape `base`.
+        if depth < max_depth {
+            for path in &children {
+                let meta = match std::fs::symlink_metadata(path) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                // `symlink_metadata` reports the link itself: a symlinked dir has
+                // `is_symlink()` true and we skip it; a real dir is descended into.
+                if meta.file_type().is_dir() && !meta.file_type().is_symlink() {
+                    queue.push_back((path.clone(), depth + 1));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve an image reference that failed to load from its literal path by scanning
+/// `base_dir` and up to `max_depth` levels of subdirectories for a file with the
+/// same basename. Returns the found absolute path, or `None` when nothing matches.
+///
+/// `Option` (not `Result`) on purpose: "not found" is the *normal* outcome of a
+/// best-effort fallback (the image simply stays broken, as it does today), not an
+/// error to surface. An unreadable directory is absorbed into `None` rather than
+/// propagated — unlike `list_link_targets`, the user never explicitly asked for
+/// this scan, so it must degrade silently.
+///
+/// Read-only: enumerates directories, never writes, so the atomic-write /
+/// conflict-guard machinery doesn't apply. Security: the search is penned inside
+/// `base_dir` by `is_within_base` and never follows directory symlinks, so a match
+/// can never resolve above the base directory (the anti-vault invariant).
+///
+/// `base_dir`/`name`/`max_depth` are single-/clear-word args; Tauri maps them to
+/// `baseDir`/`name`/`maxDepth` on the JS side, which the `invoke` call and the
+/// browser mock must mirror.
+#[tauri::command]
+pub fn resolve_image(base_dir: String, name: String, max_depth: u8) -> Option<String> {
+    let target = image_basename(&name);
+    let base = normalize_path(Path::new(&base_dir));
+    scan_match(&base, target, max_depth).map(|p| p.to_string_lossy().into_owned())
+}
+
 /// Whether a file name is a mermark scratch/recovery artifact that must never be
 /// offered as a link target. Mirrors the autosave temp suffix (`.mermark-tmp.`)
 /// and the recovery marker (`.mermark-recovered`) so the picker doesn't surface
@@ -716,6 +896,225 @@ mod tests {
         let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
         assert_eq!(got.len(), 8, "all eight image extensions are recognized");
         assert!(got.iter().all(|t| t.kind == "image"), "all classify as image kind");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- resolve_image (recursive image fallback search) ---
+    //
+    // Each test builds an isolated fixture tree under temp_dir() and tears it
+    // down. The `.test/` directory is never touched — these own their fixtures.
+
+    #[test]
+    fn resolve_finds_basename_in_subdir() {
+        // baseDir/sub/deep/pic.png is found by basename, returning its abs path.
+        let dir = temp_dir("resolve_subdir");
+        fs::create_dir_all(dir.join("sub/deep")).unwrap();
+        let target = dir.join("sub/deep/pic.png");
+        fs::write(&target, "img").unwrap();
+        let got = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
+        assert_eq!(got, Some(normalize_path(&target).to_string_lossy().into_owned()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_finds_basename_from_pathful_name() {
+        // A name carrying a stale path (`old/dir/pic.png`) is matched by its
+        // basename `pic.png` wherever it actually lives now.
+        let dir = temp_dir("resolve_pathful");
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let target = dir.join("assets/pic.png");
+        fs::write(&target, "img").unwrap();
+        let got = resolve_image(
+            dir.to_string_lossy().into_owned(),
+            "../old/dir/pic.png".into(),
+            3,
+        );
+        assert_eq!(got, Some(normalize_path(&target).to_string_lossy().into_owned()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_respects_depth_limit() {
+        // The depth ceiling is exact, not off-by-one. A file at depth 3
+        // (base/a/b/c/pic.png) is reachable at max_depth=3 but NOT at max_depth=2,
+        // which pins the level counting precisely (depth 1 = direct children).
+        let dir = temp_dir("resolve_depth");
+        fs::create_dir_all(dir.join("a/b/c")).unwrap();
+        let buried = dir.join("a/b/c/pic.png");
+        fs::write(&buried, "img").unwrap();
+
+        let at3 = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
+        assert_eq!(
+            at3,
+            Some(normalize_path(&buried).to_string_lossy().into_owned()),
+            "a depth-3 file is reachable at max_depth=3"
+        );
+
+        // One level shallower than needed → unreachable (proves no off-by-one).
+        let at2 = scan_match(&dir, "pic.png", 2);
+        assert_eq!(at2, None, "a depth-3 file must be invisible at max_depth=2");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_blocks_path_escape() {
+        // A same-named file in a *sibling* of base (outside the search root) must
+        // never be returned. baseDir is `root/base`; the decoy is `root/sibling`.
+        let root = temp_dir("resolve_escape");
+        fs::create_dir_all(root.join("base")).unwrap();
+        fs::create_dir_all(root.join("sibling")).unwrap();
+        fs::write(root.join("sibling/secret.png"), "outside").unwrap();
+        let base = root.join("base");
+        // Even a name that tries to climb out resolves only by basename within base.
+        let got = resolve_image(
+            base.to_string_lossy().into_owned(),
+            "../sibling/secret.png".into(),
+            3,
+        );
+        assert_eq!(got, None, "a file outside baseDir must never be resolved");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_does_not_follow_directory_symlink_out_of_base() {
+        // A directory symlink inside base pointing OUTSIDE base must not be
+        // descended into, or the scan could escape the vault. Unix-only because
+        // symlink creation differs on Windows (skip there).
+        use std::os::unix::fs::symlink;
+        let root = temp_dir("resolve_symlink");
+        fs::create_dir_all(root.join("base")).unwrap();
+        fs::create_dir_all(root.join("outside")).unwrap();
+        fs::write(root.join("outside/leak.png"), "secret").unwrap();
+        // base/link -> ../outside  (a dir symlink escaping base)
+        symlink(root.join("outside"), root.join("base/link")).unwrap();
+        let base = root.join("base");
+        let got = resolve_image(base.to_string_lossy().into_owned(), "leak.png".into(), 3);
+        assert_eq!(got, None, "directory symlinks must not be followed out of base");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_does_not_follow_file_symlink_out_of_base() {
+        // A *file* symlink inside base whose target is OUTSIDE base must not be
+        // returned: it names a path lexically under base but resolves elsewhere.
+        // This is the symmetric guard to the directory-symlink test — without
+        // canonicalizing the candidate, the lexical containment check would wrongly
+        // accept base/evil.png. Unix-only (symlink semantics differ on Windows).
+        use std::os::unix::fs::symlink;
+        let root = temp_dir("resolve_file_symlink");
+        fs::create_dir_all(root.join("base")).unwrap();
+        fs::create_dir_all(root.join("outside")).unwrap();
+        let secret = root.join("outside/secret.png");
+        fs::write(&secret, "secret").unwrap();
+        // base/evil.png -> ../outside/secret.png (a file symlink escaping base)
+        symlink(&secret, root.join("base/evil.png")).unwrap();
+        let base = root.join("base");
+        let got = resolve_image(base.to_string_lossy().into_owned(), "evil.png".into(), 3);
+        assert_eq!(got, None, "a file symlink resolving outside base must never be returned");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_follows_file_symlink_that_stays_within_base() {
+        // The flip side: a file symlink whose target is still INSIDE base is a
+        // legitimate hit — the canonicalized target passes is_within_base. Proves
+        // the guard rejects only escapes, not all symlinks.
+        use std::os::unix::fs::symlink;
+        let base = temp_dir("resolve_file_symlink_ok");
+        fs::create_dir_all(base.join("real")).unwrap();
+        let real = base.join("real/actual.png");
+        fs::write(&real, "img").unwrap();
+        // base/pic.png -> real/actual.png (in-base symlink)
+        symlink(&real, base.join("pic.png")).unwrap();
+        let got = resolve_image(base.to_string_lossy().into_owned(), "pic.png".into(), 3);
+        // The returned path is the symlink's own path (the match candidate), which
+        // is within base; convertFileSrc resolves it to the in-base target.
+        assert_eq!(got, Some(normalize_path(&base.join("pic.png")).to_string_lossy().into_owned()));
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn resolve_filters_by_extension() {
+        // pic.txt / pic.md share the basename stem but aren't images; only the
+        // real image extension is a candidate (is_image_ext reuse).
+        let dir = temp_dir("resolve_ext");
+        fs::write(dir.join("pic.txt"), "x").unwrap();
+        fs::write(dir.join("pic.md"), "x").unwrap();
+        let none = resolve_image(dir.to_string_lossy().into_owned(), "pic.txt".into(), 3);
+        assert_eq!(none, None, "a .txt is never an image candidate");
+        // Now add the real image and confirm it's the one that resolves.
+        fs::write(dir.join("pic.png"), "img").unwrap();
+        let some = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
+        assert_eq!(some, Some(normalize_path(&dir.join("pic.png")).to_string_lossy().into_owned()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_is_deterministic() {
+        // The same basename in two sibling folders (a/pic.png, b/pic.png) always
+        // resolves to the same first match (shallow-first, then path-ascending),
+        // across repeated calls. Both are at depth 2, so the tie-break is path order.
+        let dir = temp_dir("resolve_determ");
+        fs::create_dir_all(dir.join("a")).unwrap();
+        fs::create_dir_all(dir.join("b")).unwrap();
+        fs::write(dir.join("a/pic.png"), "a").unwrap();
+        fs::write(dir.join("b/pic.png"), "b").unwrap();
+        let first = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
+        let expected = normalize_path(&dir.join("a/pic.png")).to_string_lossy().into_owned();
+        assert_eq!(first, Some(expected.clone()), "path-ascending tie-break picks a/ over b/");
+        // Repeated calls are stable.
+        for _ in 0..5 {
+            let again = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
+            assert_eq!(again, Some(expected.clone()), "resolution must be deterministic");
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_prefers_shallower_match() {
+        // A hit directly in base outranks a deeper hit, regardless of name order:
+        // base/pic.png wins over base/zzz/pic.png because shallow comes first.
+        let dir = temp_dir("resolve_shallow");
+        fs::create_dir_all(dir.join("zzz")).unwrap();
+        fs::write(dir.join("zzz/pic.png"), "deep").unwrap();
+        fs::write(dir.join("pic.png"), "shallow").unwrap();
+        let got = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
+        assert_eq!(got, Some(normalize_path(&dir.join("pic.png")).to_string_lossy().into_owned()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_empty_or_missing_dir_is_none() {
+        // An empty directory and a non-existent baseDir both yield None (graceful,
+        // never a panic) — there's simply nothing to find.
+        let empty = temp_dir("resolve_empty");
+        assert_eq!(
+            resolve_image(empty.to_string_lossy().into_owned(), "pic.png".into(), 3),
+            None,
+            "empty dir → None"
+        );
+        fs::remove_dir_all(&empty).ok();
+
+        let missing = std::env::temp_dir()
+            .join(format!("mermark_resolve_missing_{}", std::process::id()));
+        assert_eq!(
+            resolve_image(missing.to_string_lossy().into_owned(), "pic.png".into(), 3),
+            None,
+            "missing baseDir → None, not a panic"
+        );
+    }
+
+    #[test]
+    fn resolve_basename_is_case_insensitive() {
+        // A file stored as Pic.PNG is found when searching for pic.png, matching
+        // APFS's own case-insensitive view of the filesystem (eq_ignore_ascii_case).
+        let dir = temp_dir("resolve_case");
+        fs::write(dir.join("Pic.PNG"), "img").unwrap();
+        let got = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
+        assert_eq!(got, Some(normalize_path(&dir.join("Pic.PNG")).to_string_lossy().into_owned()));
         fs::remove_dir_all(&dir).ok();
     }
 }

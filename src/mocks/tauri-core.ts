@@ -158,6 +158,28 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       mockWatchedPath = null;
       console.info("[mock] unwatch_file");
       return undefined as T;
+    case "resolve_image": {
+      // Mirrors the real `resolve_image(base_dir, name, max_depth) -> Option<String>`
+      // (serde `string | null`). The browser has no filesystem to recurse, so the
+      // scan is faked with a deterministic lookup table keyed on the reference's
+      // basename: a known image name resolves to a fixed `/mock/found/...` path,
+      // everything else resolves to null (not found). This lets the golden master
+      // exercise the fallback path deterministically — the SAMPLE body's
+      // `![local](./pic.png)` fails its literal load in a plain browser, the widget
+      // calls resolve_image with name "./pic.png", and the basename "pic.png" maps
+      // here to "/mock/found/pic.png", which convertFileSrc returns verbatim so the
+      // swapped `img.src` is observable in the DOM. Args are camelCase to match the
+      // Tauri snake→camel mapping: { baseDir, name, maxDepth }.
+      const baseDir = String(a.baseDir ?? "");
+      const name = String(a.name ?? "");
+      const basename = name.split(/[/\\]/).pop() ?? name;
+      const FOUND: Record<string, string> = {
+        "pic.png": "/mock/found/pic.png",
+      };
+      const hit = FOUND[basename.toLowerCase()] ?? null;
+      console.info("[mock] resolve_image", baseDir, name, "->", hit);
+      return hit as T;
+    }
     case "path_exists":
       return true as T;
     case "open_path":
