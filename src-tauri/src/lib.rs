@@ -149,6 +149,7 @@ pub fn run() {
             commands::create_markdown_file,
             commands::bundle_doc,
             commands::list_link_targets,
+            commands::list_dir,
             commands::resolve_image,
             commands::watch_file,
             commands::unwatch_file

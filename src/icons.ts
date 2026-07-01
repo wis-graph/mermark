@@ -102,6 +102,17 @@ const PATHS = {
   "list-tree":
     '<path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/>' +
     '<path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/>',
+  // folder — explorer: closed folder
+  folder:
+    '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  // file — explorer: a document file
+  file:
+    '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>' +
+    '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+  // corner-left-up — explorer: go to parent (`..`)
+  "corner-left-up":
+    '<path d="M14 15 9 20 4 15"/>' +
+    '<path d="M20 4h-7a4 4 0 0 0-4 4v12"/>',
   // quote — callout: quote
   quote:
     '<path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/>' +

@@ -105,6 +105,30 @@ export function applyMockExternalChange(text: string): { text: string; mtime: nu
 
 type Args = Record<string, unknown> | undefined;
 
+/** One directory entry — mirrors the Rust `DirEntry` serde shape exactly
+ *  (`is_dir` stays snake_case on the wire). Kept local to the mock so the
+ *  browser tree lookup is typed the same as `invoke<DirEntry[]>("list_dir")`. */
+interface DirEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+}
+
+/** Fold a trailing `/..` textually so the mock's `list_dir` tree lookup matches
+ *  the real backend's `normalize_path` parent resolution (the explorer's `..`
+ *  double-click passes `${root}/..`). Only the cases the fixed TREE needs are
+ *  handled — this is a deterministic stand-in, not a full path normalizer. */
+function normalizeMockPath(path: string): string {
+  const parts = path.split("/");
+  const out: string[] = [];
+  for (const part of parts) {
+    if (part === "..") out.pop();
+    else if (part === "." || part === "") continue;
+    else out.push(part);
+  }
+  return "/" + out.join("/");
+}
+
 export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> {
   const a = (args ?? {}) as Record<string, unknown>;
   // strip plugin prefix e.g. "plugin:opener|open_url" -> "open_url"
@@ -146,6 +170,33 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
         { name: "some-note", rel: "some-note.md", kind: "markdown" },
         { name: "diagram.png", rel: "diagram.png", kind: "image" },
       ] as T;
+    }
+    case "list_dir": {
+      // Mirrors the real `list_dir(path) -> Result<Vec<DirEntry>>`: the immediate
+      // children (one level) of `path`, folders first then name, hidden/artifact
+      // entries excluded. The browser has no real FS, so the lazy tree is faked
+      // with a deterministic per-path lookup — nested hover walks the table.
+      // Parent (`..`) resolution is folded by normalizeMockPath, mirroring the
+      // backend's normalize_path so `${root}/..` lands on the parent key.
+      // `is_dir` stays snake_case to match the Rust serde shape. Roots align with
+      // the golden's `?file=/mock/vault/index.md` entry point.
+      const norm = normalizeMockPath(String(a.path ?? ""));
+      const TREE: Record<string, DirEntry[]> = {
+        "/mock/vault": [
+          { name: "notes", path: "/mock/vault/notes", is_dir: true },
+          { name: "index.md", path: "/mock/vault/index.md", is_dir: false },
+          { name: "pic.png", path: "/mock/vault/pic.png", is_dir: false },
+        ],
+        "/mock/vault/notes": [
+          { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },
+        ],
+        "/mock": [
+          // `..` from /mock/vault lands here — the parent listing.
+          { name: "vault", path: "/mock/vault", is_dir: true },
+        ],
+      };
+      console.info("[mock] list_dir", a.path, "->", norm);
+      return (TREE[norm] ?? []) as T;
     }
     case "watch_file":
       // Single-slot fs watcher. No real watcher in the browser — record the

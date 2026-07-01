@@ -543,6 +543,42 @@ html, body { margin: 0; height: 100%; }
 .outline-h5 { padding-left: 56px; color: var(--muted); }
 .outline-h6 { padding-left: 68px; color: var(--muted); }
 
+/* File explorer panel. Same popover shape as .outline-row (a sibling of
+   .status-bar under #app, OUTSIDE the editor scroll host — zero decorations,
+   ⌘± zoom guard holds). A lazy folder tree, so it can grow tall and wide:
+   wider than the outline (file names + indent) with a taller max-height. */
+.explorer-row {
+  position: fixed; left: .5em; bottom: 40px; z-index: 30;
+  width: min(380px, calc(100vw - 1em)); max-height: min(70vh, 560px);
+  overflow-y: auto; padding: .35em;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--fg) 18%, transparent);
+  font-size: 13px;
+}
+.explorer-row[hidden] { display: none; }
+.explorer-tree { display: flex; flex-direction: column; }
+.explorer-item {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  border-radius: var(--radius-sm, 6px);
+  color: var(--fg); font-size: 13px; line-height: 1.4;
+  padding: 3px 8px; cursor: pointer;
+  white-space: nowrap; overflow: hidden;
+  transition: background-color .12s ease;
+}
+.explorer-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.explorer-item .explorer-glyph { flex: none; display: inline-flex; color: var(--muted); }
+.explorer-item .explorer-name { overflow: hidden; text-overflow: ellipsis; }
+.explorer-up { font-weight: 600; }
+/* Non-markdown files: visible for context, but greyed + inert (mermark opens
+   markdown only — a click is a no-op, not a broken read_file view). */
+.explorer-file.is-nonmd { color: var(--muted); cursor: default; }
+.explorer-file.is-nonmd:hover { background: transparent; }
+/* A folder's lazily-loaded children, indented under it. The container wraps in
+   the flex column so children stack full-width below the folder row. */
+.explorer-children { display: flex; flex-direction: column; margin-left: 14px; width: 100%; }
+.explorer-children[hidden] { display: none; }
+
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }
 .cm-table { border-collapse: collapse; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); }
 .cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; }

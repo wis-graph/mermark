@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { dirOf, resolveOpenPath } from "./path";
 import { createOpenPathPrompt } from "./open-file/path-prompt";
 import { createOutlinePanel } from "./outline/outline-panel";
+import { createExplorerPanel, type DirEntry } from "./explorer/explorer-panel";
 import { mountEditor, type EditorController, type PreviewMode, type SaveStatus } from "./editor";
 import { applyTheme, applyFontScale, makeThemeToggle } from "./theme";
 import {
@@ -217,14 +218,31 @@ async function boot() {
   //    so the outline tracks the live document. ────────────────────────────────
   const outline = createOutlinePanel({ getView: () => current.view });
 
+  // ── File explorer footer chrome. A lazy tree rooted at the live document's
+  //    folder: hover reads children (list_dir), `..` double-clicks upward, a
+  //    markdown file click reuses main's open path (read_file → commit → mount)
+  //    with zero new open code. Injected handlers keep it backend-independent
+  //    and reuse commitBeforeSwitch/openInWindow (hoisted boot-scope functions).
+  const explorer = createExplorerPanel({
+    listDir: (p) => invoke<DirEntry[]>("list_dir", { path: p }),
+    getBaseDir: () => currentBaseDir,
+    onOpenFile: async (absPath) => {
+      const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
+      await commitBeforeSwitch();
+      openInWindow(absPath, fresh);
+    },
+  });
+
   // Left corner: the right end is the settings/theme zone, so the open-path
-  // button lives at the far left (prepend → first child, before the mode toggle),
-  // with the outline button just to its right (left nav group, nav siblings).
-  // Prepend outline first, then open-path, so open-path ends up leftmost.
+  // button lives at the far left (prepend → first child, before the mode toggle).
+  // The left nav group reads open-path · 목차 · 탐색기 left-to-right. Prepend runs
+  // in reverse insertion order, so prepend explorer, then outline, then open-path.
+  bar.prepend(explorer.button);
   bar.prepend(outline.button);
   bar.prepend(prompt.button);
   root.append(prompt.row);
   root.append(outline.row);
+  root.append(explorer.row);
 
   // ── Per-file session persistence. The key is recomputed per open; the timer
   //    is scoped to the live editor and cancelled on teardown. ────────────────
@@ -349,6 +367,9 @@ async function boot() {
     // so an open outline panel would show the previous file's headings. Refresh
     // explicitly here (no-op when the panel is closed) so it tracks the swap.
     outline.refresh();
+    // The explorer's root is the live document's folder — reseed it on a switch
+    // (ephemeral root, not a setting). A no-op when the panel is closed.
+    explorer.resetToBaseDir();
 
     // dev-only: expose the live controller so the debug harness can read real
     // editor state (selection offsets, block specs) instead of guessing.

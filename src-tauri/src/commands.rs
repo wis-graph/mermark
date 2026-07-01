@@ -534,6 +534,124 @@ pub fn list_link_targets(dir: String) -> Result<Vec<LinkTarget>, String> {
     Ok(targets)
 }
 
+/// One entry in a directory listing for the file explorer. Unlike `LinkTarget`
+/// (the `[[`-picker's shape), the explorer shows the *literal* filesystem name —
+/// `name` is the full file name including any `.md` extension (not a stem) — plus
+/// the entry's normalized absolute `path` (fed back into `read_file` on a file
+/// click, or `list_dir` on a folder hover) and an `is_dir` flag (folders sort
+/// first and are hover-expandable). The frontend mirrors this exact shape in
+/// `src/mocks/tauri-core.ts` and its `invoke<DirEntry[]>("list_dir")`; serde
+/// serializes the field names verbatim, so `is_dir` stays snake_case on the wire.
+#[derive(serde::Serialize)]
+pub struct DirEntry {
+    /// Full file/folder name, extension included (`note.md`, not `note`).
+    pub name: String,
+    /// Normalized absolute path — a file click's `read_file` arg, a folder
+    /// hover's `list_dir` arg.
+    pub path: String,
+    /// Folder vs file: folders sort first and are hover-expandable.
+    pub is_dir: bool,
+}
+
+/// Whether a directory entry should be shown as a folder. `file_type()` reports
+/// the entry as it sits in *this* directory, so a symlink reads as a symlink
+/// (not a dir) even when it points at one; when that's the case we follow the
+/// link once (`path.is_dir()`) so a symlink-to-directory shows as an expandable
+/// folder — the explorer's `..`/symlink following is user-intended navigation.
+/// A plain directory is reported directly. One named rule so "is this an
+/// expandable folder" isn't re-derived inline. Reading only one level here means
+/// a symlink cycle can't runaway — deeper reads happen only on user hover.
+fn entry_is_dir(file_type: std::fs::FileType, path: &Path) -> bool {
+    if file_type.is_symlink() {
+        path.is_dir() // follows the link once; false for a broken/file symlink
+    } else {
+        file_type.is_dir()
+    }
+}
+
+/// Whether a directory entry is hidden by mermark's listing policy: any name
+/// beginning with `.` (`.git/`, `.DS_Store`, `.hidden.md`). Pulled out so the
+/// "dotfiles are excluded" rule reads as one named fact rather than an inline
+/// `starts_with('.')` buried in the classifier. Note `.test/` — user data — is
+/// also a dotfile and thus excluded from the listing; the command is read-only,
+/// so an excluded directory is never modified regardless.
+fn is_hidden_entry(file_name: &str) -> bool {
+    file_name.starts_with('.')
+}
+
+/// Sort key for a deterministic explorer listing: folders before files, then
+/// case-insensitively by name. Pulled out so the "folders first, then name"
+/// ordering is one named rule (mirroring `link_target_sort_key`), not an inline
+/// closure. `is_dir == true` ranks 0 (before) so folders lead the list.
+fn dir_entry_sort_key(e: &DirEntry) -> (u8, String) {
+    (if e.is_dir { 0 } else { 1 }, e.name.to_ascii_lowercase())
+}
+
+/// Classify a single directory entry into a `DirEntry`, or `None` when the
+/// listing policy hides it. The domain rule lives here as one named function
+/// instead of being scattered through `list_dir`: hidden dotfiles and mermark's
+/// own scratch/recovery artifacts are excluded; everything else — files *and*
+/// directories, of any type — is kept and shown by its full name. `is_dir` is
+/// passed in from the entry's `file_type()` (not re-derived from `path`) so a
+/// symlink-to-directory reports `is_dir = true` without the classifier following
+/// the link. `path` is normalized to a `..`/`.`-collapsed absolute path.
+fn classify_dir_entry(path: &Path, is_dir: bool) -> Option<DirEntry> {
+    let file_name = path.file_name()?.to_str()?.to_owned();
+    if is_hidden_entry(&file_name) || is_mermark_artifact(&file_name) {
+        return None;
+    }
+    Some(DirEntry {
+        name: file_name,
+        path: normalize_path(path).to_string_lossy().into_owned(),
+        is_dir,
+    })
+}
+
+/// List the immediate children (one level only — non-recursive) of `path` for
+/// the file explorer's lazy tree. Hidden dotfiles and mermark artifacts are
+/// excluded; folders sort first, then case-insensitively by name.
+///
+/// Graceful by design (mirrors `list_link_targets`): a missing/unreadable
+/// directory returns `Err(String)` (never panics) — the user explicitly opened
+/// this folder, so the failure is surfaced rather than swallowed. An individual
+/// unreadable entry (broken symlink, permission hiccup) is skipped via
+/// `filter_map(ok)` so one bad entry can't sink the whole list. An empty
+/// directory yields `Ok(vec![])`.
+///
+/// Read-only: enumerates directories, never writes, so the atomic-write /
+/// conflict-guard machinery doesn't apply. Unlike `resolve_image`, there is
+/// **no** `is_within_base` fence: the explorer's `..` navigation and symlink
+/// following are *user-intended* moves (an explicit double-click / hover), not
+/// an automatic scan, so arbitrary read-only listing above the base is allowed
+/// (a symlink-to-dir is shown as an expandable folder via `entry_is_dir`).
+/// Parent (`..`) resolution is done here by `normalize_path` (a `${root}/..`
+/// arg is folded), keeping path-shape a single source of truth rather than
+/// splitting `..` handling across the TS and Rust sides. Symlink cycles can't
+/// runaway because this reads only one level — deeper reads happen only when the
+/// user hovers, so there is no automatic recursive walk to loop.
+///
+/// `path` is a single-word arg; Tauri maps it to `path` on the JS side, which
+/// the `invoke` call and the browser mock must mirror.
+#[tauri::command]
+pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
+    let normalized = expand_home(&path);
+    let entries = std::fs::read_dir(&normalized)
+        .map_err(|e| format!("list {}: {e}", normalized.display()))?;
+    let mut result: Vec<DirEntry> = entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let path = entry.path();
+            let is_dir = entry
+                .file_type()
+                .map(|t| entry_is_dir(t, &path))
+                .unwrap_or(false);
+            classify_dir_entry(&path, is_dir)
+        })
+        .collect();
+    result.sort_by_key(dir_entry_sort_key);
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -897,6 +1015,104 @@ mod tests {
         assert_eq!(got.len(), 8, "all eight image extensions are recognized");
         assert!(got.iter().all(|t| t.kind == "image"), "all classify as image kind");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- list_dir (file explorer lazy tree, one level) ---
+    //
+    // Each test owns an isolated fixture under temp_dir() and tears it down.
+    // The `.test/` directory is never touched — read-only listing only.
+
+    #[test]
+    fn list_dir_sorts_folders_first_then_name() {
+        let dir = temp_dir("ld_sort");
+        fs::write(dir.join("z.md"), "x").unwrap();
+        fs::write(dir.join("a.md"), "x").unwrap();
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::create_dir_all(dir.join("Beta")).unwrap();
+        let got = list_dir(dir.to_string_lossy().into_owned()).unwrap();
+        let order: Vec<&str> = got.iter().map(|e| e.name.as_str()).collect();
+        // folders first (case-insensitive name), then files (case-insensitive name).
+        assert_eq!(order, vec!["Beta", "sub", "a.md", "z.md"]);
+        // is_dir flags are accurate per entry.
+        assert!(got.iter().find(|e| e.name == "Beta").unwrap().is_dir);
+        assert!(got.iter().find(|e| e.name == "sub").unwrap().is_dir);
+        assert!(!got.iter().find(|e| e.name == "a.md").unwrap().is_dir);
+        assert!(!got.iter().find(|e| e.name == "z.md").unwrap().is_dir);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn list_dir_empty_dir_returns_empty() {
+        let dir = temp_dir("ld_empty");
+        let got = list_dir(dir.to_string_lossy().into_owned()).unwrap();
+        assert!(got.is_empty(), "an empty directory yields an empty vec");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn list_dir_missing_dir_is_graceful_err() {
+        // A path that doesn't exist must return Err (graceful), never panic.
+        let missing = std::env::temp_dir()
+            .join(format!("mermark_ld_missing_{}", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        let res = list_dir(missing);
+        assert!(res.is_err(), "missing directory is a graceful error");
+    }
+
+    #[test]
+    fn list_dir_parent_resolves_via_normalize() {
+        // `${sub}/..` must resolve back to `base` (parent handling lives in
+        // normalize_path — single source of truth, not split across TS/Rust).
+        let base = temp_dir("ld_parent");
+        fs::write(base.join("root.md"), "x").unwrap();
+        let sub = base.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let up = format!("{}/..", sub.to_string_lossy());
+        let got = list_dir(up).unwrap();
+        let names: Vec<&str> = got.iter().map(|e| e.name.as_str()).collect();
+        // Listing base: its file `root.md` and its child dir `sub`.
+        assert!(names.contains(&"root.md"), "parent listing sees root.md, got {names:?}");
+        assert!(names.contains(&"sub"), "parent listing sees sub/, got {names:?}");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn list_dir_excludes_hidden_and_artifacts() {
+        let dir = temp_dir("ld_hidden");
+        fs::create_dir_all(dir.join(".git")).unwrap(); // hidden dir
+        fs::write(dir.join(".hidden.md"), "x").unwrap(); // dotfile
+        fs::write(dir.join("x.md.mermark-tmp.1"), "x").unwrap(); // autosave temp
+        fs::write(dir.join("y.md.mermark-recovered"), "x").unwrap(); // recovery marker
+        fs::write(dir.join("real.md"), "x").unwrap(); // valid file
+        fs::create_dir_all(dir.join("sub")).unwrap(); // valid dir
+        let got = list_dir(dir.to_string_lossy().into_owned()).unwrap();
+        let order: Vec<&str> = got.iter().map(|e| e.name.as_str()).collect();
+        // hidden + artifacts excluded; folder first, then file.
+        assert_eq!(order, vec!["sub", "real.md"]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_dir_shows_symlink_dir_without_recursing() {
+        use std::os::unix::fs::symlink;
+        // base/ contains a symlink `link` -> an outside dir holding `secret.md`.
+        // `link` must appear as is_dir=true (not blocked, unlike resolve_image),
+        // but list_dir reads only one level — `secret.md` never leaks into the result.
+        let base = temp_dir("ld_symlink");
+        let outside = temp_dir("ld_symlink_outside");
+        fs::write(outside.join("secret.md"), "x").unwrap();
+        symlink(&outside, base.join("link")).unwrap();
+        let got = list_dir(base.to_string_lossy().into_owned()).unwrap();
+        let link = got.iter().find(|e| e.name == "link").expect("symlink dir is shown");
+        assert!(link.is_dir, "symlink-to-dir reports is_dir=true");
+        assert!(
+            !got.iter().any(|e| e.name == "secret.md"),
+            "one level only — the symlink's target contents don't leak in"
+        );
+        fs::remove_dir_all(&base).ok();
+        fs::remove_dir_all(&outside).ok();
     }
 
     // --- resolve_image (recursive image fallback search) ---

@@ -13,6 +13,7 @@
 - **conflict guard** — read 시 mtime baseline 기록 → write 시 디스크 변경 감지(`CONFLICT:`), `.mermark-recovered` 복구.
 - **fs 와처** — `notify` 크레이트로 **열린 파일 1개만** watch(`watch_file`/`unwatch_file`, 경로 전환 시 슬롯 교체). 외부 변경 시 `file-changed` 이벤트(`{text,mtime}`) emit. 자기 쓰기 self-trigger 방지(mtime baseline `record_self_write`/`is_self_write`).
 - **path_exists** — 위키링크 대상 존재 확인.
+- **list_dir** — 한 디렉토리 레벨을 `Vec<DirEntry>`(`{name, path, is_dir}`)로 반환하는 레이지 리스팅. 폴더 먼저·이름순 정렬, 숨김(`.`)·아티팩트 제외, read-only. 없는/막힌 폴더는 graceful `Err`(빈 폴더는 `[]`). 파일 탐색기가 hover마다 한 레벨씩 호출.
 - **resolve_image** — 리터럴 경로에서 못 찾은 이미지를 baseDir 가두리(≤3 depth) 안에서 read-only 재귀 스캔해 basename 일치 파일의 절대경로를 반환(`Option<String>`). 경로 탈출/심링크 가드, 확장자 화이트리스트, 깊이·엔트리 상한. 못 찾으면 `None`(graceful).
 - **경로 정규화** — `normalize_path`(`..` collapse) + `expand_home`(선두 `~`/`~/` 홈 확장, `~user` 과확장 금지).
 
@@ -95,11 +96,12 @@
 - **위키링크 이동** — 대상 열기(현재 새 창), Alt=원문 편집.
 - **경로 열기** — 푸터 왼쪽 버튼 → 인라인 경로 입력 → 현재 창에 문서 전환(vim `:e` 감).
 - **목차보기 (Outline/TOC)** — 푸터 버튼 토글 → 헤딩 위계 트리 팝오버. 항목 클릭 시 해당 헤딩으로 이동(footnote와 공유하는 `jumpTo` 랜딩). 문서 변경 시 디바운스 실시간 갱신. 인라인 마크 정규화(`**B**`→`B`, 링크/위키링크는 표시 텍스트). 패널은 에디터 측정 트리 밖(줌 가드).
+- **파일 탐색기 (File Explorer)** — 푸터 버튼 토글 → 현 문서 폴더 루트의 **레이지 트리** 팝오버. 폴더 hover 시 자식을 `list_dir`로 읽어 펼침(120ms 디바운스 + 경로별 캐시, 재-hover 재호출 없음), 폴더 클릭은 펼침/접힘 토글. 최상단 `..` **더블클릭 → 상향**(부모가 새 루트, 캐시 clear+재구축). 파일 클릭 → **현재 창 열기**(main의 `openInWindow`+`commitBeforeSwitch` 재사용). 비-md 파일은 회색+클릭 no-op. 루트는 ephemeral(설정 아님) — 문서 전환 시 baseDir로 리셋. 패널은 에디터 측정 트리 밖(줌 가드, 데코 0개).
 
 ---
 
 ## L5 · UI 크롬 계층
-- **상태바** — 경로열기 · 목차(좌 네비 그룹) · 모드 토글 · 커서/위치 · 저장 상태 인디케이터(저장됨/저장중/충돌, 수동 저장·리로드 버튼 없음) · 테마 토글(다크→라이트→클로드 순환, moon/sun/palette 아이콘) · 설정(우). Lucide 아이콘.
+- **상태바** — 경로열기 · 목차 · 탐색기(좌 네비 그룹) · 모드 토글 · 커서/위치 · 저장 상태 인디케이터(저장됨/저장중/충돌, 수동 저장·리로드 버튼 없음) · 테마 토글(다크→라이트→클로드 순환, moon/sun/palette 아이콘) · 설정(우). Lucide 아이콘.
 - **설정 패널** — 테마 프리셋 드롭다운(다크/라이트/클로드 3종 select), 테마 비주얼 에디터(스워치 그리드 + JSON), 모드/Vim/타이포그래피.
 - **테마 프리셋** — 빌트인 3종: 다크 · 라이트 · **클로드**(Anthropic 에디토리얼 — 크림 캔버스 `#faf9f5` + 잉크 본문, 코랄 link/code, 시스템 세리프 헤딩). 프리셋 선택은 JSON 테마와 코히런스 유지(`loadPreset`/`syncJsonToPreset`).
 - **타이포그래피** — DESIGN.md(ElevenLabs) 타입 시스템, Pretendard 번들, 헤딩 스케일·트래킹. 클로드 테마는 헤딩에 시스템 세리프(`--font-heading`) 적용, 본문은 산스 유지.
