@@ -2,7 +2,7 @@
 
 > mermark의 전체 기능을 아키텍처 계층별로 구조화한 단일 참조. **기능을 추가/변경하면 이 문서를 갱신한다**(mermark-dev 파이프라인 Phase 6 규약). 정체성: 볼트 무게 없이 단일 마크다운 파일을 CLI로 즉시 열어 Obsidian급 품질로 편집·렌더하는 경량 에디터.
 >
-> 기준 버전: v0.4.0 · 최종 갱신: 2026-07-01
+> 기준 버전: v0.4.0 · 최종 갱신: 2026-07-02
 
 ---
 
@@ -13,7 +13,7 @@
 - **conflict guard** — read 시 mtime baseline 기록 → write 시 디스크 변경 감지(`CONFLICT:`), `.mermark-recovered` 복구.
 - **fs 와처** — `notify` 크레이트로 **열린 파일 1개만** watch(`watch_file`/`unwatch_file`, 경로 전환 시 슬롯 교체). 외부 변경 시 `file-changed` 이벤트(`{text,mtime}`) emit. 자기 쓰기 self-trigger 방지(mtime baseline `record_self_write`/`is_self_write`).
 - **path_exists** — 위키링크 대상 존재 확인.
-- **list_dir** — 한 디렉토리 레벨을 `Vec<DirEntry>`(`{name, path, is_dir}`)로 반환하는 레이지 리스팅. 폴더 먼저·이름순 정렬, 숨김(`.`)·아티팩트 제외, read-only. 없는/막힌 폴더는 graceful `Err`(빈 폴더는 `[]`). 파일 탐색기가 hover마다 한 레벨씩 호출.
+- **list_dir** — 한 디렉토리 레벨을 `Vec<DirEntry>`(`{name, path, is_dir}`)로 반환하는 레이지 리스팅. 폴더 먼저·이름순 정렬, 숨김(`.`)·아티팩트 제외, read-only. 없는/막힌 폴더는 graceful `Err`(빈 폴더는 `[]`). 파일 탐색기가 폴더 클릭마다 한 레벨씩 호출.
 - **resolve_image** — 리터럴 경로에서 못 찾은 이미지를 baseDir 가두리(≤3 depth) 안에서 read-only 재귀 스캔해 basename 일치 파일의 절대경로를 반환(`Option<String>`). 경로 탈출/심링크 가드, 확장자 화이트리스트, 깊이·엔트리 상한. 못 찾으면 `None`(graceful).
 - **경로 정규화** — `normalize_path`(`..` collapse) + `expand_home`(선두 `~`/`~/` 홈 확장, `~user` 과확장 금지).
 
@@ -96,7 +96,7 @@
 - **위키링크 이동** — 대상 열기(현재 새 창), Alt=원문 편집.
 - **경로 열기** — 푸터 왼쪽 버튼 → 인라인 경로 입력 → 현재 창에 문서 전환(vim `:e` 감).
 - **목차보기 (Outline/TOC)** — 푸터 버튼 토글 → 헤딩 위계 트리 팝오버. 항목 클릭 시 해당 헤딩으로 이동(footnote와 공유하는 `jumpTo` 랜딩). 문서 변경 시 디바운스 실시간 갱신. 인라인 마크 정규화(`**B**`→`B`, 링크/위키링크는 표시 텍스트). 패널은 에디터 측정 트리 밖(줌 가드).
-- **파일 탐색기 (File Explorer)** — 푸터 버튼 토글 → 현 문서 폴더 루트의 **레이지 트리** 팝오버. 폴더 hover 시 자식을 `list_dir`로 읽어 펼침(120ms 디바운스 + 경로별 캐시, 재-hover 재호출 없음), 폴더 클릭은 펼침/접힘 토글. 최상단 `..` **더블클릭 → 상향**(부모가 새 루트, 캐시 clear+재구축). 파일 클릭 → **현재 창 열기**(main의 `openInWindow`+`commitBeforeSwitch` 재사용). 비-md 파일은 회색+클릭 no-op. 루트는 ephemeral(설정 아님) — 문서 전환 시 baseDir로 리셋. 패널은 에디터 측정 트리 밖(줌 가드, 데코 0개).
+- **파일 탐색기 (File Explorer)** — 상태바 좌 네비 버튼 또는 **⌘⇧E**로 토글하는 **좌측 사이드바**(`.workspace` flex row: aside ∣ 에디터, 상태바는 폭 전체). 현 문서 폴더 루트의 **레이지 트리**. 폴더 **클릭 시에만** 자식을 `list_dir`로 읽어 펼침(경로별 캐시, 재펼침 재호출 없음) — **hover로는 아무 것도 안 열림**(WCAG 1.4.13). 최상단 `..` **단일클릭/Enter → 상향**(부모가 새 루트, 캐시 clear+재구축). **WAI-ARIA Tree 키보드**: ↑↓(포커스 이동) →(닫힌폴더 열기/열린폴더 첫자식) ←(열린폴더 닫기/부모) Enter(활성화) Home/End, roving tabindex(트리 전체 tab stop 1개). **포커스≠선택 분리**: 화살표는 포커스 링만 이동, Enter/클릭만 파일 활성화(단일선택). 파일 클릭/Enter → **현재 창 열기**(main의 `openInWindow`+`commitBeforeSwitch` 재사용, `activateItem` 단일 경로). 비-md 파일은 회색(`.is-nonmd`)+no-op. `role=tree/treeitem/group`·`aria-expanded/selected/level`. 기본 닫힘, 루트·열림 상태는 ephemeral(P0 무설정) — 문서 전환 시 baseDir로 리셋. 사이드바는 에디터 측정 트리 밖(줌 가드, 데코 0개), 테마 var만(다크/라이트/클로드 일관). *P1+ 범위 밖: 파일 작업(new/rename/delete)·다중선택·검색·드래그·폭 드래그·열림 영속·fs와처 실시간·OS기본앱 열기.*
 
 ---
 

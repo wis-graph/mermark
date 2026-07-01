@@ -157,8 +157,15 @@ async function boot() {
   // are built ONCE; re-opening a file swaps only the editor inside host.
   root.innerHTML = "";
   const host = el("div", "editor-host");
+  // .workspace is a flex ROW: the explorer sidebar (left) + the editor host
+  // (right). The status bar stays full-width below it (VSCode-style), so
+  // #app = column( workspace(row: aside | host), bar ). host is unchanged
+  // inside workspace, so every host.querySelector(".cm-scroller") reference,
+  // the measure tree, and the ⌘± zoom guard are untouched.
+  const workspace = el("div", "workspace");
+  workspace.append(host);
   const bar = el("div", "status-bar");
-  root.append(host, bar);
+  root.append(workspace, bar);
 
   // Boot mode = the panel's defaultMode (seed the live modeSetting from it),
   // then read it. After boot, ⌘E only moves modeSetting; defaultMode re-seeds
@@ -218,11 +225,11 @@ async function boot() {
   //    so the outline tracks the live document. ────────────────────────────────
   const outline = createOutlinePanel({ getView: () => current.view });
 
-  // ── File explorer footer chrome. A lazy tree rooted at the live document's
-  //    folder: hover reads children (list_dir), `..` double-clicks upward, a
-  //    markdown file click reuses main's open path (read_file → commit → mount)
-  //    with zero new open code. Injected handlers keep it backend-independent
-  //    and reuse commitBeforeSwitch/openInWindow (hoisted boot-scope functions).
+  // ── File explorer LEFT SIDEBAR. A lazy tree rooted at the live document's
+  //    folder: click reads children (list_dir), `..` single-clicks/Enters
+  //    upward, a markdown file click/Enter reuses main's open path (read_file →
+  //    commit → mount) with zero new open code. Injected handlers keep it
+  //    backend-independent and reuse commitBeforeSwitch/openInWindow.
   const explorer = createExplorerPanel({
     listDir: (p) => invoke<DirEntry[]>("list_dir", { path: p }),
     getBaseDir: () => currentBaseDir,
@@ -242,7 +249,9 @@ async function boot() {
   bar.prepend(prompt.button);
   root.append(prompt.row);
   root.append(outline.row);
-  root.append(explorer.row);
+  // The explorer is a LEFT sidebar (not a footer popover): mount it as the first
+  // child of .workspace so it sits left of the editor host.
+  workspace.prepend(explorer.aside);
 
   // ── Per-file session persistence. The key is recomputed per open; the timer
   //    is scoped to the live editor and cancelled on teardown. ────────────────
@@ -461,10 +470,19 @@ async function boot() {
   window.addEventListener(
     "keydown",
     (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.code === "KeyE") {
+      // ⌘E toggles edit/read; ⌘⇧E toggles the explorer sidebar. Guard on Shift so
+      // ⌘⇧E doesn't also flip the mode (both match metaKey + code KeyE).
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.code === "KeyE") {
         e.preventDefault();
         e.stopPropagation();
         toggleMode();
+      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyE") {
+        // ⌘⇧E (VSCode "focus explorer"). Global keydown, not a CM keymap: the
+        // sidebar lives outside .cm-content, so a CM keymap wouldn't fire when
+        // focus is in the tree. Reuses the button's toggle (open reseeds root).
+        e.preventDefault();
+        e.stopPropagation();
+        explorer.button.click();
       }
     },
     { capture: true }

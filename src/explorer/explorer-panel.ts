@@ -1,18 +1,23 @@
 import { icon } from "../icons";
 
 // ---------------------------------------------------------------------------
-// File explorer footer chrome — the same shape as the outline / open-by-path
-// buttons: a status-bar button that toggles a lazily-built in-place panel. The
-// panel is a LAZY tree rooted at the current document's folder: a folder's
-// children are read on hover via the injected listDir() (debounced), a top `..`
-// entry double-clicks upward (root change), and clicking a markdown file opens
-// it in the current window through the injected onOpenFile().
+// File explorer LEFT SIDEBAR — an editor-adjacent chrome shell, not a
+// decoration. The panel is a LAZY tree rooted at the current document's folder:
+// a folder's children are read on CLICK via the injected listDir() (never on
+// hover — WCAG 1.4.13), a top `..` entry single-clicks/Enters upward (root
+// change), and clicking/Entering a markdown file opens it in the current window
+// through the injected onOpenFile().
 //
-// This module is editor-adjacent CHROME, not a decoration: its DOM is a sibling
-// of the status bar (mounted under #app, never inside .cm-content/.cm-line), so
-// it makes ZERO block/inline decorations — the render-smoke invariant ("block
-// decorations come from a StateField") has no intersection here, and the ⌘±
-// zoom measure guard is untouched (the panel is outside the editor measure tree).
+// The tree is a WAI-ARIA Tree (APG): role=tree > role=treeitem > role=group,
+// roving tabindex (exactly one item is tab-focusable), and a full keyboard set
+// (↑↓→←/Enter/Home/End). FOCUS and SELECTION are DISTINCT: arrows move focus
+// only; Enter/click activates (opens a file / toggles a folder / changes root).
+//
+// This module mounts under #app (a sibling of the editor host / status bar),
+// never inside .cm-content/.cm-line, so it makes ZERO block/inline decorations
+// — the render-smoke invariant ("block decorations come from a StateField") has
+// no intersection here, and the ⌘± zoom measure guard is untouched (the aside
+// is outside the editor measure tree).
 //
 // The IPC (`list_dir`) and the file-open path (read_file → commitBeforeSwitch →
 // openInWindow) are INJECTED handlers, so this panel unit-tests without a real
@@ -29,18 +34,12 @@ export interface DirEntry {
   is_dir: boolean;
 }
 
-/** Debounce for reading a folder's children on hover. Named constant, not a
- *  setting: an internal UX smoothing delay (no user-visible knob) that keeps a
- *  fast sweep across the tree from firing a burst of list_dir calls. Short
- *  enough to feel instant, long enough to skip folders you only pass over. */
-const EXPLORER_HOVER_MS = 120;
-
 export interface ExplorerPanel {
-  /** The button to place in the status bar (toggles the panel). */
+  /** The button to place in the status bar (toggles the sidebar). */
   readonly button: HTMLButtonElement;
-  /** The explorer panel (hidden until first opened). Append as a sibling of the
-   *  status bar (under #app) — never inside the editor content. */
-  readonly row: HTMLElement;
+  /** The sidebar shell (hidden until first opened). Append as a sibling of the
+   *  editor host under #app / .workspace — never inside the editor content. */
+  readonly aside: HTMLElement;
   /** Reset the root to the injected baseDir and rebuild. Call on document switch
    *  so the explorer follows the live document's folder. A no-op while hidden. */
   resetToBaseDir(): void;
@@ -81,42 +80,84 @@ export function createExplorerPanel({
   const label = create("span", "status-btn-label");
   label.textContent = "탐색기";
   button.append(label);
-  button.title = "파일 탐색기 (폴더 hover 펼침 · 파일 클릭 열기 · .. 더블클릭 상향)";
+  button.title = "파일 탐색기 (⌘⇧E · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · .. 상위)";
 
-  const row = create("div", "explorer-row");
-  row.hidden = true;
+  const aside = create("aside", "explorer-aside");
+  aside.hidden = true;
+  const header = create("div", "explorer-header");
+  header.textContent = "탐색기";
   const tree = create("div", "explorer-tree");
-  row.append(tree);
+  tree.setAttribute("role", "tree");
+  tree.setAttribute("aria-label", "파일 탐색기");
+  aside.append(header, tree);
 
-  // Per-root cache: a folder's children are read once and reused on re-hover
+  // Per-root cache: a folder's children are read once and reused on re-expand
   // (no re-call). Cleared on root change / panel reopen — MVP has no fs-watch
   // invalidation (lazy read-only tree, "look around this doc lightly").
   const childrenCache = new Map<string, DirEntry[]>();
 
-  /** Build one entry row. Folders get an aria-expanded toggle + a lazy children
-   *  container; files get a click-to-open handle (greyed + no-op when non-md). */
-  const makeEntry = (e: DirEntry): HTMLElement => {
-    const kind = e.is_dir ? "explorer-dir" : "explorer-file";
-    const item = create("div", `explorer-item ${kind}`);
-    item.dataset.path = e.path;
-    if (e.is_dir) item.setAttribute("aria-expanded", "false");
-    if (!e.is_dir && !isMarkdownEntry(e.name)) item.classList.add("is-nonmd");
-    const glyph = create("span", "explorer-glyph");
-    glyph.append(icon(e.is_dir ? "folder" : "file"));
-    const name = create("span", "explorer-name");
-    name.textContent = e.name;
-    name.title = e.name;
-    item.append(glyph, name);
-    if (e.is_dir) {
-      const kids = create("div", "explorer-children");
-      kids.hidden = true;
-      item.append(kids);
+  /** The focus cursor (roving tabindex owner). Distinct from selection: arrows
+   *  move this, but only Enter/click activates. Reset on every renderTree. */
+  let focused: HTMLElement | null = null;
+
+  const allItems = (): HTMLElement[] =>
+    [...tree.querySelectorAll(".explorer-item")] as HTMLElement[];
+
+  /** The flattened list of VISIBLE tree items in tree (pre-order) order — every
+   *  `.explorer-item` whose ancestor groups are all expanded. Pure query: an
+   *  item is hidden iff it sits inside a collapsed `.explorer-children`. This is
+   *  the index space the keyboard (↑↓/Home/End) walks. CQS: no side effects. */
+  const visibleItems = (): HTMLElement[] =>
+    allItems().filter((el) => !el.closest(".explorer-children[hidden]"));
+
+  /** Move the focus cursor to `item`: roving tabindex (this item = 0, all others
+   *  = -1) + the `.is-focused` ring. Command (void). `moveDom=false` seeds the
+   *  initial cursor on render without stealing DOM focus (no scroll on open). */
+  const focusItem = (item: HTMLElement, moveDom = true): void => {
+    for (const el of allItems()) {
+      el.tabIndex = -1;
+      el.classList.remove("is-focused");
     }
-    return item;
+    item.tabIndex = 0;
+    item.classList.add("is-focused");
+    focused = item;
+    if (moveDom) item.focus();
   };
 
-  /** Read `path` once, then serve from cache on every re-read (re-hover / re-open
-   *  of the same folder never re-calls list_dir). A missing/blocked folder makes
+  /** Move focus `delta` steps through the visible list (clamped at the ends).
+   *  Opens/closes nothing — pure cursor movement (↓ = +1, ↑ = -1). Command. */
+  const focusRelative = (delta: number): void => {
+    const vis = visibleItems();
+    if (!focused) {
+      if (vis[0]) focusItem(vis[0]);
+      return;
+    }
+    const i = vis.indexOf(focused);
+    const next = vis[Math.min(vis.length - 1, Math.max(0, i + delta))];
+    if (next) focusItem(next);
+  };
+
+  /** Move focus to the first / last visible node (Home / End). Command (void). */
+  const focusEdge = (edge: "first" | "last"): void => {
+    const vis = visibleItems();
+    const target = edge === "first" ? vis[0] : vis[vis.length - 1];
+    if (target) focusItem(target);
+  };
+
+  /** Mark `item` as the SELECTED node (single-select): `aria-selected` + the
+   *  `.is-selected` fill. Distinct from focus — this only moves when a file is
+   *  activated (Enter/click), so arrow navigation never selects. Command. */
+  const selectItem = (item: HTMLElement): void => {
+    for (const el of allItems()) {
+      el.removeAttribute("aria-selected");
+      el.classList.remove("is-selected");
+    }
+    item.setAttribute("aria-selected", "true");
+    item.classList.add("is-selected");
+  };
+
+  /** Read `path` once, then serve from cache on every re-read (re-expand of the
+   *  same folder never re-calls list_dir). A missing/blocked folder makes
    *  list_dir reject — treat it as empty (silent, not a crash): the user just
    *  sees no children. The empty result is cached so a bad folder isn't retried. */
   const readChildren = async (path: string): Promise<DirEntry[]> => {
@@ -132,9 +173,43 @@ export function createExplorerPanel({
     return entries;
   };
 
-  /** Fill a folder node's children container from list_dir (once) and reveal it.
-   *  Command (void). Idempotent via data-loaded — the first hover/click loads,
-   *  later ones just re-show the already-built DOM. */
+  /** Build one entry row. Folders get a chevron twisty + aria-expanded + a lazy
+   *  children group; files get a spacer (chevron alignment) and are greyed +
+   *  inert when non-markdown. `level` (1-based) drives aria-level + the CSS
+   *  indent var, so indentation always matches the announced depth. */
+  const makeEntry = (e: DirEntry, level: number): HTMLElement => {
+    const kind = e.is_dir ? "explorer-dir" : "explorer-file";
+    const item = create("div", `explorer-item ${kind}`);
+    item.setAttribute("role", "treeitem");
+    item.setAttribute("aria-level", String(level));
+    item.tabIndex = -1;
+    item.dataset.path = e.path;
+    item.dataset.level = String(level);
+    item.style.setProperty("--level", String(level));
+    if (e.is_dir) item.setAttribute("aria-expanded", "false");
+    if (!e.is_dir && !isMarkdownEntry(e.name)) item.classList.add("is-nonmd");
+
+    const chevron = create("span", e.is_dir ? "explorer-chevron" : "explorer-chevron explorer-chevron-empty");
+    if (e.is_dir) chevron.append(icon("chevron-right"));
+    const glyph = create("span", "explorer-glyph");
+    glyph.append(icon(e.is_dir ? "folder" : "file"));
+    const name = create("span", "explorer-name");
+    name.textContent = e.name;
+    name.title = e.name;
+    item.append(chevron, glyph, name);
+
+    if (e.is_dir) {
+      const kids = create("div", "explorer-children");
+      kids.setAttribute("role", "group");
+      kids.hidden = true;
+      item.append(kids);
+    }
+    return item;
+  };
+
+  /** Fill a folder node's children group from list_dir (once) and reveal it.
+   *  Command (void). Idempotent via data-loaded — the first click loads, later
+   *  ones just re-show the already-built DOM. Children get level+1. */
   const expandFolder = async (node: HTMLElement): Promise<void> => {
     node.setAttribute("aria-expanded", "true");
     const kids = node.querySelector(":scope > .explorer-children") as HTMLElement | null;
@@ -144,34 +219,67 @@ export function createExplorerPanel({
     node.dataset.loaded = "true";
     const path = node.dataset.path;
     if (!path) return;
+    const level = Number(node.dataset.level ?? "1") + 1;
     const entries = await readChildren(path);
-    for (const child of entries) kids.append(makeEntry(child));
+    for (const child of entries) kids.append(makeEntry(child, level));
   };
 
   /** Hide a folder's children (DOM + cache preserved for instant re-expand).
-   *  Command (void). The inverse of expandFolder — the click toggle's off half. */
+   *  Command (void). The inverse of expandFolder — the toggle's off half. */
   const collapseFolder = (node: HTMLElement): void => {
     node.setAttribute("aria-expanded", "false");
     const kids = node.querySelector(":scope > .explorer-children") as HTMLElement | null;
     if (kids) kids.hidden = true;
   };
 
+  /** Toggle a folder open/closed. Command (void). The single expand/collapse
+   *  decision, shared by click + Enter + → so the rule lives in one place. */
+  const toggleFolder = (node: HTMLElement): void => {
+    if (node.getAttribute("aria-expanded") === "true") collapseFolder(node);
+    else void expandFolder(node);
+  };
+
+  /** The folder node that owns `item` (the treeitem wrapping its group), or null
+   *  at the root. Pure query — used by ← to walk to the parent. */
+  const parentItem = (item: HTMLElement): HTMLElement | null => {
+    const group = item.parentElement;
+    if (!group?.classList.contains("explorer-children")) return null;
+    return group.parentElement as HTMLElement | null;
+  };
+
+  /** The first child treeitem of an expanded folder, or null. Pure query — used
+   *  by → to step into an already-open folder. */
+  const firstChildItem = (node: HTMLElement): HTMLElement | null =>
+    node.querySelector(":scope > .explorer-children > .explorer-item") as HTMLElement | null;
+
   /** (Re)build the tree at `rootPath`: a top `..` entry then the root's sorted
-   *  children. The backend list_dir already sorts (folders first, name) — we
-   *  render in the order returned. Command (void). */
+   *  children (level 1). The backend list_dir already sorts (folders first,
+   *  name) — we render in the order returned. Seeds the focus cursor on the
+   *  first visible node without stealing DOM focus. Command (void). */
   const renderTree = async (rootPath: string): Promise<void> => {
     tree.replaceChildren();
+    focused = null;
     const up = create("div", "explorer-item explorer-up");
+    up.setAttribute("role", "treeitem");
+    up.setAttribute("aria-level", "1");
+    up.tabIndex = -1;
+    up.dataset.level = "1";
+    up.style.setProperty("--level", "1");
     up.dataset.path = `${rootPath}/..`; // parent resolution is the backend's job
+    const upChevron = create("span", "explorer-chevron explorer-chevron-empty");
     const upGlyph = create("span", "explorer-glyph");
     upGlyph.append(icon("corner-left-up"));
     const upName = create("span", "explorer-name");
     upName.textContent = "..";
-    up.append(upGlyph, upName);
-    up.title = "상위 폴더로 (더블클릭)";
+    up.append(upChevron, upGlyph, upName);
+    up.title = "상위 폴더로 (클릭 / Enter)";
     tree.append(up);
+
     const entries = await readChildren(rootPath);
-    for (const e of entries) tree.append(makeEntry(e));
+    for (const e of entries) tree.append(makeEntry(e, 1));
+
+    const first = visibleItems()[0];
+    if (first) focusItem(first, false);
   };
 
   /** Change the tree root to `parentPath` (the `..` target). Clears the per-root
@@ -183,66 +291,115 @@ export function createExplorerPanel({
     void renderTree(parentPath);
   };
 
+  /** The SINGLE activation path, shared by click + Enter (like mermaid's single
+   *  clickEntry): file → open (markdown only; non-md is inert), folder → toggle,
+   *  `..` → change root. Selection moves only here (opening a file), never on
+   *  arrow navigation. Command (void). */
+  const activateItem = (item: HTMLElement): void => {
+    if (item.classList.contains("explorer-up")) {
+      if (item.dataset.path) changeRoot(item.dataset.path);
+      return;
+    }
+    if (item.classList.contains("explorer-dir")) {
+      toggleFolder(item);
+      return;
+    }
+    if (item.classList.contains("is-nonmd")) return; // non-md is greyed + inert
+    const path = item.dataset.path;
+    if (!path) return;
+    selectItem(item);
+    onOpenFile(path);
+  };
+
+  /** → key rule: closed folder = open / open folder = step to first child /
+   *  file · `..` = no-op. Named so the ARIA arrow rule isn't an inline if. */
+  const arrowExpandOrEnter = (item: HTMLElement): void => {
+    if (!item.classList.contains("explorer-dir")) return;
+    if (item.getAttribute("aria-expanded") === "true") {
+      const first = firstChildItem(item);
+      if (first) focusItem(first);
+    } else {
+      void expandFolder(item);
+    }
+  };
+
+  /** ← key rule: open folder = close / everything else = focus parent. Named so
+   *  the ARIA arrow rule isn't an inline if. Command (void). */
+  const arrowCollapseOrParent = (item: HTMLElement): void => {
+    if (item.classList.contains("explorer-dir") && item.getAttribute("aria-expanded") === "true") {
+      collapseFolder(item);
+      return;
+    }
+    const parent = parentItem(item);
+    if (parent) focusItem(parent);
+  };
+
   const open = () => {
-    row.hidden = false;
+    aside.hidden = false;
     childrenCache.clear(); // reopen = fresh view (no stale invalidation to track)
     void renderTree(getBaseDir());
   };
   const close = () => {
-    row.hidden = true;
+    aside.hidden = true;
   };
   const resetToBaseDir = (): void => {
-    if (row.hidden) return; // closed panel reseeds on next open
+    if (aside.hidden) return; // closed panel reseeds on next open
     childrenCache.clear();
     void renderTree(getBaseDir());
   };
 
   button.addEventListener("click", () => {
-    if (row.hidden) open();
+    if (aside.hidden) open();
     else close();
   });
 
-  // Hover a folder → lazily load + expand its children (debounced across a sweep).
-  // The first hover triggers the read; the cache makes re-hover free.
-  let hoverTimer: ReturnType<typeof setTimeout> | undefined;
-  tree.addEventListener(
-    "mouseenter",
-    (e) => {
-      const node = (e.target as HTMLElement).closest?.(".explorer-dir") as HTMLElement | null;
-      if (!node) return;
-      if (node.dataset.loaded === "true") return; // already loaded — nothing to fetch
-      clearTimeout(hoverTimer);
-      hoverTimer = setTimeout(() => void expandFolder(node), EXPLORER_HOVER_MS);
-    },
-    true, // capture: mouseenter doesn't bubble, so listen on the capturing phase
-  );
-
-  // Click landing — one delegated listener, `closest` dispatch (outline pattern):
-  //   folder → toggle expand/collapse   file(.md) → open in current window
-  //   file(non-md) → no-op (greyed)     `..` → click is inert (dblclick goes up)
+  // Click landing — one delegated listener (outline/mermaid single-path shape):
+  // clicking an item moves the focus cursor there AND activates it (folder →
+  // toggle, file → open, `..` → up). No hover, no dblclick — every action is
+  // click- or keyboard-reachable.
   tree.addEventListener("click", (e) => {
-    const target = e.target as HTMLElement;
-    const item = target.closest(".explorer-item") as HTMLElement | null;
+    const item = (e.target as HTMLElement).closest(".explorer-item") as HTMLElement | null;
     if (!item) return;
-    if (item.classList.contains("explorer-up")) return; // up is dblclick-only
-    if (item.classList.contains("explorer-dir")) {
-      if (item.getAttribute("aria-expanded") === "true") collapseFolder(item);
-      else void expandFolder(item);
-      return;
+    focusItem(item);
+    activateItem(item);
+  });
+
+  // Keyboard — one delegated keydown on the tree (roving tabindex). Each key maps
+  // to a named rule; the tree is a single tab stop and arrows move WITHIN it.
+  tree.addEventListener("keydown", (e) => {
+    const item = focused;
+    if (!item) return;
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        focusRelative(1);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        focusRelative(-1);
+        break;
+      case "ArrowRight":
+        e.preventDefault();
+        arrowExpandOrEnter(item);
+        break;
+      case "ArrowLeft":
+        e.preventDefault();
+        arrowCollapseOrParent(item);
+        break;
+      case "Enter":
+        e.preventDefault();
+        activateItem(item);
+        break;
+      case "Home":
+        e.preventDefault();
+        focusEdge("first");
+        break;
+      case "End":
+        e.preventDefault();
+        focusEdge("last");
+        break;
     }
-    // A file: open only markdown (non-md is greyed + inert).
-    if (item.classList.contains("is-nonmd")) return;
-    const path = item.dataset.path;
-    if (path) onOpenFile(path);
   });
 
-  // `..` double-click → go up a level (parent becomes the new root, tree reset).
-  tree.addEventListener("dblclick", (e) => {
-    const up = (e.target as HTMLElement).closest(".explorer-up") as HTMLElement | null;
-    if (!up?.dataset.path) return;
-    e.preventDefault();
-    changeRoot(up.dataset.path);
-  });
-
-  return { button, row, resetToBaseDir };
+  return { button, aside, resetToBaseDir };
 }
