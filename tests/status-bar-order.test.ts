@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { arrangeStatusBar } from "../src/status-bar";
 
-// The status-bar layout contract: left→right order is
-// 탐색기 · 최근 · 경로열기 · 목차 · [pos · spacer · save] · 모드 · 테마.
-// arrangeStatusBar is the single ordering rule; this pins it with plain elements
-// (no editor boot needed).
+// The status-bar (footer) layout contract, reduced by M2 (sidebar toggles /
+// open-path / mode / theme / settings all moved up to the title-bar): footer
+// left→right is now 브레드크럼 슬롯 · spacer · save · pos, with pos landing at
+// the far right (the "M2 title-bar redesign" moved pos from the center).
 
 function mk(id: string): HTMLElement {
   const e = document.createElement("button");
@@ -13,52 +13,28 @@ function mk(id: string): HTMLElement {
 }
 
 describe("arrangeStatusBar", () => {
-  it("lays the chrome out left→right in the canonical order", () => {
+  it("lays the reduced footer out left→right: breadcrumb · spacer · save · pos", () => {
     const bar = document.createElement("div");
     const parts = {
-      explorer: mk("explorer"),
-      recent: mk("recent"),
-      openPath: mk("openPath"),
-      outline: mk("outline"),
-      pos: mk("pos"),
+      breadcrumb: mk("breadcrumb"),
       spacer: mk("spacer"),
       save: mk("save"),
-      mode: mk("mode"),
-      theme: mk("theme"),
+      pos: mk("pos"),
     };
     arrangeStatusBar(bar, parts);
     const ids = [...bar.children].map((c) => (c as HTMLElement).dataset.id);
-    expect(ids).toEqual([
-      "explorer",
-      "recent",
-      "openPath",
-      "outline",
-      "pos",
-      "spacer",
-      "save",
-      "mode",
-      "theme",
-    ]);
+    expect(ids).toEqual(["breadcrumb", "spacer", "save", "pos"]);
   });
 
-  it("places the mode toggle in the right cluster (after save, before theme)", () => {
+  it("pos is the last (far-right) child", () => {
     const bar = document.createElement("div");
     const parts = {
-      explorer: mk("explorer"),
-      recent: mk("recent"),
-      openPath: mk("openPath"),
-      outline: mk("outline"),
-      pos: mk("pos"),
+      breadcrumb: mk("breadcrumb"),
       spacer: mk("spacer"),
       save: mk("save"),
-      mode: mk("mode"),
-      theme: mk("theme"),
+      pos: mk("pos"),
     };
     arrangeStatusBar(bar, parts);
-    const ids = [...bar.children].map((c) => (c as HTMLElement).dataset.id);
-    expect(ids.indexOf("mode")).toBeGreaterThan(ids.indexOf("save"));
-    expect(ids.indexOf("mode")).toBeLessThan(ids.indexOf("theme"));
-    // the nav group sits left of the center cluster
-    expect(ids.indexOf("outline")).toBeLessThan(ids.indexOf("pos"));
+    expect(bar.lastElementChild).toBe(parts.pos);
   });
 });

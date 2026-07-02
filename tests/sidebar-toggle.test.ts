@@ -25,7 +25,7 @@ describe("renderSidebarButton (E)", () => {
     expect(b.querySelector(".icon-panel-left-close")).toBeNull();
     expect(b.getAttribute("aria-expanded")).toBe("false");
     expect(b.getAttribute("aria-controls")).toBe("explorer-aside");
-    expect(b.querySelector(".status-btn-label")?.textContent).toBe("탐색기");
+    expect(b.querySelector(".chrome-btn-label")?.textContent).toBe("탐색기");
   });
 
   it("open → panel-left-close + aria-expanded=true, label preserved", () => {
@@ -34,7 +34,7 @@ describe("renderSidebarButton (E)", () => {
     expect(b.querySelector(".icon-panel-left-close")).toBeTruthy();
     expect(b.querySelector(".icon-panel-left-open")).toBeNull();
     expect(b.getAttribute("aria-expanded")).toBe("true");
-    expect(b.querySelector(".status-btn-label")?.textContent).toBe("탐색기");
+    expect(b.querySelector(".chrome-btn-label")?.textContent).toBe("탐색기");
   });
 
   it("re-rendering replaces the icon (no accumulation of stale glyphs)", () => {
@@ -42,6 +42,6 @@ describe("renderSidebarButton (E)", () => {
     renderSidebarButton(b, "목차", false, "outline-aside");
     renderSidebarButton(b, "목차", true, "outline-aside");
     expect(b.querySelectorAll("svg")).toHaveLength(1);
-    expect(b.querySelectorAll(".status-btn-label")).toHaveLength(1);
+    expect(b.querySelectorAll(".chrome-btn-label")).toHaveLength(1);
   });
 });

@@ -123,7 +123,7 @@ describe("recent panel: toggle icon + disclosure ARIA (E)", () => {
     expect(p.button.querySelector(".icon-history")).toBeNull(); // old history icon removed
     expect(p.button.getAttribute("aria-expanded")).toBe("false");
     expect(p.button.getAttribute("aria-controls")).toBe("recent-aside");
-    expect(p.button.querySelector(".status-btn-label")?.textContent).toBe("최근");
+    expect(p.button.querySelector(".chrome-btn-label")?.textContent).toBe("최근");
   });
 
   it("opening swaps to panel-left-close + aria-expanded=true, label preserved", () => {
@@ -131,7 +131,7 @@ describe("recent panel: toggle icon + disclosure ARIA (E)", () => {
     p.button.click();
     expect(p.button.querySelector(".icon-panel-left-close")).toBeTruthy();
     expect(p.button.getAttribute("aria-expanded")).toBe("true");
-    expect(p.button.querySelector(".status-btn-label")?.textContent).toBe("최근");
+    expect(p.button.querySelector(".chrome-btn-label")?.textContent).toBe("최근");
   });
 
   it("closing swaps back to panel-left-open + aria-expanded=false", () => {

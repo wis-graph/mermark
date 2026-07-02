@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { icon } from "../src/icons";
 import { makeThemeToggle } from "../src/theme";
-import { mountSettingsButton } from "../src/settings/panel/modal";
+import { createSettingsButton } from "../src/settings/panel/modal";
 
-// Guards the footer redesign: the status-bar chrome renders Lucide inline SVGs,
-// not emoji glyphs (✎👁☾☀⚙✕). If a refactor reverts a button to textContent,
-// these assertions catch the regression — the buttons must carry an <svg>, and the
-// SVG must be the Lucide canvas (viewBox 0 0 24 24, stroke=currentColor) so token
-// colors (--muted → --fg) drive it for free.
+// Guards the chrome redesign: the title-bar/status-bar chrome renders Lucide
+// inline SVGs, not emoji glyphs (✎👁☾☀⚙✕). If a refactor reverts a button to
+// textContent, these assertions catch the regression — the buttons must carry
+// an <svg>, and the SVG must be the Lucide canvas (viewBox 0 0 24 24,
+// stroke=currentColor) so token colors (--muted → --fg) drive it for free.
 
 const EMOJI = /[✎👁☾☀⚙✕✓●⚠]/;
 
@@ -45,10 +45,10 @@ describe("status-bar icons (Lucide SVG, no emoji)", () => {
     document.body.innerHTML = "";
     const bar = document.createElement("div");
     document.body.appendChild(bar);
-    mountSettingsButton(bar);
+    bar.append(createSettingsButton());
     const btn = bar.querySelector(".settings-btn") as HTMLButtonElement;
     expect(btn.querySelector("svg.icon-settings")).not.toBeNull();
-    expect(btn.querySelector(".status-btn-label")?.textContent).toBe("설정");
+    expect(btn.querySelector(".chrome-btn-label")?.textContent).toBe("설정");
     expect(btn.textContent ?? "").not.toMatch(EMOJI);
   });
 });

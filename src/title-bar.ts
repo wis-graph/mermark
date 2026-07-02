@@ -13,13 +13,33 @@
 // attribute, so the window-control buttons (which don't carry the attribute)
 // receive their clicks normally — the drag region doesn't swallow them. M2
 // note: any filler/spacer element added between the buttons later needs the
-// same attribute, or that strip of pixels stops being draggable.
+// same attribute, or that strip of pixels stops being draggable — see
+// createDragSpacer below, which is exactly that filler.
+//
+// M2: the title-bar is now also the LEFT-command-group + right-cluster home
+// (sidebar toggles, open-path, mode/theme/settings) — arrangeTitleBar owns
+// that left→right order, the same "single named ordering function" contract
+// arrangeStatusBar (status-bar.ts) already established.
 
 import { isMac } from "./shortcuts/keys";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export interface TitleBar {
   el: HTMLElement;
+}
+
+/** The chrome parts arrangeTitleBar lays out, left→right. `explorer`/`recent`/
+ *  `outline`/`openPath` are the left command group (sidebar toggles first, then
+ *  open-path); `mode`/`theme`/`settings` are the right cluster. A drag spacer
+ *  fills the gap between them (created internally — see createDragSpacer). */
+export interface TitleBarParts {
+  explorer: HTMLElement;
+  recent: HTMLElement;
+  outline: HTMLElement;
+  openPath: HTMLElement;
+  mode: HTMLElement;
+  theme: HTMLElement;
+  settings: HTMLElement;
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -124,4 +144,41 @@ export function createTitleBar(opts?: { platform?: "mac" | "other" }): TitleBar 
   }
 
   return { el };
+}
+
+/** Window controls (win/linux) must stay the LAST children of the title-bar —
+ *  OS convention. Insert every arranged part before them; on mac (no controls)
+ *  this degrades to a plain append. Private to title-bar.ts. */
+function insertBeforeWindowControls(bar: HTMLElement, ...els: HTMLElement[]): void {
+  const anchor = bar.querySelector(":scope > .window-controls");
+  for (const el of els) bar.insertBefore(el, anchor); // anchor null → append
+}
+
+/** The flexible filler between the left command group and the right cluster.
+ *  MUST carry data-tauri-drag-region — a child without the attribute is a dead
+ *  zone for window dragging (M1 handoff rule, title-bar.ts header comment). */
+function createDragSpacer(): HTMLElement {
+  const s = document.createElement("span");
+  s.className = "title-spacer";
+  s.setAttribute("data-tauri-drag-region", "");
+  return s;
+}
+
+/** Arrange the title-bar chrome to the canonical order (design M2 §1):
+ *  탐색기 · 최근 · 목차 · 경로열기 · [drag spacer] · 모드 · 테마 · ⚙ — followed by
+ *  the win/linux window-controls cluster (always last, already appended by
+ *  createTitleBar). Every part is inserted via insertBeforeWindowControls, so
+ *  the window-controls-last rule holds regardless of call order. Command (void). */
+export function arrangeTitleBar(bar: HTMLElement, p: TitleBarParts): void {
+  insertBeforeWindowControls(
+    bar,
+    p.explorer,
+    p.recent,
+    p.outline,
+    p.openPath,
+    createDragSpacer(),
+    p.mode,
+    p.theme,
+    p.settings,
+  );
 }

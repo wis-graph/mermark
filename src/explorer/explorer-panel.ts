@@ -99,7 +99,7 @@ export function createExplorerPanel({
   onOpenFile,
   onOpen,
 }: ExplorerHandlers): ExplorerPanel {
-  const button = create("button", "status-btn explorer-btn") as HTMLButtonElement;
+  const button = create("button", "chrome-btn explorer-btn") as HTMLButtonElement;
   button.title = "파일 탐색기 (⌘B · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · .. 상위)";
 
   const aside = create("aside", "explorer-aside sidebar-aside");

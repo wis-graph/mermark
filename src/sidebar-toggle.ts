@@ -29,7 +29,7 @@ export function renderSidebarButton(
   isOpen: boolean,
   controlsId: string,
 ): void {
-  const label = create("span", "status-btn-label");
+  const label = create("span", "chrome-btn-label");
   label.textContent = labelText;
   button.replaceChildren(icon(isOpen ? "panel-left-close" : "panel-left-open"), label);
   button.setAttribute("aria-expanded", String(isOpen));

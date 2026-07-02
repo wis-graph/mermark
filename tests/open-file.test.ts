@@ -1,28 +1,33 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOpenPathPrompt } from "../src/open-file/path-prompt";
 
-/** The open-by-path prompt is now "footer-becomes-input": clicking the button
- *  toggles `.path-editing` on the status bar and turns it into a full-width path
- *  input (no separate row opens below). Enter submits, Esc/blur cancels. These
- *  tests pin that UI contract (toggle, submit, error-keeps-editing, cancel)
- *  without a real editor — the resolve→read→re-mount is the caller's onOpen. */
+/** The open-by-path prompt is "bar-becomes-input": clicking the button toggles
+ *  `.path-editing` on its host bar and turns it into a full-width path input (no
+ *  separate row opens below). M2 moved the host bar from the footer/status-bar
+ *  up to the title-bar (main.ts wires `bar: titleBar.el`); this module is
+ *  bar-agnostic (no logic change), so these tests exercise it against a plain
+ *  `.title-bar` element — the CSS contract these pin lives in
+ *  `.title-bar.path-editing` selectors (styles.css). Enter submits, Esc/blur
+ *  cancels. These tests pin that UI contract (toggle, submit, error-keeps-editing,
+ *  cancel) without a real editor — the resolve→read→re-mount is the caller's
+ *  onOpen. */
 
 function press(input: HTMLInputElement, key: string) {
   input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
 }
 
-describe("open-path footer prompt (inline / footer-becomes-input)", () => {
+describe("open-path title-bar prompt (inline / bar-becomes-input)", () => {
   let bar: HTMLElement;
   beforeEach(() => {
     document.body.innerHTML = "";
     bar = document.createElement("div");
-    bar.className = "status-bar";
+    bar.className = "title-bar";
     document.body.appendChild(bar);
   });
 
-  it("builds a status-bar button with the folder-open icon + label", () => {
+  it("builds a chrome button with the folder-open icon + label", () => {
     const { button } = createOpenPathPrompt({ bar, onOpen: async () => {} });
-    expect(button.classList.contains("status-btn")).toBe(true);
+    expect(button.classList.contains("chrome-btn")).toBe(true);
     expect(button.classList.contains("open-path")).toBe(true);
     expect(button.querySelector(".icon-folder-open")).not.toBeNull();
     expect(button.textContent).toContain("경로 열기");

@@ -1,11 +1,19 @@
 import { icon } from "../icons";
 
-/** Open-by-path status-bar chrome, "footer-becomes-input" style: a status-bar
- *  button that, when clicked, turns the STATUS BAR ITSELF into a full-width path
- *  input — no separate row opens below, so the bar keeps its height and the
- *  layout never shifts. Toggling adds `.path-editing` to the bar; CSS hides the
- *  other chrome and shows the input + inline error. Enter submits, Esc / blur
- *  cancels (restoring the normal bar).
+/** Open-by-path chrome, "bar-becomes-input" style: a button that, when clicked,
+ *  turns the HOST BAR ITSELF into a full-width path input — no separate row
+ *  opens below, so the bar keeps its height and the layout never shifts.
+ *  Toggling adds `.path-editing` to the bar; CSS hides the other chrome and
+ *  shows the input + inline error. Enter submits, Esc / blur cancels
+ *  (restoring the normal bar).
+ *
+ *  M2: the host bar is the TITLE-BAR (moved up from the footer/status-bar —
+ *  see main.ts's `createOpenPathPrompt({ bar: titleBar.el, ... })`). This
+ *  module stayed bar-agnostic through that move: it only ever toggles a class
+ *  and appends two children into whatever `bar` it's given, so the switch
+ *  needed zero logic changes here — just the CSS selectors in styles.css
+ *  (`.status-bar.path-editing` → `.title-bar.path-editing`) and the caller's
+ *  wiring in main.ts.
  *
  *  This module is the INPUT SURFACE only — it returns the raw string the user
  *  typed and reports failures inline; the actual document switch (resolve →
@@ -16,7 +24,7 @@ import { icon } from "../icons";
  *  display:none via CSS until `.path-editing` is toggled on. */
 
 export interface OpenPathPrompt {
-  /** The button to place in the status bar (toggles path-editing). */
+  /** The button to place in the host bar (toggles path-editing). */
   readonly button: HTMLButtonElement;
   /** The path input (a direct child of the bar, hidden until editing). Exposed
    *  for tests / focus wiring. */
@@ -24,9 +32,10 @@ export interface OpenPathPrompt {
 }
 
 export interface OpenPathHandlers {
-  /** The status bar the prompt turns into an input. The button is returned for
-   *  the caller to position; the input + error are appended into `bar` here so
-   *  the `.path-editing` toggle can hide the siblings and show them. */
+  /** The bar the prompt turns into an input — the title-bar since M2 (was the
+   *  footer/status-bar pre-M2). The button is returned for the caller to
+   *  position; the input + error are appended into `bar` here so the
+   *  `.path-editing` toggle can hide the siblings and show them. */
   bar: HTMLElement;
   /** Invoked with the raw typed path on Enter. Resolve/read/re-mount happens
    *  here. Throw (or reject) to signal "couldn't open" — the prompt catches it
@@ -42,9 +51,9 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => 
 };
 
 export function createOpenPathPrompt({ bar, onOpen }: OpenPathHandlers): OpenPathPrompt {
-  const button = create("button", "status-btn open-path") as HTMLButtonElement;
+  const button = create("button", "chrome-btn open-path") as HTMLButtonElement;
   button.append(icon("folder-open"));
-  const buttonLabel = create("span", "status-btn-label");
+  const buttonLabel = create("span", "chrome-btn-label");
   buttonLabel.textContent = "경로 열기";
   button.append(buttonLabel);
   button.title = "경로를 입력해 다른 문서를 이 창에서 엽니다";

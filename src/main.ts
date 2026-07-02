@@ -36,11 +36,11 @@ import {
 } from "./settings/app";
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./settings/sinks";
 import { createSidebarSash } from "./sidebar/sash";
-import { mountSettingsButton } from "./settings/panel/modal";
+import { createSettingsButton } from "./settings/panel/modal";
 import { copyBundleToClipboard } from "./bundle";
 import { registerHandler, installDispatcher, bindKeybindings } from "./shortcuts/registry";
 import { arrangeStatusBar } from "./status-bar";
-import { createTitleBar } from "./title-bar";
+import { createTitleBar, arrangeTitleBar } from "./title-bar";
 import { createRecentPanel } from "./recent/recent-panel";
 import { pushRecent, pruneMissing } from "./recent/recent-docs";
 import {
@@ -66,15 +66,16 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
   return e;
 };
 
-/** Set a status-bar button to a Lucide icon + (optional) label, replacing whatever
- *  it held. The shadcn/Raycast button shape: a 16px monochrome icon followed by a
- *  13px-medium label, both inheriting the button's `color`. Replaces the old emoji
- *  `textContent =` calls — same render-on-state pattern, DOM shape only. The label
- *  rides in its own <span> so the icon stays a clean flex item (gap from CSS). */
+/** Set a chrome button (title-bar or footer) to a Lucide icon + (optional) label,
+ *  replacing whatever it held. The shadcn/Raycast button shape: a 16px monochrome
+ *  icon followed by a 13px-medium label, both inheriting the button's `color`.
+ *  Replaces the old emoji `textContent =` calls — same render-on-state pattern,
+ *  DOM shape only. The label rides in its own <span> so the icon stays a clean
+ *  flex item (gap from CSS). */
 function setButtonContent(btn: HTMLElement, name: IconName, label?: string): void {
   btn.replaceChildren(icon(name));
   if (label) {
-    const text = el("span", "status-btn-label");
+    const text = el("span", "chrome-btn-label");
     text.textContent = label;
     btn.append(text);
   }
@@ -112,9 +113,9 @@ function makeSaveStatus(): {
   };
 }
 
-/** Edit/read toggle that lives in the status bar (icon + label). */
+/** Edit/read toggle that lives in the title-bar (icon + label). */
 function makeModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode) => void } {
-  const btn = el("button", "status-btn mode-toggle");
+  const btn = el("button", "chrome-btn mode-toggle");
   const render = (m: PreviewMode) => {
     setButtonContent(btn, m === "edit" ? "square-pen" : "eye", m === "edit" ? "편집" : "리더");
     btn.title = m === "edit" ? "편집 모드 (⌘E: 리더 모드로)" : "리더 모드 (⌘E: 편집 모드로)";
@@ -174,10 +175,11 @@ async function boot() {
     return;
   }
 
-  // #app is a flex column: the editor scrolls inside `host`, with a fixed
-  // status bar pinned below it that holds all the chrome (toggles, save state,
-  // cursor position) — no more controls floating over the content. host + bar
-  // are built ONCE; re-opening a file swaps only the editor inside host.
+  // #app is a flex column: the editor scrolls inside `host`, with a title-bar
+  // pinned above it (sidebar toggles, open-path, mode/theme/settings — M2) and
+  // a status bar pinned below it (save state, cursor position, M3's breadcrumb
+  // slot) — no more controls floating over the content. host + bar are built
+  // ONCE; re-opening a file swaps only the editor inside host.
   root.innerHTML = "";
   const host = el("div", "editor-host");
   // .workspace is a flex ROW: the explorer sidebar (left) + the editor host
@@ -200,8 +202,9 @@ async function boot() {
   seedSessionMode();
   const toggleMode = () => modeSetting.set(modeSetting.get() === "edit" ? "read" : "edit");
 
-  // Status-bar chrome is persistent across re-mounts; its callbacks read the
-  // mutable `current` (set by openInWindow), so they always reach the live editor.
+  // Chrome (title-bar + footer) is persistent across re-mounts; its callbacks
+  // read the mutable `current` (set by openInWindow), so they always reach the
+  // live editor.
   const mode = makeModeToggle();
   const pos = el("span", "status-pos");
   const spacer = el("span", "status-spacer");
@@ -212,9 +215,9 @@ async function boot() {
   // together, no page reload, so the layout never flashes/re-mounts.
   const themeBtn = makeThemeToggle(() => loadPreset(nextPreset(themeSetting.get())));
   themeSetting.bind(themeBtn.render); // initial icon + on change
-  // Status-bar order is arranged once, below, after every chrome panel is built
-  // (arrangeStatusBar owns the left→right contract). The center/right cluster
-  // (pos, spacer, save, mode, theme) and the left nav group land there.
+  // Title-bar and footer are each arranged once, below, after every chrome part
+  // is built — arrangeTitleBar/arrangeStatusBar own their respective left→right
+  // contracts (single named ordering function each, M2 §1/§2).
 
   // "Currently open document" — the single source of truth for which editor /
   // file / baseDir is live. All window-global sinks and listeners read this
@@ -231,12 +234,13 @@ async function boot() {
   let detachScroll: (() => void) | undefined;
   let cancelSessionTimer: (() => void) | undefined;
 
-  // ── Open-by-path footer chrome (lazy input row). The button toggles a row;
-  //    onOpen resolves the typed path against the live baseDir, guards unsaved
-  //    work, then re-mounts. A read failure rejects → the row shows the error
-  //    and stays open; the current editor is untouched. ────────────────────────
+  // ── Open-by-path title-bar chrome (M2: moved from the footer). The button
+  //    toggles the title-bar itself into a path input; onOpen resolves the typed
+  //    path against the live baseDir, guards unsaved work, then re-mounts. A read
+  //    failure rejects → the bar shows the error and stays in editing; the
+  //    current editor is untouched. ─────────────────────────────────────────────
   const prompt = createOpenPathPrompt({
-    bar,
+    bar: titleBar.el,
     onOpen: async (raw) => {
       const target = resolveOpenPath(raw, currentBaseDir);
       if (!target) throw new Error("경로를 입력하세요");
@@ -247,9 +251,9 @@ async function boot() {
       openInWindow(target, fresh);
     },
   });
-  // ── Outline (table of contents) footer chrome. Same toggle shape as open-path
-  //    but a vertical heading tree; clicking a heading jumps via the shared
-  //    jumpTo landing. getView is a closure over `current` so it follows
+  // ── Outline (table of contents) title-bar chrome. Same toggle shape as
+  //    open-path but a vertical heading tree; clicking a heading jumps via the
+  //    shared jumpTo landing. getView is a closure over `current` so it follows
   //    re-opens. Its listener is threaded into every mount (extraExtensions)
   //    so the outline tracks the live document. ────────────────────────────────
   // The left sidebar area holds one panel at a time (explorer OR outline,
@@ -304,23 +308,29 @@ async function boot() {
     onOpen: () => closeOtherSidebars("recent"),
   });
 
-  // Status-bar order (single contract): 탐색기 · 최근 · 경로열기 · 목차 · [pos ·
-  // spacer · save] · 모드 · 테마. Settings ⚙ mounts after (far right); the popover
-  // rows / explorer aside are siblings outside the bar.
-  arrangeStatusBar(bar, {
+  // Title-bar order (single contract, arrangeTitleBar owns it): 탐색기 · 최근 ·
+  // 목차 · 경로열기 · [drag spacer] · 모드 · 테마 · ⚙, window-controls always last
+  // (win/linux). createSettingsButton only builds the button + lazy modal
+  // wiring — position is this call's job, not modal.ts's (M2 decision).
+  arrangeTitleBar(titleBar.el, {
     explorer: explorer.button,
     recent: recent.button,
-    openPath: prompt.button,
     outline: outline.button,
-    pos,
-    spacer,
-    save: save.el,
+    openPath: prompt.button,
     mode: mode.btn,
     theme: themeBtn.btn,
+    settings: createSettingsButton(),
   });
-  // ⚙ settings: append last → far right. Boot-cheap — the modal DOM is built
-  // lazily on first open (cold-load constraint).
-  mountSettingsButton(bar);
+  // Footer order (single contract, arrangeStatusBar owns it): 브레드크럼 슬롯 ·
+  // spacer · save · pos (pos far right). The breadcrumb slot is an empty
+  // placeholder in M2 — its POSITION is the contract; M3 fills it with real
+  // breadcrumb content.
+  arrangeStatusBar(bar, {
+    breadcrumb: el("span", "breadcrumb-slot"),
+    spacer,
+    save: save.el,
+    pos,
+  });
   // The explorer + outline + recent are LEFT sidebars (not footer popovers):
   // mount all three as the leading children of .workspace so they sit left of
   // the editor host. They are mutually exclusive (one visible at a time via

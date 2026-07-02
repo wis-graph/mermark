@@ -520,7 +520,7 @@ describe("explorer: sidebar shell interface (7)", () => {
     await flush();
     expect(panel.button.querySelector(".icon-panel-left-close")).toBeTruthy();
     expect(panel.button.getAttribute("aria-expanded")).toBe("true");
-    expect(panel.button.querySelector(".status-btn-label")?.textContent).toBe("탐색기");
+    expect(panel.button.querySelector(".chrome-btn-label")?.textContent).toBe("탐색기");
   });
 
   it("resetToBaseDir rebuilds when open, no-ops when hidden", async () => {

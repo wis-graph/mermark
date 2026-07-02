@@ -450,6 +450,11 @@ html, body { margin: 0; height: 100%; }
 }
 .title-bar { flex: none; height: 36px; display: flex; align-items: center; padding: 0 .5em; border-bottom: 1px solid var(--border); background: var(--surface); user-select: none; -webkit-user-select: none; }
 .title-bar.mac { padding-left: var(--traffic-light-inset); }
+/* The flexible filler arrangeTitleBar (title-bar.ts) inserts between the left
+   command group and the right mode/theme/settings cluster. Same shape as
+   .status-spacer below — kept as a separate class since footer's spacer plays
+   no drag-region role. */
+.title-spacer { flex: 1; }
 .window-controls { margin-left: auto; display: flex; align-self: stretch; }
 .window-btn { display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--muted); width: 46px; cursor: default; /* window-control buttons follow OS convention, not the pointer cursor */ }
 .window-btn:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
@@ -466,15 +471,17 @@ html, body { margin: 0; height: 100%; }
 /* shadcn/Raycast ghost button: 16px monochrome icon + 13px-medium label, generous
    hit area, subtle ghost hover (no border, no fill at rest). Icon + label inherit
    `color`, so a single var swap (--muted → --fg on hover) carries both, in light and
-   dark, off the currentColor SVGs — no per-icon theming. */
-.status-btn { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-md, 8px); height: 28px; padding: 0 10px; font: inherit; font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
-.status-btn .icon { flex: none; width: 16px; height: 16px; display: block; }
-.status-btn-label { white-space: nowrap; }
-.status-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
-.status-btn:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
-.status-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent); }
+   dark, off the currentColor SVGs — no per-icon theming. Renamed to `.chrome-btn`
+   (M2, was scoped to the footer bar) since most of these buttons now live in the
+   title-bar — the class is bar-agnostic chrome, not tied to one strip. */
+.chrome-btn { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-md, 8px); height: 28px; padding: 0 10px; font: inherit; font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
+.chrome-btn .icon { flex: none; width: 16px; height: 16px; display: block; }
+.chrome-btn-label { white-space: nowrap; }
+.chrome-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
+.chrome-btn:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.chrome-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent); }
 /* Icon-only buttons (theme toggle): square so the glyph sits centered, not lopsided. */
-.status-btn.icon-only { padding: 0; width: 28px; justify-content: center; }
+.chrome-btn.icon-only { padding: 0; width: 28px; justify-content: center; }
 
 /* Save status: icon + label, color states preserved from the old emoji version
    (saved/saving muted, error red, conflict amber). The status word lives in
@@ -536,26 +543,31 @@ html, body { margin: 0; height: 100%; }
    outside #app's scroll host, so no .cm-content/.cm-line involved → ZOOM GUARD
    holds). Hidden until the footer "경로 열기" button toggles it. The input
    stretches; the error message sits to its right in a warning tone. */
-/* Open-by-path "footer-becomes-input": the STATUS BAR itself turns into a
+/* Open-by-path "bar-becomes-input": the TITLE BAR itself turns into a
    full-width path field (no row opens below, so the bar keeps its 36px height).
-   `.path-editing` (toggled on .status-bar) hides the normal chrome and reveals
-   the input + inline error, which are direct children of the bar. Theme tokens
-   only. */
+   `.path-editing` (toggled on .title-bar — moved from .status-bar in M2) hides
+   the normal chrome and reveals the input + inline error, which are direct
+   children of the bar. Theme tokens only. */
 .open-path-input { display: none; }
 .open-path-error { display: none; }
-.status-bar.path-editing > * { display: none; }
-.status-bar.path-editing > .open-path-input {
+.title-bar.path-editing > * { display: none; }
+.title-bar.path-editing > .open-path-input {
   display: block; flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 10px;
   font: inherit; font-size: 13px; color: var(--fg);
   background: var(--bg, var(--surface)); border: 1px solid var(--border);
   border-radius: var(--radius-md, 8px);
 }
-.status-bar.path-editing > .open-path-input:focus-visible {
+.title-bar.path-editing > .open-path-input:focus-visible {
   outline: none; border-color: color-mix(in srgb, var(--accent) 70%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
 }
-.status-bar.path-editing > .open-path-error { display: block; flex: none; color: #dc2626; white-space: nowrap; }
-.status-bar.path-editing > .open-path-error[hidden] { display: none; }
+.title-bar.path-editing > .open-path-error { display: block; flex: none; color: #dc2626; white-space: nowrap; }
+.title-bar.path-editing > .open-path-error[hidden] { display: none; }
+/* win/linux: re-expose the window-controls cluster during path-editing (the `> *`
+   blanket hide above would otherwise strand the user without minimize/maximize/
+   close while editing — a case the status-bar never had, since it carried no
+   window controls). mac has no .window-controls, so this rule is a no-op there. */
+.title-bar.path-editing > .window-controls { display: flex; }
 
 /* Shared LEFT SIDEBAR shell for the explorer + outline asides (VSCode-style, one
    at a time). A .workspace child left of the editor host, OUTSIDE the editor

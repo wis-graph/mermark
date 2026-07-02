@@ -37,7 +37,7 @@ export function makeThemeToggle(onToggle: () => void): {
   render: (t: Theme) => void;
 } {
   const btn = document.createElement("button");
-  btn.className = "status-btn theme-toggle icon-only";
+  btn.className = "chrome-btn theme-toggle icon-only";
   const render = (t: Theme) => {
     // Show the CURRENT theme's icon + the NEXT one in the title (the toggle now
     // cycles dark→light→claude→dark via nextPreset, so each label names where a

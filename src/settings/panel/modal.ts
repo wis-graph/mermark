@@ -8,13 +8,17 @@ import { RENDER, runTeardown } from "./controls";
 import type { Setting, Control } from "../store";
 import { icon } from "../../icons";
 
-/** Append a ⚙ status-bar button that opens the settings modal. Boot-cheap: only
- *  the button is created now; the modal DOM is built on first open. */
-export function mountSettingsButton(bar: HTMLElement): void {
+/** Build a ⚙ chrome button that opens the settings modal. Boot-cheap: only the
+ *  button is created now; the modal DOM is built on first open. Position is the
+ *  CALLER's responsibility (M2: arrangeTitleBar places it in the right cluster) —
+ *  this function does not append it anywhere, unlike the old mountSettingsButton
+ *  it replaces (that one assumed "append = far right", which broke once
+ *  .window-controls started owning the far-right slot on win/linux). */
+export function createSettingsButton(): HTMLButtonElement {
   const btn = document.createElement("button");
-  btn.className = "status-btn settings-btn";
+  btn.className = "chrome-btn settings-btn";
   const label = document.createElement("span");
-  label.className = "status-btn-label";
+  label.className = "chrome-btn-label";
   label.textContent = "설정";
   btn.append(icon("settings"), label);
   btn.title = "설정";
@@ -23,7 +27,7 @@ export function mountSettingsButton(bar: HTMLElement): void {
     if (!modal) modal = buildModal(); // lazy build on first open
     modal.open();
   });
-  bar.append(btn);
+  return btn;
 }
 
 interface SettingsModal {

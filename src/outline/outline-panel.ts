@@ -63,7 +63,7 @@ export interface OutlineHandlers {
 }
 
 export function createOutlinePanel({ getView, onOpen }: OutlineHandlers): OutlinePanel {
-  const button = create("button", "status-btn outline-btn") as HTMLButtonElement;
+  const button = create("button", "chrome-btn outline-btn") as HTMLButtonElement;
   button.title = "문서 목차 (헤딩 클릭 시 이동)";
 
   const aside = create("aside", "outline-aside sidebar-aside");

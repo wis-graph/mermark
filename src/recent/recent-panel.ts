@@ -69,7 +69,7 @@ function basename(path: string): string {
 }
 
 export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandlers): RecentPanel {
-  const button = create("button", "status-btn recent-btn") as HTMLButtonElement;
+  const button = create("button", "chrome-btn recent-btn") as HTMLButtonElement;
   button.title = "최근 문서 (클릭 시 이 창에서 열기)";
 
   const aside = create("aside", "recent-aside sidebar-aside");

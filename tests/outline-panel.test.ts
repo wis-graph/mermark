@@ -55,7 +55,7 @@ describe("outline panel: toggle icon + disclosure ARIA (E)", () => {
     expect(p.button.querySelector(".icon-panel-left-open")).toBeTruthy();
     expect(p.button.getAttribute("aria-expanded")).toBe("false");
     expect(p.button.getAttribute("aria-controls")).toBe("outline-aside");
-    expect(p.button.querySelector(".status-btn-label")?.textContent).toBe("목차");
+    expect(p.button.querySelector(".chrome-btn-label")?.textContent).toBe("목차");
   });
 
   it("opening swaps to panel-left-close + aria-expanded=true, label preserved", () => {
@@ -63,6 +63,6 @@ describe("outline panel: toggle icon + disclosure ARIA (E)", () => {
     p.button.click();
     expect(p.button.querySelector(".icon-panel-left-close")).toBeTruthy();
     expect(p.button.getAttribute("aria-expanded")).toBe("true");
-    expect(p.button.querySelector(".status-btn-label")?.textContent).toBe("목차");
+    expect(p.button.querySelector(".chrome-btn-label")?.textContent).toBe("목차");
   });
 });
