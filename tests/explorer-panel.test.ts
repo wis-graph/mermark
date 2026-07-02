@@ -16,20 +16,18 @@ import { createExplorerPanel, type DirEntry } from "../src/explorer/explorer-pan
 const dir = (name: string, path: string): DirEntry => ({ name, path, is_dir: true });
 const file = (name: string, path: string): DirEntry => ({ name, path, is_dir: false });
 
-/** A fake backend list_dir over a fixed tree. Mirrors the real command's
- *  contract: parent (`${root}/..`) is resolved to the normalized parent, so a
- *  `..` from /root/child maps to the /root key. */
+/** A fake backend list_dir over a fixed tree. `renderTree` canonicalizes the
+ *  root (via `normalizePath`) BEFORE calling this, so listDir only ever
+ *  receives canonical keys — a plain lookup, no `/..` folding needed here
+ *  (that folding used to stand in for canonicalization; now the panel itself
+ *  canonicalizes, so a literal `/..` reaching this function would be a bug). */
 function fakeTree(): (path: string) => Promise<DirEntry[]> {
   const TREE: Record<string, DirEntry[]> = {
     "/root": [dir("sub", "/root/sub"), file("a.md", "/root/a.md"), file("pic.png", "/root/pic.png")],
     "/root/sub": [file("b.md", "/root/sub/b.md")],
     "/root/child": [file("c.md", "/root/child/c.md")],
   };
-  return (path: string) => {
-    // fake normalize: fold a trailing "/.." into the parent (backend's job).
-    const norm = path.endsWith("/..") ? path.slice(0, path.lastIndexOf("/", path.length - 4)) : path;
-    return Promise.resolve(TREE[norm] ?? []);
-  };
+  return (path: string) => Promise.resolve(TREE[path] ?? []);
 }
 
 let host: HTMLElement;
@@ -244,7 +242,9 @@ describe("explorer: `..` changes root (5)", () => {
     clickItem(up); // single click (was dblclick)
     await flush();
 
-    expect(listDir).toHaveBeenLastCalledWith("/root/child/..");
+    // [RED-수정] renderTree canonicalizes before calling listDir — the literal
+    // "/root/child/.." instruction never reaches listDir, only "/root" does.
+    expect(listDir).toHaveBeenLastCalledWith("/root");
     expect(names(panel.aside)).toEqual(["..", "sub", "a.md", "pic.png"]);
   });
 
@@ -253,7 +253,8 @@ describe("explorer: `..` changes root (5)", () => {
     const panel = await openPanel({ listDir, getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
     press(panel.aside, "Enter"); // initial focus is `..`
     await flush();
-    expect(listDir).toHaveBeenLastCalledWith("/root/child/..");
+    // [RED-수정] same canonicalization contract as the click case above.
+    expect(listDir).toHaveBeenLastCalledWith("/root");
     expect(names(panel.aside)).toEqual(["..", "sub", "a.md", "pic.png"]);
   });
 });
@@ -324,7 +325,56 @@ describe("explorer: header shows current root path (D)", () => {
     const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
     clickItem(up);
     await flush();
-    expect(header.title).toBe("/root/child/..");
+    // [RED-수정] header reflects the CANONICAL root ("/root"), never the
+    // literal "/root/child/.." — this is the header-half of the bugfix.
+    expect(header.title).toBe("/root");
+  });
+});
+
+// H. Root path stays canonical across up-navigation (bugfix regression) --------
+// The `…/../../..` over-summarization bug: a literal `..` used to accumulate in
+// the stored rootPath across repeated up-navigation. renderTree now
+// canonicalizes on every entry, so it can never accumulate past one shot.
+describe("explorer: root path stays canonical", () => {
+  it("a single up-navigation leaves a canonical root everywhere it's used", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
+    const header = panel.aside.querySelector(".explorer-header") as HTMLElement;
+    const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
+    clickItem(up);
+    await flush();
+
+    expect(header.title).toBe("/root");
+    expect(header.textContent).not.toContain("..");
+    expect(header.textContent).toContain("root");
+    expect(header.getAttribute("aria-label")).toContain("/root");
+    // The up-entry re-renders with a fresh ONE-SHOT `/..` instruction off the
+    // now-canonical root — it never carries the old accumulated literal.
+    const newUp = panel.aside.querySelector(".explorer-up") as HTMLElement;
+    expect(newUp.dataset.path).toBe("/root/..");
+  });
+
+  it("multiple up-navigations never accumulate literal `..` — the `…/../../..` bug case", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root/sub", onOpenFile: vi.fn() });
+    const header = panel.aside.querySelector(".explorer-header") as HTMLElement;
+
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement); // -> /root
+    await flush();
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement); // -> /
+    await flush();
+
+    expect(header.title).toBe("/");
+    expect(header.textContent).not.toContain("../..");
+    expect(header.textContent).not.toContain("..");
+  });
+
+  it("tree content after up-navigation stays correct (display fix doesn't break navigation)", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+    expect(names(panel.aside)).toEqual(["..", "sub", "a.md", "pic.png"]);
   });
 });
 

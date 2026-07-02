@@ -1,6 +1,6 @@
 import { icon } from "../icons";
 import { extensionOf, iconNameForEntry } from "./file-icons";
-import { formatRootLabel } from "../path";
+import { formatRootLabel, normalizePath } from "../path";
 import { renderSidebarButton } from "../sidebar-toggle";
 
 /** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
@@ -289,8 +289,16 @@ export function createExplorerPanel({
   /** (Re)build the tree at `rootPath`: a top `..` entry then the root's sorted
    *  children (level 1). The backend list_dir already sorts (folders first,
    *  name) — we render in the order returned. Seeds the focus cursor on the
-   *  first visible node without stealing DOM focus. Command (void). */
+   *  first visible node without stealing DOM focus. Command (void).
+   *
+   *  This is the SINGLE canonicalization point: `rootPath` is normalized here,
+   *  before anything derives from it. `changeRoot`/`open`/`resetToBaseDir` all
+   *  funnel through this one function (the existing "single update point"), so
+   *  a `..` navigation can never accumulate literal `/../../..` in the stored
+   *  root — each render starts from a canonical path, appends at most one `..`
+   *  for the up-entry (see below), and the NEXT renderTree resolves it away. */
   const renderTree = async (rootPath: string): Promise<void> => {
+    rootPath = normalizePath(rootPath);
     // Header = the current root folder path (single update point, so header/tree
     // never drift): the compact label in text, the full path in title + aria.
     header.textContent = formatRootLabel(rootPath);
@@ -304,7 +312,11 @@ export function createExplorerPanel({
     up.tabIndex = -1;
     up.dataset.level = "1";
     up.style.setProperty("--level", "1");
-    up.dataset.path = `${rootPath}/..`; // parent resolution is the backend's job
+    // lexical `..` instruction — renderTree canonicalizes before store/display/
+    // listDir, so this literal `/..` is a one-shot command ("go up from THIS
+    // canonical root"), never a stored value: the very next renderTree call
+    // (via changeRoot) resolves it back to canonical, so it can't accumulate.
+    up.dataset.path = `${rootPath}/..`;
     const upChevron = create("span", "explorer-chevron explorer-chevron-empty");
     const upGlyph = create("span", "explorer-glyph");
     upGlyph.append(icon("corner-left-up"));
@@ -323,10 +335,12 @@ export function createExplorerPanel({
     if (first) focusItem(first, false);
   };
 
-  /** Change the tree root to `parentPath` (the `..` target). Clears the per-root
-   *  cache and rebuilds from scratch — the previous expansion state belongs to
-   *  the old root context. Command (void). The parent string is resolved by the
-   *  backend (`${root}/..` → normalized), so root-change is a single source. */
+  /** Change the tree root to `parentPath` (the `..` target, still carrying its
+   *  lexical `/..` suffix). Clears the per-root cache and rebuilds from scratch
+   *  — the previous expansion state belongs to the old root context. Command
+   *  (void). `renderTree` (not this function, and not the backend) is what
+   *  canonicalizes `parentPath` — that single call is the only normalization
+   *  point, so `listDir`/the header/the cache key all end up canonical. */
   const changeRoot = (parentPath: string): void => {
     childrenCache.clear();
     void renderTree(parentPath);
