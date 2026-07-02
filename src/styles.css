@@ -1027,21 +1027,10 @@ html, body { margin: 0; height: 100%; }
 }
 
 
-/* Recent-documents panel. A sibling of .status-bar under #app (same fixed
-   bottom-left popover shape as the outline panel) — OUTSIDE the editor scroll
-   host, so it makes no decorations and the ⌘± zoom guard holds. Theme tokens
-   only (dark / light / claude consistent). */
-.recent-row {
-  position: fixed; left: .5em; bottom: 40px; z-index: 30;
-  width: min(360px, calc(100vw - 1em)); max-height: min(60vh, 480px);
-  overflow-y: auto; padding: .35em;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
-  box-shadow: 0 8px 28px color-mix(in srgb, var(--fg) 18%, transparent);
-  font-size: 13px;
-}
-.recent-row[hidden] { display: none; }
-.recent-list { display: flex; flex-direction: column; }
+/* Recent-documents LEFT SIDEBAR — shares the .sidebar-aside shell above (width,
+   flex, [hidden] display, background, border are all inherited from there), so
+   only the list-specific rules below are bespoke. */
+.recent-list { display: flex; flex-direction: column; padding: 2px 4px 8px; }
 .recent-empty { padding: .5em; color: var(--muted); }
 .recent-empty[hidden] { display: none; }
 .recent-item {

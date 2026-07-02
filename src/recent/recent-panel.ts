@@ -1,26 +1,40 @@
-import { icon } from "../icons";
+import { renderSidebarButton } from "../sidebar-toggle";
 
 // ---------------------------------------------------------------------------
-// Recent-documents panel — the same footer-chrome shape as the outline panel: a
-// status-bar button toggling a lazily-rendered fixed popover. Each row is a
-// recently opened document (basename headline + a faint full path); clicking one
-// opens it in the current window through the injected onOpen (which reuses main's
-// read_file → commitBeforeSwitch → openInWindow path).
+// Recent-documents LEFT SIDEBAR chrome — the same shell as the file explorer /
+// outline asides: a status-bar button toggling a left-of-editor <aside>. The
+// panel lists recently opened documents (basename headline + a faint full
+// path); clicking one opens it in the current window through the injected
+// onOpenFile (which reuses main's read_file → commitBeforeSwitch →
+// openInWindow path).
 //
-// This is editor-adjacent CHROME, not a decoration: its DOM is a sibling of the
-// editor (under #app, never inside .cm-content/.cm-line), so it makes ZERO
-// block/inline decorations and the ⌘± zoom measure guard is untouched. The list
-// is read from the injected getRecent() (a closure over recentDocsSetting), and
-// main calls refresh() from a single recentDocsSetting.subscribe — the panel
-// never reads the setting directly (SSOT sink).
+// The left sidebar area is mutually exclusive with the explorer and outline
+// (one at a time, VSCode-style): opening fires onOpen so main can close the
+// other two. That coordination rule lives in main (closeOtherSidebars), not
+// here.
+//
+// This module is editor-adjacent CHROME, not a decoration: its DOM is a
+// sibling of the editor (mounted under .workspace, never inside
+// .cm-content/.cm-line), so it makes ZERO block/inline decorations and is
+// untouched by the live-preview pipeline and the ⌘± zoom measure guard. The
+// list is read from the injected getRecent() (a closure over
+// recentDocsSetting), and main calls refresh() from a single
+// recentDocsSetting.subscribe — the panel never reads the setting directly
+// (SSOT sink).
 // ---------------------------------------------------------------------------
+
+/** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
+const RECENT_ASIDE_ID = "recent-aside";
 
 export interface RecentPanel {
-  /** The button to place in the status bar (toggles the panel). */
+  /** The button to place in the status bar (toggles the sidebar). */
   readonly button: HTMLButtonElement;
-  /** The panel popover (hidden until first opened). Append as a sibling of the
-   *  status bar under #app — never inside the editor content. */
-  readonly row: HTMLElement;
+  /** The sidebar shell (hidden until first opened). Append as a sibling of the
+   *  editor host under .workspace — never inside the editor content. */
+  readonly aside: HTMLElement;
+  /** Hide the sidebar. Idempotent — used by the mutual-exclusion coordinator to
+   *  close this when another left sidebar opens. Command (void). */
+  close(): void;
   /** Re-render the list from getRecent(). A no-op while hidden (cost 0 when
    *  closed), so a recentDocsSetting change is cheap when the panel is shut. */
   refresh(): void;
@@ -31,8 +45,14 @@ export interface RecentHandlers {
    *  the panel always reads the live value (SSOT), never a captured snapshot. */
   getRecent(): string[];
   /** Open an absolute path in the current window. Injected so the panel reuses
-   *  main's open path (read_file → commitBeforeSwitch → openInWindow). */
-  onOpen(path: string): void;
+   *  main's open path (read_file → commitBeforeSwitch → openInWindow). Named
+   *  onOpenFile (not onOpen) to keep "open a document" distinct from the
+   *  panel-opened notification below. */
+  onOpenFile(path: string): void;
+  /** Called when this sidebar opens, so main can close the other left
+   *  sidebars (mutual exclusion). Optional — omitted in unit tests /
+   *  standalone use. Same signature as explorer/outline's onOpen. */
+  onOpen?(): void;
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
@@ -48,26 +68,31 @@ function basename(path: string): string {
   return sep >= 0 ? path.slice(sep + 1) : path;
 }
 
-export function createRecentPanel({ getRecent, onOpen }: RecentHandlers): RecentPanel {
+export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandlers): RecentPanel {
   const button = create("button", "status-btn recent-btn") as HTMLButtonElement;
-  button.append(icon("history"));
-  const label = create("span", "status-btn-label");
-  label.textContent = "최근";
-  button.append(label);
   button.title = "최근 문서 (클릭 시 이 창에서 열기)";
 
-  const row = create("div", "recent-row");
-  row.hidden = true;
+  const aside = create("aside", "recent-aside sidebar-aside");
+  aside.id = RECENT_ASIDE_ID;
+  aside.hidden = true;
+  const header = create("div", "recent-header sidebar-header");
+  header.textContent = "최근 문서"; // static: the recent list has no path identity of its own
   const listEl = create("div", "recent-list");
   const empty = create("div", "recent-empty");
   empty.textContent = "최근 문서가 없습니다";
   empty.hidden = true;
-  row.append(listEl, empty);
+  aside.append(header, listEl, empty);
+
+  /** Render the toggle button for the current open/closed state (icon + ARIA).
+   *  Called at init and on every open()/close() so they never drift. */
+  const renderButton = (): void =>
+    renderSidebarButton(button, "최근", !aside.hidden, RECENT_ASIDE_ID);
+  renderButton();
 
   /** Rebuild the list from the live setting. Skips work while hidden — a closed
    *  panel costs nothing when the recent list changes. */
   const refresh = (): void => {
-    if (row.hidden) return;
+    if (aside.hidden) return;
     const recent = getRecent();
     listEl.replaceChildren();
     empty.hidden = recent.length > 0;
@@ -85,14 +110,17 @@ export function createRecentPanel({ getRecent, onOpen }: RecentHandlers): Recent
   };
 
   const open = () => {
-    row.hidden = false;
+    aside.hidden = false;
+    onOpen?.();
+    renderButton();
     refresh();
   };
   const close = () => {
-    row.hidden = true;
+    aside.hidden = true;
+    renderButton();
   };
   button.addEventListener("click", () => {
-    if (row.hidden) open();
+    if (aside.hidden) open();
     else close();
   });
 
@@ -102,9 +130,9 @@ export function createRecentPanel({ getRecent, onOpen }: RecentHandlers): Recent
     const item = (e.target as HTMLElement).closest(".recent-item") as HTMLElement | null;
     if (!item?.dataset.path) return;
     e.preventDefault();
-    onOpen(item.dataset.path);
+    onOpenFile(item.dataset.path);
     close();
   });
 
-  return { button, row, refresh };
+  return { button, aside, close, refresh };
 }

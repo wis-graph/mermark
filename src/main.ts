@@ -255,9 +255,10 @@ async function boot() {
   // onOpen when it opens; this closes whichever other left sidebar was showing.
   // The closure is evaluated at click time, so referencing `explorer` (declared
   // just below) is safe. close() is idempotent, so an unconditional call is fine.
-  const closeOtherSidebars = (keep: "explorer" | "outline"): void => {
+  const closeOtherSidebars = (keep: "explorer" | "outline" | "recent"): void => {
     if (keep !== "explorer") explorer.close();
     if (keep !== "outline") outline.close();
+    if (keep !== "recent") recent.close();
   };
   const outline = createOutlinePanel({
     getView: () => current.view,
@@ -280,13 +281,14 @@ async function boot() {
     onOpen: () => closeOtherSidebars("explorer"),
   });
 
-  // ── Recent documents footer chrome. Same toggle shape as outline; the list is
-  //    read from recentDocsSetting (SSOT — the panel never writes it) and a click
-  //    reuses main's open path. A read failure prunes the dead entry. The panel
-  //    re-renders from a single recentDocsSetting.subscribe below. ──────────────
+  // ── Recent documents LEFT SIDEBAR. Same toggle shape as explorer/outline; the
+  //    list is read from recentDocsSetting (SSOT — the panel never writes it)
+  //    and a click reuses main's open path. A read failure prunes the dead
+  //    entry. The panel re-renders from a single recentDocsSetting.subscribe
+  //    below. ──────────────────────────────────────────────────────────────────
   const recent = createRecentPanel({
     getRecent: () => recentDocsSetting.get(),
-    onOpen: async (absPath) => {
+    onOpenFile: async (absPath) => {
       try {
         const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
         await commitBeforeSwitch();
@@ -296,6 +298,7 @@ async function boot() {
         recentDocsSetting.set(pruneMissing(recentDocsSetting.get(), absPath));
       }
     },
+    onOpen: () => closeOtherSidebars("recent"),
   });
 
   // Status-bar order (single contract): 탐색기 · 최근 · 경로열기 · 목차 · [pos ·
@@ -315,15 +318,16 @@ async function boot() {
   // ⚙ settings: append last → far right. Boot-cheap — the modal DOM is built
   // lazily on first open (cold-load constraint).
   mountSettingsButton(bar);
-  root.append(recent.row);
-  // The explorer + outline are LEFT sidebars (not footer popovers): mount both as
-  // the leading children of .workspace so they sit left of the editor host. They
-  // are mutually exclusive (one visible at a time via closeOtherSidebars), so
-  // their left-to-right order is never seen simultaneously.
+  // The explorer + outline + recent are LEFT sidebars (not footer popovers):
+  // mount all three as the leading children of .workspace so they sit left of
+  // the editor host. They are mutually exclusive (one visible at a time via
+  // closeOtherSidebars), so their left-to-right order is never seen
+  // simultaneously — prepend order among them is arbitrary.
   workspace.prepend(outline.aside);
   workspace.prepend(explorer.aside);
+  workspace.prepend(recent.aside);
   // The drag sash sits between whichever left sidebar is open and the editor
-  // host. DOM order: explorer.aside, outline.aside, sash, host. Its own
+  // host. DOM order: recent.aside, explorer.aside, outline.aside, sash, host. Its own
   // visibility is CSS-only (styles.css: hidden unless a sidebar sibling is
   // open) — no JS coupling to closeOtherSidebars needed.
   const sash = createSidebarSash();
