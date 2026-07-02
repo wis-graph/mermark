@@ -242,6 +242,42 @@ describe("full-editor render smoke", () => {
     ed.view.destroy();
   });
 
+  it("nested list lines get cm-list-line + depth-based cm-list-d{n} classes (P2+P3)", () => {
+    const doc = "intro\n\n- a\n    - b";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    (ed.view as unknown as { measure(): void }).measure();
+    const lines = ed.view.contentDOM.querySelectorAll(".cm-line");
+    const d1 = ed.view.contentDOM.querySelector(".cm-list-d1");
+    const d2 = ed.view.contentDOM.querySelector(".cm-list-d2");
+    expect(d1).not.toBeNull();
+    expect(d2).not.toBeNull();
+    expect(d1!.classList.contains("cm-list-line")).toBe(true);
+    expect(d2!.classList.contains("cm-list-line")).toBe(true);
+    expect(d1!.textContent).toContain("a");
+    expect(d2!.textContent).toContain("b");
+    // the non-list "intro" paragraph line never gets the list-line class
+    expect(lines[0].classList.contains("cm-list-line")).toBe(false);
+    ed.view.destroy();
+  });
+
+  it("list line class survives bullet reveal (line class is not conceal-gated)", () => {
+    const doc = "intro\n\n- Fruit\n- Veg";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-list-d1")).not.toBeNull();
+    // caret onto the bullet line → raw "- " reveals, but the hang/guide class stays
+    view.dispatch({ selection: { anchor: doc.indexOf("- Fruit") + 1 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("- Fruit");
+    const fruitLine = Array.from(view.contentDOM.querySelectorAll(".cm-line")).find((l) =>
+      l.textContent?.includes("Fruit"),
+    );
+    expect(fruitLine?.classList.contains("cm-list-line")).toBe(true);
+    expect(fruitLine?.classList.contains("cm-list-d1")).toBe(true);
+    view.destroy();
+  });
+
   it("renders --- as a horizontal rule; reveals raw on its line", () => {
     const doc = "above\n\n---\n\nbelow";
     const view = mount(host, doc);

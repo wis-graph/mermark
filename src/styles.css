@@ -782,8 +782,107 @@ html, body { margin: 0; height: 100%; }
 /* thematic break (---) → a horizontal rule filling the line */
 .cm-hr { display: inline-block; width: 100%; height: 0; margin: 0; border: none; border-top: 1px solid var(--border); vertical-align: middle; }
 
-.cm-bullet { display: inline-block; width: .38em; height: .38em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
-.cm-bullet-collapsed { box-shadow: 0 0 0 .3em color-mix(in srgb, var(--muted) 50%, transparent); }
+.cm-bullet { display: inline-block; width: .30em; height: .30em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
+.cm-bullet-collapsed { box-shadow: 0 0 0 .26em color-mix(in srgb, var(--muted) 50%, transparent); }
+
+/* ── list wrap hanging indent + nested indent guides (P2+P3, one line-class
+   family) ────────────────────────────────────────────────────────────────
+   live-preview/features/list-line.ts emits `cm-list-line cm-list-d{n}` on
+   every list-item's first source line (n = nesting depth, 1-based, capped
+   at 6). row1: text-indent exactly cancels padding-inline-start, so the
+   marker+text keep their current start column (no visible change). row2+
+   (CM6 EditorView.lineWrapping soft-wrap): the browser starts the wrapped
+   row at padding-inline-start, landing it under the text column instead of
+   column 0 — the "hanging indent". Every cm-list-d{n} also paints one
+   background linear-gradient per ancestor level (P3 guide), reusing the
+   same line-class — no separate decoration pass.
+   ZOOM GUARD: em units only (rides --font-scale ⌘± zoom via the .cm-line
+   font this class sits on); padding/text-indent/background-image only, no
+   font-size/calc — background is measure-inert so it can't fight async
+   widget 0-height layout.
+   SPECIFICITY: the element carries `cm-line cm-list-line cm-list-d{n}`, and
+   CM's baseTheme ships `.ͼ1 .cm-line { padding: 0 2px 0 6px }` at (0,2,0). A
+   bare `.cm-list-d1` is only (0,1,0) → CM's fixed 6px padding wins and the
+   hang never applies. So every rule below is prefixed `.cm-editor .cm-line…`
+   → (0,3,0), out-specifying CM regardless of source order — the same guard
+   the heading typescale rules use (see `.cm-editor .cm-line.cm-hN`). */
+.cm-editor .cm-line.cm-list-line {
+  --list-step: 1.1em;   /* per-level indent, ≈ the source's 4-space nesting */
+  --list-marker: 1.3em; /* marker + trailing space width */
+  --guide: color-mix(in srgb, var(--border) 70%, transparent);
+}
+.cm-editor .cm-line.cm-list-d1 {
+  padding-inline-start: calc(0 * var(--list-step) + var(--list-marker));
+  text-indent: calc(-1 * (0 * var(--list-step) + var(--list-marker)));
+}
+.cm-editor .cm-line.cm-list-d2 {
+  padding-inline-start: calc(1 * var(--list-step) + var(--list-marker));
+  text-indent: calc(-1 * (1 * var(--list-step) + var(--list-marker)));
+  background-image: linear-gradient(var(--guide) 0 100%);
+  background-size: 1px 100%;
+  background-position: calc(0 * var(--list-step) + .55em) 0;
+  background-repeat: no-repeat;
+}
+.cm-editor .cm-line.cm-list-d3 {
+  padding-inline-start: calc(2 * var(--list-step) + var(--list-marker));
+  text-indent: calc(-1 * (2 * var(--list-step) + var(--list-marker)));
+  background-image:
+    linear-gradient(var(--guide) 0 100%),
+    linear-gradient(var(--guide) 0 100%);
+  background-size: 1px 100%, 1px 100%;
+  background-position:
+    calc(0 * var(--list-step) + .55em) 0,
+    calc(1 * var(--list-step) + .55em) 0;
+  background-repeat: no-repeat, no-repeat;
+}
+.cm-editor .cm-line.cm-list-d4 {
+  padding-inline-start: calc(3 * var(--list-step) + var(--list-marker));
+  text-indent: calc(-1 * (3 * var(--list-step) + var(--list-marker)));
+  background-image:
+    linear-gradient(var(--guide) 0 100%),
+    linear-gradient(var(--guide) 0 100%),
+    linear-gradient(var(--guide) 0 100%);
+  background-size: 1px 100%, 1px 100%, 1px 100%;
+  background-position:
+    calc(0 * var(--list-step) + .55em) 0,
+    calc(1 * var(--list-step) + .55em) 0,
+    calc(2 * var(--list-step) + .55em) 0;
+  background-repeat: no-repeat, no-repeat, no-repeat;
+}
+.cm-editor .cm-line.cm-list-d5 {
+  padding-inline-start: calc(4 * var(--list-step) + var(--list-marker));
+  text-indent: calc(-1 * (4 * var(--list-step) + var(--list-marker)));
+  background-image:
+    linear-gradient(var(--guide) 0 100%),
+    linear-gradient(var(--guide) 0 100%),
+    linear-gradient(var(--guide) 0 100%),
+    linear-gradient(var(--guide) 0 100%);
+  background-size: 1px 100%, 1px 100%, 1px 100%, 1px 100%;
+  background-position:
+    calc(0 * var(--list-step) + .55em) 0,
+    calc(1 * var(--list-step) + .55em) 0,
+    calc(2 * var(--list-step) + .55em) 0,
+    calc(3 * var(--list-step) + .55em) 0;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat;
+}
+.cm-editor .cm-line.cm-list-d6 {
+  padding-inline-start: calc(5 * var(--list-step) + var(--list-marker));
+  text-indent: calc(-1 * (5 * var(--list-step) + var(--list-marker)));
+  background-image:
+    linear-gradient(var(--guide) 0 100%),
+    linear-gradient(var(--guide) 0 100%),
+    linear-gradient(var(--guide) 0 100%),
+    linear-gradient(var(--guide) 0 100%),
+    linear-gradient(var(--guide) 0 100%);
+  background-size: 1px 100%, 1px 100%, 1px 100%, 1px 100%, 1px 100%;
+  background-position:
+    calc(0 * var(--list-step) + .55em) 0,
+    calc(1 * var(--list-step) + .55em) 0,
+    calc(2 * var(--list-step) + .55em) 0,
+    calc(3 * var(--list-step) + .55em) 0,
+    calc(4 * var(--list-step) + .55em) 0;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+}
 
 /* ── `[[` wikilink autocomplete popup (CodeMirror tooltip) ───────────────────
    CM ships a baked LIGHT base theme for the autocomplete tooltip (white plate,

@@ -65,7 +65,7 @@
 
 ### 3.2 블록 요소
 - **헤딩** — 위계 스케일 + 폴딩 + 포커스 라인.
-- **리스트** — Workflowy식 불릿 + fold halo, task 체크박스(줌 연동).
+- **리스트** — Workflowy식 불릿(작게, `.30em`) + fold halo, task 체크박스(줌 연동). **wrap hanging indent + 인덴트 가이드**(통합 라인 데코 `list-line.ts` — `listItemDepth` 조상 카운트로 `cm-list-line cm-list-d{n}` 라인 클래스, 블록 위젯 아님). 자동줄바꿈 시 이어지는 줄이 텍스트 열에 hanging 정렬(depth별 `padding-inline-start` + 음수 `text-indent` 상쇄, em·줌 라이드), 중첩 깊이별 은은한 세로 가이드선(`--border` 저채도 background). specificity `.cm-editor .cm-line.cm-list-d{n}`로 CM baseTheme 이김. 줌가드(font-size 무접촉).
 - **블록쿼트 / 콜아웃** — `> [!type]` 13종(아이콘·색·커스텀 제목, 별칭, note 폴백).
 - **코드 블록** — 펜스 블록 위젯, 언어 토큰 conceal, fold. **자동 줄바꿈**(`white-space: pre-wrap` + `overflow-wrap: anywhere` — 들여쓰기 보존하며 긴 줄·긴 토큰 wrap, 가로스크롤 안전망 유지).
 - **테이블** — GFM 정렬(`:--:`), 셀 인라인 마크.
