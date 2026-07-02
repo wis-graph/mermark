@@ -483,6 +483,14 @@ html, body { margin: 0; height: 100%; }
 /* Icon-only buttons (theme toggle): square so the glyph sits centered, not lopsided. */
 .chrome-btn.icon-only { padding: 0; width: 28px; justify-content: center; }
 
+/* Sidebar-toggle active/"pressed" state (VSCode activity-bar style): the button
+   whose sidebar is open reads visually pressed via aria-expanded alone — icon
+   identity (folder/history/list-tree/…) never changes, only this background/color
+   do. Scoped to .chrome-btn so it can't bleed onto the explorer tree's own
+   aria-expanded (folder-row disclosure, a different class). Theme vars only. */
+.chrome-btn[aria-expanded="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--fg); }
+.chrome-btn[aria-expanded="true"]:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+
 /* Save status: icon + label, color states preserved from the old emoji version
    (saved/saving muted, error red, conflict amber). The status word lives in
    .save-label (an inline-flex icon+text); the conflict actions follow it. */

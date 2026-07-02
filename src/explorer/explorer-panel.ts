@@ -111,7 +111,7 @@ export function createExplorerPanel({
   /** Render the toggle button for the current open/closed state (icon + ARIA).
    *  Called at init and on every open()/close() so they never drift. */
   const renderButton = (): void =>
-    renderSidebarButton(button, "탐색기", !aside.hidden, EXPLORER_ASIDE_ID);
+    renderSidebarButton(button, "folder", "탐색기", !aside.hidden, EXPLORER_ASIDE_ID);
   renderButton();
   const tree = create("div", "explorer-tree");
   tree.setAttribute("role", "tree");

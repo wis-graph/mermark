@@ -80,7 +80,7 @@ export function createOutlinePanel({ getView, onOpen }: OutlineHandlers): Outlin
   /** Render the toggle button for the current open/closed state (icon + ARIA).
    *  Called at init and on every open()/close() so they never drift. */
   const renderButton = (): void =>
-    renderSidebarButton(button, "목차", !aside.hidden, OUTLINE_ASIDE_ID);
+    renderSidebarButton(button, "list-tree", "목차", !aside.hidden, OUTLINE_ASIDE_ID);
   renderButton();
 
   /** Rebuild the heading list from the live document. While the panel is hidden

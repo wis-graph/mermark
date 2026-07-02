@@ -86,7 +86,7 @@ export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandl
   /** Render the toggle button for the current open/closed state (icon + ARIA).
    *  Called at init and on every open()/close() so they never drift. */
   const renderButton = (): void =>
-    renderSidebarButton(button, "최근", !aside.hidden, RECENT_ASIDE_ID);
+    renderSidebarButton(button, "history", "최근", !aside.hidden, RECENT_ASIDE_ID);
   renderButton();
 
   /** Rebuild the list from the live setting. Skips work while hidden — a closed

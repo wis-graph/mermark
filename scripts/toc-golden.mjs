@@ -86,7 +86,7 @@ async function loadDoc(text, mode) {
 async function openOutline() {
   await page.evaluate(() => {
     const btn = document.querySelector(".outline-btn");
-    const row = document.querySelector(".outline-row");
+    const row = document.querySelector(".outline-aside");
     if (row && row.hidden) btn?.click(); // open only if currently closed
     else if (row) {
       // already open from a previous scenario — re-render against the new doc

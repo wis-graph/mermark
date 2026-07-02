@@ -9,7 +9,8 @@ import type { EditorView } from "@codemirror/view";
 // The recent panel is now a LEFT SIDEBAR <aside> (was a fixed bottom popover
 // .recent-row), sharing the .sidebar-aside shell with the explorer + outline:
 // a static "최근 문서" header, close()/onOpen for the mutual-exclusion
-// coordinator, and the shared panel-left toggle icon + disclosure ARIA.
+// coordinator, and the toggle button's fixed `history` identity icon +
+// disclosure ARIA (state = aria-expanded only, no icon swap).
 // onOpen (panel-opened notification) is distinct from onOpenFile (open a
 // document) — see design decision 2.
 
@@ -116,30 +117,35 @@ describe("recent panel: left-sidebar shell (C)", () => {
   });
 });
 
-describe("recent panel: toggle icon + disclosure ARIA (E)", () => {
-  it("closed → panel-left-open + aria-expanded=false, aria-controls set, label 최근", () => {
+describe("recent panel: toggle icon + disclosure ARIA (N)", () => {
+  it("closed → history identity icon, aria-expanded=false, aria-controls set, label 최근", () => {
     const p = createRecentPanel({ getRecent: () => [], onOpenFile: () => {} });
-    expect(p.button.querySelector(".icon-panel-left-open")).toBeTruthy();
-    expect(p.button.querySelector(".icon-history")).toBeNull(); // old history icon removed
+    expect(p.button.querySelector(".icon-history")).toBeTruthy();
     expect(p.button.getAttribute("aria-expanded")).toBe("false");
     expect(p.button.getAttribute("aria-controls")).toBe("recent-aside");
     expect(p.button.querySelector(".chrome-btn-label")?.textContent).toBe("최근");
   });
 
-  it("opening swaps to panel-left-close + aria-expanded=true, label preserved", () => {
+  it("opening keeps the SAME history icon (no swap), aria-expanded=true, label preserved", () => {
     const p = createRecentPanel({ getRecent: () => [], onOpenFile: () => {} });
     p.button.click();
-    expect(p.button.querySelector(".icon-panel-left-close")).toBeTruthy();
+    expect(p.button.querySelector(".icon-history")).toBeTruthy();
     expect(p.button.getAttribute("aria-expanded")).toBe("true");
     expect(p.button.querySelector(".chrome-btn-label")?.textContent).toBe("최근");
   });
 
-  it("closing swaps back to panel-left-open + aria-expanded=false", () => {
+  it("closing keeps the icon, resets aria-expanded=false", () => {
     const p = createRecentPanel({ getRecent: () => [], onOpenFile: () => {} });
     p.button.click();
     p.button.click();
-    expect(p.button.querySelector(".icon-panel-left-open")).toBeTruthy();
+    expect(p.button.querySelector(".icon-history")).toBeTruthy();
     expect(p.button.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("never renders a panel-left icon (no more identity-in-label/state-in-icon swap)", () => {
+    const p = createRecentPanel({ getRecent: () => [], onOpenFile: () => {} });
+    expect(p.button.querySelector(".icon-panel-left-open")).toBeNull();
+    expect(p.button.querySelector(".icon-panel-left-close")).toBeNull();
   });
 });
 

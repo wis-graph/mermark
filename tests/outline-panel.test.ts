@@ -6,7 +6,8 @@ import { createOutlinePanel } from "../src/outline/outline-panel";
 
 // Outline is now a LEFT SIDEBAR <aside> (was a fixed bottom popover .outline-row):
 // a shared sidebar shell, a static "목차" header, close()/onOpen for the mutual-
-// exclusion coordinator, and the shared panel-left toggle icon + disclosure ARIA.
+// exclusion coordinator, and the toggle button's fixed `list-tree` identity icon
+// + disclosure ARIA (state = aria-expanded only, no icon swap).
 
 const fakeView = (doc: string) =>
   ({ state: EditorState.create({ doc, extensions: [markdownLang()] }) }) as unknown as EditorView;
@@ -49,20 +50,29 @@ describe("outline panel: left-sidebar shell (C)", () => {
   });
 });
 
-describe("outline panel: toggle icon + disclosure ARIA (E)", () => {
-  it("closed → panel-left-open + aria-expanded=false, aria-controls set", () => {
+describe("outline panel: toggle icon + disclosure ARIA (N)", () => {
+  it("closed → list-tree identity icon, aria-expanded=false, aria-controls set", () => {
     const p = createOutlinePanel({ getView: () => fakeView("# a") });
-    expect(p.button.querySelector(".icon-panel-left-open")).toBeTruthy();
+    expect(p.button.querySelector(".icon-list-tree")).toBeTruthy();
     expect(p.button.getAttribute("aria-expanded")).toBe("false");
     expect(p.button.getAttribute("aria-controls")).toBe("outline-aside");
     expect(p.button.querySelector(".chrome-btn-label")?.textContent).toBe("목차");
   });
 
-  it("opening swaps to panel-left-close + aria-expanded=true, label preserved", () => {
+  it("opening keeps the SAME list-tree icon (no swap), aria-expanded=true, label preserved", () => {
     const p = createOutlinePanel({ getView: () => fakeView("# a") });
     p.button.click();
-    expect(p.button.querySelector(".icon-panel-left-close")).toBeTruthy();
+    expect(p.button.querySelector(".icon-list-tree")).toBeTruthy();
     expect(p.button.getAttribute("aria-expanded")).toBe("true");
     expect(p.button.querySelector(".chrome-btn-label")?.textContent).toBe("목차");
+  });
+
+  it("never renders a panel-left icon (no more identity-in-label/state-in-icon swap)", () => {
+    const p = createOutlinePanel({ getView: () => fakeView("# a") });
+    expect(p.button.querySelector(".icon-panel-left-open")).toBeNull();
+    expect(p.button.querySelector(".icon-panel-left-close")).toBeNull();
+    p.button.click();
+    expect(p.button.querySelector(".icon-panel-left-open")).toBeNull();
+    expect(p.button.querySelector(".icon-panel-left-close")).toBeNull();
   });
 });

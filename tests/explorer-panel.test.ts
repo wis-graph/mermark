@@ -510,17 +510,24 @@ describe("explorer: sidebar shell interface (7)", () => {
     expect(onOpen).toHaveBeenCalledOnce();
   });
 
-  it("toggle button swaps the panel-left icon + aria-expanded (E)", async () => {
+  it("toggle button keeps a fixed folder identity icon, aria-expanded tracks open state (N)", async () => {
     const panel = createExplorerPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
     host.append(panel.button, panel.aside);
-    expect(panel.button.querySelector(".icon-panel-left-open")).toBeTruthy();
+    expect(panel.button.querySelector(".icon-folder")).toBeTruthy();
     expect(panel.button.getAttribute("aria-expanded")).toBe("false");
     expect(panel.button.getAttribute("aria-controls")).toBe("explorer-aside");
     panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flush();
-    expect(panel.button.querySelector(".icon-panel-left-close")).toBeTruthy();
+    expect(panel.button.querySelector(".icon-folder")).toBeTruthy(); // no icon swap
     expect(panel.button.getAttribute("aria-expanded")).toBe("true");
     expect(panel.button.querySelector(".chrome-btn-label")?.textContent).toBe("탐색기");
+  });
+
+  it("never renders a panel-left icon on the toggle button (N)", async () => {
+    const panel = createExplorerPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    host.append(panel.button, panel.aside);
+    expect(panel.button.querySelector(".icon-panel-left-open")).toBeNull();
+    expect(panel.button.querySelector(".icon-panel-left-close")).toBeNull();
   });
 
   it("resetToBaseDir rebuilds when open, no-ops when hidden", async () => {
