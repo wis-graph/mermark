@@ -425,6 +425,39 @@ describe("app settings", () => {
     });
   });
 
+  describe("favoriteFoldersSetting", () => {
+    it("defaults to an empty array and persists under mermark.favoriteFolders", async () => {
+      const { favoriteFoldersSetting } = await import("../src/settings/app");
+      expect(favoriteFoldersSetting.get()).toEqual([]);
+      favoriteFoldersSetting.set(["/a", "/b"]);
+      expect(localStorage.getItem("mermark.favoriteFolders")).toBe(JSON.stringify(["/a", "/b"]));
+    });
+
+    it("parses a saved JSON array", async () => {
+      localStorage.setItem("mermark.favoriteFolders", JSON.stringify(["/a", "/b"]));
+      const { favoriteFoldersSetting } = await import("../src/settings/app");
+      expect(favoriteFoldersSetting.get()).toEqual(["/a", "/b"]);
+    });
+
+    it("falls back to the default on invalid JSON", async () => {
+      localStorage.setItem("mermark.favoriteFolders", "not json");
+      const { favoriteFoldersSetting } = await import("../src/settings/app");
+      expect(favoriteFoldersSetting.get()).toEqual([]);
+    });
+
+    it("falls back to the default on a non-array JSON value", async () => {
+      localStorage.setItem("mermark.favoriteFolders", "{}");
+      const { favoriteFoldersSetting } = await import("../src/settings/app");
+      expect(favoriteFoldersSetting.get()).toEqual([]);
+    });
+
+    it("filters out non-string entries from a saved array", async () => {
+      localStorage.setItem("mermark.favoriteFolders", JSON.stringify(["/a", 1, null, "/b"]));
+      const { favoriteFoldersSetting } = await import("../src/settings/app");
+      expect(favoriteFoldersSetting.get()).toEqual(["/a", "/b"]);
+    });
+  });
+
   describe("vimModeSetting", () => {
     it("defaults to off and persists under mermark.vimMode", async () => {
       const { vimModeSetting } = await import("../src/settings/app");

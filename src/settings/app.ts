@@ -432,6 +432,30 @@ export const recentDocsSetting = defineSetting<string[]>({
   serialize: (v) => JSON.stringify(v),
 });
 
+// ── 즐겨찾기 폴더 (Favorite folders) — SSOT-only, no panel ui ──────────────────
+
+/** User-curated folder shortcuts, insertion order (NOT most-recent-first —
+ *  see favorite-folders.ts for the full contrast with recentDocsSetting's MRU
+ *  rules). SSOT-only (no panel row): the title-bar favorites panel subscribes
+ *  to render, and main is the single writer (via pushFavorite/removeFavorite).
+ *  Persisted as a JSON array in localStorage — same shape/guard as
+ *  recentDocsSetting, WKWebView keeps it across restarts, no backend command
+ *  needed. Corrupt value / non-array → [] (empty list). */
+export const favoriteFoldersSetting = defineSetting<string[]>({
+  key: "mermark.favoriteFolders",
+  default: [],
+  parse: (raw) => {
+    if (raw == null) return null;
+    try {
+      const a = JSON.parse(raw);
+      return Array.isArray(a) ? a.filter((x) => typeof x === "string") : null;
+    } catch {
+      return null;
+    }
+  },
+  serialize: (v) => JSON.stringify(v),
+});
+
 // ── Body text zoom (fontScale, ⌘±) — SSOT-only, no panel ui ───────────────────
 
 const FONT_SCALE_MIN = 0.8;

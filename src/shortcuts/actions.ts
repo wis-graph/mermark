@@ -28,6 +28,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: "explorer.toggle", label: "탐색기 토글", defaultBinding: "Mod+B" },
   { id: "recent.toggle", label: "최근 문서", defaultBinding: null },
   { id: "outline.toggle", label: "목차", defaultBinding: null },
+  { id: "favorites.toggle", label: "즐겨찾기 토글", defaultBinding: "Mod+Shift+B" },
   { id: "history.back", label: "이전 문서", defaultBinding: "Mod+[" },
   { id: "history.forward", label: "다음 문서", defaultBinding: "Mod+]" },
   { id: "openPath.toggle", label: "경로 열기", defaultBinding: null },

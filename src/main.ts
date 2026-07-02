@@ -32,6 +32,7 @@ import {
   vimModeSetting,
   keybindingsSetting,
   recentDocsSetting,
+  favoriteFoldersSetting,
   sidebarWidthSetting,
 } from "./settings/app";
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./settings/sinks";
@@ -44,6 +45,8 @@ import { createTitleBar, arrangeTitleBar } from "./title-bar";
 import { createBreadcrumb } from "./breadcrumb";
 import { createRecentPanel } from "./recent/recent-panel";
 import { pushRecent, pruneMissing } from "./recent/recent-docs";
+import { createFavoritesPanel } from "./favorites/favorites-panel";
+import { pushFavorite, removeFavorite } from "./favorites/favorite-folders";
 import {
   makeHistory,
   pushHistory,
@@ -226,6 +229,12 @@ async function boot() {
   let current: EditorController;
   let currentFile = file;
   let currentBaseDir = dirOf(file);
+  // The folder the explorer tree is CURRENTLY rooted at — an ephemeral view
+  // state (not a setting), re-seeded at the exact same two points as the
+  // footer breadcrumb (explorer.onRootChange below, and openInWindow's
+  // currentBaseDir reseed) so it can never drift from what the tree is
+  // actually showing. This is the ★-add target (favorites' getCurrentFolder).
+  let currentRoot = currentBaseDir;
   // Document navigation history (⌘[/⌘]) — ephemeral in-memory session state, NOT
   // a setting: starts empty; the first openInWindow records the launch file.
   // Distinct from the recent MRU list (recentDocsSetting) — see nav-history.ts.
@@ -270,10 +279,11 @@ async function boot() {
   // onOpen when it opens; this closes whichever other left sidebar was showing.
   // The closure is evaluated at click time, so referencing `explorer` (declared
   // just below) is safe. close() is idempotent, so an unconditional call is fine.
-  const closeOtherSidebars = (keep: "explorer" | "outline" | "recent"): void => {
+  const closeOtherSidebars = (keep: "explorer" | "outline" | "recent" | "favorites"): void => {
     if (keep !== "explorer") explorer.close();
     if (keep !== "outline") outline.close();
     if (keep !== "recent") recent.close();
+    if (keep !== "favorites") favorites.close();
   };
   const outline = createOutlinePanel({
     getView: () => current.view,
@@ -294,7 +304,10 @@ async function boot() {
       openInWindow(absPath, fresh);
     },
     onOpen: () => closeOtherSidebars("explorer"),
-    onRootChange: (root) => breadcrumb.render(root),
+    onRootChange: (root) => {
+      breadcrumb.render(root);
+      currentRoot = root;
+    },
   });
 
   // ── Recent documents LEFT SIDEBAR. Same toggle shape as explorer/outline; the
@@ -317,14 +330,29 @@ async function boot() {
     onOpen: () => closeOtherSidebars("recent"),
   });
 
+  // ── Favorites LEFT SIDEBAR (M4). A user-curated folder list (NOT an MRU —
+  //    see favorite-folders.ts): a click jumps the explorer's root there
+  //    (reusing M3's jumpToRoot), the header ★ adds currentRoot, per-item X
+  //    removes. The panel is a pure sink of favoriteFoldersSetting (getFavorites)
+  //    and only emits events; main is the single writer below. ─────────────────
+  const favorites = createFavoritesPanel({
+    getFavorites: () => favoriteFoldersSetting.get(),
+    getCurrentFolder: () => currentRoot,
+    onJump: (abs) => explorer.jumpToRoot(abs),
+    onAdd: (abs) => favoriteFoldersSetting.set(pushFavorite(favoriteFoldersSetting.get(), abs)),
+    onRemove: (abs) => favoriteFoldersSetting.set(removeFavorite(favoriteFoldersSetting.get(), abs)),
+    onOpen: () => closeOtherSidebars("favorites"),
+  });
+
   // Title-bar order (single contract, arrangeTitleBar owns it): 탐색기 · 최근 ·
-  // 목차 · 경로열기 · [drag spacer] · 모드 · 테마 · ⚙, window-controls always last
-  // (win/linux). createSettingsButton only builds the button + lazy modal
-  // wiring — position is this call's job, not modal.ts's (M2 decision).
+  // 목차 · 즐겨찾기 · 경로열기 · [drag spacer] · 모드 · 테마 · ⚙, window-controls
+  // always last (win/linux). createSettingsButton only builds the button +
+  // lazy modal wiring — position is this call's job, not modal.ts's (M2 decision).
   arrangeTitleBar(titleBar.el, {
     explorer: explorer.button,
     recent: recent.button,
     outline: outline.button,
+    favorites: favorites.button,
     openPath: prompt.button,
     mode: mode.btn,
     theme: themeBtn.btn,
@@ -340,24 +368,28 @@ async function boot() {
     save: save.el,
     pos,
   });
-  // The explorer + outline + recent are LEFT sidebars (not footer popovers):
-  // mount all three as the leading children of .workspace so they sit left of
-  // the editor host. They are mutually exclusive (one visible at a time via
-  // closeOtherSidebars), so their left-to-right order is never seen
-  // simultaneously — prepend order among them is arbitrary.
+  // The explorer + outline + recent + favorites are LEFT sidebars (not footer
+  // popovers): mount all four as the leading children of .workspace so they
+  // sit left of the editor host. They are mutually exclusive (one visible at
+  // a time via closeOtherSidebars, now 4-way), so their left-to-right order is
+  // never seen simultaneously — prepend order among them is arbitrary.
   workspace.prepend(outline.aside);
   workspace.prepend(explorer.aside);
   workspace.prepend(recent.aside);
+  workspace.prepend(favorites.aside);
   // The drag sash sits between whichever left sidebar is open and the editor
-  // host. DOM order: recent.aside, explorer.aside, outline.aside, sash, host. Its own
-  // visibility is CSS-only (styles.css: hidden unless a sidebar sibling is
-  // open) — no JS coupling to closeOtherSidebars needed.
+  // host. DOM order: favorites.aside, recent.aside, explorer.aside,
+  // outline.aside, sash, host. Its own visibility is CSS-only (styles.css:
+  // hidden unless a sidebar sibling is open) — no JS coupling to
+  // closeOtherSidebars needed.
   const sash = createSidebarSash();
   host.before(sash.el);
 
   // The recent panel is a sink of recentDocsSetting: re-render on every change
   // (no-op while closed). Single subscription — no hand fan-out.
   recentDocsSetting.subscribe(() => recent.refresh());
+  // Same shape for favorites: single favoriteFoldersSetting.subscribe sink.
+  favoriteFoldersSetting.subscribe(() => favorites.refresh());
 
   // ── Per-file session persistence. The key is recomputed per open; the timer
   //    is scoped to the live editor and cancelled on teardown. ────────────────
@@ -427,6 +459,10 @@ async function boot() {
     teardownCurrent();
     currentFile = file;
     currentBaseDir = dirOf(file);
+    // Reseed currentRoot too — the same reseed point as the breadcrumb below,
+    // so favorites' getCurrentFolder tracks a document switch even while the
+    // explorer panel is closed (its onRootChange won't fire in that case).
+    currentRoot = currentBaseDir;
     const { text, mtime } = fresh;
 
     current = mountEditor(host, text, currentBaseDir, file, {
@@ -628,6 +664,7 @@ async function boot() {
   registerHandler("explorer.toggle", () => explorer.button.click());
   registerHandler("recent.toggle", () => recent.button.click());
   registerHandler("outline.toggle", () => outline.button.click());
+  registerHandler("favorites.toggle", () => favorites.button.click());
   registerHandler("history.back", goBack);
   registerHandler("history.forward", goForward);
   registerHandler("openPath.toggle", () => prompt.button.click());

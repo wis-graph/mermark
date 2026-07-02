@@ -1,11 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { createTitleBar, arrangeTitleBar } from "../src/title-bar";
 
-// The title-bar layout contract (design M2 §1): left→right is
-// 탐색기 · 최근 · 목차 · 경로열기 · [drag spacer] · 모드 · 테마 · ⚙, with the
-// win/linux window-controls cluster ALWAYS last (OS convention). arrangeTitleBar
-// is the single ordering rule; this pins it with plain elements (no editor boot
-// needed), mirroring status-bar-order.test.ts's mk() pattern.
+// The title-bar layout contract (design M2 §1, extended by M4 §arrangeTitleBar):
+// left→right is 탐색기 · 최근 · 목차 · 즐겨찾기 · 경로열기 · [drag spacer] · 모드 ·
+// 테마 · ⚙, with the win/linux window-controls cluster ALWAYS last (OS
+// convention). arrangeTitleBar is the single ordering rule; this pins it with
+// plain elements (no editor boot needed), mirroring status-bar-order.test.ts's
+// mk() pattern.
 
 function mk(id: string): HTMLElement {
   const e = document.createElement("button");
@@ -18,6 +19,7 @@ function parts() {
     explorer: mk("explorer"),
     recent: mk("recent"),
     outline: mk("outline"),
+    favorites: mk("favorites"),
     openPath: mk("openPath"),
     mode: mk("mode"),
     theme: mk("theme"),
@@ -30,7 +32,20 @@ describe("arrangeTitleBar", () => {
     const { el: bar } = createTitleBar({ platform: "mac" });
     arrangeTitleBar(bar, parts());
     const ids = [...bar.children].map((c) => (c as HTMLElement).dataset.id);
-    expect(ids).toEqual(["explorer", "recent", "outline", "openPath", undefined, "mode", "theme", "settings"]);
+    expect(ids).toEqual([
+      "explorer",
+      "recent",
+      "outline",
+      "favorites",
+      "openPath",
+      undefined,
+      "mode",
+      "theme",
+      "settings",
+    ]);
+    // favorites sits AFTER outline and BEFORE openPath (M4: reserved slot from M2).
+    expect(ids.indexOf("favorites")).toBeGreaterThan(ids.indexOf("outline"));
+    expect(ids.indexOf("favorites")).toBeLessThan(ids.indexOf("openPath"));
     // openPath sits AFTER outline — the new grouping (differs from the old status-bar order).
     expect(ids.indexOf("openPath")).toBeGreaterThan(ids.indexOf("outline"));
   });

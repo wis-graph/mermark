@@ -1220,6 +1220,53 @@ html, body { margin: 0; height: 100%; }
 .recent-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recent-path { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* Favorites LEFT SIDEBAR (M4) — shares the .sidebar-aside shell above (width,
+   flex, [hidden] display, background, border are all inherited from there).
+   Distinct from recent's header: a ★-add button rides on the right, and each
+   item carries an X-remove button revealed on hover. Theme tokens only (no
+   hardcoded hex) — the star/x icons inherit currentColor for free. */
+.favorites-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+}
+.favorites-header-label { flex: 1 1 auto; }
+.favorites-add {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  background: transparent; border: none; border-radius: var(--radius-sm, 6px);
+  color: var(--muted); cursor: pointer;
+  transition: background-color .12s ease, color .12s ease;
+}
+.favorites-add:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.favorites-add:disabled { color: var(--accent); cursor: default; }
+.favorites-add:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.favorites-list { display: flex; flex-direction: column; padding: 2px 4px 8px; }
+.favorites-empty { padding: .5em; color: var(--muted); }
+.favorites-empty[hidden] { display: none; }
+.favorites-item {
+  position: relative; display: flex; flex-direction: column; gap: 1px; width: 100%;
+  text-align: left; background: transparent; border: none;
+  border-radius: var(--radius-sm, 6px);
+  color: var(--fg); font: inherit; padding: 4px 26px 4px 8px; cursor: pointer;
+  overflow: hidden; transition: background-color .12s ease;
+}
+.favorites-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.favorites-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.favorites-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.favorites-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.favorites-path { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.favorites-remove {
+  position: absolute; top: 4px; right: 4px;
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0;
+  background: transparent; border: none; border-radius: var(--radius-sm, 6px);
+  color: var(--muted); cursor: pointer; opacity: 0;
+  transition: opacity .12s ease, background-color .12s ease, color .12s ease;
+}
+.favorites-item:hover .favorites-remove,
+.favorites-item:focus-within .favorites-remove { opacity: 1; }
+.favorites-remove:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
+.favorites-remove .icon { width: 12px; height: 12px; }
+
 /* Keybind settings control (단축키 category). One row per rebindable action:
    label · current chord · 재정의 (capture) · 기본값 (reset), with 전체 리셋 on
    top. Theme tokens only. */

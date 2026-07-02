@@ -92,6 +92,19 @@ describe("shortcut registry", () => {
     expect(effectiveBinding("history.forward")).toBe("Mod+]");
   });
 
+  it("favorites.toggle ships with ⌘⇧B (paired with explorer.toggle's ⌘B)", () => {
+    bindKeybindings(keybindSetting("kb.favorites"));
+    expect(effectiveBinding("favorites.toggle")).toBe("Mod+Shift+B");
+  });
+
+  it("dispatchChord runs the handler bound to favorites.toggle's default chord", () => {
+    bindKeybindings(keybindSetting("kb.favoritesDispatch"));
+    const fn = vi.fn();
+    registerHandler("favorites.toggle", fn);
+    expect(dispatchChord("Mod+Shift+B")).toBe(true);
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
   it("override map round-trips through localStorage (JSON serialize)", () => {
     const s1 = keybindSetting("kb.persist");
     s1.set({ "zoom.in": "Mod+Shift+=" });

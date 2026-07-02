@@ -29,13 +29,15 @@ export interface TitleBar {
 }
 
 /** The chrome parts arrangeTitleBar lays out, left→right. `explorer`/`recent`/
- *  `outline`/`openPath` are the left command group (sidebar toggles first, then
- *  open-path); `mode`/`theme`/`settings` are the right cluster. A drag spacer
- *  fills the gap between them (created internally — see createDragSpacer). */
+ *  `outline`/`favorites`/`openPath` are the left command group (sidebar
+ *  toggles first, then open-path); `mode`/`theme`/`settings` are the right
+ *  cluster. A drag spacer fills the gap between them (created internally —
+ *  see createDragSpacer). */
 export interface TitleBarParts {
   explorer: HTMLElement;
   recent: HTMLElement;
   outline: HTMLElement;
+  favorites: HTMLElement;
   openPath: HTMLElement;
   mode: HTMLElement;
   theme: HTMLElement;
@@ -164,17 +166,19 @@ function createDragSpacer(): HTMLElement {
   return s;
 }
 
-/** Arrange the title-bar chrome to the canonical order (design M2 §1):
- *  탐색기 · 최근 · 목차 · 경로열기 · [drag spacer] · 모드 · 테마 · ⚙ — followed by
- *  the win/linux window-controls cluster (always last, already appended by
- *  createTitleBar). Every part is inserted via insertBeforeWindowControls, so
- *  the window-controls-last rule holds regardless of call order. Command (void). */
+/** Arrange the title-bar chrome to the canonical order (design M2 §1, M4 §
+ *  arrangeTitleBar): 탐색기 · 최근 · 목차 · 즐겨찾기 · 경로열기 · [drag spacer] ·
+ *  모드 · 테마 · ⚙ — followed by the win/linux window-controls cluster (always
+ *  last, already appended by createTitleBar). Every part is inserted via
+ *  insertBeforeWindowControls, so the window-controls-last rule holds
+ *  regardless of call order. Command (void). */
 export function arrangeTitleBar(bar: HTMLElement, p: TitleBarParts): void {
   insertBeforeWindowControls(
     bar,
     p.explorer,
     p.recent,
     p.outline,
+    p.favorites,
     p.openPath,
     createDragSpacer(),
     p.mode,
