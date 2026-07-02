@@ -1,5 +1,6 @@
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { indentUnit } from "@codemirror/language";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap, highlightActiveLine, drawSelection } from "@codemirror/view";
 import { vim } from "@replit/codemirror-vim";
@@ -8,6 +9,7 @@ import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode
 import { footnoteNav } from "./markdown/footnote-nav";
 import { footnoteHover } from "./markdown/footnote-hover";
 import { markdownFolding } from "./markdown/fold";
+import { listIndentKeymap } from "./markdown/list-indent";
 import { markdownLang } from "./markdown/parser";
 import { wikilinkCompletionSource } from "./markdown/wikilink-complete";
 import { markupWrap } from "./markdown/markup-wrap";
@@ -322,6 +324,13 @@ export function mountEditor(
     extensions: [
       markdownLang(),
       markdownFolding,
+      // 4 spaces (not the CM default 2): a 2-space nested list item sits below
+      // the parent's content column (e.g. "1. " has content col 3), so Lezer
+      // parses it as lazy continuation, not a nested ListItem. 4 spaces clears
+      // both bullet ("- ", col 2) and ordered ("1. "/"10. ", col 3/4) content
+      // columns, so Tab-indented sub-lists actually nest. Not user-configurable
+      // (SSOT: no setting requested, avoid gold-plating).
+      indentUnit.of("    "),
       inlinePreview(baseDir, filePath),
       blockPreview,
       // Footnote click navigation: ref chip → definition, def marker → first
@@ -347,14 +356,23 @@ export function mountEditor(
       vimCompartment.of(vimExtensions(opts.vimMode === "on")),
       history(),
       // closeBrackets/completion keymaps sit before defaultKeymap so an active
-      // popup grabs Enter/Tab first; both pass through when no popup is open, so
-      // default Enter/Tab and the app's Mod-chord shortcuts are untouched. The
-      // app chords (⌘E mode toggle, etc.) are owned by the global shortcut
-      // dispatcher (src/shortcuts) — NOT a CM keymap — so they fire regardless of
-      // editor focus and stay in one registry.
+      // popup grabs Enter first (completionKeymap does NOT bind Tab — verified
+      // against @codemirror/autocomplete's default keymap, so without
+      // listIndentKeymap a Tab keystroke would fall through to default/browser
+      // behavior even with the popup open); both pass through when no popup is
+      // open, so default Enter and the app's Mod-chord shortcuts are untouched.
+      // listIndentKeymap sits between completionKeymap and defaultKeymap: its
+      // own first branch (completionPopupIsOpen) delegates Tab to
+      // acceptCompletion while a popup is open, and otherwise indents/dedents a
+      // list line or returns false to fall through to default Tab (focus move)
+      // — see src/markdown/list-indent.ts. The app chords (⌘E mode toggle,
+      // etc.) are owned by the global shortcut dispatcher (src/shortcuts) — NOT
+      // a CM keymap — so they fire regardless of editor focus and stay in one
+      // registry.
       keymap.of([
         ...closeBracketsKeymap,
         ...completionKeymap,
+        ...listIndentKeymap,
         ...defaultKeymap,
         ...historyKeymap,
       ]),

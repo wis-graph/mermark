@@ -164,3 +164,63 @@ describe("frontmatter parsing (top --- vs mid --- HR)", () => {
     expect(fm[0][1]).toBe("---\nk: v\n...");
   });
 });
+
+// The 4-space indentUnit decision (src/editor.ts, indentUnit.of("    ")) exists
+// because a nested list item must clear its parent's *content column* to parse
+// as a nested ListItem rather than a lazy continuation line of the parent's
+// paragraph. These assertions are the parser-level evidence for that decision.
+describe("list nesting depends on indent width (indentUnit = 4sp decision)", () => {
+  it("4-space indent nests a bullet sub-list (BulletList > ListItem > BulletList)", () => {
+    const doc = "- a\n    - b";
+    const tree = baseParser.configure([GFM, ...mermarkExtensions]).parse(doc);
+    let nestedBulletLists = 0;
+    tree.iterate({
+      enter(n) {
+        if (n.name !== "BulletList") return;
+        for (let p = n.node.parent; p; p = p.parent) {
+          if (p.name === "BulletList") {
+            nestedBulletLists++;
+            break;
+          }
+        }
+      },
+    });
+    expect(nestedBulletLists).toBeGreaterThan(0);
+  });
+
+  it("4-space indent nests an ordered sub-list (OrderedList > ListItem > OrderedList)", () => {
+    const doc = "1. a\n    1. b";
+    const tree = baseParser.configure([GFM, ...mermarkExtensions]).parse(doc);
+    let nestedOrderedLists = 0;
+    tree.iterate({
+      enter(n) {
+        if (n.name !== "OrderedList") return;
+        for (let p = n.node.parent; p; p = p.parent) {
+          if (p.name === "OrderedList") {
+            nestedOrderedLists++;
+            break;
+          }
+        }
+      },
+    });
+    expect(nestedOrderedLists).toBeGreaterThan(0);
+  });
+
+  it("2-space indent does NOT nest an ordered sub-list (lazy continuation instead — why 2sp was rejected)", () => {
+    const doc = "1. a\n  1. b";
+    const tree = baseParser.configure([GFM, ...mermarkExtensions]).parse(doc);
+    let nestedOrderedLists = 0;
+    tree.iterate({
+      enter(n) {
+        if (n.name !== "OrderedList") return;
+        for (let p = n.node.parent; p; p = p.parent) {
+          if (p.name === "OrderedList") {
+            nestedOrderedLists++;
+            break;
+          }
+        }
+      },
+    });
+    expect(nestedOrderedLists).toBe(0);
+  });
+});

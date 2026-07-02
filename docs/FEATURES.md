@@ -92,6 +92,7 @@
 - **마크업 래핑** — 선택 위 `=`(==highlight==), `*`(italic→bold→both).
 - **붙여넣기 링크화** — 선택 + URL paste → `[선택](URL)`.
 - **위키링크 자동완성** — `[[` 입력 시 파일 피커.
+- **리스트 Tab/Shift-Tab 들여쓰기** — 커서가 리스트 항목(불릿·숫자)에 있을 때 Tab=한 단계 중첩(4-space)·Shift-Tab=해제(`list-indent.ts` 리스트 인식 커스텀 핸들러 — `indentMore`/`indentLess` 위임). 리스트 밖 Tab은 기존 동작(포커스 이동) 보존. `[[` 완성 팝업 열림 시 Tab=완성 수락(indent 아님). `indentUnit` 4-space(ordered 리스트 중첩 성립).
 
 ### 4.3 네비게이션
 - **풋노트 양방향** — 참조↔정의 클릭 이동 + ⌘hover 정의 프리뷰(forward 비동기 위젯 재center).
