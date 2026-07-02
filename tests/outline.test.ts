@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { markdownLang } from "../src/markdown/parser";
-import { collectHeadings } from "../src/markdown/outline";
+import { collectHeadings, findHeadingByText } from "../src/markdown/outline";
 
 // Tauri's invoke is called by image/wikilink widgets + autosave when a full
 // editor is mounted (the integration block below). Stub with the real command
@@ -104,6 +104,49 @@ describe("collectHeadings: edge cases", () => {
   it("extracts a heading inside a blockquote without leaking the '>' marker", () => {
     const s = state("> # quoted");
     expect(collectHeadings(s).map((h) => [h.level, h.text])).toEqual([[1, "quoted"]]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findHeadingByText — pure query. [[#heading]] anchor resolution: the anchor
+// text (plain, no markdown markers) is matched against headingDisplayText
+// (already mark-stripped), so both sides go through the SAME normalization
+// (whitespace collapse + trim + lowercase).
+// ---------------------------------------------------------------------------
+describe("findHeadingByText", () => {
+  it("matches case-insensitively, returning the heading line's start pos", () => {
+    const doc = "intro\n\n## Alpha";
+    const s = state(doc);
+    expect(findHeadingByText(s, "alpha")).toBe(doc.indexOf("## Alpha"));
+  });
+
+  it("matches a mark-stripped display text (anchor written as plain display text)", () => {
+    const doc = "## **Bold** Title";
+    const s = state(doc);
+    expect(findHeadingByText(s, "bold title")).toBe(0);
+  });
+
+  it("normalizes internal whitespace + trims on the anchor side", () => {
+    const doc = "## Bold   Title";
+    const s = state(doc);
+    expect(findHeadingByText(s, "  bold   title ")).toBe(0);
+  });
+
+  it("returns the FIRST match in document order when duplicate headings exist", () => {
+    const doc = "# Dup\n\nbody\n\n## Dup";
+    const s = state(doc);
+    expect(findHeadingByText(s, "dup")).toBe(doc.indexOf("# Dup"));
+  });
+
+  it("returns null when no heading matches", () => {
+    expect(findHeadingByText(state("# Alpha"), "beta")).toBeNull();
+  });
+
+  it("never matches a '# fake' heading inside a fenced code block (tree-based, free)", () => {
+    const doc = "```\n# fake\n```\n\n# Real";
+    const s = state(doc);
+    expect(findHeadingByText(s, "fake")).toBeNull();
+    expect(findHeadingByText(s, "real")).toBe(doc.indexOf("# Real"));
   });
 });
 

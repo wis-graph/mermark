@@ -529,7 +529,10 @@ html, body { margin: 0; height: 100%; }
    scroll host — zero decorations, ⌘± zoom guard holds. Theme tokens only (no
    hardcoded hex) so dark / light / claude stay consistent. */
 .sidebar-aside {
-  flex: none; width: 240px; min-width: 160px;
+  /* width = --sidebar-width (SSOT: sidebarWidthSetting via cssVarSink, main.ts).
+     min-width:160px stays as a CSS floor too — a second, redundant safety net
+     under clampSidebarWidth's own 160 floor (belt + suspenders, not the SSOT). */
+  flex: none; width: var(--sidebar-width, 240px); min-width: 160px;
   display: flex; flex-direction: column;
   overflow-y: auto;
   background: var(--surface);
@@ -538,6 +541,22 @@ html, body { margin: 0; height: 100%; }
   user-select: none;
 }
 .sidebar-aside[hidden] { display: none; }
+
+/* Drag sash: a thin divider between the left sidebar shell and the editor
+   host (src/sidebar/sash.ts). Visibility is CSS-only — hidden unless a
+   .sidebar-aside sibling is open (general sibling combinator), so it never
+   needs JS to track closeOtherSidebars/open-close state. Theme tokens only
+   (no hardcoded hex): a 1px --border line at rest, an --accent tint on hover
+   or while dragging. */
+.workspace-sash {
+  display: none; flex: none; width: 5px; cursor: col-resize;
+  background: var(--border);
+}
+.sidebar-aside:not([hidden]) ~ .workspace-sash { display: block; }
+.workspace-sash:hover,
+.workspace-sash.is-dragging {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+}
 .sidebar-header {
   flex: none; padding: 8px 10px 4px;
   font-size: 11px; font-weight: 600; letter-spacing: .02em;

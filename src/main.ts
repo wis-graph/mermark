@@ -32,8 +32,10 @@ import {
   vimModeSetting,
   keybindingsSetting,
   recentDocsSetting,
+  sidebarWidthSetting,
 } from "./settings/app";
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./settings/sinks";
+import { createSidebarSash } from "./sidebar/sash";
 import { mountSettingsButton } from "./settings/panel/modal";
 import { copyBundleToClipboard } from "./bundle";
 import { registerHandler, installDispatcher, bindKeybindings } from "./shortcuts/registry";
@@ -156,6 +158,11 @@ async function boot() {
   fontSizeSetting.bind(cssVarSink("--editor-font-size", (px: number) => `${px}px`));
   readingWidthSetting.bind(cssVarSink("--measure", (ch: number) => `${ch}ch`));
   lineHeightSetting.bind(cssVarSink("--line-height"));
+  // Left sidebar width (drag sash): same setting.bind(cssVarSink) shape as the
+  // typography vars above. The sash (below, once `workspace` exists) previews
+  // the width as a transient var during drag and commits here on release; this
+  // sink re-applies that same value, so SSOT and the var converge (idempotent).
+  sidebarWidthSetting.bind(cssVarSink("--sidebar-width", (px: number) => `${px}px`));
   // Heading typescale: one ratio → six --hN-scale vars (headingScaleSink fans
   // them; styles.css multiplies each into its line's font-size calc).
   headingRatioSetting.bind(headingScaleSink());
@@ -315,6 +322,12 @@ async function boot() {
   // their left-to-right order is never seen simultaneously.
   workspace.prepend(outline.aside);
   workspace.prepend(explorer.aside);
+  // The drag sash sits between whichever left sidebar is open and the editor
+  // host. DOM order: explorer.aside, outline.aside, sash, host. Its own
+  // visibility is CSS-only (styles.css: hidden unless a sidebar sibling is
+  // open) — no JS coupling to closeOtherSidebars needed.
+  const sash = createSidebarSash();
+  host.before(sash.el);
 
   // The recent panel is a sink of recentDocsSetting: re-render on every change
   // (no-op while closed). Single subscription — no hand fan-out.

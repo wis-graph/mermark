@@ -140,3 +140,27 @@ export function collectHeadings(state: EditorState): Heading[] {
   });
   return headings;
 }
+
+/** Normalize heading text for anchor matching: collapse internal whitespace,
+ *  trim, and lowercase (Obsidian-style case-insensitive heading anchors).
+ *  Applied to BOTH sides of the comparison in findHeadingByText so a heading's
+ *  displayText and a `[[#anchor]]` target match through the SAME rule instead
+ *  of two ad hoc normalizations drifting apart. Internal — not part of the
+ *  outline's public surface. Pure. */
+function normalizeHeadingText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * The line-start position (the same landing collectHeadings/jumpTo use) of the
+ * first heading in document order whose display text matches `text` once both
+ * sides are normalized (whitespace collapsed + trim + case-insensitive), or
+ * null when no heading matches. Built on collectHeadings, so it inherits the
+ * tree-based guarantee that a `# fake` heading inside a fenced code block is
+ * never a candidate. Pure query.
+ */
+export function findHeadingByText(state: EditorState, text: string): number | null {
+  const target = normalizeHeadingText(text);
+  const match = collectHeadings(state).find((h) => normalizeHeadingText(h.text) === target);
+  return match ? match.pos : null;
+}

@@ -378,6 +378,53 @@ describe("app settings", () => {
     });
   });
 
+  describe("sidebarWidthSetting", () => {
+    it("defaults to 240 and persists under mermark.sidebarWidth", async () => {
+      const { sidebarWidthSetting } = await import("../src/settings/app");
+      expect(sidebarWidthSetting.get()).toBe(240);
+      sidebarWidthSetting.set(300);
+      expect(localStorage.getItem("mermark.sidebarWidth")).toBe("300");
+    });
+
+    it("reads a saved width over the default", async () => {
+      localStorage.setItem("mermark.sidebarWidth", "300");
+      const { sidebarWidthSetting } = await import("../src/settings/app");
+      expect(sidebarWidthSetting.get()).toBe(300);
+    });
+
+    it("falls back to the default on a corrupt saved value (numberParse contract)", async () => {
+      localStorage.setItem("mermark.sidebarWidth", "abc");
+      const { sidebarWidthSetting } = await import("../src/settings/app");
+      expect(sidebarWidthSetting.get()).toBe(240);
+    });
+
+    it("falls back to the default when nothing is saved (numberParse(null))", async () => {
+      const { sidebarWidthSetting } = await import("../src/settings/app");
+      expect(sidebarWidthSetting.get()).toBe(240);
+    });
+
+    it("clamps an above-range hand-edited value at boot (5000 → ceiling, never reaches the DOM raw)", async () => {
+      // jsdom innerWidth = 1024 → max = min(480, 512) = 480
+      localStorage.setItem("mermark.sidebarWidth", "5000");
+      const { sidebarWidthSetting } = await import("../src/settings/app");
+      expect(sidebarWidthSetting.get()).toBe(480);
+    });
+
+    it("clamps a below-range hand-edited value at boot (-100 → 160 floor)", async () => {
+      localStorage.setItem("mermark.sidebarWidth", "-100");
+      const { sidebarWidthSetting } = await import("../src/settings/app");
+      expect(sidebarWidthSetting.get()).toBe(160);
+    });
+
+    it("clampSidebarWidth holds the 160–min(480, viewport/2) rule (SSOT for drag/keyboard/parse)", async () => {
+      const { clampSidebarWidth } = await import("../src/settings/app");
+      expect(clampSidebarWidth(240, 1200)).toBe(240); // in-range passes through
+      expect(clampSidebarWidth(100, 1200)).toBe(160); // floor
+      expect(clampSidebarWidth(900, 1200)).toBe(480); // absolute ceiling
+      expect(clampSidebarWidth(500, 800)).toBe(400); // half-viewport ceiling wins
+    });
+  });
+
   describe("vimModeSetting", () => {
     it("defaults to off and persists under mermark.vimMode", async () => {
       const { vimModeSetting } = await import("../src/settings/app");

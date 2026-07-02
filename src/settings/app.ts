@@ -462,6 +462,46 @@ export const fontScaleSetting = defineSetting<number>({
   serialize: (v) => String(v),
 });
 
+// ── Left sidebar width (drag sash) — SSOT-only, no panel ui ───────────────────
+
+// Exported so the sash's ARIA (aria-valuemin/max) reads the SAME bounds this
+// clamp enforces — one source for "160..480", never a drifting hardcoded copy.
+export const SIDEBAR_WIDTH_MIN = 160; // must match .sidebar-aside's CSS min-width (styles.css)
+export const SIDEBAR_WIDTH_MAX_ABS = 480; // absolute cap so a huge display can't let the sidebar dominate
+
+/** The "valid sidebar width" rule in ONE named place, alongside
+ *  clampFontScale/clampReadingWidth: floor 160 (a title needs at least this
+ *  much room to stay legible; must match .sidebar-aside's CSS min-width) and a
+ *  ceiling that is the SMALLER of an absolute cap (480) and half the viewport
+ *  (so the sidebar can never crowd the editor host out entirely). Drag,
+ *  keyboard (sash.ts), AND the setting's own parse all route through this ONE
+ *  function — so a hand-edited localStorage value (e.g. "5000") is clamped at
+ *  boot before it can flow to --sidebar-width and squash the editor host,
+ *  never inline Math.min/max at a call site. Pure query. */
+export function clampSidebarWidth(px: number, viewportWidth: number): number {
+  const max = Math.min(SIDEBAR_WIDTH_MAX_ABS, viewportWidth / 2);
+  return Math.min(max, Math.max(SIDEBAR_WIDTH_MIN, px));
+}
+
+/** Shared width (px) of the left-sidebar shell (.sidebar-aside), which the
+ *  explorer and outline panels both render into — one shell, one width, so
+ *  this is a SINGLE setting rather than one per panel. Set only via the sash
+ *  (src/sidebar/sash.ts): drag previews the width as a transient CSS var and
+ *  commits here on release; the keyboard (arrow keys) commits immediately per
+ *  keypress. parse clamps a saved/hand-edited value through clampSidebarWidth
+ *  (same pattern as readingWidthSetting/fontScaleSetting) so an out-of-range
+ *  stored value can't reach the DOM. No panel row (defineSetting, not
+ *  registerSetting) — it's a direct manipulation preference, not a
+ *  settings-panel choice. */
+export const sidebarWidthSetting = defineSetting<number>({
+  key: "mermark.sidebarWidth",
+  default: 240,
+  parse: (raw) => {
+    const n = numberParse(raw);
+    return n == null ? null : clampSidebarWidth(n, window.innerWidth); // corrupt → default; out-of-range → clamp
+  },
+});
+
 // Named zoom commands (CQS: void, single SSOT writer = fontScaleSetting.set).
 // The key handler in main.ts calls these by intent rather than inlining the
 // step/clamp math at the keydown site.

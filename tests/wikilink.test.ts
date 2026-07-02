@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { wikilinkPath, isImageTarget, WikilinkWidget } from "../src/markdown/wikilink";
+import { wikilinkPath, isImageTarget, sameFileHeadingAnchor, WikilinkWidget } from "../src/markdown/wikilink";
 
 const mockInvoke = vi.fn();
 const mockOpenAsset = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
+  convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -31,6 +32,27 @@ describe("wikilinkPath", () => {
   });
   it("resolves bare [[#heading]] to the current file", () => {
     expect(wikilinkPath("#section", baseDir, "/home/u/notes/self.md")).toBe("/home/u/notes/self.md");
+  });
+});
+
+describe("sameFileHeadingAnchor", () => {
+  it("resolves a bare heading anchor", () => {
+    expect(sameFileHeadingAnchor("#Sec")).toBe("Sec");
+  });
+  it("trims whitespace around the anchor text", () => {
+    expect(sameFileHeadingAnchor("# Spaced Title ")).toBe("Spaced Title");
+  });
+  it("returns null when a file part precedes the anchor (cross-file, out of scope)", () => {
+    expect(sameFileHeadingAnchor("file#Sec")).toBeNull();
+  });
+  it("returns null for a block reference (not a heading)", () => {
+    expect(sameFileHeadingAnchor("#^abc123")).toBeNull();
+  });
+  it("returns null for a bare hash with no anchor text", () => {
+    expect(sameFileHeadingAnchor("#")).toBeNull();
+  });
+  it("returns null for an empty target", () => {
+    expect(sameFileHeadingAnchor("")).toBeNull();
   });
 });
 
@@ -144,5 +166,108 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     expect(mockInvoke).not.toHaveBeenCalledWith("create_markdown_file", expect.any(Object));
     expect(dom.className).toContain("cm-wikilink-error");
     expect(dom.title).toContain("마크다운 파일만 자동 생성 가능");
+  });
+
+  it("[[#heading]] anchor: cm-wikilink-active immediately, zero IPC (path skipped entirely)", () => {
+    const widget = new WikilinkWidget("x", "", "Target");
+    const dom = widget.toDOM({} as any);
+    expect(dom.className).toContain("cm-wikilink-active");
+    expect(dom.className).not.toContain("cm-wikilink-pending");
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("regression: a real path (unaffected by the anchor branch) still opens via open_path", async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === "path_exists") return Promise.resolve(true);
+      return Promise.resolve();
+    });
+    const widget = new WikilinkWidget("x", "/abs/note.md");
+    const dom = widget.toDOM({} as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    dom.click();
+    expect(mockInvoke).toHaveBeenCalledWith("open_path", { path: "/abs/note.md" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [[#heading]] click navigation — mounted integration. The anchor is resolved
+// against the LIVE document at click time (findHeadingByText), so this needs a
+// real EditorView with the markdown parser, not a bare toDOM({} as any) stub.
+// ---------------------------------------------------------------------------
+import { mountEditor } from "../src/editor";
+
+describe("[[#heading]] click navigation (mounted integration)", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === "read_file"
+        ? Promise.resolve({ text: "", mtime: 1 })
+        : cmd === "write_file"
+          ? Promise.resolve(1)
+          : Promise.resolve(false),
+    );
+  });
+
+  function mount(doc: string) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const { view } = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "edit" });
+    return { host, view };
+  }
+
+  it("clicking a matching anchor moves the caret to the heading line, with zero IPC", () => {
+    const doc = "# Target\n\nSee [[#Target]] here.";
+    const { host, view } = mount(doc);
+    try {
+      const link = view.contentDOM.querySelector<HTMLAnchorElement>(".cm-wikilink");
+      expect(link).not.toBeNull();
+      expect(link!.className).toContain("cm-wikilink-active");
+      link!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      expect(view.state.selection.main.head).toBe(doc.indexOf("# Target"));
+      expect(mockInvoke).not.toHaveBeenCalledWith("path_exists", expect.any(Object));
+      expect(mockInvoke).not.toHaveBeenCalledWith("open_path", expect.any(Object));
+    } finally {
+      view.destroy();
+      host.remove();
+    }
+  });
+
+  it("clicking an anchor with no matching heading is a graceful no-op (selection unchanged, zero IPC)", () => {
+    const doc = "# Other\n\nSee [[#Nope]] here.";
+    const { host, view } = mount(doc);
+    try {
+      // Keep the caret on line 1 ("# Other"), NOT the wikilink's own line 3 —
+      // touching that line would reveal the raw `[[#Nope]]` source (conceal
+      // drops on the cursor's line) and there would be no widget DOM to click.
+      view.dispatch({ selection: { anchor: 0 } });
+      const before = view.state.selection.main.head;
+      const link = view.contentDOM.querySelector<HTMLAnchorElement>(".cm-wikilink");
+      expect(link).not.toBeNull();
+      link!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      expect(view.state.selection.main.head).toBe(before);
+      expect(mockInvoke).not.toHaveBeenCalledWith("path_exists", expect.any(Object));
+    } finally {
+      view.destroy();
+      host.remove();
+    }
+  });
+
+  it("Alt+click on an anchor widget edits the raw source instead of jumping (D-J3 restore)", () => {
+    const doc = "# Target\n\nSee [[#Target]] here.";
+    const { host, view } = mount(doc);
+    try {
+      const link = view.contentDOM.querySelector<HTMLAnchorElement>(".cm-wikilink");
+      expect(link).not.toBeNull();
+      const before = view.state.selection.main.head;
+      link!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, altKey: true }));
+      // Alt+click places the caret at the link's own position (edit the raw
+      // [[#Target]]), which is NOT the heading's landing (pos 0) and not the
+      // untouched caret either — it's wherever the widget sits in the doc.
+      expect(view.state.selection.main.head).not.toBe(doc.indexOf("# Target"));
+      expect(view.state.selection.main.head).not.toBe(before);
+    } finally {
+      view.destroy();
+      host.remove();
+    }
   });
 });
