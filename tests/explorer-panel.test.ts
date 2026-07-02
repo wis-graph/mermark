@@ -308,46 +308,134 @@ describe("explorer: folder children nest vertically, not to the right (F)", () =
   });
 });
 
-// D. Header shows the current root path ----------------------------------------
-describe("explorer: header shows current root path (D)", () => {
-  it("header shows the root path (not the label 탐색기), with the full path in title + aria-label", async () => {
+// D. Header is static — path display is the footer breadcrumb's job now -------
+describe("explorer: header is static '탐색기' (D)", () => {
+  it("header stays '탐색기' after the initial renderTree (path display moved to the footer breadcrumb)", async () => {
     const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
     const header = panel.aside.querySelector(".explorer-header") as HTMLElement;
-    expect(header.textContent).not.toBe("탐색기");
-    expect(header.textContent).toContain("child");
-    expect(header.title).toBe("/root/child");
-    expect(header.getAttribute("aria-label")).toContain("/root/child");
+    expect(header.textContent).toBe("탐색기");
+    expect(header.title).toBe("");
+    expect(header.hasAttribute("aria-label")).toBe(false);
   });
 
-  it("header updates when the root changes via `..` (changeRoot → renderTree)", async () => {
+  it("header stays static across a root change via `..` (changeRoot → renderTree)", async () => {
     const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
     const header = panel.aside.querySelector(".explorer-header") as HTMLElement;
     const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
     clickItem(up);
     await flush();
-    // [RED-수정] header reflects the CANONICAL root ("/root"), never the
-    // literal "/root/child/.." — this is the header-half of the bugfix.
-    expect(header.title).toBe("/root");
+    expect(header.textContent).toBe("탐색기");
+  });
+});
+
+// I. onRootChange — the single observation point for the tree's live root ------
+describe("explorer: onRootChange fires once per renderTree (I)", () => {
+  it("fires with the canonicalized baseDir on open()", async () => {
+    const onRootChange = vi.fn();
+    const panel = createExplorerPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root/child/",
+      onOpenFile: vi.fn(),
+      onRootChange,
+    });
+    host.append(panel.button, panel.aside);
+    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(onRootChange).toHaveBeenCalledWith("/root/child");
+  });
+
+  it("fires again with the parent path on `..`", async () => {
+    const onRootChange = vi.fn();
+    const panel = createExplorerPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root/child",
+      onOpenFile: vi.fn(),
+      onRootChange,
+    });
+    host.append(panel.button, panel.aside);
+    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    onRootChange.mockClear();
+
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+    expect(onRootChange).toHaveBeenCalledWith("/root");
+  });
+
+  it("fires with the jump target on jumpToRoot", async () => {
+    const onRootChange = vi.fn();
+    const panel = createExplorerPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      onRootChange,
+    });
+    host.append(panel.button, panel.aside);
+    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    onRootChange.mockClear();
+
+    panel.jumpToRoot("/root/child");
+    await flush();
+    expect(onRootChange).toHaveBeenCalledWith("/root/child");
+  });
+});
+
+// J. jumpToRoot ------------------------------------------------------------------
+describe("explorer: jumpToRoot (J)", () => {
+  it("on a CLOSED panel: reveals the shell (onOpen fires) and renders the target — not baseDir", async () => {
+    const onOpen = vi.fn();
+    const panel = createExplorerPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      onOpen,
+    });
+    host.append(panel.button, panel.aside);
+    expect(panel.aside.hidden).toBe(true);
+
+    panel.jumpToRoot("/root/child");
+    await flush();
+
+    expect(panel.aside.hidden).toBe(false);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(names(panel.aside)).toEqual(["..", "c.md"]);
+  });
+
+  it("on an OPEN panel: rebuilds at the target in place (root changes to the jump target)", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(names(panel.aside)).toEqual(["..", "sub", "a.md", "pic.png"]);
+
+    panel.jumpToRoot("/root/child");
+    await flush();
+    expect(panel.aside.hidden).toBe(false);
+    expect(names(panel.aside)).toEqual(["..", "c.md"]);
   });
 });
 
 // H. Root path stays canonical across up-navigation (bugfix regression) --------
 // The `…/../../..` over-summarization bug: a literal `..` used to accumulate in
 // the stored rootPath across repeated up-navigation. renderTree now
-// canonicalizes on every entry, so it can never accumulate past one shot.
+// canonicalizes on every entry, so it can never accumulate past one shot. The
+// header no longer carries the path (M3 staticized it — see section D), so
+// this now observes canonicalization through onRootChange (the single
+// observation point renderTree fires from) and the up-entry's dataset.
 describe("explorer: root path stays canonical", () => {
   it("a single up-navigation leaves a canonical root everywhere it's used", async () => {
+    const onRootChange = vi.fn();
     const listDir = vi.fn(fakeTree());
-    const panel = await openPanel({ listDir, getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
-    const header = panel.aside.querySelector(".explorer-header") as HTMLElement;
+    const panel = createExplorerPanel({ listDir, getBaseDir: () => "/root/child", onOpenFile: vi.fn(), onRootChange });
+    host.append(panel.button, panel.aside);
+    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    onRootChange.mockClear();
+
     const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
     clickItem(up);
     await flush();
 
-    expect(header.title).toBe("/root");
-    expect(header.textContent).not.toContain("..");
-    expect(header.textContent).toContain("root");
-    expect(header.getAttribute("aria-label")).toContain("/root");
+    expect(onRootChange).toHaveBeenLastCalledWith("/root");
     // The up-entry re-renders with a fresh ONE-SHOT `/..` instruction off the
     // now-canonical root — it never carries the old accumulated literal.
     const newUp = panel.aside.querySelector(".explorer-up") as HTMLElement;
@@ -355,18 +443,21 @@ describe("explorer: root path stays canonical", () => {
   });
 
   it("multiple up-navigations never accumulate literal `..` — the `…/../../..` bug case", async () => {
+    const onRootChange = vi.fn();
     const listDir = vi.fn(fakeTree());
-    const panel = await openPanel({ listDir, getBaseDir: () => "/root/sub", onOpenFile: vi.fn() });
-    const header = panel.aside.querySelector(".explorer-header") as HTMLElement;
+    const panel = createExplorerPanel({ listDir, getBaseDir: () => "/root/sub", onOpenFile: vi.fn(), onRootChange });
+    host.append(panel.button, panel.aside);
+    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
 
     clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement); // -> /root
     await flush();
     clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement); // -> /
     await flush();
 
-    expect(header.title).toBe("/");
-    expect(header.textContent).not.toContain("../..");
-    expect(header.textContent).not.toContain("..");
+    expect(onRootChange).toHaveBeenLastCalledWith("/");
+    const newUp = panel.aside.querySelector(".explorer-up") as HTMLElement;
+    expect(newUp.dataset.path).toBe("//..");
   });
 
   it("tree content after up-navigation stays correct (display fix doesn't break navigation)", async () => {

@@ -41,6 +41,7 @@ import { copyBundleToClipboard } from "./bundle";
 import { registerHandler, installDispatcher, bindKeybindings } from "./shortcuts/registry";
 import { arrangeStatusBar } from "./status-bar";
 import { createTitleBar, arrangeTitleBar } from "./title-bar";
+import { createBreadcrumb } from "./breadcrumb";
 import { createRecentPanel } from "./recent/recent-panel";
 import { pushRecent, pruneMissing } from "./recent/recent-docs";
 import {
@@ -256,6 +257,13 @@ async function boot() {
   //    shared jumpTo landing. getView is a closure over `current` so it follows
   //    re-opens. Its listener is threaded into every mount (extraExtensions)
   //    so the outline tracks the live document. ────────────────────────────────
+  // ── Footer breadcrumb. Declared BEFORE explorer (same TDZ-safe shape as
+  //    closeOtherSidebars below): its onJump only reaches into `explorer` at
+  //    CLICK time, by which point explorer is long since assigned, so the
+  //    forward reference is safe. explorer.onRootChange (wired at its own
+  //    creation, below) closes the loop the other way. ────────────────────────
+  const breadcrumb = createBreadcrumb({ onJump: (abs) => explorer.jumpToRoot(abs) });
+
   // The left sidebar area holds one panel at a time (explorer OR outline,
   // VSCode-style). Named coordinator so the "one left sidebar at a time" rule
   // lives in one place, not an inline if at each panel. Each panel calls its
@@ -286,6 +294,7 @@ async function boot() {
       openInWindow(absPath, fresh);
     },
     onOpen: () => closeOtherSidebars("explorer"),
+    onRootChange: (root) => breadcrumb.render(root),
   });
 
   // ── Recent documents LEFT SIDEBAR. Same toggle shape as explorer/outline; the
@@ -321,12 +330,12 @@ async function boot() {
     theme: themeBtn.btn,
     settings: createSettingsButton(),
   });
-  // Footer order (single contract, arrangeStatusBar owns it): 브레드크럼 슬롯 ·
-  // spacer · save · pos (pos far right). The breadcrumb slot is an empty
-  // placeholder in M2 — its POSITION is the contract; M3 fills it with real
-  // breadcrumb content.
+  // Footer order (single contract, arrangeStatusBar owns it): 브레드크럼 ·
+  // spacer · save · pos (pos far right). M3: the placeholder span is now the
+  // real breadcrumb chrome — its content tracks the explorer's live root via
+  // onRootChange (above) + the openInWindow seed (below).
   arrangeStatusBar(bar, {
-    breadcrumb: el("span", "breadcrumb-slot"),
+    breadcrumb: breadcrumb.el,
     spacer,
     save: save.el,
     pos,
@@ -479,6 +488,12 @@ async function boot() {
     // The explorer's root is the live document's folder — reseed it on a switch
     // (ephemeral root, not a setting). A no-op when the panel is closed.
     explorer.resetToBaseDir();
+    // Seed the footer breadcrumb for THIS switch too: resetToBaseDir is a no-op
+    // while the explorer panel is closed (so onRootChange won't fire), and the
+    // breadcrumb must still track the live document's folder even with the
+    // panel shut. Idempotent with onRootChange when the panel IS open (both
+    // land on the same currentBaseDir — a harmless double render).
+    breadcrumb.render(currentBaseDir);
 
     // Record this document as most-recent — the SINGLE write point for the recent
     // list (dedup → front → cap via pushRecent). The recent panel re-renders from

@@ -87,6 +87,80 @@ export function formatRootLabel(path: string, keepSegments = 3): string {
   return `${ellipsisPrefix}${tail}`;
 }
 
+/** Split `rest` on `sep`, pushing one `{label, abs}` segment per non-empty
+ *  chunk and accumulating each chunk onto `rootAbs` to build that ancestor's
+ *  real absolute path. Shared by every `breadcrumbSegments` branch (home /
+ *  drive / posix-root / relative) so the "join with sep, skip empty chunks"
+ *  rule lives in one place instead of being repeated per branch. Command
+ *  (void) — mutates `segments` in place, mirroring `ctx.push` style callers. */
+function appendAncestors(
+  segments: { label: string; abs: string }[],
+  rootAbs: string,
+  rest: string,
+  sep: string,
+): void {
+  let abs = rootAbs;
+  for (const seg of rest.split(sep)) {
+    if (seg.length === 0) continue;
+    abs = abs === "" || abs.endsWith(sep) ? `${abs}${seg}` : `${abs}${sep}${seg}`;
+    segments.push({ label: seg, abs });
+  }
+}
+
+/** A normalized absolute path → its breadcrumb ancestors, each `{label, abs}`:
+ *  `label` is the compact display text, `abs` is that ancestor's REAL
+ *  (un-abbreviated) absolute path — the click-to-jump target. A home prefix
+ *  (`/Users/<u>`, `/home/<u>`, `C:\Users\<u>`) collapses to a single `~`
+ *  node whose `abs` is the real home path (label ≠ abs is the whole point:
+ *  the display is short, the jump target is exact). Non-home paths get a
+ *  leading root node instead (posix `/`, or the Windows drive `C:\`), so a
+ *  breadcrumb for an absolute path is never empty. `~` is a literal segment
+ *  the backend expands at jump time (matches `normalizePath`'s `~` rule) — it
+ *  stays a single `{~, ~}` node, no expansion here. `""` → `[]` (nothing to
+ *  show). Pure query (CQS): no IO, no DOM, no state — reuses `normalizePath`/
+ *  `abbreviateHome`/`detectSeparator` so this can never disagree with them on
+ *  what a path's segments or separator are. */
+export function breadcrumbSegments(path: string): { label: string; abs: string }[] {
+  path = normalizePath(path);
+  if (path === "") return [];
+  if (path === "~") return [{ label: "~", abs: "~" }];
+
+  const sep = detectSeparator(path);
+  const abbreviated = abbreviateHome(path);
+  const segments: { label: string; abs: string }[] = [];
+
+  if (abbreviated !== path && abbreviated.startsWith("~")) {
+    // abbreviateHome replaced the leading `abbreviated.length - 1` chars of
+    // `path` (everything but the "~" itself) — invert that to recover the
+    // real home directory this path lives under.
+    const homeReal = path.slice(0, path.length - (abbreviated.length - 1));
+    segments.push({ label: "~", abs: homeReal });
+    appendAncestors(segments, homeReal, path.slice(homeReal.length), sep);
+    return segments;
+  }
+
+  const driveMatch = /^[A-Za-z]:/.exec(path);
+  if (driveMatch) {
+    const root = `${driveMatch[0]}${sep}`;
+    segments.push({ label: driveMatch[0], abs: root });
+    appendAncestors(segments, root, path.slice(root.length), sep);
+    return segments;
+  }
+
+  if (path.startsWith(sep)) {
+    segments.push({ label: sep, abs: sep });
+    appendAncestors(segments, sep, path.slice(1), sep);
+    return segments;
+  }
+
+  // Relative path (no root/home/drive prefix) — outside the documented
+  // mapping table (breadcrumb only ever receives explorer/document roots,
+  // which are absolute), handled defensively so the function stays total:
+  // no leading root node, ancestors accumulate from "".
+  appendAncestors(segments, "", path, sep);
+  return segments;
+}
+
 /** A path the user typed that carries no target — empty or whitespace-only.
  *  Named so the "refuse to open" rule lives in one place, not an inline `if`. */
 export function isBlankPath(input: string): boolean {

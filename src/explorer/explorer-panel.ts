@@ -1,6 +1,6 @@
 import { icon } from "../icons";
 import { extensionOf, iconNameForEntry } from "./file-icons";
-import { formatRootLabel, normalizePath } from "../path";
+import { normalizePath } from "../path";
 import { renderSidebarButton } from "../sidebar-toggle";
 
 /** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
@@ -49,6 +49,13 @@ export interface ExplorerPanel {
   /** Reset the root to the injected baseDir and rebuild. Call on document switch
    *  so the explorer follows the live document's folder. A no-op while hidden. */
   resetToBaseDir(): void;
+  /** Jump the tree root to an arbitrary ancestor (the footer breadcrumb's click
+   *  target). Opens the panel first if it's closed (a closed-panel jump means
+   *  "show me that folder", not "wait for it to open on its own") — then
+   *  rebuilds at `absPath` via the same path as `..`/reopen (cache clear +
+   *  renderTree), so onRootChange fires exactly like any other root change.
+   *  Command (void). */
+  jumpToRoot(absPath: string): void;
   /** Hide the sidebar. Idempotent — used by the mutual-exclusion coordinator to
    *  close this when the other left sidebar opens. Command (void). */
   close(): void;
@@ -67,6 +74,13 @@ export interface ExplorerHandlers {
   /** Called when this sidebar opens, so main can close the other left sidebar
    *  (mutual exclusion). Optional — omitted in unit tests / standalone use. */
   onOpen?(): void;
+  /** Called once per renderTree, right after the root is canonicalized — the
+   *  SINGLE observation point for "what folder is the tree showing now"
+   *  (covers open/changeRoot/resetToBaseDir/jumpToRoot alike, since they all
+   *  funnel through renderTree). The footer breadcrumb subscribes here so it
+   *  can never drift from the tree it's supposed to describe. Optional —
+   *  omitted in unit tests / standalone use. */
+  onRootChange?(root: string): void;
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
@@ -98,6 +112,7 @@ export function createExplorerPanel({
   getBaseDir,
   onOpenFile,
   onOpen,
+  onRootChange,
 }: ExplorerHandlers): ExplorerPanel {
   const button = create("button", "chrome-btn explorer-btn") as HTMLButtonElement;
   button.title = "파일 탐색기 (⌘B · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · .. 상위)";
@@ -106,7 +121,9 @@ export function createExplorerPanel({
   aside.id = EXPLORER_ASIDE_ID;
   aside.hidden = true;
   const header = create("div", "explorer-header sidebar-header");
-  header.textContent = "탐색기"; // replaced by the root path on first renderTree
+  // Static — path display is now the footer breadcrumb's job (single source
+  // of truth), so the header never carries the root path (see renderTree).
+  header.textContent = "탐색기";
 
   /** Render the toggle button for the current open/closed state (icon + ARIA).
    *  Called at init and on every open()/close() so they never drift. */
@@ -292,18 +309,19 @@ export function createExplorerPanel({
    *  first visible node without stealing DOM focus. Command (void).
    *
    *  This is the SINGLE canonicalization point: `rootPath` is normalized here,
-   *  before anything derives from it. `changeRoot`/`open`/`resetToBaseDir` all
-   *  funnel through this one function (the existing "single update point"), so
-   *  a `..` navigation can never accumulate literal `/../../..` in the stored
-   *  root — each render starts from a canonical path, appends at most one `..`
-   *  for the up-entry (see below), and the NEXT renderTree resolves it away. */
+   *  before anything derives from it. `changeRoot`/`open`/`resetToBaseDir`/
+   *  `jumpToRoot` all funnel through this one function (the existing "single
+   *  update point"), so a `..` navigation can never accumulate literal
+   *  `/../../..` in the stored root — each render starts from a canonical
+   *  path, appends at most one `..` for the up-entry (see below), and the
+   *  NEXT renderTree resolves it away. The same canonicalization point is
+   *  also the single observation point: `onRootChange` fires here, right
+   *  after normalization, so the footer breadcrumb (or any other observer)
+   *  always sees the canonical root the tree is actually showing — never a
+   *  stale or pre-normalized value. */
   const renderTree = async (rootPath: string): Promise<void> => {
     rootPath = normalizePath(rootPath);
-    // Header = the current root folder path (single update point, so header/tree
-    // never drift): the compact label in text, the full path in title + aria.
-    header.textContent = formatRootLabel(rootPath);
-    header.title = rootPath;
-    header.setAttribute("aria-label", `현재 폴더: ${rootPath}`);
+    onRootChange?.(rootPath);
     tree.replaceChildren();
     focused = null;
     const up = create("div", "explorer-item explorer-up");
@@ -389,10 +407,18 @@ export function createExplorerPanel({
     if (parent) focusItem(parent);
   };
 
-  const open = () => {
+  /** Make the sidebar shell visible: unhide the aside, fire the mutual-exclusion
+   *  hook, sync the toggle button. Does NOT touch the tree/cache — callers
+   *  decide what to render (open() renders baseDir, jumpToRoot() renders its
+   *  target). Named so "reveal the shell" is one rule shared by both open
+   *  paths, not two copies of the same three lines. Command (void). */
+  const revealShell = (): void => {
     aside.hidden = false;
     onOpen?.();
     renderButton();
+  };
+  const open = () => {
+    revealShell();
     childrenCache.clear(); // reopen = fresh view (no stale invalidation to track)
     void renderTree(getBaseDir());
   };
@@ -404,6 +430,17 @@ export function createExplorerPanel({
     if (aside.hidden) return; // closed panel reseeds on next open
     childrenCache.clear();
     void renderTree(getBaseDir());
+  };
+  /** Jump the root to `absPath` (the footer breadcrumb's click target): reveal
+   *  the shell first if it's closed (a click on a hidden breadcrumb still
+   *  means "show me that folder"), then rebuild there. Can't reuse `open()`
+   *  directly — `open()` always renders `getBaseDir()`, which would land on
+   *  the live document's folder instead of the clicked ancestor — so this
+   *  shares only the shell-reveal half via `revealShell`, then calls
+   *  `changeRoot` (cache clear + renderTree) like `..` does. Command (void). */
+  const jumpToRoot = (absPath: string): void => {
+    if (aside.hidden) revealShell();
+    changeRoot(absPath);
   };
 
   button.addEventListener("click", () => {
@@ -459,5 +496,5 @@ export function createExplorerPanel({
     }
   });
 
-  return { button, aside, resetToBaseDir, close };
+  return { button, aside, resetToBaseDir, jumpToRoot, close };
 }

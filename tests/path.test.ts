@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { dirOf, resolveOpenPath, isBlankPath, formatRootLabel, normalizePath } from "../src/path";
+import {
+  dirOf,
+  resolveOpenPath,
+  isBlankPath,
+  formatRootLabel,
+  normalizePath,
+  breadcrumbSegments,
+} from "../src/path";
 
 describe("normalizePath", () => {
   // Parity with backend `commands.rs:849 test_normalize_path_resolves_dot_dot_and_dot`
@@ -124,6 +131,74 @@ describe("formatRootLabel", () => {
 
   it("passes a short home-relative path through unchanged", () => {
     expect(formatRootLabel("~/notes")).toBe("~/notes");
+  });
+});
+
+describe("breadcrumbSegments", () => {
+  it("posix non-home path: leading `/` root node + each ancestor accumulated", () => {
+    expect(breadcrumbSegments("/etc/nginx")).toEqual([
+      { label: "/", abs: "/" },
+      { label: "etc", abs: "/etc" },
+      { label: "nginx", abs: "/etc/nginx" },
+    ]);
+  });
+
+  it("home path: `~` label but abs is the REAL home path, ancestors accumulate off it", () => {
+    expect(breadcrumbSegments("/Users/wis/docs/superpowers/plans")).toEqual([
+      { label: "~", abs: "/Users/wis" },
+      { label: "docs", abs: "/Users/wis/docs" },
+      { label: "superpowers", abs: "/Users/wis/docs/superpowers" },
+      { label: "plans", abs: "/Users/wis/docs/superpowers/plans" },
+    ]);
+  });
+
+  it("home itself is a single `~` node with abs = the real home path", () => {
+    expect(breadcrumbSegments("/Users/wis")).toEqual([{ label: "~", abs: "/Users/wis" }]);
+    expect(breadcrumbSegments("/home/u")).toEqual([{ label: "~", abs: "/home/u" }]);
+  });
+
+  it("root path is a single segment (never empty)", () => {
+    expect(breadcrumbSegments("/")).toEqual([{ label: "/", abs: "/" }]);
+  });
+
+  it("windows drive (non-home): drive-root node then ancestors", () => {
+    expect(breadcrumbSegments("C:\\Windows\\System32")).toEqual([
+      { label: "C:", abs: "C:\\" },
+      { label: "Windows", abs: "C:\\Windows" },
+      { label: "System32", abs: "C:\\Windows\\System32" },
+    ]);
+  });
+
+  it("windows home: abbreviates to `~`, sep stays `\\`", () => {
+    expect(breadcrumbSegments("C:\\Users\\u\\proj")).toEqual([
+      { label: "~", abs: "C:\\Users\\u" },
+      { label: "proj", abs: "C:\\Users\\u\\proj" },
+    ]);
+  });
+
+  it("literal `~` is a single unexpanded node", () => {
+    expect(breadcrumbSegments("~")).toEqual([{ label: "~", abs: "~" }]);
+  });
+
+  it("empty path yields no segments", () => {
+    expect(breadcrumbSegments("")).toEqual([]);
+  });
+
+  it("round-trips: every segment's abs is already canonical (normalizePath is a no-op on it)", () => {
+    const cases = [
+      "/etc/nginx",
+      "/Users/wis/docs/superpowers/plans",
+      "/Users/wis",
+      "/",
+      "C:\\Windows\\System32",
+      "C:\\Users\\u\\proj",
+      "~",
+    ];
+    for (const path of cases) {
+      for (const seg of breadcrumbSegments(path)) {
+        expect(normalizePath(seg.abs)).toBe(seg.abs);
+      }
+    }
   });
 });
 
