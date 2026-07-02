@@ -350,6 +350,73 @@ describe("explorer: opens markdown only (6)", () => {
   });
 });
 
+// G. Folder/file icons: extension glyphs + folder open/close swap --------------
+// The row glyph reflects the entry KIND (folder / file family), the folder glyph
+// swaps with open state, and the `..` glyph is untouched. SVGs carry the
+// `icon icon-<name>` class from icons.ts, so we assert by that selector.
+const glyphIcon = (item: HTMLElement) =>
+  item.querySelector(":scope > .explorer-label > .explorer-glyph > svg");
+describe("explorer: file/folder icons + open-state swap (G)", () => {
+  it("file rows carry an extension-specific glyph; folder is closed by default", async () => {
+    const listDir = vi.fn((path: string) =>
+      Promise.resolve(
+        path === "/root"
+          ? [dir("sub", "/root/sub"), file("a.md", "/root/a.md"), file("pic.png", "/root/pic.png"), file("data.json", "/root/data.json"), file("app.ts", "/root/app.ts")]
+          : []
+      )
+    );
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const at = (n: string) => items(panel.aside).find((e) => nameOf(e) === n) as HTMLElement;
+
+    expect(glyphIcon(at("a.md"))?.classList.contains("icon-file-text")).toBe(true);
+    expect(glyphIcon(at("pic.png"))?.classList.contains("icon-file-image")).toBe(true);
+    expect(glyphIcon(at("data.json"))?.classList.contains("icon-braces")).toBe(true);
+    expect(glyphIcon(at("app.ts"))?.classList.contains("icon-file-code")).toBe(true);
+    expect(glyphIcon(at("sub"))?.classList.contains("icon-folder")).toBe(true);
+  });
+
+  it("the `..` up entry keeps its corner-left-up glyph (regression)", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
+    expect(glyphIcon(up)?.classList.contains("icon-corner-left-up")).toBe(true);
+  });
+
+  it("non-md file keeps .is-nonmd AND gets its extension glyph (icon = type, dim = openability)", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const png = panel.aside.querySelector(".explorer-file.is-nonmd") as HTMLElement;
+    expect(nameOf(png)).toBe("pic.png");
+    expect(glyphIcon(png)?.classList.contains("icon-file-image")).toBe(true);
+  });
+
+  it("folder glyph swaps folder → folder-open on expand and back on collapse (click)", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
+    expect(glyphIcon(sub)?.classList.contains("icon-folder")).toBe(true);
+
+    clickItem(sub); // expand
+    await flush();
+    expect(sub.getAttribute("aria-expanded")).toBe("true");
+    expect(glyphIcon(sub)?.classList.contains("icon-folder-open")).toBe(true);
+
+    clickItem(sub); // collapse
+    expect(sub.getAttribute("aria-expanded")).toBe("false");
+    expect(glyphIcon(sub)?.classList.contains("icon-folder")).toBe(true);
+  });
+
+  it("keyboard →/← swaps the folder glyph too (shared expand/collapse command)", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    press(panel.aside, "ArrowDown"); // focus "sub"
+    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
+    press(panel.aside, "ArrowRight"); // expand
+    await flush();
+    expect(glyphIcon(sub)?.classList.contains("icon-folder-open")).toBe(true);
+    // step back onto the folder, then collapse it
+    press(panel.aside, "ArrowLeft"); // open folder → collapse
+    expect(sub.getAttribute("aria-expanded")).toBe("false");
+    expect(glyphIcon(sub)?.classList.contains("icon-folder")).toBe(true);
+  });
+});
+
 // 7. Sidebar shell interface ---------------------------------------------------
 describe("explorer: sidebar shell interface (7)", () => {
   it("exposes aside/button/resetToBaseDir; button toggles; aside starts hidden", async () => {

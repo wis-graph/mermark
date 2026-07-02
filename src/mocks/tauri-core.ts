@@ -185,6 +185,11 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
         "/mock/vault": [
           { name: "notes", path: "/mock/vault/notes", is_dir: true },
           { name: "index.md", path: "/mock/vault/index.md", is_dir: false },
+          { name: "logo.svg", path: "/mock/vault/logo.svg", is_dir: false },
+          { name: "data.json", path: "/mock/vault/data.json", is_dir: false },
+          { name: "app.ts", path: "/mock/vault/app.ts", is_dir: false },
+          { name: "guide.pdf", path: "/mock/vault/guide.pdf", is_dir: false },
+          { name: "LICENSE", path: "/mock/vault/LICENSE", is_dir: false },
           { name: "pic.png", path: "/mock/vault/pic.png", is_dir: false },
         ],
         "/mock/vault/notes": [

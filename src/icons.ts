@@ -114,6 +114,27 @@ const PATHS = {
   file:
     '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>' +
     '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+  // file-text — explorer: markdown (md/markdown) file
+  "file-text":
+    '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>' +
+    '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>' +
+    '<path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  // file-image — explorer: image (png/jpg/jpeg/gif/svg/webp) file
+  "file-image":
+    '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>' +
+    '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>' +
+    '<circle cx="10" cy="12" r="2"/>' +
+    '<path d="m20 17-1.296-1.296a2.41 2.41 0 0 0-3.408 0L9 22"/>',
+  // file-code — explorer: source-code (js/ts/rs/py/… ) file
+  "file-code":
+    '<path d="M10 12.5 8 15l2 2.5"/>' +
+    '<path d="m14 12.5 2 2.5-2 2.5"/>' +
+    '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>' +
+    '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>',
+  // braces — explorer: JSON (`{ }`) file
+  braces:
+    '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/>' +
+    '<path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
   // corner-left-up — explorer: go to parent (`..`)
   "corner-left-up":
     '<path d="M14 15 9 20 4 15"/>' +

@@ -1,4 +1,5 @@
 import { icon } from "../icons";
+import { extensionOf, iconNameForEntry } from "./file-icons";
 import { formatRootLabel } from "../path";
 import { renderSidebarButton } from "../sidebar-toggle";
 
@@ -76,9 +77,20 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => 
 
 /** A markdown file is the only kind the explorer opens — mermark is a markdown
  *  editor, so read_file'ing a binary would render a broken view. Named rule so
- *  the "only open .md" gate lives in one place, not an inline click `if`. */
+ *  the "only open .md" gate lives in one place, not an inline click `if`. Shares
+ *  `extensionOf` so extension parsing converges (still .md-only: `.markdown`
+ *  keeps its file-text glyph but stays inert — open policy is out of scope). */
 function isMarkdownEntry(name: string): boolean {
-  return name.toLowerCase().endsWith(".md");
+  return extensionOf(name) === "md";
+}
+
+/** Swap a folder node's glyph to match its open state (`folder` ↔ `folder-open`).
+ *  Command (void). Called from the SAME command that sets `aria-expanded`
+ *  (expandFolder / collapseFolder) so the glyph and the state can't drift. The
+ *  icon id comes from the file-icons SSOT (folders ignore the name). */
+function renderFolderGlyph(node: HTMLElement, expanded: boolean): void {
+  const glyph = node.querySelector(":scope > .explorer-label > .explorer-glyph");
+  if (glyph) glyph.replaceChildren(icon(iconNameForEntry("", true, expanded)));
 }
 
 export function createExplorerPanel({
@@ -207,7 +219,7 @@ export function createExplorerPanel({
     const chevron = create("span", e.is_dir ? "explorer-chevron" : "explorer-chevron explorer-chevron-empty");
     if (e.is_dir) chevron.append(icon("chevron-right"));
     const glyph = create("span", "explorer-glyph");
-    glyph.append(icon(e.is_dir ? "folder" : "file"));
+    glyph.append(icon(iconNameForEntry(e.name, e.is_dir, false)));
     const name = create("span", "explorer-name");
     name.textContent = e.name;
     name.title = e.name;
@@ -232,6 +244,7 @@ export function createExplorerPanel({
    *  ones just re-show the already-built DOM. Children get level+1. */
   const expandFolder = async (node: HTMLElement): Promise<void> => {
     node.setAttribute("aria-expanded", "true");
+    renderFolderGlyph(node, true); // glyph swap in the same command as aria-expanded
     const kids = node.querySelector(":scope > .explorer-children") as HTMLElement | null;
     if (!kids) return;
     kids.hidden = false;
@@ -248,6 +261,7 @@ export function createExplorerPanel({
    *  Command (void). The inverse of expandFolder — the toggle's off half. */
   const collapseFolder = (node: HTMLElement): void => {
     node.setAttribute("aria-expanded", "false");
+    renderFolderGlyph(node, false); // glyph swap in the same command as aria-expanded
     const kids = node.querySelector(":scope > .explorer-children") as HTMLElement | null;
     if (kids) kids.hidden = true;
   };

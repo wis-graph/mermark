@@ -604,6 +604,12 @@ html, body { margin: 0; height: 100%; }
 .explorer-dir[aria-expanded="true"] > .explorer-label > .explorer-chevron { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .explorer-chevron { transition: none; } }
 .explorer-glyph { flex: none; display: inline-flex; color: var(--muted); }
+/* Folder glyph carries an accent tint (openable container signal); file glyphs
+   stay --muted, and the chevron stays --muted (accent is on the glyph only, so
+   the disclosure twisty and the container color are separate signals). `..`
+   (.explorer-up, not .explorer-dir) is excluded → stays --muted. Theme var only,
+   no hard-coded hex, so all three themes track their own --accent. */
+.explorer-dir > .explorer-label > .explorer-glyph { color: var(--accent); }
 .explorer-name { overflow: hidden; text-overflow: ellipsis; }
 .explorer-up > .explorer-label { font-weight: 600; }
 /* Non-markdown files: visible for context, but greyed + inert (mermark opens
