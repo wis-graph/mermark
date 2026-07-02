@@ -374,6 +374,30 @@ export const themeForceSetting = registerSetting<ThemeForce>({
   },
 });
 
+// ── 단축키 (Keyboard shortcuts) ───────────────────────────────────────────────
+
+/** User keybinding OVERRIDES only, as { actionId: chord } (canonical chord
+ *  strings, e.g. "Mod+Shift+L"). Defaults live in actions.ts (SHORTCUT_ACTIONS),
+ *  so an unmodified action has NO key here — the registry's effectiveBinding
+ *  layers overrides over defaults. SSOT: the registry subscribes; the keybind
+ *  control writes. Corrupt/absent JSON → {} (all defaults). The keybind control
+ *  (kind "keybind") renders one row per action from the catalog. */
+export const keybindingsSetting = registerSetting<Record<string, string>>({
+  key: "mermark.keybindings",
+  default: {},
+  parse: (raw) => {
+    if (raw == null) return null;
+    try {
+      const o = JSON.parse(raw);
+      return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, string>) : null;
+    } catch {
+      return null;
+    }
+  },
+  serialize: (v) => JSON.stringify(v),
+  ui: { label: "단축키", group: "단축키", control: { kind: "keybind" } },
+});
+
 // ── 플러그인 (Plugins) — placeholder; empty in round 1 ────────────────────────
 
 /** Placeholder so the Plugins category appears. Any future feature that calls
@@ -384,6 +408,28 @@ registerSetting<null>({
   parse: () => null,
   serialize: () => "",
   ui: { label: "플러그인", group: "플러그인", control: { kind: "info" } },
+});
+
+// ── 최근 문서 (Recent documents) — SSOT-only, no panel ui ─────────────────────
+
+/** Recently opened document paths, most-recent-first. SSOT-only (no panel row):
+ *  the status-bar recent panel subscribes to render, and openInWindow is the
+ *  single writer (via pushRecent). Persisted as a JSON array in localStorage —
+ *  WKWebView keeps it across restarts, so no backend command is needed. Corrupt
+ *  value / non-array → [] (empty history). */
+export const recentDocsSetting = defineSetting<string[]>({
+  key: "mermark.recentDocs",
+  default: [],
+  parse: (raw) => {
+    if (raw == null) return null;
+    try {
+      const a = JSON.parse(raw);
+      return Array.isArray(a) ? a.filter((x) => typeof x === "string") : null;
+    } catch {
+      return null;
+    }
+  },
+  serialize: (v) => JSON.stringify(v),
 });
 
 // ── Body text zoom (fontScale, ⌘±) — SSOT-only, no panel ui ───────────────────

@@ -6,6 +6,9 @@
 import type { Setting, Control } from "../store";
 import type { Theme } from "../theme-schema";
 import { parseTheme, serializeTheme } from "../theme-schema";
+import { SHORTCUT_ACTIONS } from "../../shortcuts/actions";
+import { effectiveBinding, findConflict, suppressDispatcher } from "../../shortcuts/registry";
+import { eventToChord, displayChord } from "../../shortcuts/keys";
 
 // Subscription cleanup: a control that calls setting.subscribe must hand back its
 // unsubscribe fns so the modal can tear them down on category swap / close,
@@ -326,6 +329,151 @@ function downloadTheme(t: Theme): void {
   URL.revokeObjectURL(url);
 }
 
+/** The keybind control: ONE setting (keybindingsSetting, a { id: chord }
+ *  override map) rendered as MANY rows — one per SHORTCUT_ACTION — like the json
+ *  control's 1→18 fan-out. Each row shows the action label, its effective chord
+ *  (override ?? default via effectiveBinding), a capture ("재정의") button, and an
+ *  individual reset; a 전체 리셋 button sits on top.
+ *
+ *  Round-trip contract (SETTINGS_COMPONENT_SPEC): (a) mount reflects
+ *  setting.get() through effectiveBinding, (b) a captured chord writes
+ *  setting.set({ ...cur, [id]: chord }), (c) setting.subscribe(reflect) tracks
+ *  external changes. Capture arms a one-shot global keydown that reads the chord
+ *  (eventToChord), rejects a conflict (findConflict) with an inline warning, and
+ *  suppresses the global dispatcher while armed (so the chord being assigned
+ *  doesn't fire its current action). Esc cancels. attachTeardown releases the
+ *  subscription AND any still-armed capture on modal swap/close. */
+function renderKeybind(setting: Setting<Record<string, string>>): HTMLElement {
+  const { row: r, cell } = row("");
+  r.classList.add("settings-row-keybind");
+
+  const wrap = document.createElement("div");
+  wrap.className = "keybind-editor";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "keybind-toolbar";
+  const resetAll = document.createElement("button");
+  resetAll.type = "button";
+  resetAll.className = "keybind-reset-all";
+  resetAll.textContent = "전체 리셋";
+  resetAll.addEventListener("click", () => setting.set({}));
+  toolbar.appendChild(resetAll);
+  wrap.appendChild(toolbar);
+
+  const list = document.createElement("div");
+  list.className = "keybind-list";
+  wrap.appendChild(list);
+
+  // The currently armed capture's cleanup (remove its keydown listener + release
+  // dispatcher suppression), or null when idle. Stored so teardown can disarm a
+  // capture left open when the modal closes mid-assignment.
+  let disarm: (() => void) | null = null;
+
+  // Per-action reflectors, run on mount and on every external setting change.
+  const reflectors: Array<() => void> = [];
+
+  for (const action of SHORTCUT_ACTIONS) {
+    const item = document.createElement("div");
+    item.className = "keybind-item";
+    item.dataset.id = action.id;
+
+    const label = document.createElement("span");
+    label.className = "keybind-label";
+    label.textContent = action.label;
+
+    const chord = document.createElement("span");
+    chord.className = "keybind-chord";
+
+    const warning = document.createElement("span");
+    warning.className = "keybind-warning";
+    warning.hidden = true;
+
+    const capture = document.createElement("button");
+    capture.type = "button";
+    capture.className = "keybind-capture";
+    capture.textContent = "재정의";
+
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "keybind-reset";
+    reset.textContent = "기본값";
+    reset.addEventListener("click", () => {
+      const next = { ...setting.get() };
+      delete next[action.id]; // remove override → fall back to the default
+      setting.set(next);
+    });
+
+    /** Reflect this action's effective chord (override ?? default). Shows a
+     *  muted "미지정" when the action is unbound. */
+    const reflect = (): void => {
+      const eff = effectiveBinding(action.id);
+      chord.textContent = eff ? displayChord(eff) : "미지정";
+      chord.classList.toggle("is-unbound", !eff);
+    };
+    reflectors.push(reflect);
+
+    /** End the armed capture: drop the listener, un-suppress the dispatcher, and
+     *  restore the button. Idempotent. */
+    const endCapture = (): void => {
+      disarm?.();
+      disarm = null;
+      capture.textContent = "재정의";
+      capture.classList.remove("is-capturing");
+    };
+
+    capture.addEventListener("click", () => {
+      if (disarm) {
+        endCapture(); // clicking an armed capture cancels it
+        return;
+      }
+      warning.hidden = true;
+      capture.textContent = "키를 누르세요…";
+      capture.classList.add("is-capturing");
+      suppressDispatcher(true);
+      const onKey = (e: KeyboardEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.code === "Escape" || e.key === "Escape") {
+          endCapture();
+          return;
+        }
+        const c = eventToChord(e);
+        if (!c) return; // lone modifier / unbindable — keep waiting
+        const conflict = findConflict(c, action.id);
+        if (conflict) {
+          const other = SHORTCUT_ACTIONS.find((a) => a.id === conflict);
+          warning.textContent = `이미 '${other?.label ?? conflict}'에 할당됨`;
+          warning.hidden = false;
+          endCapture();
+          return;
+        }
+        setting.set({ ...setting.get(), [action.id]: c });
+        endCapture();
+      };
+      window.addEventListener("keydown", onKey, true);
+      disarm = () => {
+        window.removeEventListener("keydown", onKey, true);
+        suppressDispatcher(false);
+      };
+    });
+
+    item.append(label, chord, capture, reset, warning);
+    list.appendChild(item);
+  }
+
+  const reflectAll = () => {
+    for (const reflect of reflectors) reflect();
+  };
+  reflectAll();
+  // Teardown: release the subscription AND disarm any capture left open when the
+  // modal closes mid-assignment (else its window listener + dispatcher
+  // suppression would leak).
+  attachTeardown(r, [setting.subscribe(reflectAll), () => disarm?.()]);
+
+  cell.appendChild(wrap);
+  return r;
+}
+
 /** A read-only placeholder row (the empty Plugins category in round 1). Any
  *  future feature that calls registerSetting with its own ui.group renders
  *  through the real controls; this is the "nothing here yet" filler. */
@@ -350,6 +498,7 @@ export const RENDER: {
   slider: (s, c) => renderSlider(s as Setting<unknown>, c),
   text: (s, c) => renderText(s as unknown as Setting<string>, c),
   json: (s) => renderJson(s as unknown as Setting<Theme>),
+  keybind: (s) => renderKeybind(s as unknown as Setting<Record<string, string>>),
   info: () => renderInfo(),
 };
 

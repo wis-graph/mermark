@@ -30,10 +30,16 @@ import {
   themeForceSetting,
   seedSessionMode,
   vimModeSetting,
+  keybindingsSetting,
+  recentDocsSetting,
 } from "./settings/app";
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./settings/sinks";
 import { mountSettingsButton } from "./settings/panel/modal";
-import { installBundleShortcut } from "./bundle";
+import { copyBundleToClipboard } from "./bundle";
+import { registerHandler, installDispatcher, bindKeybindings } from "./shortcuts/registry";
+import { arrangeStatusBar } from "./status-bar";
+import { createRecentPanel } from "./recent/recent-panel";
+import { pushRecent, pruneMissing } from "./recent/recent-docs";
 import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./file-watch";
 import { openConflictModal } from "./conflict/conflict-modal";
 import { icon, type IconName } from "./icons";
@@ -187,10 +193,9 @@ async function boot() {
   // together, no page reload, so the layout never flashes/re-mounts.
   const themeBtn = makeThemeToggle(() => loadPreset(nextPreset(themeSetting.get())));
   themeSetting.bind(themeBtn.render); // initial icon + on change
-  bar.append(mode.btn, pos, spacer, save.el, themeBtn.btn);
-  // ⚙ settings: append after the theme toggle. Boot-cheap — the modal DOM is
-  // built lazily on first open (cold-load constraint).
-  mountSettingsButton(bar);
+  // Status-bar order is arranged once, below, after every chrome panel is built
+  // (arrangeStatusBar owns the left→right contract). The center/right cluster
+  // (pos, spacer, save, mode, theme) and the left nav group land there.
 
   // "Currently open document" — the single source of truth for which editor /
   // file / baseDir is live. All window-global sinks and listeners read this
@@ -208,6 +213,7 @@ async function boot() {
   //    work, then re-mounts. A read failure rejects → the row shows the error
   //    and stays open; the current editor is untouched. ────────────────────────
   const prompt = createOpenPathPrompt({
+    bar,
     onOpen: async (raw) => {
       const target = resolveOpenPath(raw, currentBaseDir);
       if (!target) throw new Error("경로를 입력하세요");
@@ -240,18 +246,50 @@ async function boot() {
     },
   });
 
-  // Left corner: the right end is the settings/theme zone, so the open-path
-  // button lives at the far left (prepend → first child, before the mode toggle).
-  // The left nav group reads open-path · 목차 · 탐색기 left-to-right. Prepend runs
-  // in reverse insertion order, so prepend explorer, then outline, then open-path.
-  bar.prepend(explorer.button);
-  bar.prepend(outline.button);
-  bar.prepend(prompt.button);
-  root.append(prompt.row);
+  // ── Recent documents footer chrome. Same toggle shape as outline; the list is
+  //    read from recentDocsSetting (SSOT — the panel never writes it) and a click
+  //    reuses main's open path. A read failure prunes the dead entry. The panel
+  //    re-renders from a single recentDocsSetting.subscribe below. ──────────────
+  const recent = createRecentPanel({
+    getRecent: () => recentDocsSetting.get(),
+    onOpen: async (absPath) => {
+      try {
+        const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
+        await commitBeforeSwitch();
+        openInWindow(absPath, fresh);
+      } catch (err) {
+        console.error("Failed to open recent document; pruning it", err);
+        recentDocsSetting.set(pruneMissing(recentDocsSetting.get(), absPath));
+      }
+    },
+  });
+
+  // Status-bar order (single contract): 탐색기 · 최근 · 경로열기 · 목차 · [pos ·
+  // spacer · save] · 모드 · 테마. Settings ⚙ mounts after (far right); the popover
+  // rows / explorer aside are siblings outside the bar.
+  arrangeStatusBar(bar, {
+    explorer: explorer.button,
+    recent: recent.button,
+    openPath: prompt.button,
+    outline: outline.button,
+    pos,
+    spacer,
+    save: save.el,
+    mode: mode.btn,
+    theme: themeBtn.btn,
+  });
+  // ⚙ settings: append last → far right. Boot-cheap — the modal DOM is built
+  // lazily on first open (cold-load constraint).
+  mountSettingsButton(bar);
+  root.append(recent.row);
   root.append(outline.row);
   // The explorer is a LEFT sidebar (not a footer popover): mount it as the first
   // child of .workspace so it sits left of the editor host.
   workspace.prepend(explorer.aside);
+
+  // The recent panel is a sink of recentDocsSetting: re-render on every change
+  // (no-op while closed). Single subscription — no hand fan-out.
+  recentDocsSetting.subscribe(() => recent.refresh());
 
   // ── Per-file session persistence. The key is recomputed per open; the timer
   //    is scoped to the live editor and cancelled on teardown. ────────────────
@@ -322,7 +360,6 @@ async function boot() {
     current = mountEditor(host, text, currentBaseDir, file, {
       onStatus: save.set,
       initialMode: modeSetting.get(),
-      onToggleMode: toggleMode,
       onCursor: (line, col) => {
         pos.textContent = `Ln ${line}, Col ${col}`;
         saveSessionState();
@@ -379,6 +416,11 @@ async function boot() {
     // The explorer's root is the live document's folder — reseed it on a switch
     // (ephemeral root, not a setting). A no-op when the panel is closed.
     explorer.resetToBaseDir();
+
+    // Record this document as most-recent — the SINGLE write point for the recent
+    // list (dedup → front → cap via pushRecent). The recent panel re-renders from
+    // its recentDocsSetting subscription; localStorage persists it across restarts.
+    recentDocsSetting.set(pushRecent(recentDocsSetting.get(), file));
 
     // dev-only: expose the live controller so the debug harness can read real
     // editor state (selection offsets, block specs) instead of guessing.
@@ -454,54 +496,43 @@ async function boot() {
   // in eq) re-creates and attachPanZoom re-runs with the new value.
   panZoomSetting.subscribe(() => current.refresh());
   mode.btn.addEventListener("click", toggleMode);
+
+  // ── Keyboard shortcuts: every app chord flows through ONE registry + global
+  //    dispatcher (src/shortcuts). Handlers are injected here because they close
+  //    over boot state (the live editor via `current`, the panels, the zoom
+  //    commands); bindKeybindings wires the SSOT override setting; installDispatcher
+  //    arms the single capture-phase listener. This replaces the old ad-hoc
+  //    window keydown listeners (⌘E/⌘⇧E, ⌘±) and bundle.ts's own listener —
+  //    no hardcoded keydown remains. Chords are physical-key based (e.code), so
+  //    they fire under non-Latin layouts (e.g. Korean). Zoom handlers are
+  //    unchanged (→ --font-scale CSS var); only their trigger moved to the registry.
+  registerHandler("mode.toggle", toggleMode);
+  registerHandler("explorer.toggle", () => explorer.button.click());
+  registerHandler("recent.toggle", () => recent.button.click());
+  registerHandler("outline.toggle", () => outline.button.click());
+  registerHandler("openPath.toggle", () => prompt.button.click());
+  registerHandler("zoom.in", zoomIn);
+  registerHandler("zoom.out", zoomOut);
+  registerHandler("zoom.reset", resetZoom);
+  registerHandler("vim.toggle", () =>
+    vimModeSetting.set(vimModeSetting.get() === "on" ? "off" : "on"),
+  );
+  registerHandler("save.flush", () => current.flushSave());
   // ⌘⇧C: copy the LLM context bundle (this doc + 1-hop wikilinks) to the
-  // clipboard. Reads the live file via the `current*` cell so it tracks re-opens.
-  installBundleShortcut(() => currentFile, {
-    onResult: (copied) => {
+  // clipboard. Reads the live file via `currentFile` so it tracks re-opens;
+  // transient feedback rides in the `pos` cell.
+  registerHandler("bundle.copy", () => {
+    if (!currentFile) return;
+    void copyBundleToClipboard(currentFile).then((copied) => {
       const prev = pos.textContent;
       pos.textContent = copied ? "✓ 번들 복사됨" : "⚠ 번들 복사 실패";
       setTimeout(() => {
         if (pos.textContent !== prev) pos.textContent = prev;
       }, 1200);
-    },
+    });
   });
-  // global capture-phase listener so ⌘E works reliably even under different
-  // keyboard layouts (like Korean) and regardless of editor focus states
-  window.addEventListener(
-    "keydown",
-    (e) => {
-      // ⌘E toggles edit/read; ⌘⇧E toggles the explorer sidebar. Guard on Shift so
-      // ⌘⇧E doesn't also flip the mode (both match metaKey + code KeyE).
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.code === "KeyE") {
-        e.preventDefault();
-        e.stopPropagation();
-        toggleMode();
-      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyE") {
-        // ⌘⇧E (VSCode "focus explorer"). Global keydown, not a CM keymap: the
-        // sidebar lives outside .cm-content, so a CM keymap wouldn't fire when
-        // focus is in the tree. Reuses the button's toggle (open reseeds root).
-        e.preventDefault();
-        e.stopPropagation();
-        explorer.button.click();
-      }
-    },
-    { capture: true }
-  );
-  // Body-text zoom (Cmd =/-/0). Same global-keydown spot as ⌘E so it works in
-  // read mode and when the editor isn't focused.
-  window.addEventListener("keydown", (e) => {
-    if (!(e.metaKey || e.ctrlKey)) return;
-    if (e.key === "=" || e.key === "+") {
-      e.preventDefault();
-      zoomIn();
-    } else if (e.key === "-" || e.key === "_") {
-      e.preventDefault();
-      zoomOut();
-    } else if (e.key === "0") {
-      e.preventDefault();
-      resetZoom();
-    }
-  });
+  bindKeybindings(keybindingsSetting);
+  installDispatcher();
   // mode is the SSOT: the button label binds to it; the live editor reacts to
   // changes. Persistence is handled by the store.
   modeSetting.bind(mode.render); // initial label + on change

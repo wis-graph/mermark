@@ -98,6 +98,11 @@ const PATHS = {
   list:
     '<path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/>' +
     '<path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/>',
+  // history — recent documents
+  history:
+    '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>' +
+    '<path d="M3 3v5h5"/>' +
+    '<path d="M12 7v5l4 2"/>',
   // list-tree — outline / table of contents
   "list-tree":
     '<path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/>' +

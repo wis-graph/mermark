@@ -31,7 +31,7 @@
 
 ## 2. 카테고리 (Sidebar)
 
-현재 5개. **삽입(등록) 순서**가 곧 표시 순서이며 첫 등장이 위치를 고정한다(`registry.ts groups()`).
+현재 6개. **삽입(등록) 순서**가 곧 표시 순서이며 첫 등장이 위치를 고정한다(`registry.ts groups()`).
 
 | 순서 | 카테고리 | 비고 |
 |------|----------|------|
@@ -39,7 +39,8 @@
 | 2 | 타이포그래피 | 글꼴·크기·너비·줄간격·제목비율 |
 | 3 | 에디터 | 모드·자동저장·충돌·Vim·이미지검색 |
 | 4 | Mermaid | 팬줌·다이어그램 테마 |
-| 5 | 플러그인 | (플레이스홀더 — info만) |
+| 5 | 단축키 | 모든 rebindable action 재정의(`keybind` 컨트롤 — §5.5) |
+| 6 | 플러그인 | (플레이스홀더 — info만) |
 
 **계약**: 새 그룹은 새 `group` 문자열을 쓰면 자동 생성. 그룹 내 항목도 등록 순. 디자인은 카테고리 구분/서브헤딩을 자유롭게 추가 가능하나 **순서와 그룹 멤버십은 데이터(`ui.group`)가 결정**한다.
 
@@ -59,7 +60,7 @@
 
 ---
 
-## 4. 컨트롤 위젯 6종 (동작 계약)
+## 4. 컨트롤 위젯 7종 (동작 계약)
 
 `kind`로 디스패치되는 렌더러 테이블(`controls.ts RENDER`). **모든 컨트롤의 공통 라운드트립 계약**:
 1. 마운트 시 `setting.get()` 값을 반영.
@@ -73,6 +74,7 @@
 | **slider** | 연속 수치 | number | min/max/step 범위, **현재값 라이브 표시**(단위 포함) | 본문크기·너비·줄간격·자동저장지연 (4) |
 | **text** | 자유 문자열 | string | 텍스트 입력, 선택적 도움말 텍스트 | 웹폰트 (1) |
 | **json** | 테마 비주얼 에디터 | Theme 객체 | §5 별도 명세 | 테마 JSON (1) |
+| **keybind** | 단축키 재정의 | Record<actionId,chord>(override만) | §5.5 별도 명세 — 1 setting → N행(action당). effectiveBinding=override??default 표시, 키 캡처·충돌 거부·개별/전체 리셋 | 단축키 (1) |
 | **info** | 정적 안내 | — | 읽기 전용 텍스트(컨트롤 없음) | 플러그인 플레이스홀더 (1) |
 
 **디자인 메모**: 현재 16항목 중 8개가 segmented라 시각적으로 단조롭다. 디자이너는 segmented/select/slider/text를 Claude 디자인 언어로 재가공하되, **kind별 동작 계약(상호배타/1:1/범위+라이브값/자유입력)은 불변**.
@@ -97,7 +99,21 @@
 
 ---
 
-## 6. 전체 항목 인벤토리 (16)
+## 5.5. 단축키 에디터 (`keybind` 컨트롤)
+
+`renderKeybind()`. `json`처럼 **1 setting → N행** 복합 렌더(`SHORTCUT_ACTIONS` 순회, action당 1행). 저장값은 `keybindingsSetting`(`Record<actionId, chord>`, **사용자 override분만** — 미override action은 키 부재 → `actions.ts` 기본값 사용).
+
+- **행 구성**: 라벨 + 현 바인딩 표시(`displayChord(effectiveBinding(id))` — mac ⌘⇧B / other Ctrl+Shift+B) + 재정의(키 캡처) 버튼 + 개별 리셋. 상단에 전체 리셋.
+- **키 캡처 UX**: "재정의" 클릭 → "키를 누르세요" 상태(일회성 window keydown, 캡처 중 전역 디스패처 `suppressDispatcher`) → `eventToChord`(lone modifier 무시) → `findConflict` 통과 시 `set`, 실패 시 인라인 경고("이미 '<label>'에 할당됨"). Esc = 취소.
+- **충돌 정책**: 감지 + **거부**(무음 last-writer-wins 금지 — 한 action 도달불능 방지).
+- **리셋**: 개별 = Record에서 id 삭제(→기본값 복귀), 전체 = `set({})`.
+- **공통 계약 준수**: mount 시 `effectiveBinding` 반영 / 캡처→`set` / `subscribe(reflectAll)` 외부변경 반영 / `attachTeardown`(구독 해제 + 미완 캡처 disarm).
+
+**계약**: N행 렌더 + 키 캡처 + 충돌 거부 + 개별/전체 리셋 + effectiveBinding(override??default) 표시는 **기능적으로 유지**. 디자인은 행 레이아웃·캡처 버튼 형태를 자유 재구성 가능하나 위 동작은 불변.
+
+---
+
+## 6. 전체 항목 인벤토리 (17)
 
 | 그룹 | 항목 | kind | 값/옵션 |
 |------|------|------|---------|
@@ -116,9 +132,10 @@
 | 에디터 | 이미지 재귀 검색 | segmented | 켜기/끄기 |
 | Mermaid | 팬/줌 | segmented | 켜기/끄기 |
 | Mermaid | 다이어그램 테마 | segmented | 앱따라감/다크/라이트 |
+| 단축키 | 단축키 재정의 | keybind | Record<actionId,chord> (§5.5) |
 | 플러그인 | (플레이스홀더) | info | — |
 
-> 패널에 안 나오는 SSOT-only 설정(라이브 단축키): `modeSetting`(⌘E), `fontScaleSetting`(⌘±) — 디자인 대상 아님.
+> 패널에 안 나오는 SSOT-only 설정: `modeSetting`(⌘E), `fontScaleSetting`(⌘±/⌘0), `recentDocsSetting`(최근문서 목록·상태바 패널) — 디자인 대상 아님.
 
 ---
 

@@ -64,6 +64,9 @@ export interface EditorController {
   setConflictPolicy(p: ConflictPolicy): void;
   setVimMode(enabled: boolean): void;
   reloadFromFile(text: string, mtime: number): void;
+  /** Save the buffered edit now (the save.flush shortcut). No-op while
+   *  conflicted — the buffer is rescued on close or via forceSave. */
+  flushSave(): void;
 }
 
 /** Debounced autosave to disk. Tracks the file's modification time as a baseline
@@ -237,7 +240,6 @@ export function mountEditor(
   opts: {
     onStatus?: (s: SaveStatus, detail?: string) => void;
     initialMode?: PreviewMode;
-    onToggleMode?: () => void;
     onCursor?: (line: number, col: number) => void;
     /** Modification time observed when `doc` was read — the autosave baseline. */
     baseMtime?: number;
@@ -255,7 +257,6 @@ export function mountEditor(
   const {
     onStatus = () => {},
     initialMode = "read",
-    onToggleMode = () => {},
     onCursor = () => {},
     baseMtime = 0,
     autosaveDelay = DEFAULT_AUTOSAVE_DELAY_MS,
@@ -311,6 +312,9 @@ export function mountEditor(
       });
       autosave.resetBaseline(mtime);
     },
+    flushSave() {
+      autosave.flush();
+    },
   };
 
   const state = EditorState.create({
@@ -344,9 +348,11 @@ export function mountEditor(
       history(),
       // closeBrackets/completion keymaps sit before defaultKeymap so an active
       // popup grabs Enter/Tab first; both pass through when no popup is open, so
-      // default Enter/Tab and the app's Mod-chord shortcuts are untouched.
+      // default Enter/Tab and the app's Mod-chord shortcuts are untouched. The
+      // app chords (⌘E mode toggle, etc.) are owned by the global shortcut
+      // dispatcher (src/shortcuts) — NOT a CM keymap — so they fire regardless of
+      // editor focus and stay in one registry.
       keymap.of([
-        { key: "Mod-e", run: () => (onToggleMode(), true) },
         ...closeBracketsKeymap,
         ...completionKeymap,
         ...defaultKeymap,

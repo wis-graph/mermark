@@ -1,104 +1,114 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOpenPathPrompt } from "../src/open-file/path-prompt";
 
-/** The open-by-path footer prompt is the INPUT SURFACE: it collects a typed
- *  path and reports failures back into its row. The actual resolve→read→re-mount
- *  is the caller's onOpen — here stubbed — so these tests pin the UI contract
- *  (toggle, submit, error-keeps-open, cancel) without a real editor. The
- *  re-mount itself is exercised by render-smoke (mountEditor) + path.test
- *  (resolveOpenPath); a full boot() re-mount needs a Tauri window, out of jsdom. */
+/** The open-by-path prompt is now "footer-becomes-input": clicking the button
+ *  toggles `.path-editing` on the status bar and turns it into a full-width path
+ *  input (no separate row opens below). Enter submits, Esc/blur cancels. These
+ *  tests pin that UI contract (toggle, submit, error-keeps-editing, cancel)
+ *  without a real editor — the resolve→read→re-mount is the caller's onOpen. */
 
 function press(input: HTMLInputElement, key: string) {
   input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
 }
 
-describe("open-path footer prompt", () => {
-  let host: HTMLElement;
+describe("open-path footer prompt (inline / footer-becomes-input)", () => {
+  let bar: HTMLElement;
   beforeEach(() => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
+    document.body.innerHTML = "";
+    bar = document.createElement("div");
+    bar.className = "status-bar";
+    document.body.appendChild(bar);
   });
 
   it("builds a status-bar button with the folder-open icon + label", () => {
-    const { button } = createOpenPathPrompt({ onOpen: async () => {} });
+    const { button } = createOpenPathPrompt({ bar, onOpen: async () => {} });
     expect(button.classList.contains("status-btn")).toBe(true);
     expect(button.classList.contains("open-path")).toBe(true);
     expect(button.querySelector(".icon-folder-open")).not.toBeNull();
     expect(button.textContent).toContain("경로 열기");
   });
 
-  it("starts with the input row hidden and reveals + focuses it on button click", () => {
-    const { button, row } = createOpenPathPrompt({ onOpen: async () => {} });
-    host.append(button, row);
-    expect(row.hidden).toBe(true);
+  it("appends the input into the bar and starts NOT in path-editing", () => {
+    const { input } = createOpenPathPrompt({ bar, onOpen: async () => {} });
+    expect(input.parentElement).toBe(bar);
+    expect(bar.classList.contains("path-editing")).toBe(false);
+  });
+
+  it("enters path-editing (bar class + input focus) on button click", () => {
+    const { button, input } = createOpenPathPrompt({ bar, onOpen: async () => {} });
+    bar.appendChild(button);
     button.click();
-    expect(row.hidden).toBe(false);
-    const input = row.querySelector<HTMLInputElement>(".open-path-input")!;
+    expect(bar.classList.contains("path-editing")).toBe(true);
     expect(document.activeElement).toBe(input);
   });
 
-  it("toggles the row closed on a second button click", () => {
-    const { button, row } = createOpenPathPrompt({ onOpen: async () => {} });
-    host.append(button, row);
+  it("toggles back out of path-editing on a second button click", () => {
+    const { button } = createOpenPathPrompt({ bar, onOpen: async () => {} });
+    bar.appendChild(button);
     button.click();
     button.click();
-    expect(row.hidden).toBe(true);
+    expect(bar.classList.contains("path-editing")).toBe(false);
   });
 
   it("calls onOpen with the raw typed path on Enter", () => {
     const onOpen = vi.fn(async () => {});
-    const { button, row } = createOpenPathPrompt({ onOpen });
-    host.append(button, row);
+    const { button, input } = createOpenPathPrompt({ bar, onOpen });
+    bar.appendChild(button);
     button.click();
-    const input = row.querySelector<HTMLInputElement>(".open-path-input")!;
     input.value = "~/notes/x.md";
     press(input, "Enter");
     expect(onOpen).toHaveBeenCalledWith("~/notes/x.md");
   });
 
-  it("closes the row after a successful open", async () => {
+  it("restores the bar after a successful open", async () => {
     let resolve!: () => void;
     const onOpen = vi.fn(() => new Promise<void>((r) => (resolve = r)));
-    const { button, row } = createOpenPathPrompt({ onOpen });
-    host.append(button, row);
+    const { button, input } = createOpenPathPrompt({ bar, onOpen });
+    bar.appendChild(button);
     button.click();
-    const input = row.querySelector<HTMLInputElement>(".open-path-input")!;
     input.value = "/a/b.md";
     press(input, "Enter");
     resolve();
     await Promise.resolve();
     await Promise.resolve();
-    expect(row.hidden).toBe(true);
+    expect(bar.classList.contains("path-editing")).toBe(false);
   });
 
-  it("shows the error and KEEPS the row open when onOpen rejects (missing file)", async () => {
+  it("shows the error and STAYS in path-editing when onOpen rejects", async () => {
     const onOpen = vi.fn(async () => {
       throw new Error("파일 없음");
     });
-    const { button, row } = createOpenPathPrompt({ onOpen });
-    host.append(button, row);
+    const { button, input } = createOpenPathPrompt({ bar, onOpen });
+    bar.appendChild(button);
     button.click();
-    const input = row.querySelector<HTMLInputElement>(".open-path-input")!;
     input.value = "/nope.md";
     press(input, "Enter");
     await Promise.resolve();
     await Promise.resolve();
-    const error = row.querySelector<HTMLElement>(".open-path-error")!;
-    expect(row.hidden).toBe(false);
+    const error = bar.querySelector<HTMLElement>(".open-path-error")!;
+    expect(bar.classList.contains("path-editing")).toBe(true);
     expect(error.hidden).toBe(false);
     expect(error.textContent).toContain("파일 없음");
   });
 
-  it("cancels (closes row, clears value, no onOpen) on Esc", () => {
+  it("cancels (leaves path-editing, clears value, no onOpen) on Esc", () => {
     const onOpen = vi.fn(async () => {});
-    const { button, row } = createOpenPathPrompt({ onOpen });
-    host.append(button, row);
+    const { button, input } = createOpenPathPrompt({ bar, onOpen });
+    bar.appendChild(button);
     button.click();
-    const input = row.querySelector<HTMLInputElement>(".open-path-input")!;
     input.value = "/a/b.md";
     press(input, "Escape");
-    expect(row.hidden).toBe(true);
+    expect(bar.classList.contains("path-editing")).toBe(false);
     expect(input.value).toBe("");
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("cancels on blur", () => {
+    const { button, input } = createOpenPathPrompt({ bar, onOpen: async () => {} });
+    bar.appendChild(button);
+    button.click();
+    expect(bar.classList.contains("path-editing")).toBe(true);
+    input.dispatchEvent(new FocusEvent("blur"));
+    expect(bar.classList.contains("path-editing")).toBe(false);
   });
 });

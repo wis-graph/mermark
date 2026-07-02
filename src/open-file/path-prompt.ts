@@ -1,28 +1,37 @@
 import { icon } from "../icons";
 
-/** Open-by-path footer chrome: a status-bar button that toggles a lazily-built
- *  inline input row (text field + error slot). Enter submits the typed path,
- *  Esc cancels. This module is the INPUT SURFACE only — it returns the raw
- *  string the user typed and reports failures back into the row; the actual
- *  document switch (resolve → read_file → re-mount) is the caller's job
- *  (CQS: this is a query surface, opening is a command elsewhere).
+/** Open-by-path status-bar chrome, "footer-becomes-input" style: a status-bar
+ *  button that, when clicked, turns the STATUS BAR ITSELF into a full-width path
+ *  input — no separate row opens below, so the bar keeps its height and the
+ *  layout never shifts. Toggling adds `.path-editing` to the bar; CSS hides the
+ *  other chrome and shows the input + inline error. Enter submits, Esc / blur
+ *  cancels (restoring the normal bar).
  *
- *  Lazy by design (cold-load): the input row DOM is built on first button
- *  click, not at boot. */
+ *  This module is the INPUT SURFACE only — it returns the raw string the user
+ *  typed and reports failures inline; the actual document switch (resolve →
+ *  read_file → re-mount) is the caller's onOpen (CQS: this is a query surface,
+ *  opening is a command elsewhere).
+ *
+ *  Lazy by design (cold-load): the input + error nodes are created here but stay
+ *  display:none via CSS until `.path-editing` is toggled on. */
 
 export interface OpenPathPrompt {
-  /** The button to append into the status bar. */
+  /** The button to place in the status bar (toggles path-editing). */
   readonly button: HTMLButtonElement;
-  /** The inline input row (hidden until the button is first clicked). Append
-   *  this where it should appear (above/within the status bar). */
-  readonly row: HTMLElement;
+  /** The path input (a direct child of the bar, hidden until editing). Exposed
+   *  for tests / focus wiring. */
+  readonly input: HTMLInputElement;
 }
 
 export interface OpenPathHandlers {
+  /** The status bar the prompt turns into an input. The button is returned for
+   *  the caller to position; the input + error are appended into `bar` here so
+   *  the `.path-editing` toggle can hide the siblings and show them. */
+  bar: HTMLElement;
   /** Invoked with the raw typed path on Enter. Resolve/read/re-mount happens
    *  here. Throw (or reject) to signal "couldn't open" — the prompt catches it
-   *  and shows the message in the row WITHOUT closing it, so the user can fix
-   *  the path. Resolve normally on success; the prompt then closes the row. */
+   *  and shows the message inline WITHOUT leaving editing, so the user can fix
+   *  the path. Resolve on success; the prompt then restores the normal bar. */
   onOpen(raw: string): Promise<void>;
 }
 
@@ -32,23 +41,27 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => 
   return e;
 };
 
-export function createOpenPathPrompt({ onOpen }: OpenPathHandlers): OpenPathPrompt {
+export function createOpenPathPrompt({ bar, onOpen }: OpenPathHandlers): OpenPathPrompt {
   const button = create("button", "status-btn open-path") as HTMLButtonElement;
   button.append(icon("folder-open"));
-  const label = create("span", "status-btn-label");
-  label.textContent = "경로 열기";
-  button.append(label);
+  const buttonLabel = create("span", "status-btn-label");
+  buttonLabel.textContent = "경로 열기";
+  button.append(buttonLabel);
   button.title = "경로를 입력해 다른 문서를 이 창에서 엽니다";
 
-  const row = create("div", "open-path-row");
-  row.hidden = true;
   const input = create("input", "open-path-input") as HTMLInputElement;
   input.type = "text";
   input.placeholder = "경로 입력 (절대 / ~/ / 상대) — Enter 열기, Esc 취소";
   input.spellcheck = false;
   const error = create("span", "open-path-error");
   error.hidden = true;
-  row.append(input, error);
+  // The input + error live in the bar; `.path-editing` (CSS) reveals them and
+  // hides the other chrome. They stay display:none otherwise (bar height held).
+  bar.append(input, error);
+
+  // While a submit is in flight, blur must NOT deactivate (the async onOpen still
+  // owns the outcome — success closes, failure keeps editing with the error).
+  let submitting = false;
 
   const clearError = () => {
     error.hidden = true;
@@ -58,43 +71,56 @@ export function createOpenPathPrompt({ onOpen }: OpenPathHandlers): OpenPathProm
     error.textContent = msg;
     error.hidden = false;
   };
-  const close = () => {
-    row.hidden = true;
-    clearError();
-    input.value = "";
-  };
-  const open = () => {
-    row.hidden = false;
+  const activate = () => {
+    bar.classList.add("path-editing");
     clearError();
     input.focus();
     input.select();
   };
+  const deactivate = () => {
+    bar.classList.remove("path-editing");
+    clearError();
+    input.value = "";
+  };
 
-  // Toggle the row on each button click; opening focuses the field.
+  // Toggle path-editing on each button click; entering focuses the field.
   button.addEventListener("click", () => {
-    if (row.hidden) open();
-    else close();
+    if (bar.classList.contains("path-editing")) deactivate();
+    else activate();
   });
 
-  // Esc cancels (row closes, editor untouched). Enter submits the typed path.
+  // Esc cancels (restore the bar, editor untouched). Enter submits the path.
   input.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      close();
+      deactivate();
       return;
     }
     if (e.key === "Enter") {
       e.preventDefault();
       const raw = input.value;
       clearError();
-      // The switch is async (read_file). On failure keep the row open with the
-      // message so the user can correct the path; on success close the row.
+      submitting = true;
+      // The switch is async (read_file). On failure keep editing with the message
+      // so the user can correct the path; on success restore the bar.
       void onOpen(raw)
-        .then(() => close())
-        .catch((err: unknown) => showError(`열 수 없음: ${String(err)}`));
+        .then(() => {
+          submitting = false;
+          deactivate();
+        })
+        .catch((err: unknown) => {
+          submitting = false;
+          showError(`열 수 없음: ${String(err)}`);
+        });
     }
   });
   input.addEventListener("input", clearError);
+  // Clicking away cancels — but not while a submit is resolving (that path owns
+  // the outcome). Guard against the Enter→blur race.
+  input.addEventListener("blur", () => {
+    if (submitting) return;
+    if (bar.classList.contains("path-editing")) deactivate();
+  });
 
-  return { button, row };
+  return { button, input };
 }

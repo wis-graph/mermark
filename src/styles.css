@@ -503,12 +503,26 @@ html, body { margin: 0; height: 100%; }
    outside #app's scroll host, so no .cm-content/.cm-line involved → ZOOM GUARD
    holds). Hidden until the footer "경로 열기" button toggles it. The input
    stretches; the error message sits to its right in a warning tone. */
-.open-path-row { flex: none; display: flex; align-items: center; gap: .5em; padding: .35em .5em; border-top: 1px solid var(--border); background: var(--surface); font-size: 13px; }
-.open-path-row[hidden] { display: none; }
-.open-path-input { flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 10px; font: inherit; font-size: 13px; color: var(--fg); background: var(--bg, var(--surface)); border: 1px solid var(--border); border-radius: var(--radius-md, 8px); }
-.open-path-input:focus-visible { outline: none; border-color: color-mix(in srgb, var(--accent) 70%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
-.open-path-error { flex: none; color: #dc2626; white-space: nowrap; }
-.open-path-error[hidden] { display: none; }
+/* Open-by-path "footer-becomes-input": the STATUS BAR itself turns into a
+   full-width path field (no row opens below, so the bar keeps its 36px height).
+   `.path-editing` (toggled on .status-bar) hides the normal chrome and reveals
+   the input + inline error, which are direct children of the bar. Theme tokens
+   only. */
+.open-path-input { display: none; }
+.open-path-error { display: none; }
+.status-bar.path-editing > * { display: none; }
+.status-bar.path-editing > .open-path-input {
+  display: block; flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 10px;
+  font: inherit; font-size: 13px; color: var(--fg);
+  background: var(--bg, var(--surface)); border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+}
+.status-bar.path-editing > .open-path-input:focus-visible {
+  outline: none; border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.status-bar.path-editing > .open-path-error { display: block; flex: none; color: #dc2626; white-space: nowrap; }
+.status-bar.path-editing > .open-path-error[hidden] { display: none; }
 
 /* Outline (table of contents) panel. A sibling of .status-bar under #app — it
    lives OUTSIDE the editor's scroll host, so it never touches .cm-content /
@@ -985,3 +999,63 @@ html, body { margin: 0; height: 100%; }
   gap: 0.5em;
 }
 
+
+/* Recent-documents panel. A sibling of .status-bar under #app (same fixed
+   bottom-left popover shape as the outline panel) — OUTSIDE the editor scroll
+   host, so it makes no decorations and the ⌘± zoom guard holds. Theme tokens
+   only (dark / light / claude consistent). */
+.recent-row {
+  position: fixed; left: .5em; bottom: 40px; z-index: 30;
+  width: min(360px, calc(100vw - 1em)); max-height: min(60vh, 480px);
+  overflow-y: auto; padding: .35em;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--fg) 18%, transparent);
+  font-size: 13px;
+}
+.recent-row[hidden] { display: none; }
+.recent-list { display: flex; flex-direction: column; }
+.recent-empty { padding: .5em; color: var(--muted); }
+.recent-empty[hidden] { display: none; }
+.recent-item {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
+  background: transparent; border: none; border-radius: var(--radius-sm, 6px);
+  color: var(--fg); font: inherit; padding: 4px 8px; cursor: pointer;
+  overflow: hidden; transition: background-color .12s ease;
+}
+.recent-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.recent-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.recent-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.recent-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-path { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Keybind settings control (단축키 category). One row per rebindable action:
+   label · current chord · 재정의 (capture) · 기본값 (reset), with 전체 리셋 on
+   top. Theme tokens only. */
+.settings-row-keybind .settings-row-control { width: 100%; }
+.keybind-editor { display: flex; flex-direction: column; gap: .5em; width: 100%; }
+.keybind-toolbar { display: flex; justify-content: flex-end; }
+.keybind-reset-all,
+.keybind-capture,
+.keybind-reset {
+  background: transparent; color: var(--fg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px); font: inherit; font-size: 12px;
+  padding: 3px 8px; cursor: pointer; transition: background-color .12s ease, border-color .12s ease;
+}
+.keybind-reset-all:hover,
+.keybind-capture:hover,
+.keybind-reset:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.keybind-capture.is-capturing { border-color: var(--accent); color: var(--accent); }
+.keybind-list { display: flex; flex-direction: column; }
+.keybind-item {
+  display: grid; grid-template-columns: 1fr auto auto auto; align-items: center;
+  gap: .5em; padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.keybind-label { color: var(--fg); font-size: 13px; }
+.keybind-chord {
+  font-variant-numeric: tabular-nums; font-size: 13px; color: var(--fg);
+  min-width: 4ch; text-align: right;
+}
+.keybind-chord.is-unbound { color: var(--muted); }
+.keybind-warning { grid-column: 1 / -1; color: #dc2626; font-size: 12px; }
+.keybind-warning[hidden] { display: none; }

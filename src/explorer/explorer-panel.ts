@@ -80,7 +80,7 @@ export function createExplorerPanel({
   const label = create("span", "status-btn-label");
   label.textContent = "탐색기";
   button.append(label);
-  button.title = "파일 탐색기 (⌘⇧E · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · .. 상위)";
+  button.title = "파일 탐색기 (⌘B · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · .. 상위)";
 
   const aside = create("aside", "explorer-aside");
   aside.hidden = true;

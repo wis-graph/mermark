@@ -48,6 +48,8 @@
 ### 2.3 설정 SSOT
 - **`defineSetting` 프리미티브** — 의존성 없는 단일 출처 설정.
 - **sink 구독** — 설정 변경 → sink가 DOM/에디터에 반영(theme/mode/vim/fontScale/conflictPolicy/panZoom 등).
+- **단축키 레지스트리** — 전역 앱 단축키의 단일 SSOT(`src/shortcuts/`). `actions.ts`(rebindable action 선언, 순수 데이터·핸들러 미포함) + `keys.ts`(`e.code` 물리키 기반 chord 직렬화 `Mod+B`, mac ⌘⇧ / other Ctrl+Shift 표시, 한글 레이아웃 대응) + `registry.ts`(단일 전역 capture 디스패처, `effectiveBinding`=사용자 override ?? 기본값, `findConflict` 충돌 감지). 흩어진 하드코딩 키맵(구 ⌘E/⌘±/⌘⇧C·CM `Mod-e`)을 전부 수렴 — 앱-chord 하드코딩 keydown 0. `keybindingsSetting`(override분만 localStorage 저장)이 SSOT, 사용자 재정의는 설정 "단축키" 카테고리에서.
+- **최근 문서 SSOT** — `recentDocsSetting`(`string[]` localStorage, 재시작 유지). `openInWindow` 단일 지점에서 `pushRecent`(dedup→최근순→상한 15), 없는 경로는 `pruneMissing`으로 정리.
 - **줌 가드(ZOOM GUARD)** — `.cm-content`/`.cm-line`에 font-size 직접 금지(async 위젯 0-height 붕괴 방지), `.cm-line` em만.
 
 ---
@@ -96,12 +98,15 @@
 - **위키링크 이동** — 대상 열기(현재 새 창), Alt=원문 편집.
 - **경로 열기** — 푸터 왼쪽 버튼 → 인라인 경로 입력 → 현재 창에 문서 전환(vim `:e` 감).
 - **목차보기 (Outline/TOC)** — 푸터 버튼 토글 → 헤딩 위계 트리 팝오버. 항목 클릭 시 해당 헤딩으로 이동(footnote와 공유하는 `jumpTo` 랜딩). 문서 변경 시 디바운스 실시간 갱신. 인라인 마크 정규화(`**B**`→`B`, 링크/위키링크는 표시 텍스트). 패널은 에디터 측정 트리 밖(줌 가드).
-- **파일 탐색기 (File Explorer)** — 상태바 좌 네비 버튼 또는 **⌘⇧E**로 토글하는 **좌측 사이드바**(`.workspace` flex row: aside ∣ 에디터, 상태바는 폭 전체). 현 문서 폴더 루트의 **레이지 트리**. 폴더 **클릭 시에만** 자식을 `list_dir`로 읽어 펼침(경로별 캐시, 재펼침 재호출 없음) — **hover로는 아무 것도 안 열림**(WCAG 1.4.13). 최상단 `..` **단일클릭/Enter → 상향**(부모가 새 루트, 캐시 clear+재구축). **WAI-ARIA Tree 키보드**: ↑↓(포커스 이동) →(닫힌폴더 열기/열린폴더 첫자식) ←(열린폴더 닫기/부모) Enter(활성화) Home/End, roving tabindex(트리 전체 tab stop 1개). **포커스≠선택 분리**: 화살표는 포커스 링만 이동, Enter/클릭만 파일 활성화(단일선택). 파일 클릭/Enter → **현재 창 열기**(main의 `openInWindow`+`commitBeforeSwitch` 재사용, `activateItem` 단일 경로). 비-md 파일은 회색(`.is-nonmd`)+no-op. `role=tree/treeitem/group`·`aria-expanded/selected/level`. 기본 닫힘, 루트·열림 상태는 ephemeral(P0 무설정) — 문서 전환 시 baseDir로 리셋. 사이드바는 에디터 측정 트리 밖(줌 가드, 데코 0개), 테마 var만(다크/라이트/클로드 일관). *P1+ 범위 밖: 파일 작업(new/rename/delete)·다중선택·검색·드래그·폭 드래그·열림 영속·fs와처 실시간·OS기본앱 열기.*
+- **최근 문서 (Recent Documents)** — 상태바 탐색기 다음 버튼(`history` 아이콘) 토글 → 최근 연 문서 목록 패널(outline 패턴, lazy·측정트리 밖). 항목(basename + 흐린 경로) 클릭 → 현재 창 열기(`openInWindow` 재사용). 최근순·중복제거·상한 15, **재시작 후 유지**(localStorage). 없는 경로 클릭은 graceful(에러 표시 + 목록에서 제거).
+- **파일 탐색기 (File Explorer)** — 상태바 좌 네비 버튼 또는 **⌘B**로 토글하는 **좌측 사이드바**(`.workspace` flex row: aside ∣ 에디터, 상태바는 폭 전체). 현 문서 폴더 루트의 **레이지 트리**. 폴더 **클릭 시에만** 자식을 `list_dir`로 읽어 펼침(경로별 캐시, 재펼침 재호출 없음) — **hover로는 아무 것도 안 열림**(WCAG 1.4.13). 최상단 `..` **단일클릭/Enter → 상향**(부모가 새 루트, 캐시 clear+재구축). **WAI-ARIA Tree 키보드**: ↑↓(포커스 이동) →(닫힌폴더 열기/열린폴더 첫자식) ←(열린폴더 닫기/부모) Enter(활성화) Home/End, roving tabindex(트리 전체 tab stop 1개). **포커스≠선택 분리**: 화살표는 포커스 링만 이동, Enter/클릭만 파일 활성화(단일선택). 파일 클릭/Enter → **현재 창 열기**(main의 `openInWindow`+`commitBeforeSwitch` 재사용, `activateItem` 단일 경로). 비-md 파일은 회색(`.is-nonmd`)+no-op. `role=tree/treeitem/group`·`aria-expanded/selected/level`. 기본 닫힘, 루트·열림 상태는 ephemeral(P0 무설정) — 문서 전환 시 baseDir로 리셋. 사이드바는 에디터 측정 트리 밖(줌 가드, 데코 0개), 테마 var만(다크/라이트/클로드 일관). *P1+ 범위 밖: 파일 작업(new/rename/delete)·다중선택·검색·드래그·폭 드래그·열림 영속·fs와처 실시간·OS기본앱 열기.*
 
 ---
 
 ## L5 · UI 크롬 계층
-- **상태바** — 경로열기 · 목차 · 탐색기(좌 네비 그룹) · 모드 토글 · 커서/위치 · 저장 상태 인디케이터(저장됨/저장중/충돌, 수동 저장·리로드 버튼 없음) · 테마 토글(다크→라이트→클로드 순환, moon/sun/palette 아이콘) · 설정(우). Lucide 아이콘.
+- **상태바** — **좌 네비 그룹**: 탐색기(⌘B) · 최근문서 · 경로열기 · 목차. **중앙**: 커서/위치 · 저장 상태 인디케이터(저장됨/저장중/충돌, 수동 저장·리로드 버튼 없음). **우측**: 편집/리더 모드 토글(⌘E) · 테마 토글(다크→라이트→클로드 순환, moon/sun/palette 아이콘) · 설정. Lucide 아이콘.
+- **경로 열기 인라인** — 경로열기 버튼 클릭 시 **상태바 자체가 입력칸으로 전환**(`.path-editing` — 아래 공간 안 열림, 상태바 높이 유지). 경로 입력 → Enter로 현재 창 열기(`resolveOpenPath` 재사용), ESC/blur/제출 시 상태바 원복. 없는 경로는 인라인 에러.
+- **단축키 설정** — 설정 패널 "단축키" 카테고리(신규 `keybind` 컨트롤 kind). 각 action 행 = 라벨 + 현 바인딩 표시 + 키 캡처(재정의) + 개별 리셋, 상단 전체 리셋. 캡처 시 충돌 감지(중복 chord 거부 + 인라인 경고), Esc 취소. 사용자 override는 재시작 후 유지. 기본 바인딩: ⌘E(모드)·⌘B(탐색기)·⌘=/⌘-/⌘0(줌)·⌘⇧C(번들 복사), 그 외 action(최근문서·목차·경로열기·Vim·저장)은 기본 미바인딩(사용자가 부여 가능).
 - **설정 패널** — 테마 프리셋 드롭다운(다크/라이트/클로드 3종 select), 테마 비주얼 에디터(스워치 그리드 + JSON), 모드/Vim/타이포그래피.
 - **테마 프리셋** — 빌트인 3종: 다크 · 라이트 · **클로드**(Anthropic 에디토리얼 — 크림 캔버스 `#faf9f5` + 잉크 본문, 코랄 link/code, 시스템 세리프 헤딩). 프리셋 선택은 JSON 테마와 코히런스 유지(`loadPreset`/`syncJsonToPreset`).
 - **타이포그래피** — DESIGN.md(ElevenLabs) 타입 시스템, Pretendard 번들, 헤딩 스케일·트래킹. 클로드 테마는 헤딩에 시스템 세리프(`--font-heading`) 적용, 본문은 산스 유지.

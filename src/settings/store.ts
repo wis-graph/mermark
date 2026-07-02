@@ -27,6 +27,7 @@ export type Control<T> =
   | { kind: "slider"; min: number; max: number; step: number; unit?: string }
   | { kind: "text"; placeholder?: string; help?: string }
   | { kind: "json" }
+  | { kind: "keybind" }
   | { kind: "info" };
 
 export interface SettingDef<T> {
