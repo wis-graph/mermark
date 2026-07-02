@@ -1,4 +1,9 @@
 import { icon } from "../icons";
+import { formatRootLabel } from "../path";
+import { renderSidebarButton } from "../sidebar-toggle";
+
+/** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
+const EXPLORER_ASIDE_ID = "explorer-aside";
 
 // ---------------------------------------------------------------------------
 // File explorer LEFT SIDEBAR — an editor-adjacent chrome shell, not a
@@ -43,6 +48,9 @@ export interface ExplorerPanel {
   /** Reset the root to the injected baseDir and rebuild. Call on document switch
    *  so the explorer follows the live document's folder. A no-op while hidden. */
   resetToBaseDir(): void;
+  /** Hide the sidebar. Idempotent — used by the mutual-exclusion coordinator to
+   *  close this when the other left sidebar opens. Command (void). */
+  close(): void;
 }
 
 export interface ExplorerHandlers {
@@ -55,6 +63,9 @@ export interface ExplorerHandlers {
   /** Open an absolute path in the current window. Injected so the panel reuses
    *  main's read_file → commitBeforeSwitch → openInWindow path (no new open code). */
   onOpenFile(absPath: string): void;
+  /** Called when this sidebar opens, so main can close the other left sidebar
+   *  (mutual exclusion). Optional — omitted in unit tests / standalone use. */
+  onOpen?(): void;
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
@@ -74,18 +85,22 @@ export function createExplorerPanel({
   listDir,
   getBaseDir,
   onOpenFile,
+  onOpen,
 }: ExplorerHandlers): ExplorerPanel {
   const button = create("button", "status-btn explorer-btn") as HTMLButtonElement;
-  button.append(icon("folder"));
-  const label = create("span", "status-btn-label");
-  label.textContent = "탐색기";
-  button.append(label);
   button.title = "파일 탐색기 (⌘B · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · .. 상위)";
 
-  const aside = create("aside", "explorer-aside");
+  const aside = create("aside", "explorer-aside sidebar-aside");
+  aside.id = EXPLORER_ASIDE_ID;
   aside.hidden = true;
-  const header = create("div", "explorer-header");
-  header.textContent = "탐색기";
+  const header = create("div", "explorer-header sidebar-header");
+  header.textContent = "탐색기"; // replaced by the root path on first renderTree
+
+  /** Render the toggle button for the current open/closed state (icon + ARIA).
+   *  Called at init and on every open()/close() so they never drift. */
+  const renderButton = (): void =>
+    renderSidebarButton(button, "탐색기", !aside.hidden, EXPLORER_ASIDE_ID);
+  renderButton();
   const tree = create("div", "explorer-tree");
   tree.setAttribute("role", "tree");
   tree.setAttribute("aria-label", "파일 탐색기");
@@ -196,7 +211,12 @@ export function createExplorerPanel({
     const name = create("span", "explorer-name");
     name.textContent = e.name;
     name.title = e.name;
-    item.append(chevron, glyph, name);
+    // The visible clickable ROW (chevron·glyph·name) is its own flex wrapper, kept
+    // separate from the children group so a folder's group nests as a vertical
+    // block BELOW the label — not as a flex sibling to its RIGHT (the 527faf6 bug).
+    const label = create("div", "explorer-label");
+    label.append(chevron, glyph, name);
+    item.append(label);
 
     if (e.is_dir) {
       const kids = create("div", "explorer-children");
@@ -257,6 +277,11 @@ export function createExplorerPanel({
    *  name) — we render in the order returned. Seeds the focus cursor on the
    *  first visible node without stealing DOM focus. Command (void). */
   const renderTree = async (rootPath: string): Promise<void> => {
+    // Header = the current root folder path (single update point, so header/tree
+    // never drift): the compact label in text, the full path in title + aria.
+    header.textContent = formatRootLabel(rootPath);
+    header.title = rootPath;
+    header.setAttribute("aria-label", `현재 폴더: ${rootPath}`);
     tree.replaceChildren();
     focused = null;
     const up = create("div", "explorer-item explorer-up");
@@ -271,7 +296,9 @@ export function createExplorerPanel({
     upGlyph.append(icon("corner-left-up"));
     const upName = create("span", "explorer-name");
     upName.textContent = "..";
-    up.append(upChevron, upGlyph, upName);
+    const upLabel = create("div", "explorer-label");
+    upLabel.append(upChevron, upGlyph, upName);
+    up.append(upLabel);
     up.title = "상위 폴더로 (클릭 / Enter)";
     tree.append(up);
 
@@ -336,11 +363,14 @@ export function createExplorerPanel({
 
   const open = () => {
     aside.hidden = false;
+    onOpen?.();
+    renderButton();
     childrenCache.clear(); // reopen = fresh view (no stale invalidation to track)
     void renderTree(getBaseDir());
   };
   const close = () => {
     aside.hidden = true;
+    renderButton();
   };
   const resetToBaseDir = (): void => {
     if (aside.hidden) return; // closed panel reseeds on next open
@@ -401,5 +431,5 @@ export function createExplorerPanel({
     }
   });
 
-  return { button, aside, resetToBaseDir };
+  return { button, aside, resetToBaseDir, close };
 }

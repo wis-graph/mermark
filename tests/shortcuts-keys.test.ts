@@ -28,6 +28,27 @@ describe("eventToChord (e.code physical key)", () => {
   it("returns null for a lone modifier press (no standalone key)", () => {
     expect(eventToChord(ev({ metaKey: true, code: "MetaLeft" }))).toBeNull();
   });
+
+  // ⌘+ zoom alias: the physical key Equal folds Shift away so ⌘+ === ⌘= (browser
+  // zoom parity). Letters keep Shift; ⌘- / ⌘0 are unaffected.
+  it("folds ⌘+ (Shift+Equal) to the same chord as ⌘= (Mod+=)", () => {
+    expect(eventToChord(ev({ metaKey: true, shiftKey: true, code: "Equal" }))).toBe("Mod+=");
+  });
+  it("keeps ⌘= as Mod+= (no regression)", () => {
+    expect(eventToChord(ev({ metaKey: true, code: "Equal" }))).toBe("Mod+=");
+  });
+  it("does NOT fold Shift for letters (⌘⇧C stays Mod+Shift+C)", () => {
+    expect(eventToChord(ev({ metaKey: true, shiftKey: true, code: "KeyC" }))).toBe("Mod+Shift+C");
+  });
+  it("⌘- and ⌘0 unaffected (Mod+- / Mod+0)", () => {
+    expect(eventToChord(ev({ metaKey: true, code: "Minus" }))).toBe("Mod+-");
+    expect(eventToChord(ev({ metaKey: true, code: "Digit0" }))).toBe("Mod+0");
+  });
+  // B document-history chords: bracket codes map to [ / ].
+  it("maps bracket codes for history (⌘[ → Mod+[, ⌘] → Mod+])", () => {
+    expect(eventToChord(ev({ metaKey: true, code: "BracketLeft" }))).toBe("Mod+[");
+    expect(eventToChord(ev({ metaKey: true, code: "BracketRight" }))).toBe("Mod+]");
+  });
 });
 
 describe("parseChord / formatChord round-trip", () => {

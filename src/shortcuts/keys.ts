@@ -63,6 +63,16 @@ function codeToKey(code: string): string | null {
   return null; // MetaLeft/ControlLeft/ShiftLeft/AltLeft/… → not a standalone key
 }
 
+/** Does Shift fold away on this physical key — i.e. is `+` the same chord as `=`?
+ *  On `Equal`, Shift produces `+`, and browsers treat ⌘+ and ⌘= as the SAME zoom
+ *  command, so we normalize ⌘+ → "Mod+=" (⌘= aliases ⌘+). Named so this browser
+ *  zoom-parity rule lives in one place, shared by capture (rebind UI) and dispatch
+ *  — otherwise the two would store/look-up different strings and a rebind of ⌘+
+ *  would silently miss. Only `Equal` folds; letters (⌘⇧C) keep their Shift. */
+function foldsShiftAway(code: string): boolean {
+  return code === "Equal";
+}
+
 /** The single "read a keydown into a chord" rule. Returns the canonical stored
  *  string, or null when the event is not a complete chord (a lone modifier
  *  press, or a key that carries no bindable token). Pure query. */
@@ -72,7 +82,7 @@ export function eventToChord(e: KeyboardEvent): string | null {
   return formatChord({
     mod: e.metaKey || e.ctrlKey,
     alt: e.altKey,
-    shift: e.shiftKey,
+    shift: e.shiftKey && !foldsShiftAway(e.code),
     key,
   });
 }

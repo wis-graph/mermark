@@ -258,6 +258,76 @@ describe("explorer: `..` changes root (5)", () => {
   });
 });
 
+// F. Child nesting structure (P0 527faf6 regression) --------------------------
+// jsdom can't compute flex geometry, so we pin the DOM STRUCTURE that caused the
+// bug: the row content must live in .explorer-label, and a folder's children must
+// be a block SIBLING after the label (vertical), not a flex sibling to the right.
+describe("explorer: folder children nest vertically, not to the right (F)", () => {
+  it("folder row content lives in .explorer-label, NOT directly under .explorer-item", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const item = panel.aside.querySelector(".explorer-item.explorer-dir") as HTMLElement;
+    const label = item.querySelector(":scope > .explorer-label") as HTMLElement;
+    expect(label).toBeTruthy();
+    expect(label.querySelector(".explorer-chevron")).toBeTruthy();
+    expect(label.querySelector(".explorer-name")).toBeTruthy();
+    // chevron/name are inside label now, not direct flex siblings of the item.
+    expect(item.querySelector(":scope > .explorer-chevron")).toBeNull();
+    expect(item.querySelector(":scope > .explorer-name")).toBeNull();
+  });
+
+  it("the `..` up entry also wraps its row in .explorer-label", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
+    const label = up.querySelector(":scope > .explorer-label") as HTMLElement;
+    expect(label).toBeTruthy();
+    expect(label.querySelector(".explorer-name")?.textContent).toBe("..");
+  });
+
+  it("expanded children nest as a block sibling AFTER the label (vertical order)", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const item = panel.aside.querySelector(".explorer-item.explorer-dir") as HTMLElement;
+    clickItem(item);
+    await flush();
+    const label = item.querySelector(":scope > .explorer-label") as HTMLElement;
+    const kids = item.querySelector(":scope > .explorer-children") as HTMLElement;
+    expect(kids).toBeTruthy();
+    // document order: label precedes children (children is the vertical block below).
+    expect(label.compareDocumentPosition(kids) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(kids.querySelectorAll(".explorer-item").length).toBeGreaterThan(0);
+  });
+
+  it("child items are indented one level deeper (--level = parent+1)", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const item = panel.aside.querySelector(".explorer-item.explorer-dir") as HTMLElement;
+    expect(item.style.getPropertyValue("--level")).toBe("1");
+    clickItem(item);
+    await flush();
+    const child = panel.aside.querySelector(".explorer-children .explorer-item") as HTMLElement;
+    expect(child.style.getPropertyValue("--level")).toBe("2");
+  });
+});
+
+// D. Header shows the current root path ----------------------------------------
+describe("explorer: header shows current root path (D)", () => {
+  it("header shows the root path (not the label 탐색기), with the full path in title + aria-label", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
+    const header = panel.aside.querySelector(".explorer-header") as HTMLElement;
+    expect(header.textContent).not.toBe("탐색기");
+    expect(header.textContent).toContain("child");
+    expect(header.title).toBe("/root/child");
+    expect(header.getAttribute("aria-label")).toContain("/root/child");
+  });
+
+  it("header updates when the root changes via `..` (changeRoot → renderTree)", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
+    const header = panel.aside.querySelector(".explorer-header") as HTMLElement;
+    const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
+    clickItem(up);
+    await flush();
+    expect(header.title).toBe("/root/child/..");
+  });
+});
+
 // 6. Only .md opens ------------------------------------------------------------
 describe("explorer: opens markdown only (6)", () => {
   it("md click → onOpenFile(absPath); non-md click + Enter are no-ops", async () => {
@@ -294,6 +364,46 @@ describe("explorer: sidebar shell interface (7)", () => {
     expect(panel.aside.hidden).toBe(false);
     panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(panel.aside.hidden).toBe(true);
+  });
+
+  it("aside carries a stable id + shared sidebar shell class", async () => {
+    const panel = createExplorerPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    host.append(panel.button, panel.aside);
+    expect(panel.aside.id).toBe("explorer-aside");
+    expect(panel.aside.classList.contains("sidebar-aside")).toBe(true);
+  });
+
+  it("close() hides the aside (idempotent, for the sidebar coordinator)", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(panel.aside.hidden).toBe(false);
+    panel.close();
+    expect(panel.aside.hidden).toBe(true);
+    panel.close();
+    expect(panel.aside.hidden).toBe(true);
+  });
+
+  it("fires onOpen only when opening (mutual-exclusion hook)", async () => {
+    const onOpen = vi.fn();
+    const panel = createExplorerPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn(), onOpen });
+    host.append(panel.button, panel.aside);
+    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(onOpen).toHaveBeenCalledOnce();
+    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true })); // close
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it("toggle button swaps the panel-left icon + aria-expanded (E)", async () => {
+    const panel = createExplorerPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    host.append(panel.button, panel.aside);
+    expect(panel.button.querySelector(".icon-panel-left-open")).toBeTruthy();
+    expect(panel.button.getAttribute("aria-expanded")).toBe("false");
+    expect(panel.button.getAttribute("aria-controls")).toBe("explorer-aside");
+    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(panel.button.querySelector(".icon-panel-left-close")).toBeTruthy();
+    expect(panel.button.getAttribute("aria-expanded")).toBe("true");
+    expect(panel.button.querySelector(".status-btn-label")?.textContent).toBe("탐색기");
   });
 
   it("resetToBaseDir rebuilds when open, no-ops when hidden", async () => {

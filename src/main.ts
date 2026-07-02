@@ -40,6 +40,15 @@ import { registerHandler, installDispatcher, bindKeybindings } from "./shortcuts
 import { arrangeStatusBar } from "./status-bar";
 import { createRecentPanel } from "./recent/recent-panel";
 import { pushRecent, pruneMissing } from "./recent/recent-docs";
+import {
+  makeHistory,
+  pushHistory,
+  back,
+  forward,
+  currentEntry,
+  pruneAt,
+  type NavHistory,
+} from "./history/nav-history";
 import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./file-watch";
 import { openConflictModal } from "./conflict/conflict-modal";
 import { icon, type IconName } from "./icons";
@@ -203,6 +212,10 @@ async function boot() {
   let current: EditorController;
   let currentFile = file;
   let currentBaseDir = dirOf(file);
+  // Document navigation history (⌘[/⌘]) — ephemeral in-memory session state, NOT
+  // a setting: starts empty; the first openInWindow records the launch file.
+  // Distinct from the recent MRU list (recentDocsSetting) — see nav-history.ts.
+  let navHistory: NavHistory = makeHistory();
   // The per-file teardown closures the previous openInWindow installed (scroll
   // listener, pending session timer). teardownCurrent runs them before swap.
   let detachScroll: (() => void) | undefined;
@@ -229,7 +242,20 @@ async function boot() {
   //    jumpTo landing. getView is a closure over `current` so it follows
   //    re-opens. Its listener is threaded into every mount (extraExtensions)
   //    so the outline tracks the live document. ────────────────────────────────
-  const outline = createOutlinePanel({ getView: () => current.view });
+  // The left sidebar area holds one panel at a time (explorer OR outline,
+  // VSCode-style). Named coordinator so the "one left sidebar at a time" rule
+  // lives in one place, not an inline if at each panel. Each panel calls its
+  // onOpen when it opens; this closes whichever other left sidebar was showing.
+  // The closure is evaluated at click time, so referencing `explorer` (declared
+  // just below) is safe. close() is idempotent, so an unconditional call is fine.
+  const closeOtherSidebars = (keep: "explorer" | "outline"): void => {
+    if (keep !== "explorer") explorer.close();
+    if (keep !== "outline") outline.close();
+  };
+  const outline = createOutlinePanel({
+    getView: () => current.view,
+    onOpen: () => closeOtherSidebars("outline"),
+  });
 
   // ── File explorer LEFT SIDEBAR. A lazy tree rooted at the live document's
   //    folder: click reads children (list_dir), `..` single-clicks/Enters
@@ -244,6 +270,7 @@ async function boot() {
       await commitBeforeSwitch();
       openInWindow(absPath, fresh);
     },
+    onOpen: () => closeOtherSidebars("explorer"),
   });
 
   // ── Recent documents footer chrome. Same toggle shape as outline; the list is
@@ -282,9 +309,11 @@ async function boot() {
   // lazily on first open (cold-load constraint).
   mountSettingsButton(bar);
   root.append(recent.row);
-  root.append(outline.row);
-  // The explorer is a LEFT sidebar (not a footer popover): mount it as the first
-  // child of .workspace so it sits left of the editor host.
+  // The explorer + outline are LEFT sidebars (not footer popovers): mount both as
+  // the leading children of .workspace so they sit left of the editor host. They
+  // are mutually exclusive (one visible at a time via closeOtherSidebars), so
+  // their left-to-right order is never seen simultaneously.
+  workspace.prepend(outline.aside);
   workspace.prepend(explorer.aside);
 
   // The recent panel is a sink of recentDocsSetting: re-render on every change
@@ -351,7 +380,11 @@ async function boot() {
    *  mtime baseline, session key) by going through the verified mountEditor
    *  boot path. Tears down any previous editor first. Mode/vim are preserved
    *  from the live settings (a re-open keeps your edit/read + vim state). */
-  function openInWindow(file: string, fresh: { text: string; mtime: number }): void {
+  function openInWindow(
+    file: string,
+    fresh: { text: string; mtime: number },
+    opts: { viaHistory?: boolean } = {},
+  ): void {
     teardownCurrent();
     currentFile = file;
     currentBaseDir = dirOf(file);
@@ -422,11 +455,51 @@ async function boot() {
     // its recentDocsSetting subscription; localStorage persists it across restarts.
     recentDocsSetting.set(pushRecent(recentDocsSetting.get(), file));
 
+    // Record the navigation in the back/forward history — the SAME single locus
+    // as the recent write. A back/forward move (viaHistory) must NOT re-push (the
+    // handler already moved the pointer), else ⌘[ would loop. Named so the "don't
+    // re-record a history move" rule isn't an inline if.
+    recordNavigation(file, opts.viaHistory ?? false);
+
     // dev-only: expose the live controller so the debug harness can read real
     // editor state (selection offsets, block specs) instead of guessing.
     if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
       (window as unknown as { __mermark?: unknown }).__mermark = current;
   }
+
+  /** Record a document mount in the back/forward history — unless it WAS a
+   *  history move (viaHistory), in which case the pointer was already set by the
+   *  handler and re-pushing would break back/forward. Named so the "don't
+   *  re-record a history move" rule lives in one place, not an inline if. */
+  function recordNavigation(file: string, viaHistory: boolean): void {
+    if (viaHistory) return;
+    navHistory = pushHistory(navHistory, file);
+  }
+
+  /** Step the history cursor by `move` (back/forward) and open the target,
+   *  reusing the single open path. A no-op move (already at an end) returns
+   *  early. The pointer is only committed AFTER a successful read, so a failed
+   *  read leaves the history unchanged — a dead entry is pruned and skipped.
+   *  Command (void). Shared body so back and forward differ by one function. */
+  async function navigateHistory(move: (h: NavHistory) => NavHistory): Promise<void> {
+    const next = move(navHistory);
+    if (next === navHistory) return; // at an end → no-op (same-ref signal)
+    const target = currentEntry(next);
+    if (!target) return;
+    let fresh: { text: string; mtime: number };
+    try {
+      fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: target });
+    } catch {
+      // The target file is gone: forget it and skip (no navigation).
+      navHistory = pruneAt(navHistory, next.index);
+      return;
+    }
+    await commitBeforeSwitch();
+    navHistory = next; // commit the pointer only after the read succeeded
+    openInWindow(target, fresh, { viaHistory: true });
+  }
+  const goBack = (): void => void navigateHistory(back);
+  const goForward = (): void => void navigateHistory(forward);
 
   // ── Window-global wiring (installed ONCE; reads `current` so it always
   //    reaches the live editor after a re-mount). ─────────────────────────────
@@ -510,6 +583,8 @@ async function boot() {
   registerHandler("explorer.toggle", () => explorer.button.click());
   registerHandler("recent.toggle", () => recent.button.click());
   registerHandler("outline.toggle", () => outline.button.click());
+  registerHandler("history.back", goBack);
+  registerHandler("history.forward", goForward);
   registerHandler("openPath.toggle", () => prompt.button.click());
   registerHandler("zoom.in", zoomIn);
   registerHandler("zoom.out", zoomOut);

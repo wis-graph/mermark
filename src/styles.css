@@ -524,22 +524,29 @@ html, body { margin: 0; height: 100%; }
 .status-bar.path-editing > .open-path-error { display: block; flex: none; color: #dc2626; white-space: nowrap; }
 .status-bar.path-editing > .open-path-error[hidden] { display: none; }
 
-/* Outline (table of contents) panel. A sibling of .status-bar under #app — it
-   lives OUTSIDE the editor's scroll host, so it never touches .cm-content /
-   .cm-line: the ⌘± zoom measure guard holds and its own font-size is free.
-   Floats above the 36px status bar as a bottom-left popover (fixed → no #app
-   positioning change needed), scrolls when the tree is tall. */
-.outline-row {
-  position: fixed; left: .5em; bottom: 40px; z-index: 30;
-  width: min(320px, calc(100vw - 1em)); max-height: min(60vh, 480px);
-  overflow-y: auto; padding: .35em;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
-  box-shadow: 0 8px 28px color-mix(in srgb, var(--fg) 18%, transparent);
-  font-size: 13px;
+/* Shared LEFT SIDEBAR shell for the explorer + outline asides (VSCode-style, one
+   at a time). A .workspace child left of the editor host, OUTSIDE the editor
+   scroll host — zero decorations, ⌘± zoom guard holds. Theme tokens only (no
+   hardcoded hex) so dark / light / claude stay consistent. */
+.sidebar-aside {
+  flex: none; width: 240px; min-width: 160px;
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  font-size: 13px; color: var(--fg);
+  user-select: none;
 }
-.outline-row[hidden] { display: none; }
-.outline-tree { display: flex; flex-direction: column; }
+.sidebar-aside[hidden] { display: none; }
+.sidebar-header {
+  flex: none; padding: 8px 10px 4px;
+  font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  color: var(--muted);
+}
+
+/* Outline (table of contents) LEFT SIDEBAR — the outline shares the sidebar
+   shell above; only its heading list styling is bespoke. */
+.outline-tree { display: flex; flex-direction: column; padding: 2px 4px 8px; }
 .outline-empty { padding: .5em; color: var(--muted); }
 .outline-empty[hidden] { display: none; }
 .outline-item {
@@ -561,28 +568,22 @@ html, body { margin: 0; height: 100%; }
 .outline-h5 { padding-left: 56px; color: var(--muted); }
 .outline-h6 { padding-left: 68px; color: var(--muted); }
 
-/* File explorer LEFT SIDEBAR. A .workspace child (left of the editor host),
-   OUTSIDE the editor scroll host — zero decorations, ⌘± zoom guard holds. Theme
-   tokens only (no hardcoded hex) so dark / light / claude stay consistent. */
-.explorer-aside {
-  flex: none; width: 240px; min-width: 160px;
-  display: flex; flex-direction: column;
-  overflow-y: auto;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  font-size: 13px; color: var(--fg);
-  user-select: none;
-}
-.explorer-aside[hidden] { display: none; }
+/* File explorer LEFT SIDEBAR — shares the .sidebar-aside shell above. Its header
+   shows the current ROOT PATH (dynamic), so no uppercasing (paths are
+   case-sensitive) — just clip an over-long path with an ellipsis (the title +
+   aria-label carry the full absolute path). */
 .explorer-header {
-  flex: none; padding: 8px 10px 4px;
-  font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .explorer-tree { display: flex; flex-direction: column; padding: 2px 4px 8px; }
-/* Indent by aria-level: --level (1-based) is set inline on each item so the
-   indentation always matches the announced depth. */
-.explorer-item {
+/* An item is a vertical BLOCK: its label row on top, its children group below.
+   The old row-flex on .explorer-item pulled the children group up beside the
+   name (527faf6 bug); the flex now lives on .explorer-label only. */
+.explorer-item { display: block; outline: none; }
+/* The visible clickable row. Indent by aria-level: --level (1-based, set inline
+   on the item, inherited here) so indentation always matches the announced
+   depth and children step in one level deeper. */
+.explorer-label {
   display: flex; align-items: center; gap: 4px;
   padding: 3px 6px 3px calc(4px + (var(--level, 1) - 1) * 14px);
   border-radius: var(--radius-sm, 6px);
@@ -591,26 +592,27 @@ html, body { margin: 0; height: 100%; }
   outline: none;
   transition: background-color .12s ease;
 }
-.explorer-item:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.explorer-item > .explorer-label:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
 /* Focus (keyboard cursor) = a ring; Selection (open file) = a fill. Distinct
    styles so they read differently and can co-exist (ring over fill). --accent
-   drives both, falling back to --caret when a theme omits an accent. */
-.explorer-item.is-selected { background: color-mix(in srgb, var(--accent, var(--caret)) 16%, transparent); }
-.explorer-item.is-focused { box-shadow: inset 0 0 0 1.5px var(--accent, var(--caret)); }
+   drives both, falling back to --caret when a theme omits an accent. The state
+   classes stay on .explorer-item (TS untouched); CSS targets its label row. */
+.explorer-item.is-selected > .explorer-label { background: color-mix(in srgb, var(--accent, var(--caret)) 16%, transparent); }
+.explorer-item.is-focused > .explorer-label { box-shadow: inset 0 0 0 1.5px var(--accent, var(--caret)); }
 .explorer-chevron { flex: none; display: inline-flex; width: 16px; height: 16px; color: var(--muted); transition: transform .15s ease; }
 .explorer-chevron-empty { visibility: hidden; }
-.explorer-dir[aria-expanded="true"] > .explorer-chevron { transform: rotate(90deg); }
+.explorer-dir[aria-expanded="true"] > .explorer-label > .explorer-chevron { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .explorer-chevron { transition: none; } }
 .explorer-glyph { flex: none; display: inline-flex; color: var(--muted); }
 .explorer-name { overflow: hidden; text-overflow: ellipsis; }
-.explorer-up { font-weight: 600; }
+.explorer-up > .explorer-label { font-weight: 600; }
 /* Non-markdown files: visible for context, but greyed + inert (mermark opens
    markdown only — a click is a no-op, not a broken read_file view). */
-.explorer-file.is-nonmd { color: var(--muted); cursor: default; }
-.explorer-file.is-nonmd:hover { background: transparent; }
-/* A folder's lazily-loaded children group. Indent is on the item (via --level),
-   so the group itself doesn't add margin. */
-.explorer-children { display: flex; flex-direction: column; }
+.explorer-file.is-nonmd > .explorer-label { color: var(--muted); cursor: default; }
+.explorer-file.is-nonmd > .explorer-label:hover { background: transparent; }
+/* A folder's lazily-loaded children group: a vertical block below the label.
+   Indent is on each child item (via --level), so the group itself adds none. */
+.explorer-children { display: block; }
 .explorer-children[hidden] { display: none; }
 
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }

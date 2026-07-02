@@ -5,6 +5,31 @@ export function dirOf(path: string): string {
   return sep >= 0 ? path.slice(0, sep) : "";
 }
 
+/** Replace a leading home directory (`/Users/<u>`, `/home/<u>`, `C:\Users\<u>`)
+ *  with `~`. A pure regex heuristic — the frontend has no way to ask the backend
+ *  for the real $HOME (that would need a new command), so a wrong guess simply
+ *  leaves the path untouched (display-only, always safe). Named so the "shorten
+ *  home" rule lives in one place. */
+function abbreviateHome(path: string): string {
+  return path
+    .replace(/^\/Users\/[^/]+/, "~")
+    .replace(/^\/home\/[^/]+/, "~")
+    .replace(/^[A-Za-z]:[\\/]Users[\\/][^\\/]+/, "~");
+}
+
+/** Shorten an absolute root path into a compact header label: abbreviate the home
+ *  prefix to `~`, then, when the path has more than `keepSegments` segments, keep
+ *  only the last N behind a leading `…/` (the current folder + its parents carry
+ *  the most information). Pure — the caller keeps the full path in title/aria for
+ *  accessibility. Short paths pass through unchanged. */
+export function formatRootLabel(path: string, keepSegments = 3): string {
+  const abbreviated = abbreviateHome(path);
+  const sep = abbreviated.includes("\\") && !abbreviated.includes("/") ? "\\" : "/";
+  const segments = abbreviated.split(sep).filter((s) => s.length > 0);
+  if (segments.length <= keepSegments) return abbreviated;
+  return `…/${segments.slice(-keepSegments).join("/")}`;
+}
+
 /** A path the user typed that carries no target — empty or whitespace-only.
  *  Named so the "refuse to open" rule lives in one place, not an inline `if`. */
 export function isBlankPath(input: string): boolean {

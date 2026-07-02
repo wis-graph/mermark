@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dirOf, resolveOpenPath, isBlankPath } from "../src/path";
+import { dirOf, resolveOpenPath, isBlankPath, formatRootLabel } from "../src/path";
 
 describe("dirOf", () => {
   it("returns the parent directory of an absolute posix path", () => {
@@ -31,6 +31,26 @@ describe("isBlankPath", () => {
   it("is false for any non-whitespace input", () => {
     expect(isBlankPath("a.md")).toBe(false);
     expect(isBlankPath("  x  ")).toBe(false);
+  });
+});
+
+describe("formatRootLabel", () => {
+  it("abbreviates a home directory to ~", () => {
+    expect(formatRootLabel("/Users/wis/projects/mermark")).toContain("~");
+    expect(formatRootLabel("/Users/wis/projects/mermark")).not.toContain("/Users/wis");
+    expect(formatRootLabel("/home/wis")).toBe("~");
+  });
+  it("keeps the last N segments with a leading … for long paths", () => {
+    const out = formatRootLabel("/a/b/c/d/e/f", 3);
+    expect(out.endsWith("d/e/f")).toBe(true);
+    expect(out.startsWith("…/")).toBe(true);
+  });
+  it("returns short paths intact (no …)", () => {
+    expect(formatRootLabel("/a/b")).toBe("/a/b");
+    expect(formatRootLabel("/a/b/c")).toBe("/a/b/c"); // exactly keepSegments
+  });
+  it("abbreviates a windows home directory to ~", () => {
+    expect(formatRootLabel("C:\\Users\\wis")).toBe("~");
   });
 });
 

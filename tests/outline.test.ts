@@ -130,10 +130,10 @@ describe("outline panel: click navigation", () => {
     const doc = "# one\n## two\n### three";
     const view = fakeView(doc);
     const panel = createOutlinePanel({ getView: () => view });
-    panel.row.hidden = false;
+    panel.aside.hidden = false;
     panel.refresh();
 
-    const items = panel.row.querySelectorAll<HTMLElement>(".outline-item");
+    const items = panel.aside.querySelectorAll<HTMLElement>(".outline-item");
     expect(items).toHaveLength(3);
 
     items[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
@@ -144,7 +144,7 @@ describe("outline panel: click navigation", () => {
   it("renders nothing and stays cheap while the panel is closed", () => {
     const panel = createOutlinePanel({ getView: () => fakeView("# a\n## b") });
     panel.refresh(); // closed → no-op
-    expect(panel.row.querySelectorAll(".outline-item")).toHaveLength(0);
+    expect(panel.aside.querySelectorAll(".outline-item")).toHaveLength(0);
   });
 });
 
@@ -162,19 +162,19 @@ describe("outline panel: mounted integration", () => {
       initialMode: "edit",
     });
     const panel = createOutlinePanel({ getView: () => view });
-    document.body.append(panel.row);
-    panel.row.hidden = false;
+    document.body.append(panel.aside);
+    panel.aside.hidden = false;
     panel.refresh();
 
-    expect(panel.row.querySelectorAll(".outline-item")).toHaveLength(3);
+    expect(panel.aside.querySelectorAll(".outline-item")).toHaveLength(3);
     // Zoom guard: the panel is NOT inside the editor's measured content tree.
-    expect(view.contentDOM.querySelector(".outline-row")).toBeNull();
+    expect(view.contentDOM.querySelector(".outline-aside")).toBeNull();
     expect(view.contentDOM.querySelector(".outline-item")).toBeNull();
-    expect(document.querySelector(".outline-row")).not.toBeNull();
+    expect(document.querySelector(".outline-aside")).not.toBeNull();
 
     view.destroy();
     host.remove();
-    panel.row.remove();
+    panel.aside.remove();
   });
 
   it("makes no decorations in the editor content (only heading classes)", () => {

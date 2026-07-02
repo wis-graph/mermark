@@ -120,6 +120,16 @@ const PATHS = {
     '<path d="M20 4h-7a4 4 0 0 0-4 4v12"/>',
   // chevron-right — explorer: folder twisty (rotates 90° when expanded)
   "chevron-right": '<path d="m9 18 6-6-6-6"/>',
+  // panel-left-open — sidebar toggle when the sidebar is CLOSED (affords opening)
+  "panel-left-open":
+    '<rect width="18" height="18" x="3" y="3" rx="2"/>' +
+    '<path d="M9 3v18"/>' +
+    '<path d="m14 9 3 3-3 3"/>',
+  // panel-left-close — sidebar toggle when the sidebar is OPEN (affords closing)
+  "panel-left-close":
+    '<rect width="18" height="18" x="3" y="3" rx="2"/>' +
+    '<path d="M9 3v18"/>' +
+    '<path d="m16 15-3-3 3-3"/>',
   // quote — callout: quote
   quote:
     '<path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/>' +
