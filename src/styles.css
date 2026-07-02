@@ -255,9 +255,20 @@ html, body { margin: 0; height: 100%; }
 .cm-highlight { background: var(--highlight-bg, #fff3a3); color: var(--highlight-color, #1a1300); border-radius: var(--radius-xs, 4px); padding: 0 .15em; }
 /* Fenced code rendered as a block widget (a styled box hugging the code),
    like the mermaid/table/math widgets. Vertical breathing room is padding, not
-   margin — CM measures widget height by offsetHeight, which excludes margin. */
+   margin — CM measures widget height by offsetHeight, which excludes margin.
+   `overflow-x: auto` is kept as a safety net (not load-bearing after the wrap
+   fix below — pre-wrap means lines no longer overflow horizontally in normal
+   use, but an unbroken run with no wrap opportunity at all, e.g. a giant
+   base64 blob under overflow-wrap corner cases, still gets a scrollbar
+   instead of blowing out the column). */
 .cm-codeblock { display: block; margin: 0; position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: .7em .9em; overflow-x: auto; font-size: var(--block-font-size); line-height: 1.5; }
-.cm-codeblock code { font-family: ui-monospace, monospace; letter-spacing: normal; white-space: pre; }
+/* `pre-wrap` preserves whitespace/indentation (like `pre`) but wraps at normal
+   break points; `overflow-wrap: anywhere` further breaks inside unbroken
+   tokens (long URLs, hashes) so long lines wrap inside the block instead of
+   forcing horizontal scroll — read-mode code blocks now wrap like the edit-
+   mode `.cm-code-line` (which gets wrapping for free from
+   EditorView.lineWrapping on the real editor line). */
+.cm-codeblock code { font-family: ui-monospace, monospace; letter-spacing: normal; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: .6em; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
 /* revealed (editing) fenced code keeps a code background, so it still reads as a
    code block while you edit it. */

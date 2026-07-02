@@ -67,7 +67,7 @@
 - **헤딩** — 위계 스케일 + 폴딩 + 포커스 라인.
 - **리스트** — Workflowy식 불릿 + fold halo, task 체크박스(줌 연동).
 - **블록쿼트 / 콜아웃** — `> [!type]` 13종(아이콘·색·커스텀 제목, 별칭, note 폴백).
-- **코드 블록** — 펜스 블록 위젯, 언어 토큰 conceal, fold.
+- **코드 블록** — 펜스 블록 위젯, 언어 토큰 conceal, fold. **자동 줄바꿈**(`white-space: pre-wrap` + `overflow-wrap: anywhere` — 들여쓰기 보존하며 긴 줄·긴 토큰 wrap, 가로스크롤 안전망 유지).
 - **테이블** — GFM 정렬(`:--:`), 셀 인라인 마크.
 - **구분선** — `---`(중간), 상단 `---`는 frontmatter.
 - **프론트매터** — 문서 최상단 `---…---` YAML → 키-값 2열 표(scalar, conceal/reveal).
