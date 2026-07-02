@@ -231,12 +231,14 @@ pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let label = format!("w{}", WINDOW_SEQ.fetch_add(1, Ordering::Relaxed));
     let path_str = normalized.to_string_lossy().into_owned();
     let url = WebviewUrl::App(format!("index.html?file={}", urlencoding::encode(&path_str)).into());
-    WebviewWindowBuilder::new(&app, label, url)
-        .title("mermark")
-        .inner_size(crate::DEFAULT_WINDOW.0, crate::DEFAULT_WINDOW.1)
-        .min_inner_size(crate::MIN_WINDOW.0, crate::MIN_WINDOW.1)
-        .build()
-        .map_err(|e| e.to_string())?;
+    crate::with_document_chrome(
+        WebviewWindowBuilder::new(&app, label, url)
+            .title("mermark")
+            .inner_size(crate::DEFAULT_WINDOW.0, crate::DEFAULT_WINDOW.1)
+            .min_inner_size(crate::MIN_WINDOW.0, crate::MIN_WINDOW.1),
+    )
+    .build()
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

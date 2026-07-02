@@ -54,6 +54,39 @@ pub const DEFAULT_WINDOW: (f64, f64) = (1200.0, 860.0);
 /// not into a degenerate state.
 pub const MIN_WINDOW: (f64, f64) = (640.0, 480.0);
 
+/// mermark document window's chrome rule, shared by the startup `main` window
+/// (below) and the wikilink-spawned window in `commands::open_path` — the same
+/// two-path sharing pattern as `DEFAULT_WINDOW`/`MIN_WINDOW` above, so this lives
+/// here rather than being duplicated per call site.
+///
+/// macOS keeps the native decorations but overlays them: the traffic lights stay
+/// (so window controls remain native) while the title text is hidden and the
+/// frontend's own title-bar strip draws underneath. `decorations` is deliberately
+/// **never** touched on macOS — setting it `false` there would disable the
+/// Overlay title bar entirely, silently losing the traffic lights (a known
+/// Tauri/macOS footgun, not a hypothetical).
+///
+/// Every other OS instead turns decorations off outright (`decorations(false)`)
+/// so the native title bar disappears and the frontend's custom minimize/
+/// maximize/close buttons take its place.
+///
+/// `title_bar_style`/`hidden_title` exist on `WebviewWindowBuilder` **only**
+/// under `#[cfg(target_os = "macos")]` (verified against the tauri 2.11.2
+/// source) — off-macOS builds don't just skip the *behavior*, the methods are
+/// absent from the type, so the platform split has to be a `cfg` branch, not a
+/// runtime `if`.
+pub(crate) fn with_document_chrome<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
+    builder: tauri::WebviewWindowBuilder<'a, R, M>,
+) -> tauri::WebviewWindowBuilder<'a, R, M> {
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.decorations(false);
+    builder
+}
+
 /// Logical `(width, height, x)` for a window that fills the right half of a
 /// monitor: half the monitor's logical width, full logical height, offset right
 /// by that same half-width. The builder takes logical pixels, so the caller
@@ -217,9 +250,11 @@ pub fn run() {
                         None
                     };
 
-                    let mut builder = tauri::WebviewWindowBuilder::new(app, "main", url)
-                        .title("mermark")
-                        .min_inner_size(MIN_WINDOW.0, MIN_WINDOW.1);
+                    let mut builder = with_document_chrome(
+                        tauri::WebviewWindowBuilder::new(app, "main", url)
+                            .title("mermark")
+                            .min_inner_size(MIN_WINDOW.0, MIN_WINDOW.1),
+                    );
                     builder = match right_half {
                         Some((width, height, x)) => {
                             builder.inner_size(width, height).position(x, 0.0)

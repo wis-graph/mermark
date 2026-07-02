@@ -40,6 +40,7 @@ import { mountSettingsButton } from "./settings/panel/modal";
 import { copyBundleToClipboard } from "./bundle";
 import { registerHandler, installDispatcher, bindKeybindings } from "./shortcuts/registry";
 import { arrangeStatusBar } from "./status-bar";
+import { createTitleBar } from "./title-bar";
 import { createRecentPanel } from "./recent/recent-panel";
 import { pushRecent, pruneMissing } from "./recent/recent-docs";
 import {
@@ -181,13 +182,15 @@ async function boot() {
   const host = el("div", "editor-host");
   // .workspace is a flex ROW: the explorer sidebar (left) + the editor host
   // (right). The status bar stays full-width below it (VSCode-style), so
-  // #app = column( workspace(row: aside | host), bar ). host is unchanged
-  // inside workspace, so every host.querySelector(".cm-scroller") reference,
-  // the measure tree, and the ⌘± zoom guard are untouched.
+  // #app = column( titleBar, workspace(row: aside | host), bar ). host is
+  // unchanged inside workspace, so every host.querySelector(".cm-scroller")
+  // reference, the measure tree, and the ⌘± zoom guard are untouched — the
+  // title-bar strip sits entirely outside .workspace.
   const workspace = el("div", "workspace");
   workspace.append(host);
   const bar = el("div", "status-bar");
-  root.append(workspace, bar);
+  const titleBar = createTitleBar();
+  root.append(titleBar.el, workspace, bar);
 
   // Boot mode = the panel's defaultMode (seed the live modeSetting from it),
   // then read it. After boot, ⌘E only moves modeSetting; defaultMode re-seeds

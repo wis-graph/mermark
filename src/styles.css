@@ -422,6 +422,28 @@ html, body { margin: 0; height: 100%; }
 .cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); }
 .cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); }
 
+/* Top title-bar — custom window chrome, OUTSIDE .workspace (#app = column(
+   .title-bar, .workspace, .status-bar)). Same "no .cm-content/.cm-line here"
+   rule as the status bar below: zero contact with the ZOOM GUARD. macOS keeps
+   the native Overlay traffic lights (drawn by the OS on top of the webview,
+   set up on the Rust side via with_document_chrome) and this strip only
+   reserves an inset so its content doesn't collide with them. Other platforms
+   get decorations(false) on the Rust side, so the right-aligned window-controls
+   cluster below is the ONLY window chrome those platforms have. */
+:root {
+  --traffic-light-inset: 78px; /* mac native traffic-light cluster width — realistic tune spot */
+  /* Close-button hover only: OS convention red (Windows-style), not a brand
+     color — same "theme-invariant affordance token in :root" treatment as
+     --caret above, so component rules below stay hex-free. */
+  --window-close-hover: #e81123;
+}
+.title-bar { flex: none; height: 36px; display: flex; align-items: center; padding: 0 .5em; border-bottom: 1px solid var(--border); background: var(--surface); user-select: none; -webkit-user-select: none; }
+.title-bar.mac { padding-left: var(--traffic-light-inset); }
+.window-controls { margin-left: auto; display: flex; align-self: stretch; }
+.window-btn { display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--muted); width: 46px; cursor: default; /* window-control buttons follow OS convention, not the pointer cursor */ }
+.window-btn:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.window-btn-close:hover { background: var(--window-close-hover); color: #fff; }
+
 /* Bottom status bar — all editor chrome lives here, out of the content. A
    shadcn/Raycast-toned strip: taller (36px) for a comfortable hit area, surface
    bg under a hairline top, 13px body. The status bar sits OUTSIDE the CM measure

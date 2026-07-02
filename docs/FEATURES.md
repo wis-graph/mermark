@@ -106,6 +106,7 @@
 ---
 
 ## L5 · UI 크롬 계층
+- **커스텀 타이틀바** (상단바 재설계 M1) — 네이티브 데코 대신 커스텀 상단 바(`.title-bar`, `#app` 최상단, `data-tauri-drag-region` 드래그). **mac**: `WebviewWindowBuilder`에 Overlay+hidden_title(신호등 유지·타이틀 숨김, Rust `with_document_chrome` — main·wikilink 두 창 공유) + 좌측 신호등 인셋(`--traffic-light-inset`). **win/linux**: `decorations(false)` + 우측 커스텀 최소/최대/닫기 버튼 3종(`getCurrentWindow().minimize/toggleMaximize/close`, capability 3종). `isTauriRuntime` 가드로 dev:browser no-op. 신규 IPC command 0(창 API는 코어). 줌가드(측정트리 밖). *M2~M4에서 토글·브레드크럼·즐겨찾기가 이 상단바로 이주 예정 — `docs/TOPBAR_REDESIGN_PLAN.md`.*
 - **상태바** — **좌 네비 그룹**: 탐색기(⌘B) · 최근문서 · 경로열기 · 목차. **중앙**: 커서/위치 · 저장 상태 인디케이터(저장됨/저장중/충돌, 수동 저장·리로드 버튼 없음). **우측**: 편집/리더 모드 토글(⌘E) · 테마 토글(다크→라이트→클로드 순환, moon/sun/palette 아이콘) · 설정. Lucide 아이콘.
 - **경로 열기 인라인** — 경로열기 버튼 클릭 시 **상태바 자체가 입력칸으로 전환**(`.path-editing` — 아래 공간 안 열림, 상태바 높이 유지). 경로 입력 → Enter로 현재 창 열기(`resolveOpenPath` 재사용), ESC/blur/제출 시 상태바 원복. 없는 경로는 인라인 에러.
 - **좌측 사이드바 폭 드래그** — 사이드바(탐색기·목차 공유)와 에디터 사이 sash(`.workspace-sash`, `role=separator`) 드래그로 폭 조절. 드래그 중엔 `--sidebar-width` var만 갱신(미리보기), 놓을 때 `sidebarWidthSetting`에 1회 커밋(localStorage 영속·재시작 유지). 키보드 ←/→ 16px 조절. `clampSidebarWidth`로 min 160 ~ max min(480, 뷰포트/2)(저장값 parse도 clamp 경유). 사이드바 닫히면 sash 자동 숨김(CSS 형제선택자). 줌 가드: aside 폭 var만 조절, 측정 트리(`.cm-content`/`--measure`) 무접촉.
