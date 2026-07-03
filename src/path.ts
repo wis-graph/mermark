@@ -5,6 +5,17 @@ export function dirOf(path: string): string {
   return sep >= 0 ? path.slice(0, sep) : "";
 }
 
+/** The file name at the end of a path (posix or windows separators) — the
+ *  sibling of `dirOf`: both share the same `Math.max(lastIndexOf("/"),
+ *  lastIndexOf("\\"))` separator rule, so they can never disagree on where a
+ *  path splits into directory vs filename. Promoted here (2026-07-03 intent
+ *  review #2) from byte-identical private copies that had drifted into
+ *  favorites-panel.ts and recent-panel.ts. */
+export function basename(path: string): string {
+  const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return sep >= 0 ? path.slice(sep + 1) : path;
+}
+
 /** Which separator a path "speaks": `\` only when the path has a backslash and
  *  no forward slash, `/` otherwise (posix default). Shared by `normalizePath`
  *  (to rejoin segments) and `formatRootLabel` (to split them) so the two never

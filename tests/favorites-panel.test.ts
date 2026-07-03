@@ -59,7 +59,9 @@ describe("favorites section: list rendering", () => {
     const items = s.el.querySelectorAll(".favorites-item");
     expect(items.length).toBe(2);
     expect(items[0].querySelector(".favorites-name")?.textContent).toBe("docs");
-    const pathEl = items[0].querySelector(".favorites-path") as HTMLElement;
+    // Shared with recent-panel: chrome/path-label.ts's truncatedPathLabel
+    // renders `.path-label > bdi` (see docs/reviews/intent-review-2026-07-03.md #1).
+    const pathEl = items[0].querySelector(".path-label") as HTMLElement;
     expect(pathEl.querySelector("bdi")?.textContent).toBe("/x/docs");
     expect(items[1].querySelector(".favorites-name")?.textContent).toBe("notes");
   });

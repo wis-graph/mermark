@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   dirOf,
+  basename,
   resolveOpenPath,
   isBlankPath,
   formatRootLabel,
@@ -76,6 +77,35 @@ describe("dirOf", () => {
   });
   it("handles empty input", () => {
     expect(dirOf("")).toBe("");
+  });
+});
+
+// `dirOf`'s sibling — promoted 2026-07-03 (intent review #2) from byte-
+// identical private copies in favorites-panel.ts and recent-panel.ts. Same
+// separator rule as `dirOf`, so the two must never disagree on where a path
+// splits into directory vs filename.
+describe("basename", () => {
+  it("returns the file name of an absolute posix path", () => {
+    expect(basename("/Users/x/notes/foo.md")).toBe("foo.md");
+  });
+  it("returns the file name of a relative path", () => {
+    expect(basename("notes/foo.md")).toBe("foo.md");
+  });
+  it("returns the whole string for a bare filename (no separator)", () => {
+    expect(basename("foo.md")).toBe("foo.md");
+  });
+  it("returns the file name for a root-level file", () => {
+    expect(basename("/foo.md")).toBe("foo.md");
+  });
+  it("handles windows backslash separators", () => {
+    expect(basename("C:\\Users\\x\\foo.md")).toBe("foo.md");
+  });
+  it("handles empty input", () => {
+    expect(basename("")).toBe("");
+  });
+  it("agrees with dirOf on the split point (dirOf + sep + basename reconstructs the path)", () => {
+    const p = "/Users/x/notes/foo.md";
+    expect(`${dirOf(p)}/${basename(p)}`).toBe(p);
   });
 });
 

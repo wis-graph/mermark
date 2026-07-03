@@ -7,6 +7,7 @@ import {
   findCjkBoldRuns,
   hasBoldMarker,
   alreadyStyled,
+  standardBoldFlank,
 } from "../src/markdown/live-preview/features/cjk-bold";
 
 const parser = baseParser.configure([GFM, ...mermarkExtensions]);
@@ -111,6 +112,90 @@ describe("alreadyStyled", () => {
     const doc = '**"New Policy"**를';
     const tree = parser.parse(doc);
     expect(alreadyStyled(tree, 0)).toBe(false);
+  });
+});
+
+// --- standardBoldFlank ↔ real lezer equivalence trip wire -------------------
+//
+// docs/reviews/intent-review-2026-07-03.md #3: standardBoldFlank re-implements
+// @lezer/markdown's private DefaultInline.Emphasis flanking formula for a
+// fixed `**` delimiter. If upstream lezer drifts (gets stricter OR more
+// lenient than this reimplementation), findCjkBoldRuns could either
+// double-apply cm-strong (guarded at runtime by alreadyStyled — see the
+// integration tests above) or silently miss a legitimate CJK rescue (NOT
+// guarded anywhere before this test existed). This matrix makes both
+// directions of drift fail loudly: for every (before, after) neighbor-class
+// pair in a standard (non-CJK) boundary corpus, standardBoldFlank's verdict
+// must match whether the real baseParser+GFM parser actually produces a
+// StrongEmphasis node for the equivalent document.
+//
+// Each probe isolates ONE side of the `**` pair (open or close) by pinning
+// the OTHER side to a construction that is unconditionally flanking-valid
+// under the standard formula, regardless of the neighbor class under test —
+// see the inline comments on eachConstruction for the pinning proof.
+
+type NeighborClass = "letter" | "digit" | "punct" | "space" | "boundary";
+
+// One representative character per class. "boundary" = start-of-paragraph
+// (for the open probe) or end-of-paragraph (for the close probe) — modeled
+// as "" (isSpace("") is true in cjk-bold.ts, matching CommonMark's
+// start/end-of-line-is-whitespace-equivalent convention).
+const NEIGHBORS: Record<NeighborClass, string> = {
+  letter: "a",
+  digit: "5",
+  punct: '"',
+  space: " ",
+  boundary: "",
+};
+const CLASSES = Object.keys(NEIGHBORS) as NeighborClass[];
+
+function hasStrongEmphasis(doc: string): boolean {
+  const tree = parser.parse(doc);
+  let found = false;
+  tree.iterate({
+    enter(node) {
+      if (node.name === "StrongEmphasis") found = true;
+    },
+  });
+  return found;
+}
+
+describe("standardBoldFlank <-> real lezer StrongEmphasis: bidirectional equivalence matrix", () => {
+  describe("canOpen (opening ** flanking)", () => {
+    // Pin the CLOSE side: content is "${after}Z" and the closer follows
+    // immediately, so beforeClose is always 'Z' (a letter) -> rightFlanking
+    // is true regardless of afterClose ("" here, doc ends at the closer).
+    // Only the OPEN side's (before, after) pair is under test.
+    for (const beforeClass of CLASSES) {
+      for (const afterClass of CLASSES) {
+        if (afterClass === "boundary") continue; // open marker always has content right after it
+        const before = NEIGHBORS[beforeClass];
+        const after = NEIGHBORS[afterClass];
+        it(`before=${beforeClass} after=${afterClass}`, () => {
+          const doc = beforeClass === "boundary" ? `**${after}Z**` : `x${before}**${after}Z**`;
+          expect(hasStrongEmphasis(doc)).toBe(standardBoldFlank(before, after).canOpen);
+        });
+      }
+    }
+  });
+
+  describe("canClose (closing ** flanking)", () => {
+    // Pin the OPEN side: the opener sits at the absolute start of the
+    // paragraph (before="" -> sBefore=true) and is immediately followed by
+    // 'Z' (a letter -> sAfter=false, pAfter=false), so leftFlanking is true
+    // regardless of before/afterClass. Only the CLOSE side's (before, after)
+    // pair is under test.
+    for (const beforeClass of CLASSES) {
+      if (beforeClass === "boundary") continue; // close marker always has content right before it
+      for (const afterClass of CLASSES) {
+        const before = NEIGHBORS[beforeClass];
+        const after = NEIGHBORS[afterClass];
+        it(`before=${beforeClass} after=${afterClass}`, () => {
+          const doc = afterClass === "boundary" ? `**Z${before}**` : `**Z${before}**${after}y`;
+          expect(hasStrongEmphasis(doc)).toBe(standardBoldFlank(before, after).canClose);
+        });
+      }
+    }
   });
 });
 

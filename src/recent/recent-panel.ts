@@ -1,4 +1,6 @@
 import { renderSidebarButton } from "../sidebar-toggle";
+import { basename } from "../path";
+import { truncatedPathLabel } from "../chrome/path-label";
 
 // ---------------------------------------------------------------------------
 // Recent-documents LEFT SIDEBAR chrome — the same shell as the file explorer /
@@ -61,13 +63,6 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => 
   return e;
 };
 
-/** The file name at the end of a path (posix or windows separators). Named so
- *  the "headline is the basename" rule lives in one place, not an inline slice. */
-function basename(path: string): string {
-  const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return sep >= 0 ? path.slice(sep + 1) : path;
-}
-
 export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandlers): RecentPanel {
   const button = create("button", "chrome-btn recent-btn") as HTMLButtonElement;
   button.title = "최근 문서 (클릭 시 이 창에서 열기)";
@@ -101,16 +96,9 @@ export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandl
       item.dataset.path = path;
       const name = create("span", "recent-name");
       name.textContent = basename(path);
-      // The path segment goes in a left-truncating span (styles.css: rtl +
-      // text-align:left on .recent-path). The <bdi> isolates the path's own
-      // (LTR) directionality from the rtl trick, so the segment order stays
-      // normal (…/work/projects) while the CLIP happens on the left — the
-      // confirmed UX (rightmost, most-identifying segment stays visible).
-      // Mirrors favorites-panel.ts's identical left-truncation pattern.
-      const dir = create("span", "recent-path");
-      const bdi = document.createElement("bdi");
-      bdi.textContent = path;
-      dir.append(bdi);
+      // Left-truncating path label (shared with favorites-panel.ts — see
+      // chrome/path-label.ts for the rtl+<bdi> DOM/CSS rule this builds).
+      const dir = truncatedPathLabel(path);
       item.append(name, dir);
       item.title = path;
       listEl.append(item);

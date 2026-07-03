@@ -1258,17 +1258,22 @@ html, body { margin: 0; height: 100%; }
 .recent-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
 .recent-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
 .recent-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* LEFT-truncating path (M5 favorites-path 패턴 복제: 뒤쪽 폴더명/파일명이 보여야
-   함, "…/work/projects"). direction:rtl flips WHERE the ellipsis clips (the
-   start, not the end) while text-align:left keeps the text visually
-   left-anchored; the <bdi> (see recent-panel.ts) isolates the path's own LTR
-   segment order from the rtl trick. CSS-only — no JS width measurement. */
-.recent-path {
+/* Shared LEFT-truncating path label (src/chrome/path-label.ts's
+   truncatedPathLabel) — used by both this panel and the favorites section
+   below, so the rule lives in one place instead of two duplicated blocks
+   (consolidated 2026-07-03, see docs/reviews/intent-review-2026-07-03.md #1;
+   was .recent-path + .favorites-path, byte-identical). direction:rtl flips
+   WHERE the ellipsis clips (the start, not the end) while text-align:left
+   keeps the text visually left-anchored; the <bdi> isolates the path's own
+   LTR segment order from the rtl trick, so "…/work/projects" reads normally
+   and only clips from the left (rightmost, most-identifying segment stays
+   visible). CSS-only — no JS width measurement. */
+.path-label {
   direction: rtl; text-align: left;
   font-size: 11px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.recent-path > bdi { direction: ltr; unicode-bidi: isolate; }
+.path-label > bdi { direction: ltr; unicode-bidi: isolate; }
 
 /* Favorites BOTTOM SECTION (M5, design 분기1/2/7) — hosted INSIDE
    .explorer-aside, below .explorer-tree (see explorer-panel.ts's
@@ -1303,19 +1308,9 @@ html, body { margin: 0; height: 100%; }
 .favorites-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
 .favorites-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
 .favorites-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* LEFT-truncating path (M5 확정 3: 뒤쪽 폴더명이 보여야 함, "…/work/projects").
-   direction:rtl flips WHERE the ellipsis clips (the start, not the end) while
-   text-align:left keeps the text visually left-anchored; the <bdi> (see
-   favorites-panel.ts) isolates the path's own LTR segment order from the rtl
-   trick, so "/Users/x/work/projects" reads normally and only gets clipped
-   from the left. CSS-only — no JS width measurement (zoom-guard, sash-resize
-   friendly for free). */
-.favorites-path {
-  direction: rtl; text-align: left;
-  font-size: 11px; color: var(--muted);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.favorites-path > bdi { direction: ltr; unicode-bidi: isolate; }
+/* Left-truncating path label: see .path-label above (shared with the
+   recent panel's former .recent-path rule; favorites-panel.ts builds it via
+   chrome/path-label.ts's truncatedPathLabel). */
 .favorites-remove {
   position: absolute; top: 4px; right: 4px;
   display: flex; align-items: center; justify-content: center;

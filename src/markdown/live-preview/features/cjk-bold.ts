@@ -83,8 +83,12 @@ function computeFlank(before: string, after: string, isPunctLike: (ch: string) =
 
 /** Standard CommonMark flanking — CJK letters are plain letters, exactly what
  *  the real parser already computes. Used to detect "the parser already
- *  handled this pair" so `findCjkBoldRuns` never re-flags it. */
-function standardBoldFlank(before: string, after: string): Flank {
+ *  handled this pair" so `findCjkBoldRuns` never re-flags it. Exported
+ *  (2026-07-03 intent review #3) only so tests/cjk-bold.test.ts can run the
+ *  drift trip wire (this formula's canOpen/canClose must agree with the
+ *  real @lezer/markdown baseParser's StrongEmphasis judgement) — no
+ *  production caller outside this module needs it. */
+export function standardBoldFlank(before: string, after: string): Flank {
   return computeFlank(before, after, isPunctuation);
 }
 
