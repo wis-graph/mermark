@@ -1,73 +1,73 @@
-import { renderSidebarButton } from "../sidebar-toggle";
 import { icon } from "../icons";
-import { isFavorite } from "./favorite-folders";
 
 // ---------------------------------------------------------------------------
-// Favorites LEFT SIDEBAR chrome — the same shell as explorer/outline/recent:
-// a status-bar button toggling a left-of-editor <aside>. Unlike recent (an
-// MRU of opened DOCUMENTS), this lists user-CURATED FOLDERS: clicking one
-// jumps the explorer's root there (onJump), a header ★ button adds the
-// current folder (onAdd), and each item carries an X to remove it (onRemove).
+// Favorites BOTTOM SECTION (M5) — a split-pane section hosted INSIDE the
+// explorer's .explorer-aside (below the file tree), not an independent
+// left-sidebar view. M4 shipped favorites as a fourth mutually-exclusive
+// <aside> (button + open/close + 4-way exclusion); the M5 redesign folds it
+// into the explorer's own aside as a permanently-visible <section> so the
+// tree and the favorites list are on screen together (confirmed mockup:
+// "탐색기 하단 분리 섹션"). See _workspace/01_architect_design.md 분기 1/2.
 //
-// SSOT: this panel NEVER reads or writes favoriteFoldersSetting directly. It
-// reads through the injected getFavorites() (a closure over the setting, same
-// as recent's getRecent) and only EMITS events (onAdd/onRemove/onJump) — main
-// is the single writer (favoriteFoldersSetting.set(pushFavorite/removeFavorite(...)))
-// and the single re-render trigger (one favoriteFoldersSetting.subscribe).
+// Hosting: main builds this section and hands its `el` to
+// createExplorerPanel({ favoritesSlot }) — explorer appends it below the
+// tree and hosts it as an opaque DOM node (the same injection shape as
+// listDir/onOpenFile). Explorer never imports this module or the favorites
+// domain — it only knows "a slot to append", keeping the domain boundary
+// exactly where main.ts's other panel wiring draws it.
 //
-// Self-close: unlike recent (which closes itself after opening a document,
-// since opening never opens another sidebar), favorites does NOT self-close
-// on click. onJump → explorer.jumpToRoot → (reveals the explorer shell if
-// closed →) explorer's onOpen → closeOtherSidebars("explorer") already closes
-// favorites as a side effect of the explorer opening. Closing here too would
-// just be a redundant (if harmless) second close call — the single-path
-// design keeps "who closes favorites on jump" in ONE place (the explorer's
-// open path), not two.
+// SSOT: this section NEVER reads or writes favoriteFoldersSetting directly.
+// It reads through the injected getFavorites() (a closure over the setting,
+// same as recent's getRecent) and only EMITS events (onJump/onRemove) — main
+// is the single writer (favoriteFoldersSetting.set(pushFavorite/
+// removeFavorite(...))) and the single re-render trigger (one
+// favoriteFoldersSetting.subscribe that also fans out to the explorer's
+// folder-row stars — see main.ts).
 //
-// Editor-adjacent CHROME, not a decoration: mounted under .workspace, never
-// inside .cm-content/.cm-line — zero block/inline decorations, live-preview
-// pipeline and the ⌘± zoom measure guard are both untouched.
+// header ★-ADD REMOVED (M5): adding a favorite is now the polder row star's
+// job (explorer-panel.ts's `.explorer-star`, toggled via pushFavorite). The
+// section header's star is a decorative glyph only — no getCurrentFolder,
+// no onAdd. The tradeoff (the tree ROOT itself has no row to star) is
+// accepted per design 분기 2: `..` still exposes the previous root as a
+// child row.
+//
+// X-remove KEPT (M5): the tree star can only toggle a folder that's
+// currently VISIBLE in the tree. A favorite reached by jumping elsewhere has
+// no row to un-star, so the section's per-item X is the only off-tree
+// removal path — unlike the header ★-add, this one has no tree-side
+// equivalent, so it stays.
 // ---------------------------------------------------------------------------
 
-/** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
-const FAVORITES_ASIDE_ID = "favorites-aside";
-
-export interface FavoritesPanel {
-  /** The button to place in the title bar (toggles the sidebar). */
-  readonly button: HTMLButtonElement;
-  /** The sidebar shell (hidden until first opened). Append as a sibling of the
-   *  editor host under .workspace — never inside the editor content. */
-  readonly aside: HTMLElement;
-  /** Hide the sidebar. Idempotent — used by the mutual-exclusion coordinator to
-   *  close this when another left sidebar opens. Command (void). */
-  close(): void;
-  /** Re-render the list (and the ★-add button state) from getFavorites(). A
-   *  no-op while hidden (cost 0 when closed), so a favoriteFoldersSetting
-   *  change is cheap when the panel is shut. */
+export interface FavoritesSection {
+  /** The section root. Explorer appends this as a sibling BELOW its tree
+   *  (never inside .cm-content/.cm-line — zero decorations, ⌘± zoom guard
+   *  untouched, same as the tree itself). Not an <aside> — an <aside> nested
+   *  inside another <aside> (the explorer's) would double up the landmark;
+   *  a <section aria-label> reads correctly as a labelled sub-region. */
+  readonly el: HTMLElement;
+  /** Re-render the list from getFavorites(). No open/closed gate any more
+   *  (the section is always live once mounted) — cheap because the list is
+   *  typically small (user curation, not a big MRU). */
   refresh(): void;
+  /** Focus the first favorite item, or the section itself when the list is
+   *  empty. Injected into explorer as `focusFavorites` (createExplorerPanel)
+   *  so `revealFavorites` DELEGATES here instead of re-deriving the same
+   *  landing rule from the opaque slot node — this is the single owner of
+   *  "where ⌘⇧B lands". Command (void). */
+  focusFirst(): void;
 }
 
 export interface FavoritesHandlers {
   /** The current favorites list, insertion order. A closure over the setting
-   *  so the panel always reads the live value (SSOT), never a captured
+   *  so the section always reads the live value (SSOT), never a captured
    *  snapshot. */
   getFavorites(): string[];
-  /** The folder the ★-add button targets — "the folder the tree is currently
-   *  rooted at" (main's currentRoot view state). A closure so it tracks live. */
-  getCurrentFolder(): string;
   /** Jump the explorer's root to this absolute folder path. Injected so the
-   *  panel reuses main's explorer.jumpToRoot — no new navigation code. */
+   *  section reuses main's explorer.jumpToRoot — no new navigation code. */
   onJump(absPath: string): void;
-  /** Add the current folder to favorites. Injected so main is the single
-   *  favoriteFoldersSetting writer (set(pushFavorite(...))). */
-  onAdd(absPath: string): void;
   /** Remove a folder from favorites. Injected so main is the single
    *  favoriteFoldersSetting writer (set(removeFavorite(...))). */
   onRemove(absPath: string): void;
-  /** Called when this sidebar opens, so main can close the other left
-   *  sidebars (mutual exclusion). Optional — omitted in unit tests /
-   *  standalone use. Same signature as explorer/outline/recent's onOpen. */
-  onOpen?(): void;
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
@@ -85,53 +85,31 @@ function basename(path: string): string {
   return sep >= 0 ? path.slice(sep + 1) : path;
 }
 
-export function createFavoritesPanel({
+export function createFavoritesSection({
   getFavorites,
-  getCurrentFolder,
   onJump,
-  onAdd,
   onRemove,
-  onOpen,
-}: FavoritesHandlers): FavoritesPanel {
-  const button = create("button", "chrome-btn favorites-btn") as HTMLButtonElement;
-  button.title = "즐겨찾기 (폴더 클릭 시 이동)";
+}: FavoritesHandlers): FavoritesSection {
+  const el = create("section", "explorer-favorites");
+  el.setAttribute("aria-label", "즐겨찾기");
 
-  const aside = create("aside", "favorites-aside sidebar-aside");
-  aside.id = FAVORITES_ASIDE_ID;
-  aside.hidden = true;
   const header = create("div", "favorites-header sidebar-header");
+  const headerGlyph = create("span", "favorites-header-glyph");
+  headerGlyph.append(icon("star"));
   const headerLabel = create("span", "favorites-header-label");
   headerLabel.textContent = "즐겨찾기";
-  const addBtn = create("button", "favorites-add") as HTMLButtonElement;
-  addBtn.type = "button";
-  addBtn.title = "현재 폴더 추가";
-  addBtn.append(icon("star"));
-  header.append(headerLabel, addBtn);
+  header.append(headerGlyph, headerLabel);
+
   const listEl = create("div", "favorites-list");
   const empty = create("div", "favorites-empty");
   empty.textContent = "즐겨찾기한 폴더가 없습니다";
   empty.hidden = true;
-  aside.append(header, listEl, empty);
+  el.append(header, listEl, empty);
 
-  /** Render the toggle button for the current open/closed state (icon + ARIA).
-   *  Called at init and on every open()/close() so they never drift. */
-  const renderButton = (): void =>
-    renderSidebarButton(button, "star", "즐겨찾기", !aside.hidden, FAVORITES_ASIDE_ID);
-  renderButton();
-
-  /** Sync the header ★-add button to whether the current folder is already
-   *  favorited — disabled + aria-pressed=true when it is (the "already
-   *  pinned" affordance), enabled otherwise. Command (void). */
-  const renderAddButton = (): void => {
-    const already = isFavorite(getFavorites(), getCurrentFolder());
-    addBtn.disabled = already;
-    addBtn.setAttribute("aria-pressed", String(already));
-  };
-
-  /** Rebuild the list from the live setting. Skips work while hidden — a
-   *  closed panel costs nothing when the favorites list changes. */
+  /** Rebuild the list from the live setting. Unlike the M4 aside, there's no
+   *  hidden-panel gate any more — the section is always mounted and visible
+   *  whenever the explorer is open, so refresh() always does real work. */
   const refresh = (): void => {
-    if (aside.hidden) return;
     const favorites = getFavorites();
     listEl.replaceChildren();
     empty.hidden = favorites.length > 0;
@@ -141,8 +119,15 @@ export function createFavoritesPanel({
       item.dataset.path = path;
       const name = create("span", "favorites-name");
       name.textContent = basename(path);
+      // The path segment goes in a left-truncating span (styles.css: rtl +
+      // text-align:left on .favorites-path). The <bdi> isolates the path's
+      // own (LTR) directionality from the rtl trick, so the segment order
+      // stays normal (…/work/projects) while the CLIP happens on the left —
+      // the confirmed UX (rightmost, most-identifying segment stays visible).
       const dir = create("span", "favorites-path");
-      dir.textContent = path;
+      const bdi = document.createElement("bdi");
+      bdi.textContent = path;
+      dir.append(bdi);
       const remove = create("button", "favorites-remove") as HTMLButtonElement;
       remove.type = "button";
       remove.dataset.remove = "true";
@@ -152,29 +137,13 @@ export function createFavoritesPanel({
       item.title = path;
       listEl.append(item);
     }
-    renderAddButton();
   };
-
-  const open = () => {
-    aside.hidden = false;
-    onOpen?.();
-    renderButton();
-    refresh();
-  };
-  const close = () => {
-    aside.hidden = true;
-    renderButton();
-  };
-  button.addEventListener("click", () => {
-    if (aside.hidden) open();
-    else close();
-  });
-
-  addBtn.addEventListener("click", () => onAdd(getCurrentFolder()));
+  refresh();
 
   // Click an item → jump to it (single delegated mousedown listener, matching
   // recent/outline). The remove button is checked FIRST so removing an item
-  // never also fires a jump. No self-close (see module header).
+  // never also fires a jump. No self-close (there's no aside to close any
+  // more — the section stays mounted).
   listEl.addEventListener("mousedown", (e) => {
     const target = e.target as HTMLElement;
     const item = target.closest(".favorites-item") as HTMLElement | null;
@@ -187,5 +156,15 @@ export function createFavoritesPanel({
     onJump(item.dataset.path);
   });
 
-  return { button, aside, close, refresh };
+  const focusFirst = (): void => {
+    const first = listEl.querySelector<HTMLElement>(".favorites-item");
+    if (first) {
+      first.focus();
+      return;
+    }
+    el.tabIndex = -1;
+    el.focus();
+  };
+
+  return { el, refresh, focusFirst };
 }

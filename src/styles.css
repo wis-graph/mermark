@@ -666,11 +666,19 @@ html, body { margin: 0; height: 100%; }
 /* File explorer LEFT SIDEBAR — shares the .sidebar-aside shell above. Its header
    shows the current ROOT PATH (dynamic), so no uppercasing (paths are
    case-sensitive) — just clip an over-long path with an ellipsis (the title +
-   aria-label carry the full absolute path). */
+   aria-label carry the full absolute path).
+
+   M5 split-pane: .explorer-aside now stacks TWO independently-scrolling
+   regions — the tree (flex:1, grows to fill) and the hosted favorites
+   section (flex:none, capped + its own scroll) — instead of the whole aside
+   scrolling as one unit. Scoped to .explorer-aside ONLY, so the shared
+   .sidebar-aside (outline/recent, which still scroll as a single region) is
+   untouched. */
+.explorer-aside { overflow: hidden; }
 .explorer-header {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.explorer-tree { display: flex; flex-direction: column; padding: 2px 4px 8px; }
+.explorer-tree { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 2px 4px 8px; }
 /* An item is a vertical BLOCK: its label row on top, its children group below.
    The old row-flex on .explorer-item pulled the children group up beside the
    name (527faf6 bug); the flex now lives on .explorer-label only. */
@@ -707,6 +715,28 @@ html, body { margin: 0; height: 100%; }
 .explorer-dir > .explorer-label > .explorer-glyph { color: var(--accent); }
 .explorer-name { overflow: hidden; text-overflow: ellipsis; }
 .explorer-up > .explorer-label { font-weight: 600; }
+/* Folder-row favorite star (M5, design 분기2/6/제약). tabindex=-1 (out of the
+   roving-tabindex race — see explorer-panel.ts). Faint at rest (dimmer than
+   --muted via color-mix so an un-favorited tree stays visually quiet), a
+   solid --fg on hover/focus-visible (the "look, you can star this" affordance),
+   and a filled --accent once favorited — regardless of hover, so a favorited
+   folder is always identifiable at a glance. Theme vars only (no hardcoded
+   hex): dark/light/claude all derive their own faint/hover/filled shades. */
+.explorer-star {
+  flex: none; margin-left: auto; display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0;
+  background: transparent; border: none; border-radius: var(--radius-sm, 6px);
+  color: color-mix(in srgb, var(--muted) 45%, transparent);
+  cursor: pointer;
+  transition: color .12s ease, background-color .12s ease;
+}
+.explorer-label:hover .explorer-star { color: var(--fg); }
+.explorer-star:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
+.explorer-star.is-favorite,
+.explorer-label:hover .explorer-star.is-favorite,
+.explorer-star.is-favorite:hover { color: var(--accent); }
+.explorer-star:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.explorer-star .icon { width: 13px; height: 13px; }
 /* Non-markdown files: visible for context, but greyed + inert (mermark opens
    markdown only — a click is a no-op, not a broken read_file view). */
 .explorer-file.is-nonmd > .explorer-label { color: var(--muted); cursor: default; }
@@ -1220,25 +1250,25 @@ html, body { margin: 0; height: 100%; }
 .recent-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recent-path { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Favorites LEFT SIDEBAR (M4) — shares the .sidebar-aside shell above (width,
-   flex, [hidden] display, background, border are all inherited from there).
-   Distinct from recent's header: a ★-add button rides on the right, and each
-   item carries an X-remove button revealed on hover. Theme tokens only (no
-   hardcoded hex) — the star/x icons inherit currentColor for free. */
+/* Favorites BOTTOM SECTION (M5, design 분기1/2/7) — hosted INSIDE
+   .explorer-aside, below .explorer-tree (see explorer-panel.ts's
+   favoritesSlot). No longer a sibling .sidebar-aside (M4): it's a
+   permanently-visible <section>, capped + independently scrolling. Theme
+   tokens only (no hardcoded hex) — the star/x icons inherit currentColor.
+
+   header ★-add REMOVED (M5): adding a favorite is now the folder-row star's
+   job (.explorer-star above) — the header's star is a decorative glyph only. */
+.explorer-favorites {
+  flex: none; max-height: 40vh; overflow-y: auto;
+  border-top: 1px solid var(--border);
+  display: flex; flex-direction: column;
+}
 .favorites-header {
-  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  display: flex; align-items: center; gap: 6px;
 }
+.favorites-header-glyph { flex: none; display: inline-flex; color: var(--muted); }
+.favorites-header-glyph .icon { width: 13px; height: 13px; }
 .favorites-header-label { flex: 1 1 auto; }
-.favorites-add {
-  flex: none; display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; padding: 0;
-  background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: var(--muted); cursor: pointer;
-  transition: background-color .12s ease, color .12s ease;
-}
-.favorites-add:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
-.favorites-add:disabled { color: var(--accent); cursor: default; }
-.favorites-add:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
 .favorites-list { display: flex; flex-direction: column; padding: 2px 4px 8px; }
 .favorites-empty { padding: .5em; color: var(--muted); }
 .favorites-empty[hidden] { display: none; }
@@ -1253,7 +1283,19 @@ html, body { margin: 0; height: 100%; }
 .favorites-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
 .favorites-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
 .favorites-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.favorites-path { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* LEFT-truncating path (M5 확정 3: 뒤쪽 폴더명이 보여야 함, "…/work/projects").
+   direction:rtl flips WHERE the ellipsis clips (the start, not the end) while
+   text-align:left keeps the text visually left-anchored; the <bdi> (see
+   favorites-panel.ts) isolates the path's own LTR segment order from the rtl
+   trick, so "/Users/x/work/projects" reads normally and only gets clipped
+   from the left. CSS-only — no JS width measurement (zoom-guard, sash-resize
+   friendly for free). */
+.favorites-path {
+  direction: rtl; text-align: left;
+  font-size: 11px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.favorites-path > bdi { direction: ltr; unicode-bidi: isolate; }
 .favorites-remove {
   position: absolute; top: 4px; right: 4px;
   display: flex; align-items: center; justify-content: center;
