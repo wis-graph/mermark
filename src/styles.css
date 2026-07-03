@@ -215,10 +215,20 @@ html, body { margin: 0; height: 100%; }
 .cm-fold-marker-closed svg { transform: rotate(-90deg); }
 .cm-editor:hover .cm-fold-marker { opacity: .5; }
 .cm-fold-marker:hover { opacity: 1 !important; color: var(--fg); }
-.cm-fold-marker-closed { opacity: .8; } /* a collapsed section always shows its toggle */
-.cm-editor:hover .cm-fold-marker-closed { opacity: .9; }
+/* a collapsed section always shows its toggle at full strength (not the muted
+   hover-fade color the expanded chevron uses) — closed folds must read as
+   unambiguously present regardless of hover state. */
+.cm-fold-marker-closed { opacity: 1; color: var(--fg); }
+.cm-editor:hover .cm-fold-marker-closed { opacity: 1; }
+/* fold gutter cells are outside the measure tree (.cm-gutters, not .cm-content),
+   so flex-centering here is zoom-guard safe: it repositions the chevron within
+   its own gutter cell without touching document metrics. */
+.cm-foldGutter .cm-gutterElement { display: flex; align-items: center; justify-content: center; }
 /* folded-content placeholder (…) — CM hard-codes a light pill; theme it. */
-.cm-editor .cm-foldPlaceholder { background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); margin: 0 .25em; padding: 0 .45em; }
+/* ZOOM GUARD: placeholder sits inside .cm-content (the measure tree), so only
+   metrics-inert properties are allowed here — vertical-align centers the glyph
+   against the line box without touching line-height/font-size/padding. */
+.cm-editor .cm-foldPlaceholder { background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); margin: 0 .25em; padding: 0 .45em; vertical-align: middle; }
 
 /* themed scrollbar — the editor scrolls inside .cm-scroller */
 .cm-scroller::-webkit-scrollbar { width: 11px; height: 11px; }
@@ -1248,7 +1258,17 @@ html, body { margin: 0; height: 100%; }
 .recent-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
 .recent-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
 .recent-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.recent-path { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* LEFT-truncating path (M5 favorites-path 패턴 복제: 뒤쪽 폴더명/파일명이 보여야
+   함, "…/work/projects"). direction:rtl flips WHERE the ellipsis clips (the
+   start, not the end) while text-align:left keeps the text visually
+   left-anchored; the <bdi> (see recent-panel.ts) isolates the path's own LTR
+   segment order from the rtl trick. CSS-only — no JS width measurement. */
+.recent-path {
+  direction: rtl; text-align: left;
+  font-size: 11px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.recent-path > bdi { direction: ltr; unicode-bidi: isolate; }
 
 /* Favorites BOTTOM SECTION (M5, design 분기1/2/7) — hosted INSIDE
    .explorer-aside, below .explorer-tree (see explorer-panel.ts's

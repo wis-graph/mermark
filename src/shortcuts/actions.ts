@@ -40,6 +40,10 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: "zoom.out", label: "본문 축소", defaultBinding: "Mod+-" },
   { id: "zoom.reset", label: "본문 배율 초기화", defaultBinding: "Mod+0" },
   { id: "bundle.copy", label: "LLM 번들 복사", defaultBinding: "Mod+Shift+C" },
+  // Mod+Alt+C is the CANONICAL serialized form (keys.ts formatChord fixes the
+  // order Mod, Alt, Shift, key) for ⌥⌘C — do not write "Alt+Mod+C" or any
+  // other ordering here, or eventToChord's lookup will never match it.
+  { id: "path.copy", label: "문서 경로 복사", defaultBinding: "Mod+Alt+C" },
   { id: "vim.toggle", label: "Vim 모드 토글", defaultBinding: null },
   { id: "save.flush", label: "저장 (강제 플러시)", defaultBinding: null },
 ];

@@ -33,6 +33,10 @@ describe("recent panel", () => {
     expect(items.length).toBe(2);
     expect(items[0].querySelector(".recent-name")?.textContent).toBe("alpha.md");
     expect(items[0].querySelector(".recent-path")?.textContent).toBe("/notes/alpha.md");
+    // M6-B: the path segment is wrapped in a <bdi> (mirrors favorites-panel's
+    // left-truncation pattern) so styles.css's rtl trick can clip the LEFT of
+    // the path while the segment order (and rightmost basename) stays intact.
+    expect(items[0].querySelector(".recent-path > bdi")?.textContent).toBe("/notes/alpha.md");
   });
 
   it("shows the empty state when there is no history", () => {

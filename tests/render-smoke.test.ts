@@ -574,6 +574,63 @@ describe("full-editor render smoke", () => {
     expect(td?.querySelector("strong.cm-strong")?.textContent).toBe("x");
     view.destroy();
   });
+
+  // ── bold wrapping an inline code span (M6-D regression guard) ───────────────
+  // Design note (_workspace/01_architect_design.md D): a mount probe already
+  // confirmed StrongEmphasis nests InlineCode correctly and the decoration
+  // path renders `.cm-strong` wrapping `.cm-inline-code` with both marker
+  // pairs concealed. This test locks that structure in place so a future
+  // regression in text-styles.ts/core.ts node traversal is caught here rather
+  // than only surfacing as a visual (CDP-only) defect.
+  it("bold wraps an inline code span: cm-strong contains cm-inline-code, markers concealed", () => {
+    const doc = "intro\n\n**앞 `code` 뒤**\n\noutro";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } }); // caret off the bold line
+    (view as unknown as { measure(): void }).measure();
+    // Live-preview inline marks render as <span class="cm-strong">/<span
+    // class="cm-inline-code"> (Decoration.mark with no tagName override) —
+    // NOT <strong>/<code>. table-widget.ts's mini-renderer is the one that
+    // emits real <strong>/<code> tags for table cells; the main document body
+    // uses the generic span decoration path exercised here.
+    const strong = view.contentDOM.querySelector(".cm-strong");
+    expect(strong).not.toBeNull();
+    const code = strong!.querySelector(".cm-inline-code");
+    expect(code, "cm-inline-code must be nested inside cm-strong").not.toBeNull();
+    expect(code!.textContent).toBe("code");
+    expect(strong!.textContent).not.toContain("**"); // bold markers concealed
+    expect(strong!.textContent).not.toContain("`"); // code markers concealed
+    expect(strong!.textContent).toBe("앞 code 뒤");
+    view.destroy();
+  });
+
+  it("bold wraps an inline code span in the real Korean repro case (M6-D)", () => {
+    const doc = "intro\n\n**누구 것인지 표시하는 열 하나(`user_id`)**\n\noutro";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } }); // caret off the bold line
+    (view as unknown as { measure(): void }).measure();
+    const strong = view.contentDOM.querySelector(".cm-strong");
+    expect(strong).not.toBeNull();
+    const code = strong!.querySelector(".cm-inline-code");
+    expect(code, "cm-inline-code must be nested inside cm-strong").not.toBeNull();
+    expect(code!.textContent).toBe("user_id");
+    expect(strong!.textContent).not.toContain("**");
+    view.destroy();
+  });
+
+  it("bold wraps an inline code span in read mode too (no reveal in read)", () => {
+    const doc = "intro\n\n**앞 `code` 뒤**\n\noutro";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    // caret parked ON the bold line — read mode must never reveal regardless.
+    ed.view.dispatch({ selection: { anchor: doc.indexOf("**앞") + 1 } });
+    (ed.view as unknown as { measure(): void }).measure();
+    const strong = ed.view.contentDOM.querySelector(".cm-strong");
+    expect(strong).not.toBeNull();
+    const code = strong!.querySelector(".cm-inline-code");
+    expect(code).not.toBeNull();
+    expect(code!.textContent).toBe("code");
+    expect(ed.view.contentDOM.textContent).not.toContain("**앞");
+    ed.view.destroy();
+  });
 });
 
 describe("mode toggle", () => {

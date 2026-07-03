@@ -111,4 +111,24 @@ describe("shortcut registry", () => {
     const s2 = keybindSetting("kb.persist"); // fresh read of the same key
     expect(s2.get()).toEqual({ "zoom.in": "Mod+Shift+=" });
   });
+
+  // M6-C: path.copy (⌥⌘C, document path copy) ships as Mod+Alt+C and must not
+  // collide with bundle.copy's ⌘⇧C (Mod+Shift+C) — different chord, both live
+  // side by side in the catalog.
+  it("path.copy ships with Mod+Alt+C and does not conflict with bundle.copy's Mod+Shift+C", () => {
+    bindKeybindings(keybindSetting("kb.pathCopy"));
+    expect(effectiveBinding("path.copy")).toBe("Mod+Alt+C");
+    expect(effectiveBinding("bundle.copy")).toBe("Mod+Shift+C");
+    expect(findConflict("Mod+Alt+C")).toBe("path.copy");
+    expect(findConflict("Mod+Alt+C", "path.copy")).toBeNull(); // excluded self
+    expect(findConflict("Mod+Shift+C")).toBe("bundle.copy"); // unaffected sibling
+  });
+
+  it("dispatchChord runs the handler bound to path.copy's default chord", () => {
+    bindKeybindings(keybindSetting("kb.pathCopyDispatch"));
+    const fn = vi.fn();
+    registerHandler("path.copy", fn);
+    expect(dispatchChord("Mod+Alt+C")).toBe(true);
+    expect(fn).toHaveBeenCalledOnce();
+  });
 });

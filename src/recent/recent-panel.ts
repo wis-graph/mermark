@@ -101,8 +101,16 @@ export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandl
       item.dataset.path = path;
       const name = create("span", "recent-name");
       name.textContent = basename(path);
+      // The path segment goes in a left-truncating span (styles.css: rtl +
+      // text-align:left on .recent-path). The <bdi> isolates the path's own
+      // (LTR) directionality from the rtl trick, so the segment order stays
+      // normal (…/work/projects) while the CLIP happens on the left — the
+      // confirmed UX (rightmost, most-identifying segment stays visible).
+      // Mirrors favorites-panel.ts's identical left-truncation pattern.
       const dir = create("span", "recent-path");
-      dir.textContent = path;
+      const bdi = document.createElement("bdi");
+      bdi.textContent = path;
+      dir.append(bdi);
       item.append(name, dir);
       item.title = path;
       listEl.append(item);

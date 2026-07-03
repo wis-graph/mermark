@@ -49,6 +49,13 @@ describe("eventToChord (e.code physical key)", () => {
     expect(eventToChord(ev({ metaKey: true, code: "BracketLeft" }))).toBe("Mod+[");
     expect(eventToChord(ev({ metaKey: true, code: "BracketRight" }))).toBe("Mod+]");
   });
+  // M6-C: ⌥⌘C (Option+Cmd+C) for document.copyPath. The canonical serialized
+  // form is "Mod+Alt+C" (formatChord's fixed Mod, Alt, Shift, key order) — NOT
+  // "Alt+Mod+C". This is a contract test locking that order so actions.ts's
+  // defaultBinding stays matchable by eventToChord's output.
+  it("maps ⌥⌘C (meta+alt+KeyC) to the canonical Mod+Alt+C", () => {
+    expect(eventToChord(ev({ metaKey: true, altKey: true, code: "KeyC" }))).toBe("Mod+Alt+C");
+  });
 });
 
 describe("parseChord / formatChord round-trip", () => {

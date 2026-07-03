@@ -694,18 +694,48 @@ async function boot() {
     vimModeSetting.set(vimModeSetting.get() === "on" ? "off" : "on"),
   );
   registerHandler("save.flush", () => current.flushSave());
+  // Transient status-bar feedback shared by clipboard-copy handlers: shows
+  // `msg` in the `pos` cell, then restores whatever was there before the
+  // *first* flash of the current burst. Command, void — no return value,
+  // callers don't need one.
+  //
+  // Overlapping calls (e.g. ⌥⌘C then ⌘⇧C within 1200ms) must not lose the
+  // real baseline: the second call would otherwise capture the first flash's
+  // message as `prev`, and the first call's un-cancelled timer would still
+  // fire and stomp the second flash. So a flash burst captures its baseline
+  // only once (when no timer is pending) and every overlapping call cancels
+  // the previous timer before scheduling its own restore.
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  let flashBaseline: string | null = null;
+  const flashStatus = (msg: string): void => {
+    if (flashTimer === undefined) flashBaseline = pos.textContent;
+    else clearTimeout(flashTimer);
+    pos.textContent = msg;
+    flashTimer = setTimeout(() => {
+      pos.textContent = flashBaseline;
+      flashTimer = undefined;
+      flashBaseline = null;
+    }, 1200);
+  };
   // ⌘⇧C: copy the LLM context bundle (this doc + 1-hop wikilinks) to the
   // clipboard. Reads the live file via `currentFile` so it tracks re-opens;
   // transient feedback rides in the `pos` cell.
   registerHandler("bundle.copy", () => {
     if (!currentFile) return;
     void copyBundleToClipboard(currentFile).then((copied) => {
-      const prev = pos.textContent;
-      pos.textContent = copied ? "✓ 번들 복사됨" : "⚠ 번들 복사 실패";
-      setTimeout(() => {
-        if (pos.textContent !== prev) pos.textContent = prev;
-      }, 1200);
+      flashStatus(copied ? "✓ 번들 복사됨" : "⚠ 번들 복사 실패");
     });
+  });
+  // ⌥⌘C: copy the current document's absolute path to the clipboard. No IPC —
+  // `currentFile` is already the live-file SSOT cell (same one bundle.copy
+  // reads), and the webview's navigator.clipboard is the same write path
+  // bundle.ts uses. Graceful no-op when no document is open.
+  registerHandler("path.copy", () => {
+    if (!currentFile) return;
+    navigator.clipboard
+      .writeText(currentFile)
+      .then(() => flashStatus("✓ 경로 복사됨"))
+      .catch(() => flashStatus("⚠ 경로 복사 실패"));
   });
   bindKeybindings(keybindingsSetting);
   installDispatcher();
