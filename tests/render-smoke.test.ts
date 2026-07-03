@@ -120,6 +120,26 @@ describe("full-editor render smoke", () => {
     view.destroy();
   });
 
+  it("conceals CJK-bold ** markers off-line, reveals on the line, re-conceals (M7 cjkBold B1/B2)", () => {
+    const doc = 'first line\n\nsee **"New Policy"**를 here';
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    // concealed: body styled cm-strong, ** markers hidden
+    expect(view.contentDOM.querySelector(".cm-strong")).not.toBeNull();
+    expect(view.contentDOM.textContent).toContain("New Policy");
+    expect(view.contentDOM.textContent).not.toContain('**"New Policy"**');
+    // cursor onto the line → raw source revealed
+    view.dispatch({ selection: { anchor: doc.indexOf("**") + 2 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain('**"New Policy"**를');
+    // cursor away again → re-concealed
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toContain('**"New Policy"**');
+    view.destroy();
+  });
+
   it("does not render ==highlight== inside code fences", () => {
     const doc = "```\n==x==\n```\n\ntail";
     const view = mount(host, doc);

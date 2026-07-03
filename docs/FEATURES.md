@@ -58,6 +58,7 @@
 
 ### 3.1 인라인 요소
 - **강조** — bold(`**`), italic(`*`), code(`` ` ``), strikethrough(`~~`) — **테이블 셀 안에서도 렌더**(inline-render.ts).
+- **CJK 인접 플랭킹 완화** — 한국어 조사 등 CJK 글자가 볼드 마커에 바로 붙을 때(`**"New Policy"**를`, `**…(\`user_id\`)**와`) CommonMark 표준 플랭킹 판정으로는 실패하던 `**` 볼드를 성립시킨다. CJK 인접에서만 적용하는 의도적 CommonMark 표준 이탈(`**` 볼드 한정, `*`/`***`/`_` 비대상). 라이브프리뷰 데코 레이어(`live-preview/features/cjk-bold.ts`)에서만 동작 — outline/read-mode 렌더러(`inline-render.ts`)는 미반영(별도 정규식 렌더러라 M7 스코프 밖).
 - **하이라이트** — `==mark==`(GFM 확장).
 - **링크 / 위키링크** — `[text](url)`, `[[target]]`(피커·자동완성·active/missing/asset).
 - **풋노트 참조** — `[^name]` 위첨자 칩.

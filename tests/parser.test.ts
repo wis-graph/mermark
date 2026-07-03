@@ -120,6 +120,24 @@ describe("highlight parsing", () => {
   });
 });
 
+// M7 (CJK-friendly bold) is implemented as a live-preview decoration layer,
+// not a parser change — see _workspace/01_architect_design.md §1 for why the
+// parser route is structurally blocked. This is the tripwire for that
+// premise: if the parser ever starts (or stops) producing StrongEmphasis for
+// these cases, the decoration-layer approach's assumptions have shifted and
+// cjk-bold.ts needs re-review.
+describe("parser invariant: CJK flanking cases (M7 decoration-layer premise)", () => {
+  it("still fails to parse **\"New Policy\"**를 as StrongEmphasis (parser untouched)", () => {
+    expect(nodesOf('**"New Policy"**를', "StrongEmphasis")).toEqual([]);
+  });
+  it("still parses plain **bold** as StrongEmphasis", () => {
+    expect(nodesOf("**bold**", "StrongEmphasis")).toEqual([["StrongEmphasis", "**bold**"]]);
+  });
+  it("still parses **중요**를 as StrongEmphasis (CJK letters already flank like letters)", () => {
+    expect(nodesOf("**중요**를", "StrongEmphasis")).toEqual([["StrongEmphasis", "**중요**"]]);
+  });
+});
+
 describe("GFM still intact", () => {
   it("parses tables, task markers, links, images", () => {
     const doc = "| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n\n[t](u) ![a](b.png)";

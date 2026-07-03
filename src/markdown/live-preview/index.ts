@@ -5,6 +5,7 @@ import {
   type InlineFeature,
 } from "./core";
 import { textStyles } from "./features/text-styles";
+import { cjkBold } from "./features/cjk-bold";
 import { heading } from "./features/heading";
 import { blockquote } from "./features/blockquote";
 import { link } from "./features/link";
@@ -28,6 +29,7 @@ export type { PreviewMode } from "./core";
  *  each one is self-contained in features/. */
 const INLINE_FEATURES: InlineFeature[] = [
   textStyles,
+  cjkBold,
   heading,
   blockquote,
   link,
