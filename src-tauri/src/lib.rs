@@ -7,6 +7,30 @@ pub mod cli;
 mod commands;
 mod watcher;
 
+#[cfg(target_os = "macos")]
+fn setup_cli_path() -> std::io::Result<()> {
+    use std::fs::{OpenOptions, read_to_string};
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    let home = std::env::var("HOME").map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "HOME environment variable not found")
+    })?;
+    
+    let zshrc_path = PathBuf::from(home).join(".zshrc");
+    
+    if zshrc_path.exists() {
+        let content = read_to_string(&zshrc_path)?;
+        
+        if !content.contains("mermark CLI path") {
+            let cli_line = "\n# mermark CLI path\nexport PATH=\"$PATH:/Applications/mermark.app/Contents/MacOS\"\n";
+            let mut file = OpenOptions::new().append(true).open(&zshrc_path)?;
+            file.write_all(cli_line.as_bytes())?;
+        }
+    }
+    Ok(())
+}
+
 /// Process-unique counter for scratch-file names. Kept separate from
 /// `commands::TMP_SEQ` (which names autosave temp files) so the two concerns
 /// don't share state across module boundaries; the naming *pattern* is copied,
@@ -188,6 +212,10 @@ pub fn run() {
             commands::unwatch_file
         ])
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            if let Err(e) = setup_cli_path() {
+                eprintln!("mermark: failed to setup CLI path: {e}");
+            }
             let args: Vec<String> = std::env::args().skip(1).collect();
             let cwd = std::env::current_dir().unwrap_or_default();
             match cli::parse_args(&args, &cwd) {
@@ -413,6 +441,38 @@ mod tests {
         )
         .unwrap();
         assert!(out.contains("absolute body"), "got: {out}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_setup_cli_path() {
+        let dir = scratch_dir("setup_cli");
+        let zshrc = dir.join(".zshrc");
+        fs::write(&zshrc, "# initial zshrc\n").unwrap();
+        
+        let old_home = std::env::var("HOME");
+        std::env::set_var("HOME", &dir);
+        
+        let res1 = setup_cli_path();
+        let content1 = fs::read_to_string(&zshrc).unwrap();
+        
+        let res2 = setup_cli_path();
+        let content2 = fs::read_to_string(&zshrc).unwrap();
+        
+        // Restore HOME
+        if let Ok(ref val) = old_home {
+            std::env::set_var("HOME", val);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        
+        res1.unwrap();
+        res2.unwrap();
+        
+        assert!(content1.contains("mermark CLI path"), "First call should append path");
+        assert_eq!(content1, content2, "Second call should not append duplicate path");
+        
         fs::remove_dir_all(&dir).ok();
     }
 }
