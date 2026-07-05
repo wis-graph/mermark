@@ -242,6 +242,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
     case "open_url":
       console.info("[mock] open", a.path ?? a.url);
       return undefined as T;
+    case "get_version":
+      return "0.4.0" as T;
     default:
       console.warn("[mock] unhandled invoke:", cmd, args);
       return undefined as T;

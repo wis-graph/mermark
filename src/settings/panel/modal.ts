@@ -99,24 +99,18 @@ function buildModal(): SettingsModal {
   // 2. 버전 정보 표시용 텍스트 영역
   const versionInfo = document.createElement("div");
   versionInfo.className = "settings-version-info";
-  versionInfo.style.fontSize = "11px";
-  versionInfo.style.opacity = "0.6";
-  versionInfo.style.padding = "4px 8px";
-  versionInfo.style.textAlign = "center";
-  versionInfo.style.fontFamily = "monospace";
   versionInfo.textContent = "v0.4.0"; // fallback 하드코딩
   sidebar.appendChild(versionInfo);
 
   // 비동기로 실제 앱 버전 가져와서 반영
   getVersion().then((v) => {
-    versionInfo.textContent = `v${v}`;
+    if (v) versionInfo.textContent = `v${v}`;
   }).catch(() => {});
 
   // 3. 업데이트 확인 버튼
   const updateBtn = document.createElement("button");
   updateBtn.type = "button";
   updateBtn.className = "settings-cat update-btn";
-  updateBtn.style.marginTop = "auto"; // 사이드바 맨 아래로 밀기
   updateBtn.style.color = "var(--accent)";
   updateBtn.append(icon("refresh-cw"), " 업데이트 확인");
 
