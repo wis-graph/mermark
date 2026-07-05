@@ -9,24 +9,31 @@ mod watcher;
 
 #[cfg(target_os = "macos")]
 fn setup_cli_path() -> std::io::Result<()> {
-    use std::fs::{OpenOptions, read_to_string};
-    use std::io::Write;
-    use std::path::PathBuf;
-
     let home = std::env::var("HOME").map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "HOME environment variable not found")
     })?;
-    
-    let zshrc_path = PathBuf::from(home).join(".zshrc");
-    
-    if zshrc_path.exists() {
-        let content = read_to_string(&zshrc_path)?;
-        
-        if !content.contains("mermark CLI path") {
-            let cli_line = "\n# mermark CLI path\nexport PATH=\"$PATH:/Applications/mermark.app/Contents/MacOS\"\n";
-            let mut file = OpenOptions::new().append(true).open(&zshrc_path)?;
-            file.write_all(cli_line.as_bytes())?;
-        }
+    setup_cli_path_in(PathBuf::from(home))
+}
+
+#[cfg(target_os = "macos")]
+fn setup_cli_path_in(home: PathBuf) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    let zshrc_path = home.join(".zshrc");
+    let content = if zshrc_path.exists() {
+        std::fs::read_to_string(&zshrc_path)?
+    } else {
+        String::new()
+    };
+
+    if !content.contains("/Applications/mermark.app/Contents/MacOS") {
+        let cli_line = "\n# mermark CLI path\nexport PATH=\"$PATH:/Applications/mermark.app/Contents/MacOS\"\n";
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&zshrc_path)?;
+        file.write_all(cli_line.as_bytes())?;
     }
     Ok(())
 }
@@ -455,32 +462,37 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn test_setup_cli_path() {
-        let dir = scratch_dir("setup_cli");
-        let zshrc = dir.join(".zshrc");
-        fs::write(&zshrc, "# initial zshrc\n").unwrap();
+        // Case 1: .zshrc exists but doesn't have the path
+        let dir1 = scratch_dir("setup_cli_exists");
+        let zshrc1 = dir1.join(".zshrc");
+        fs::write(&zshrc1, "# initial zshrc\n").unwrap();
+        setup_cli_path_in(dir1.clone()).unwrap();
+        let content1 = fs::read_to_string(&zshrc1).unwrap();
+        assert!(content1.contains("/Applications/mermark.app/Contents/MacOS"));
         
-        let old_home = std::env::var("HOME");
-        std::env::set_var("HOME", &dir);
-        
-        let res1 = setup_cli_path();
-        let content1 = fs::read_to_string(&zshrc).unwrap();
-        
-        let res2 = setup_cli_path();
-        let content2 = fs::read_to_string(&zshrc).unwrap();
-        
-        // Restore HOME
-        if let Ok(ref val) = old_home {
-            std::env::set_var("HOME", val);
-        } else {
-            std::env::remove_var("HOME");
-        }
-        
-        res1.unwrap();
-        res2.unwrap();
-        
-        assert!(content1.contains("mermark CLI path"), "First call should append path");
-        assert_eq!(content1, content2, "Second call should not append duplicate path");
-        
-        fs::remove_dir_all(&dir).ok();
+        // Case 2: second run doesn't append duplicate
+        setup_cli_path_in(dir1.clone()).unwrap();
+        let content2 = fs::read_to_string(&zshrc1).unwrap();
+        assert_eq!(content1, content2);
+        fs::remove_dir_all(&dir1).ok();
+
+        // Case 3: .zshrc does not exist
+        let dir2 = scratch_dir("setup_cli_missing");
+        let zshrc2 = dir2.join(".zshrc");
+        assert!(!zshrc2.exists());
+        setup_cli_path_in(dir2.clone()).unwrap();
+        assert!(zshrc2.exists());
+        let content3 = fs::read_to_string(&zshrc2).unwrap();
+        assert!(content3.contains("/Applications/mermark.app/Contents/MacOS"));
+        fs::remove_dir_all(&dir2).ok();
+
+        // Case 4: duplication check checks path itself, not comment
+        let dir3 = scratch_dir("setup_cli_path_only");
+        let zshrc3 = dir3.join(".zshrc");
+        fs::write(&zshrc3, "export PATH=\"$PATH:/Applications/mermark.app/Contents/MacOS\"\n").unwrap();
+        setup_cli_path_in(dir3.clone()).unwrap();
+        let content4 = fs::read_to_string(&zshrc3).unwrap();
+        assert_eq!(content4, "export PATH=\"$PATH:/Applications/mermark.app/Contents/MacOS\"\n");
+        fs::remove_dir_all(&dir3).ok();
     }
 }
