@@ -201,6 +201,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // The single-file fs watcher's slot + self-write mute baseline. Managed
         // state so `write_file` can record its own mtime and `watch_file` /
         // `unwatch_file` can swap the one live watcher.

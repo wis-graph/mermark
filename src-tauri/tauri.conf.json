@@ -28,5 +28,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50aXRsZWQxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ=",
+      "endpoints": [
+        "https://raw.githubusercontent.com/wis-graph/mermark/main/updater.json"
+      ]
+    }
   }
 }
