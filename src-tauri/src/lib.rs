@@ -235,16 +235,11 @@ pub fn run() {
                         right: false,
                     }
                 }
-                Err(e) => {
-                    match &e {
-                        cli::CliError::Missing => unreachable!(),
-                        cli::CliError::IsDirectory(p) => {
-                            eprintln!(
-                                "mermark: {} is a directory, not a file.\nusage: mermark <file.md>",
-                                p.display()
-                            );
-                        }
-                    }
+                Err(cli::CliError::IsDirectory(p)) => {
+                    eprintln!(
+                        "mermark: {} is a directory, not a file.\nusage: mermark <file.md>",
+                        p.display()
+                    );
                     std::process::exit(2);
                 }
             };
