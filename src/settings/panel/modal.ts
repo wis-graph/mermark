@@ -7,6 +7,9 @@ import { groups, type Group } from "../registry";
 import { RENDER, runTeardown } from "./controls";
 import type { Setting, Control } from "../store";
 import { icon } from "../../icons";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
 
 /** Build a ⚙ chrome button that opens the settings modal. Boot-cheap: only the
  *  button is created now; the modal DOM is built on first open. Position is the
@@ -87,6 +90,65 @@ function buildModal(): SettingsModal {
     sidebar.appendChild(b);
     return { b, group: g };
   });
+
+  // 1. 구분선
+  const divider = document.createElement("div");
+  divider.className = "settings-sidebar-divider";
+  sidebar.appendChild(divider);
+
+  // 2. 버전 정보 표시용 텍스트 영역
+  const versionInfo = document.createElement("div");
+  versionInfo.className = "settings-version-info";
+  versionInfo.style.fontSize = "11px";
+  versionInfo.style.opacity = "0.6";
+  versionInfo.style.padding = "4px 8px";
+  versionInfo.style.textAlign = "center";
+  versionInfo.style.fontFamily = "monospace";
+  versionInfo.textContent = "v0.4.0"; // fallback 하드코딩
+  sidebar.appendChild(versionInfo);
+
+  // 비동기로 실제 앱 버전 가져와서 반영
+  getVersion().then((v) => {
+    versionInfo.textContent = `v${v}`;
+  }).catch(() => {});
+
+  // 3. 업데이트 확인 버튼
+  const updateBtn = document.createElement("button");
+  updateBtn.type = "button";
+  updateBtn.className = "settings-cat update-btn";
+  updateBtn.style.marginTop = "auto"; // 사이드바 맨 아래로 밀기
+  updateBtn.style.color = "var(--accent)";
+  updateBtn.append(icon("refresh-cw"), " 업데이트 확인");
+
+  let isChecking = false;
+  updateBtn.addEventListener("click", async () => {
+    if (isChecking) return;
+    isChecking = true;
+    updateBtn.textContent = "확인 중...";
+
+    try {
+      const update = await check();
+      if (update) {
+        const confirmed = confirm(
+          `새로운 업데이트가 있습니다!\n\n버전: ${update.version}\n게시일: ${update.date ?? "N/A"}\n\n지금 설치하고 재시작하시겠습니까?`
+        );
+        if (confirmed) {
+          updateBtn.textContent = "설치 중...";
+          await update.downloadAndInstall();
+          await relaunch();
+        }
+      } else {
+        alert("최신 버전을 사용 중입니다.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert(`업데이트 확인 실패:\n${err}`);
+    } finally {
+      isChecking = false;
+      updateBtn.replaceChildren(icon("refresh-cw"), " 업데이트 확인");
+    }
+  });
+  sidebar.appendChild(updateBtn);
 
   /** Tear down every control currently in the pane (run their stashed unsubscribe
    *  fns) before the DOM is discarded, so no stale subscription survives a swap or
