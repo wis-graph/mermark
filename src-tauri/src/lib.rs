@@ -218,84 +218,19 @@ pub fn run() {
             }
             let args: Vec<String> = std::env::args().skip(1).collect();
             let cwd = std::env::current_dir().unwrap_or_default();
-            match cli::parse_args(&args, &cwd) {
-                Ok(cli::LaunchArgs { target, right }) => {
-                    // Resolve the parse-time intent into a concrete file path to
-                    // open. `File` already carries one; `Stdin` performs the
-                    // effect (read piped stdin into a scratch .md) the pure
-                    // parser deferred. Both converge here so the url/geometry/
-                    // builder code below runs once for either source.
-                    let target = match target {
-                        cli::Target::File(path) => {
-                            // Create the file if it doesn't exist yet (vim-style)
-                            // before opening; an existing file is opened as-is.
-                            // A creation failure (e.g. unwritable parent dir) is a
-                            // launch error: report it and exit gracefully with the
-                            // same code/style as the other CLI failures below
-                            // rather than panicking out of `setup`.
-                            if let Err(e) = ensure_file_target(&path) {
-                                eprintln!("mermark: cannot open {}: {e}", path.display());
-                                std::process::exit(2);
-                            }
-                            path
-                        }
-                        cli::Target::Stdin => {
-                            if !stdin_is_piped() {
-                                eprintln!(
-                                    "mermark: '-' reads piped stdin; nothing was piped.\nusage: cat file.md | mermark -"
-                                );
-                                std::process::exit(2);
-                            }
-                            write_stdin_to_scratch(
-                                std::io::stdin().lock(),
-                                &std::env::temp_dir(),
-                            )
-                            .map_err(|e| format!("mermark: failed to buffer stdin: {e}"))?
-                        }
-                    };
-                    let url = tauri::WebviewUrl::App(
-                        format!(
-                            "index.html?file={}",
-                            urlencoding::encode(&target.to_string_lossy())
-                        )
-                        .into(),
-                    );
-                    // `--right` docks the window to the right half of the
-                    // primary monitor; without a readable monitor (None/Err) we
-                    // fall back to the centered default rather than abort launch.
-                    let right_half = if right {
-                        app.primary_monitor()
-                            .ok()
-                            .flatten()
-                            .map(|monitor| {
-                                let scale = monitor.scale_factor();
-                                let size = monitor.size();
-                                let logical_width = size.width as f64 / scale;
-                                let logical_height = size.height as f64 / scale;
-                                right_half_geometry(logical_width, logical_height)
-                            })
-                    } else {
-                        None
-                    };
-
-                    let mut builder = with_document_chrome(
-                        tauri::WebviewWindowBuilder::new(app, "main", url)
-                            .title("mermark")
-                            .min_inner_size(MIN_WINDOW.0, MIN_WINDOW.1),
-                    );
-                    builder = match right_half {
-                        Some((width, height, x)) => {
-                            builder.inner_size(width, height).position(x, 0.0)
-                        }
-                        None => builder.inner_size(DEFAULT_WINDOW.0, DEFAULT_WINDOW.1),
-                    };
-                    builder.build()?;
+            let parsed_args = cli::parse_args(&args, &cwd);
+            let launch_args = match parsed_args {
+                Ok(args) => args,
+                Err(cli::CliError::Missing) => {
+                    // 인자 없이 실행되었을 경우 임시 디렉토리에 untitled.md 파일을 대상으로 설정
+                    cli::LaunchArgs {
+                        target: cli::Target::File(std::env::temp_dir().join("untitled.md")),
+                        right: false,
+                    }
                 }
                 Err(e) => {
                     match &e {
-                        cli::CliError::Missing => {
-                            eprintln!("mermark: no file given.\nusage: mermark <file.md>");
-                        }
+                        cli::CliError::Missing => unreachable!(),
                         cli::CliError::IsDirectory(p) => {
                             eprintln!(
                                 "mermark: {} is a directory, not a file.\nusage: mermark <file.md>",
@@ -305,7 +240,80 @@ pub fn run() {
                     }
                     std::process::exit(2);
                 }
-            }
+            };
+            let cli::LaunchArgs { target, right } = launch_args;
+
+            // Resolve the parse-time intent into a concrete file path to
+            // open. `File` already carries one; `Stdin` performs the
+            // effect (read piped stdin into a scratch .md) the pure
+            // parser deferred. Both converge here so the url/geometry/
+            // builder code below runs once for either source.
+            let target = match target {
+                cli::Target::File(path) => {
+                    // Create the file if it doesn't exist yet (vim-style)
+                    // before opening; an existing file is opened as-is.
+                    // A creation failure (e.g. unwritable parent dir) is a
+                    // launch error: report it and exit gracefully with the
+                    // same code/style as the other CLI failures below
+                    // rather than panicking out of `setup`.
+                    if let Err(e) = ensure_file_target(&path) {
+                        eprintln!("mermark: cannot open {}: {e}", path.display());
+                        std::process::exit(2);
+                    }
+                    path
+                }
+                cli::Target::Stdin => {
+                    if !stdin_is_piped() {
+                        eprintln!(
+                            "mermark: '-' reads piped stdin; nothing was piped.\nusage: cat file.md | mermark -"
+                        );
+                        std::process::exit(2);
+                    }
+                    write_stdin_to_scratch(
+                        std::io::stdin().lock(),
+                        &std::env::temp_dir(),
+                    )
+                    .map_err(|e| format!("mermark: failed to buffer stdin: {e}"))?
+                }
+            };
+            let url = tauri::WebviewUrl::App(
+                format!(
+                    "index.html?file={}",
+                    urlencoding::encode(&target.to_string_lossy())
+                )
+                .into(),
+            );
+
+            // `--right` docks the window to the right half of the
+            // primary monitor; without a readable monitor (None/Err) we
+            // fall back to the centered default rather than abort launch.
+            let right_half = if right {
+                app.primary_monitor()
+                    .ok()
+                    .flatten()
+                    .map(|monitor| {
+                        let scale = monitor.scale_factor();
+                        let size = monitor.size();
+                        let logical_width = size.width as f64 / scale;
+                        let logical_height = size.height as f64 / scale;
+                        right_half_geometry(logical_width, logical_height)
+                    })
+            } else {
+                None
+            };
+
+            let mut builder = with_document_chrome(
+                tauri::WebviewWindowBuilder::new(app, "main", url)
+                    .title("mermark")
+                    .min_inner_size(MIN_WINDOW.0, MIN_WINDOW.1),
+            );
+            builder = match right_half {
+                Some((width, height, x)) => {
+                    builder.inner_size(width, height).position(x, 0.0)
+                }
+                None => builder.inner_size(DEFAULT_WINDOW.0, DEFAULT_WINDOW.1),
+            };
+            builder.build()?;
             Ok(())
         })
         .run(tauri::generate_context!())
