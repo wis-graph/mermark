@@ -124,6 +124,7 @@ function buildModal(): SettingsModal {
   updateBtn.addEventListener("click", async () => {
     if (isChecking) return;
     isChecking = true;
+    updateBtn.disabled = true;
     updateBtn.textContent = "확인 중...";
 
     try {
@@ -145,6 +146,7 @@ function buildModal(): SettingsModal {
       alert(`업데이트 확인 실패:\n${err}`);
     } finally {
       isChecking = false;
+      updateBtn.disabled = false;
       updateBtn.replaceChildren(icon("refresh-cw"), " 업데이트 확인");
     }
   });

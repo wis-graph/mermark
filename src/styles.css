@@ -1354,3 +1354,10 @@ html, body { margin: 0; height: 100%; }
 .keybind-chord.is-unbound { color: var(--muted); }
 .keybind-warning { grid-column: 1 / -1; color: #dc2626; font-size: 12px; }
 .keybind-warning[hidden] { display: none; }
+
+.settings-sidebar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0.8em 0;
+  opacity: 0.5;
+}
