@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { dirOf, resolveOpenPath } from "./path";
+import { homeDir, documentDir } from "@tauri-apps/api/path";
+import { dirOf, resolveOpenPath, normalizePath, basename } from "./path";
 import { createOpenPathPrompt } from "./open-file/path-prompt";
+import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { createOutlinePanel } from "./outline/outline-panel";
 import { createExplorerPanel, type DirEntry } from "./explorer/explorer-panel";
 import { mountEditor, type EditorController, type PreviewMode, type SaveStatus } from "./editor";
@@ -127,7 +130,24 @@ function makeModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode) =>
   return { btn, render };
 }
 
+async function initDefaultFavorites() {
+  const current = favoriteFoldersSetting.get();
+  if (current.length === 0 && localStorage.getItem("mermark.favoriteFolders") === null) {
+    try {
+      const home = await homeDir();
+      const docs = await documentDir();
+      const list: string[] = [];
+      if (home) list.push(normalizePath(home));
+      if (docs) list.push(normalizePath(docs));
+      favoriteFoldersSetting.set(list);
+    } catch (err) {
+      console.error("Failed to init default favorites:", err);
+    }
+  }
+}
+
 async function boot() {
+  await initDefaultFavorites();
   // Theme is the SSOT; bind the DOM sink first so the dataset is set before the
   // editor mounts (mermaid reads it on its lazy initial load) — and so it also
   // applies on the no-file / error screens below.
@@ -174,10 +194,6 @@ async function boot() {
   headingRatioSetting.bind(headingScaleSink());
   const root = document.querySelector<HTMLDivElement>("#app")!;
   const file = new URLSearchParams(location.search).get("file");
-  if (!file) {
-    root.textContent = "No file specified.";
-    return;
-  }
 
   // #app is a flex column: the editor scrolls inside `host`, with a title-bar
   // pinned above it (sidebar toggles, open-path, mode/theme/settings — M2) and
@@ -227,8 +243,8 @@ async function boot() {
   // file / baseDir is live. All window-global sinks and listeners read this
   // mutable cell; openInWindow re-points it. No second copy of "which file".
   let current: EditorController;
-  let currentFile = file;
-  let currentBaseDir = dirOf(file);
+  let currentFile = file ?? "";
+  let currentBaseDir = file ? dirOf(file) : "";
   // Document navigation history (⌘[/⌘]) — ephemeral in-memory session state, NOT
   // a setting: starts empty; the first openInWindow records the launch file.
   // Distinct from the recent MRU list (recentDocsSetting) — see nav-history.ts.
@@ -248,6 +264,10 @@ async function boot() {
     onOpen: async (raw) => {
       const target = resolveOpenPath(raw, currentBaseDir);
       if (!target) throw new Error("경로를 입력하세요");
+      if (!file) {
+        location.href = `index.html?file=${encodeURIComponent(target)}`;
+        return;
+      }
       // read_file first: if it fails (missing/unreadable) we throw BEFORE any
       // teardown, so the switch only happens after a successful read.
       const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: target });
@@ -278,8 +298,10 @@ async function boot() {
     if (keep !== "outline") outline.close();
     if (keep !== "recent") recent.close();
   };
+  const dummyState = EditorState.create({ doc: "" });
+  const dummyView = { state: dummyState } as unknown as EditorView;
   const outline = createOutlinePanel({
-    getView: () => current.view,
+    getView: () => current?.view ?? dummyView,
     onOpen: () => closeOtherSidebars("outline"),
   });
 
@@ -321,9 +343,13 @@ async function boot() {
     listDir: (p) => invoke<DirEntry[]>("list_dir", { path: p }),
     getBaseDir: () => currentBaseDir,
     onOpenFile: async (absPath) => {
-      const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
-      await commitBeforeSwitch();
-      openInWindow(absPath, fresh);
+      if (!file) {
+        location.href = `index.html?file=${encodeURIComponent(absPath)}`;
+      } else {
+        const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
+        await commitBeforeSwitch();
+        openInWindow(absPath, fresh);
+      }
     },
     onOpen: () => closeOtherSidebars("explorer"),
     onRootChange: (root) => breadcrumb.render(root),
@@ -341,13 +367,17 @@ async function boot() {
   const recent = createRecentPanel({
     getRecent: () => recentDocsSetting.get(),
     onOpenFile: async (absPath) => {
-      try {
-        const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
-        await commitBeforeSwitch();
-        openInWindow(absPath, fresh);
-      } catch (err) {
-        console.error("Failed to open recent document; pruning it", err);
-        recentDocsSetting.set(pruneMissing(recentDocsSetting.get(), absPath));
+      if (!file) {
+        location.href = `index.html?file=${encodeURIComponent(absPath)}`;
+      } else {
+        try {
+          const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
+          await commitBeforeSwitch();
+          openInWindow(absPath, fresh);
+        } catch (err) {
+          console.error("Failed to open recent document; pruning it", err);
+          recentDocsSetting.set(pruneMissing(recentDocsSetting.get(), absPath));
+        }
       }
     },
     onOpen: () => closeOtherSidebars("recent"),
@@ -441,6 +471,7 @@ async function boot() {
    *  sibling, so neither the edits nor the external change are lost. Named so
    *  the "don't lose work on switch" rule lives in one place. */
   async function commitBeforeSwitch(): Promise<void> {
+    if (!current) return;
     if (!current.hasUnsaved()) return;
     current.beginClose();
     await current.saveOnClose();
@@ -635,6 +666,7 @@ async function boot() {
     const win = getCurrentWindow();
     await win.onCloseRequested(async (e) => {
       saveSessionState(true);
+      if (!current) return;
       if (!current.hasUnsaved()) return;
       e.preventDefault();
       current.beginClose();
@@ -649,20 +681,20 @@ async function boot() {
   // cache + re-render every block. Change-only sink (no initial work needed).
   themeSetting.subscribe((t) => {
     refreshMermaidTheme(t);
-    current.refresh();
+    current?.refresh();
   });
   // Editor-behavior sinks: the settings are the writers, the live editor is the
   // single sink for each (no hand fan-out). autosaveDelay/conflictPolicy were
   // seeded via mountEditor opts; these keep them live across re-mounts.
-  autosaveDelaySetting.subscribe((ms) => current.setAutosaveDelay(ms));
-  conflictPolicySetting.subscribe((p) => current.setConflictPolicy(p));
-  vimModeSetting.subscribe((mode) => current.setVimMode(mode === "on"));
+  autosaveDelaySetting.subscribe((ms) => current?.setAutosaveDelay(ms));
+  conflictPolicySetting.subscribe((p) => current?.setConflictPolicy(p));
+  vimModeSetting.subscribe((mode) => current?.setVimMode(mode === "on"));
   // themeForce re-bake is owned by mermaid-widget (self-subscription); main
   // only triggers the redraw it alone can dispatch.
-  themeForceSetting.subscribe(() => current.refresh());
+  themeForceSetting.subscribe(() => current?.refresh());
   // panZoom toggle: re-render blocks so MermaidWidget (which snapshots panZoom
   // in eq) re-creates and attachPanZoom re-runs with the new value.
-  panZoomSetting.subscribe(() => current.refresh());
+  panZoomSetting.subscribe(() => current?.refresh());
   mode.btn.addEventListener("click", toggleMode);
 
   // ── Keyboard shortcuts: every app chord flows through ONE registry + global
@@ -693,7 +725,7 @@ async function boot() {
   registerHandler("vim.toggle", () =>
     vimModeSetting.set(vimModeSetting.get() === "on" ? "off" : "on"),
   );
-  registerHandler("save.flush", () => current.flushSave());
+  registerHandler("save.flush", () => current?.flushSave());
   // Transient status-bar feedback shared by clipboard-copy handlers: shows
   // `msg` in the `pos` cell, then restores whatever was there before the
   // *first* flash of the current burst. Command, void — no return value,
@@ -742,7 +774,13 @@ async function boot() {
   // mode is the SSOT: the button label binds to it; the live editor reacts to
   // changes. Persistence is handled by the store.
   modeSetting.bind(mode.render); // initial label + on change
-  modeSetting.subscribe((m) => current.setMode(m));
+  modeSetting.subscribe((m) => current?.setMode(m));
+
+  if (!file) {
+    host.classList.add("welcome-host");
+    renderWelcomeScreen(host, explorer);
+    return;
+  }
 
   // First load: read + mount. A read failure here means the launch file is
   // gone — show the error in place of the editor (the bar stays).
@@ -752,6 +790,105 @@ async function boot() {
   } catch (e) {
     host.textContent = `Failed to open: ${String(e)}`;
   }
+}
+
+function renderWelcomeScreen(
+  host: HTMLElement,
+  explorer: ReturnType<typeof createExplorerPanel>
+) {
+  const pane = el("div", "welcome-pane");
+
+  // 1. 즐겨찾기 섹션
+  const favSection = el("div", "welcome-section");
+  const favHeader = el("h2", "welcome-title");
+  favHeader.textContent = "즐겨찾기";
+  favSection.append(favHeader);
+
+  const renderFavorites = () => {
+    const folders = favoriteFoldersSetting.get();
+    const listContainer = el("div", "welcome-list");
+    if (folders.length === 0) {
+      const empty = el("div", "welcome-empty");
+      empty.textContent = "등록된 즐겨찾기 폴더가 없습니다.";
+      listContainer.append(empty);
+    } else {
+      folders.forEach((folder) => {
+        const row = el("div", "welcome-row welcome-folder-row");
+        const iconSpan = el("span", "welcome-icon");
+        iconSpan.append(icon("folder"));
+
+        const name = el("span", "welcome-name");
+        name.textContent = basename(folder) || folder;
+
+        const pathInfo = el("span", "welcome-path");
+        pathInfo.textContent = folder;
+
+        row.append(iconSpan, name, pathInfo);
+        row.addEventListener("click", () => {
+          explorer.jumpToRoot(folder);
+        });
+        listContainer.append(row);
+      });
+    }
+    return listContainer;
+  };
+
+  let favList = renderFavorites();
+  favSection.append(favList);
+  pane.append(favSection);
+
+  favoriteFoldersSetting.subscribe(() => {
+    const next = renderFavorites();
+    favList.replaceWith(next);
+    favList = next;
+  });
+
+  // 2. 최근 문서 섹션
+  const recSection = el("div", "welcome-section");
+  const recHeader = el("h2", "welcome-title");
+  recHeader.textContent = "최근 문서";
+  recSection.append(recHeader);
+
+  const renderRecents = () => {
+    const docs = recentDocsSetting.get();
+    const listContainer = el("div", "welcome-list");
+    if (docs.length === 0) {
+      const empty = el("div", "welcome-empty");
+      empty.textContent = "최근 열어본 문서가 없습니다.";
+      listContainer.append(empty);
+    } else {
+      docs.forEach((doc) => {
+        const row = el("div", "welcome-row welcome-file-row");
+        const iconSpan = el("span", "welcome-icon");
+        iconSpan.append(icon("file-text"));
+
+        const name = el("span", "welcome-name");
+        name.textContent = basename(doc);
+
+        const pathInfo = el("span", "welcome-path");
+        pathInfo.textContent = doc;
+
+        row.append(iconSpan, name, pathInfo);
+        row.addEventListener("click", () => {
+          location.href = `index.html?file=${encodeURIComponent(doc)}`;
+        });
+        listContainer.append(row);
+      });
+    }
+    return listContainer;
+  };
+
+  let recList = renderRecents();
+  recSection.append(recList);
+  pane.append(recSection);
+
+  recentDocsSetting.subscribe(() => {
+    const next = renderRecents();
+    recList.replaceWith(next);
+    recList = next;
+  });
+
+  host.append(pane);
 }
 
 boot();
