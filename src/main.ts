@@ -147,6 +147,7 @@ async function initDefaultFavorites() {
 }
 
 async function boot() {
+  void unwatchFile();
   await initDefaultFavorites();
   // Theme is the SSOT; bind the DOM sink first so the dataset is set before the
   // editor mounts (mermaid reads it on its lazy initial load) — and so it also
@@ -638,6 +639,7 @@ async function boot() {
    *  conflict" decision isn't an inline if at the listener site. Command: void. */
   let openConflict: { close(): void } | null = null;
   function resolveExternalChange(text: string, mtime: number): void {
+    if (!current) return;
     if (decideExternalChange(current.hasUnsaved()) === "reload") {
       current.reloadFromFile(text, mtime);
       return;
