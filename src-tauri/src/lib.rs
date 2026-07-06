@@ -228,15 +228,9 @@ pub fn run() {
             let args: Vec<String> = std::env::args().skip(1).collect();
             let cwd = std::env::current_dir().unwrap_or_default();
             let parsed_args = cli::parse_args(&args, &cwd);
-            let launch_args = match parsed_args {
-                Ok(args) => args,
-                Err(cli::CliError::Missing) => {
-                    // 인자 없이 실행되었을 경우 임시 디렉토리에 untitled.md 파일을 대상으로 설정
-                    cli::LaunchArgs {
-                        target: cli::Target::File(std::env::temp_dir().join("untitled.md")),
-                        right: false,
-                    }
-                }
+            let (target, right) = match parsed_args {
+                Ok(args) => (Some(args.target), args.right),
+                Err(cli::CliError::Missing) => (None, false),
                 Err(cli::CliError::IsDirectory(p)) => {
                     eprintln!(
                         "mermark: {} is a directory, not a file.\nusage: mermark <file.md>",
@@ -245,15 +239,14 @@ pub fn run() {
                     std::process::exit(2);
                 }
             };
-            let cli::LaunchArgs { target, right } = launch_args;
 
             // Resolve the parse-time intent into a concrete file path to
             // open. `File` already carries one; `Stdin` performs the
             // effect (read piped stdin into a scratch .md) the pure
             // parser deferred. Both converge here so the url/geometry/
             // builder code below runs once for either source.
-            let target = match target {
-                cli::Target::File(path) => {
+            let target_path = match target {
+                Some(cli::Target::File(path)) => {
                     // Create the file if it doesn't exist yet (vim-style)
                     // before opening; an existing file is opened as-is.
                     // A creation failure (e.g. unwritable parent dir) is a
@@ -264,29 +257,34 @@ pub fn run() {
                         eprintln!("mermark: cannot open {}: {e}", path.display());
                         std::process::exit(2);
                     }
-                    path
+                    Some(path)
                 }
-                cli::Target::Stdin => {
+                Some(cli::Target::Stdin) => {
                     if !stdin_is_piped() {
                         eprintln!(
                             "mermark: '-' reads piped stdin; nothing was piped.\nusage: cat file.md | mermark -"
                         );
                         std::process::exit(2);
                     }
-                    write_stdin_to_scratch(
+                    let path = write_stdin_to_scratch(
                         std::io::stdin().lock(),
                         &std::env::temp_dir(),
                     )
-                    .map_err(|e| format!("mermark: failed to buffer stdin: {e}"))?
+                    .map_err(|e| format!("mermark: failed to buffer stdin: {e}"))?;
+                    Some(path)
                 }
+                None => None,
             };
-            let url = tauri::WebviewUrl::App(
-                format!(
-                    "index.html?file={}",
-                    urlencoding::encode(&target.to_string_lossy())
-                )
-                .into(),
-            );
+            let url = match target_path {
+                Some(path) => tauri::WebviewUrl::App(
+                    format!(
+                        "index.html?file={}",
+                        urlencoding::encode(&path.to_string_lossy())
+                    )
+                    .into(),
+                ),
+                None => tauri::WebviewUrl::App("index.html".into()),
+            };
 
             // `--right` docks the window to the right half of the
             // primary monitor; without a readable monitor (None/Err) we

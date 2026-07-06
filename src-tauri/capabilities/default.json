@@ -13,6 +13,7 @@
     "opener:default",
     "updater:default",
     "process:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "core:path:default"
   ]
 }
