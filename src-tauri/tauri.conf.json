@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "mermark",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "identifier": "com.mermark.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -32,7 +32,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50aXRsZWQxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCQkVGRDlDNTUxRTZBOTEKUldTUmFoNVZuUDIrV3c4UUwvWlJqeDRpV1FMdXVuN1ozNjloSUpmejFRR1NCOC9tVXprZ0JRNVoK",
       "endpoints": [
         "https://raw.githubusercontent.com/wis-graph/mermark/main/updater.json"
       ]
