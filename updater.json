@@ -1,0 +1,11 @@
+{
+  "version": "0.5.0",
+  "notes": "웰컴 화면 및 즐겨찾기 기본값 자동 등록 추가",
+  "pub_date": "2026-07-06T17:34:00Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbkxRRjI3a01ZWUxaeDV4QjBITCt3WHV3bFV2aHM4RWQvU0VaUlZucWE4TXZLSlJib3Vpblo4OUVyeXhldGRwYWpzSzFWSHRDVGxDTnpUVG12aS85eThTY2FyTzh0TVFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzIxNjc4CWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClpYMFpzdkFWM0J1Um42RDRBeTVJN095N0NYRkFrbTJzbTlUS1NnTm1jMitwdVVWTDlDWkFmQUIvSS91NnZmNE53RndGbFB4a1l2VnpydnY1NksySEN3PT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.0/mermark.app.tar.gz"
+    }
+  }
+}
