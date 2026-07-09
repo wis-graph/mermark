@@ -103,6 +103,36 @@ export function applyMockExternalChange(text: string): { text: string; mtime: nu
   return { text, mtime: Date.now() };
 }
 
+// Minimal stubs of `@tauri-apps/api/core`'s `Resource`/`Channel` classes.
+// `@tauri-apps/plugin-updater` does `import { Resource, Channel, invoke } from
+// "@tauri-apps/api/core"` (its `Update` extends `Resource`, `download`/
+// `downloadAndInstall` construct a `Channel`). Since this mock is aliased in
+// for that whole module in `--mode browser` (see vite.config.ts), esbuild
+// needs these named exports to resolve at all, or the dev:browser build fails
+// before a single line of app code runs. The browser mock has no real update
+// stream, so these only need to satisfy the shape `plugin-updater` touches —
+// not reproduce the real message-ordering/resource-cleanup logic.
+export class Resource {
+  #rid: number;
+  constructor(rid: number) {
+    this.#rid = rid;
+  }
+  get rid(): number {
+    return this.#rid;
+  }
+  async close(): Promise<void> {
+    return invoke("plugin:resources|close", { rid: this.#rid });
+  }
+}
+
+export class Channel<T = unknown> {
+  id = 0;
+  onmessage: (message: T) => void;
+  constructor(onmessage?: (message: T) => void) {
+    this.onmessage = onmessage ?? (() => {});
+  }
+}
+
 type Args = Record<string, unknown> | undefined;
 
 /** One directory entry — mirrors the Rust `DirEntry` serde shape exactly
@@ -244,6 +274,14 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       return undefined as T;
     case "get_version":
       return "0.4.0" as T;
+    case "check":
+      // `@tauri-apps/plugin-updater`'s `check()` calls
+      // `invoke("plugin:updater|check", ...)`; the "plugin:" prefix is
+      // stripped above so it lands here. There's no real updater in the
+      // browser mock, so degrade gracefully: falsy metadata makes `check()`
+      // resolve to `null` (its documented "no update available" contract).
+      console.info("[mock] check (updater) -> no update");
+      return null as T;
     default:
       console.warn("[mock] unhandled invoke:", cmd, args);
       return undefined as T;
