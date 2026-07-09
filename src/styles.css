@@ -80,6 +80,11 @@
   --h4-tracking: -0.005em;
   --h5-tracking: 0;
   --h6-tracking: 0;
+  /* SELECTION PERMEABILITY RULE: any surface background painted ON/INSIDE .cm-line
+     must use this translucent derivative. drawSelection()'s hideNativeSelection kills
+     native ::selection inside .cm-line (vim on AND off), so the only selection paint
+     there is .cm-selectionLayer at z-index -1 — an opaque line background occludes it. */
+  --surface-veil: color-mix(in srgb, var(--surface) 60%, transparent);
 }
 :root[data-theme="light"] {
   /* light = brand editorial default */
@@ -227,7 +232,10 @@ html, body { margin: 0; height: 100%; }
 /* folded-content placeholder (…) — CM hard-codes a light pill; theme it. */
 /* ZOOM GUARD: placeholder sits inside .cm-content (the measure tree), so only
    metrics-inert properties are allowed here — vertical-align centers the glyph
-   against the line box without touching line-height/font-size/padding. */
+   against the line box without touching line-height/font-size/padding.
+   DELIBERATE EXCEPTION to the SELECTION PERMEABILITY RULE (:root): the fold pill
+   keeps an opaque --surface. Selecting across a collapsed pill is a rare
+   interaction, and the solid-pill identity wins over selection show-through here. */
 .cm-editor .cm-foldPlaceholder { background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); margin: 0 .25em; padding: 0 .45em; vertical-align: middle; }
 
 /* themed scrollbar — the editor scrolls inside .cm-scroller */
@@ -243,12 +251,22 @@ html, body { margin: 0; height: 100%; }
 /* Text selection. drawSelection() paints the EditorState selection into the
    .cm-selectionBackground overlay layer (this is what makes vim visual mode
    visible — vim sets selection ranges programmatically with no native DOM
-   selection to paint, and its hideNativeSelection kills ::selection in vim mode).
-   CM bakes a faint default fill into .cm-selectionBackground via a runtime theme,
-   so the `.cm-editor` prefix + `!important` is needed to substitute our token.
-   Native ::selection mirrors the same token for non-CM text (and edit-mode drag
-   when vim is off); inside vim mode vim forces ::selection transparent and the
-   drawSelection layer takes over. Measure-inert overlay — ZOOM GUARD holds. */
+   selection to paint). CM bakes a faint default fill into .cm-selectionBackground
+   via a runtime theme, so the `.cm-editor` prefix + `!important` is needed to
+   substitute our token.
+   drawSelection() also unconditionally installs `hideNativeSelection`, which
+   forces `.cm-line ::selection` transparent — MODE-INDEPENDENT (vim on AND off).
+   So inside `.cm-line`, native ::selection never paints; the .cm-selectionBackground
+   overlay above is the only selection paint there (and it sits at z-index -1,
+   which is why in-line surface backgrounds must use --surface-veil, not an
+   opaque --surface — see the SELECTION PERMEABILITY RULE at :root).
+   The ::selection rule below stays live only through its `.cm-content ::selection`
+   arm: it targets content OUTSIDE .cm-line — block-widget DOM (e.g. read-mode
+   `.cm-codeblock`) where hideNativeSelection's `.cm-line`-scoped kill switch does
+   not reach, so native ::selection still paints there and needs its own color
+   token. (The sibling `.cm-line ::selection` arm is a dead subset — hideNativeSelection
+   forces it transparent — kept only for selector symmetry.) Measure-inert overlay
+   — ZOOM GUARD holds. */
 .cm-editor .cm-selectionBackground { background: var(--selection-bg) !important; }
 .cm-editor .cm-content ::selection,
 .cm-editor .cm-line ::selection { background: var(--selection-bg); }
@@ -257,7 +275,7 @@ html, body { margin: 0; height: 100%; }
 .cm-strong { font-weight: 700; color: var(--bold-color, inherit); }
 .cm-em { font-style: italic; color: var(--italic-color, inherit); }
 .cm-strike { text-decoration: line-through; }
-.cm-inline-code { font-family: ui-monospace, monospace; letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface); color: var(--code-color, inherit); }
+.cm-inline-code { font-family: ui-monospace, monospace; letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface-veil); color: var(--code-color, inherit); }
 /* ==highlight== → a fluorescent <mark>. Pin a dark ink on the highlight so it
    stays legible on dark theme too, where --fg flips to white and white-on-yellow
    would wash out. --highlight-bg gives each theme its own fluorescent tone, and
@@ -282,7 +300,7 @@ html, body { margin: 0; height: 100%; }
 .cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: .6em; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
 /* revealed (editing) fenced code keeps a code background, so it still reads as a
    code block while you edit it. */
-.cm-code-line { background: var(--surface); font-family: ui-monospace, monospace; letter-spacing: normal; }
+.cm-code-line { background: var(--surface-veil); font-family: ui-monospace, monospace; letter-spacing: normal; }
 /* Block-widget vertical spacing MUST be padding, not margin: CM measures a
    widget's height via offsetHeight (which excludes margin), so a margin here
    desyncs the height map and makes vertical cursor motion skip lines below. */
@@ -320,7 +338,7 @@ html, body { margin: 0; height: 100%; }
 .cm-math-inline { padding: 0 .15em; }
 /* blockquote: a left rule + soft tint, kept whether focused or not. */
 .cm-blockquote { border-left: 3px solid var(--border); background: color-mix(in srgb, var(--muted) 9%, transparent); padding-left: .75em; }
-.cm-callout { background: var(--surface); border-left: 3px solid var(--accent); padding-left: .75em; }
+.cm-callout { background: var(--surface-veil); border-left: 3px solid var(--accent); padding-left: .75em; }
 .cm-callout-head { font-weight: 700; }
 /* head widget: icon + title chip rendered in place of the `[!type] title` source.
    Colours come from currentColor (icon stroke=currentColor), so each type's head
