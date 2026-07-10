@@ -85,6 +85,20 @@
      native ::selection inside .cm-line (vim on AND off), so the only selection paint
      there is .cm-selectionLayer at z-index -1 — an opaque line background occludes it. */
   --surface-veil: color-mix(in srgb, var(--surface) 60%, transparent);
+  /* SIDEBAR CONTRAST RULE (테마별 반전): 사이드바는 에디터의 반대 명도 — dark는
+     밝은 pole, light/claude는 어두운 pole, var(--bg) 8% 앵커(≤20% = pole-dominant
+     불변식)가 커스텀 테마 가독성 보장. --sidebar-bg의 var(--bg) 앵커는 커스텀
+     JSON 테마가 documentElement에 인라인 주입하는 --bg를(:root/data-theme 규칙을
+     이기며) 자동으로 따라가는 zero-drift 메커니즘(--surface-veil과 동일 기법)이지만,
+     bg 가중치를 8%로 묶어 pole 쪽이 지배하게 함으로써 어떤 커스텀 bg가 들어와도
+     사이드바 bg 명도가 pole ±8% 대역에 갇힌다 — 그래서 아래 고정 --sidebar-fg/
+     muted/accent/border(전역 --fg/--muted/--accent/--border가 아님)가 항상 읽힌다.
+     실측 근거: _workspace/01_architect_design.md 결정 2·3·5. */
+  --sidebar-bg: color-mix(in srgb, var(--bg) 8%, #f9f7f3);
+  --sidebar-fg: #1c1917;
+  --sidebar-muted: #57524c;
+  --sidebar-accent: #1d6fb8;
+  --sidebar-border: rgba(0,0,0,.16);
 }
 :root[data-theme="light"] {
   /* light = brand editorial default */
@@ -98,6 +112,12 @@
   --highlight-bg: #fff3a3;      /* soft pastel mark on the bright editorial canvas */
   /* light = link blue (#1d6fb8) tint at low alpha on the bright canvas */
   --selection-bg: rgba(29, 111, 184, 0.25);
+  /* SIDEBAR CONTRAST RULE (light ratio, 어두운 pole) — see :root's --sidebar-bg comment. */
+  --sidebar-bg: color-mix(in srgb, var(--bg) 8%, #09090b);
+  --sidebar-fg: #ececea;
+  --sidebar-muted: #a3a09a;
+  --sidebar-accent: #a8c8e8;
+  --sidebar-border: rgba(255,255,255,.14);
 }
 /* claude = the Anthropic editorial palette: tinted-cream canvas + warm-ink text,
    coral reserved for action/link/code (coral is scarce). These 18 color values are
@@ -134,6 +154,15 @@
      `serif` generic catches last, so Korean headings fall back to the OS Hangul
      sans rather than breaking (the Cormorant-no-Hangul history). */
   --font-heading: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+  /* SIDEBAR CONTRAST RULE (claude ratio, 어두운 웜 pole) — see :root's
+     --sidebar-bg comment. accent는 브랜드 coral(#cc785c)이 아니라 밝힌
+     #e0906f — near-black sbg 위에서 비텍스트 ≥3:1을 확보하기 위한 튜닝
+     (design doc "claude 온기 노트"). */
+  --sidebar-bg: color-mix(in srgb, var(--bg) 8%, #090604);
+  --sidebar-fg: #f0eee9;
+  --sidebar-muted: #a8a29e;
+  --sidebar-accent: #e0906f;
+  --sidebar-border: rgba(255,255,255,.12);
 }
 /* Heading font swap for claude only. Same specificity tier as
    `.cm-editor .cm-line.cm-heading` (the --reading-font rule) but with the
@@ -631,7 +660,11 @@ html, body { margin: 0; height: 100%; }
 /* Shared LEFT SIDEBAR shell for the explorer + outline asides (VSCode-style, one
    at a time). A .workspace child left of the editor host, OUTSIDE the editor
    scroll host — zero decorations, ⌘± zoom guard holds. Theme tokens only (no
-   hardcoded hex) so dark / light / claude stay consistent. */
+   hardcoded hex) so dark / light / claude stay consistent. Background/foreground
+   are the --sidebar-bg/fg/muted/accent/border tokens (SIDEBAR CONTRAST RULE,
+   :root above) — a strong theme-inverted tone, not --surface, and internal
+   text/icons consume --sidebar-* exclusively (never the global --fg/--muted/
+   --accent/--border, see remap below). */
 .sidebar-aside {
   /* width = --sidebar-width (SSOT: sidebarWidthSetting via cssVarSink, main.ts).
      min-width:160px stays as a CSS floor too — a second, redundant safety net
@@ -639,9 +672,9 @@ html, body { margin: 0; height: 100%; }
   flex: none; width: var(--sidebar-width, 240px); min-width: 160px;
   display: flex; flex-direction: column;
   overflow-y: auto;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  font-size: 13px; color: var(--fg);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
+  font-size: 13px; color: var(--sidebar-fg);
   user-select: none;
 }
 .sidebar-aside[hidden] { display: none; }
@@ -664,32 +697,32 @@ html, body { margin: 0; height: 100%; }
 .sidebar-header {
   flex: none; padding: 8px 10px 4px;
   font-size: 11px; font-weight: 600; letter-spacing: .02em;
-  color: var(--muted);
+  color: var(--sidebar-muted);
 }
 
 /* Outline (table of contents) LEFT SIDEBAR — the outline shares the sidebar
    shell above; only its heading list styling is bespoke. */
 .outline-tree { display: flex; flex-direction: column; padding: 2px 4px 8px; }
-.outline-empty { padding: .5em; color: var(--muted); }
+.outline-empty { padding: .5em; color: var(--sidebar-muted); }
 .outline-empty[hidden] { display: none; }
 .outline-item {
   display: block; width: 100%; text-align: left;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: var(--fg); font: inherit; font-size: 13px; line-height: 1.4;
+  color: var(--sidebar-fg); font: inherit; font-size: 13px; line-height: 1.4;
   padding: 3px 8px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background-color .12s ease;
 }
-.outline-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.outline-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
-.outline-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.outline-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
+.outline-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
+.outline-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
 /* Depth indent: each level steps in; h1 is the trunk. */
 .outline-h1 { padding-left: 8px; font-weight: 600; }
 .outline-h2 { padding-left: 20px; }
 .outline-h3 { padding-left: 32px; }
-.outline-h4 { padding-left: 44px; color: var(--muted); }
-.outline-h5 { padding-left: 56px; color: var(--muted); }
-.outline-h6 { padding-left: 68px; color: var(--muted); }
+.outline-h4 { padding-left: 44px; color: var(--sidebar-muted); }
+.outline-h5 { padding-left: 56px; color: var(--sidebar-muted); }
+.outline-h6 { padding-left: 68px; color: var(--sidebar-muted); }
 
 /* File explorer LEFT SIDEBAR — shares the .sidebar-aside shell above. Its header
    shows the current ROOT PATH (dynamic), so no uppercasing (paths are
@@ -718,29 +751,32 @@ html, body { margin: 0; height: 100%; }
   display: flex; align-items: center; gap: 4px;
   padding: 3px 6px 3px calc(4px + (var(--level, 1) - 1) * 14px);
   border-radius: var(--radius-sm, 6px);
-  color: var(--fg); line-height: 1.5; cursor: pointer;
+  color: var(--sidebar-fg); line-height: 1.5; cursor: pointer;
   white-space: nowrap; overflow: hidden;
   outline: none;
   transition: background-color .12s ease;
 }
-.explorer-item > .explorer-label:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.explorer-item > .explorer-label:hover { background: color-mix(in srgb, var(--sidebar-fg) 6%, transparent); }
 /* Focus (keyboard cursor) = a ring; Selection (open file) = a fill. Distinct
-   styles so they read differently and can co-exist (ring over fill). --accent
-   drives both, falling back to --caret when a theme omits an accent. The state
-   classes stay on .explorer-item (TS untouched); CSS targets its label row. */
-.explorer-item.is-selected > .explorer-label { background: color-mix(in srgb, var(--accent, var(--caret)) 16%, transparent); }
-.explorer-item.is-focused > .explorer-label { box-shadow: inset 0 0 0 1.5px var(--accent, var(--caret)); }
-.explorer-chevron { flex: none; display: inline-flex; width: 16px; height: 16px; color: var(--muted); transition: transform .15s ease; }
+   styles so they read differently and can co-exist (ring over fill). --sidebar-accent
+   drives both — always declared in :root (SIDEBAR CONTRAST RULE), so the
+   old `var(--accent, var(--caret))` fallback (for a theme that might omit
+   accent) no longer has a reason to exist. The state classes stay on
+   .explorer-item (TS untouched); CSS targets its label row. */
+.explorer-item.is-selected > .explorer-label { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); }
+.explorer-item.is-focused > .explorer-label { box-shadow: inset 0 0 0 1.5px var(--sidebar-accent); }
+.explorer-chevron { flex: none; display: inline-flex; width: 16px; height: 16px; color: var(--sidebar-muted); transition: transform .15s ease; }
 .explorer-chevron-empty { visibility: hidden; }
 .explorer-dir[aria-expanded="true"] > .explorer-label > .explorer-chevron { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .explorer-chevron { transition: none; } }
-.explorer-glyph { flex: none; display: inline-flex; color: var(--muted); }
+.explorer-glyph { flex: none; display: inline-flex; color: var(--sidebar-muted); }
 /* Folder glyph carries an accent tint (openable container signal); file glyphs
-   stay --muted, and the chevron stays --muted (accent is on the glyph only, so
-   the disclosure twisty and the container color are separate signals). `..`
-   (.explorer-up, not .explorer-dir) is excluded → stays --muted. Theme var only,
-   no hard-coded hex, so all three themes track their own --accent. */
-.explorer-dir > .explorer-label > .explorer-glyph { color: var(--accent); }
+   stay --sidebar-muted, and the chevron stays --sidebar-muted (accent is on the
+   glyph only, so the disclosure twisty and the container color are separate
+   signals). `..` (.explorer-up, not .explorer-dir) is excluded → stays
+   --sidebar-muted. Sidebar var only (no hard-coded hex, no global --accent),
+   so all three themes track their own --sidebar-accent. */
+.explorer-dir > .explorer-label > .explorer-glyph { color: var(--sidebar-accent); }
 .explorer-name { overflow: hidden; text-overflow: ellipsis; }
 .explorer-up > .explorer-label { font-weight: 600; }
 /* Folder-row favorite star (M5, design 분기2/6/제약). tabindex=-1 (out of the
@@ -754,20 +790,20 @@ html, body { margin: 0; height: 100%; }
   flex: none; margin-left: auto; display: flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; padding: 0;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: color-mix(in srgb, var(--muted) 45%, transparent);
+  color: color-mix(in srgb, var(--sidebar-muted) 45%, transparent);
   cursor: pointer;
   transition: color .12s ease, background-color .12s ease;
 }
-.explorer-label:hover .explorer-star { color: var(--fg); }
-.explorer-star:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
+.explorer-label:hover .explorer-star { color: var(--sidebar-fg); }
+.explorer-star:hover { background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); color: var(--sidebar-fg); }
 .explorer-star.is-favorite,
 .explorer-label:hover .explorer-star.is-favorite,
-.explorer-star.is-favorite:hover { color: var(--accent); }
-.explorer-star:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.explorer-star.is-favorite:hover { color: var(--sidebar-accent); }
+.explorer-star:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
 .explorer-star .icon { width: 13px; height: 13px; }
 /* Non-markdown files: visible for context, but greyed + inert (mermark opens
    markdown only — a click is a no-op, not a broken read_file view). */
-.explorer-file.is-nonmd > .explorer-label { color: var(--muted); cursor: default; }
+.explorer-file.is-nonmd > .explorer-label { color: var(--sidebar-muted); cursor: default; }
 .explorer-file.is-nonmd > .explorer-label:hover { background: transparent; }
 /* A folder's lazily-loaded children group: a vertical block below the label.
    Indent is on each child item (via --level), so the group itself adds none. */
@@ -1264,17 +1300,17 @@ html, body { margin: 0; height: 100%; }
    flex, [hidden] display, background, border are all inherited from there), so
    only the list-specific rules below are bespoke. */
 .recent-list { display: flex; flex-direction: column; padding: 2px 4px 8px; }
-.recent-empty { padding: .5em; color: var(--muted); }
+.recent-empty { padding: .5em; color: var(--sidebar-muted); }
 .recent-empty[hidden] { display: none; }
 .recent-item {
   display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: var(--fg); font: inherit; padding: 4px 8px; cursor: pointer;
+  color: var(--sidebar-fg); font: inherit; padding: 4px 8px; cursor: pointer;
   overflow: hidden; transition: background-color .12s ease;
 }
-.recent-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.recent-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
-.recent-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.recent-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
+.recent-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
+.recent-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
 .recent-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Shared LEFT-truncating path label (src/chrome/path-label.ts's
    truncatedPathLabel) — used by both this panel and the favorites section
@@ -1288,7 +1324,7 @@ html, body { margin: 0; height: 100%; }
    visible). CSS-only — no JS width measurement. */
 .path-label {
   direction: rtl; text-align: left;
-  font-size: 11px; color: var(--muted);
+  font-size: 11px; color: var(--sidebar-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .path-label > bdi { direction: ltr; unicode-bidi: isolate; }
@@ -1303,28 +1339,28 @@ html, body { margin: 0; height: 100%; }
    job (.explorer-star above) — the header's star is a decorative glyph only. */
 .explorer-favorites {
   flex: none; max-height: 40vh; overflow-y: auto;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--sidebar-border);
   display: flex; flex-direction: column;
 }
 .favorites-header {
   display: flex; align-items: center; gap: 6px;
 }
-.favorites-header-glyph { flex: none; display: inline-flex; color: var(--muted); }
+.favorites-header-glyph { flex: none; display: inline-flex; color: var(--sidebar-muted); }
 .favorites-header-glyph .icon { width: 13px; height: 13px; }
 .favorites-header-label { flex: 1 1 auto; }
 .favorites-list { display: flex; flex-direction: column; padding: 2px 4px 8px; }
-.favorites-empty { padding: .5em; color: var(--muted); }
+.favorites-empty { padding: .5em; color: var(--sidebar-muted); }
 .favorites-empty[hidden] { display: none; }
 .favorites-item {
   position: relative; display: flex; flex-direction: column; gap: 1px; width: 100%;
   text-align: left; background: transparent; border: none;
   border-radius: var(--radius-sm, 6px);
-  color: var(--fg); font: inherit; padding: 4px 26px 4px 8px; cursor: pointer;
+  color: var(--sidebar-fg); font: inherit; padding: 4px 26px 4px 8px; cursor: pointer;
   overflow: hidden; transition: background-color .12s ease;
 }
-.favorites-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.favorites-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
-.favorites-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.favorites-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
+.favorites-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
+.favorites-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
 .favorites-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Left-truncating path label: see .path-label above (shared with the
    recent panel's former .recent-path rule; favorites-panel.ts builds it via
@@ -1334,12 +1370,12 @@ html, body { margin: 0; height: 100%; }
   display: flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; padding: 0;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: var(--muted); cursor: pointer; opacity: 0;
+  color: var(--sidebar-muted); cursor: pointer; opacity: 0;
   transition: opacity .12s ease, background-color .12s ease, color .12s ease;
 }
 .favorites-item:hover .favorites-remove,
 .favorites-item:focus-within .favorites-remove { opacity: 1; }
-.favorites-remove:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
+.favorites-remove:hover { background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); color: var(--sidebar-fg); }
 .favorites-remove .icon { width: 12px; height: 12px; }
 
 /* Keybind settings control (단축키 category). One row per rebindable action:
