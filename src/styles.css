@@ -524,7 +524,11 @@ html, body { margin: 0; height: 100%; }
    chrome strip sat visually ABOVE a grey canvas (--surface was lighter than
    --bg in light/claude). gap: 2px is the 12px-inset-grid button spacing
    (shared with .left-command-group below). */
-.title-bar { flex: none; height: 36px; display: flex; align-items: center; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--border); background: var(--bg); user-select: none; -webkit-user-select: none; }
+/* FULLY seamless: same canvas bg as the editor AND no hairline — the bars and
+   the reading column are one sheet; the only tonal boundary in the shell is
+   the sidebar rail. (The editor host doesn't scroll UNDER these bars — they're
+   flex siblings — so a separator line has no job here.) */
+.title-bar { flex: none; height: 36px; display: flex; align-items: center; gap: 2px; padding: 0 8px; background: var(--bg); user-select: none; -webkit-user-select: none; }
 .title-bar.mac { padding-left: var(--traffic-light-inset); }
 /* The left command group wrapper (title-bar.ts's createLeftCommandGroup) —
    hosts the 탐색기·최근·목차·경로열기 buttons as ONE rehomable unit (M6).
@@ -550,7 +554,7 @@ html, body { margin: 0; height: 100%; }
    touches the ZOOM GUARD (no .cm-content/.cm-line here). */
 /* Seamless chrome (see .title-bar above): --bg, not --surface, so the footer
    reads as canvas too — only the hairline top border marks the seam. */
-.status-bar { flex: none; height: 36px; display: flex; align-items: center; gap: .25em; padding: 0 12px; border-top: 1px solid var(--border); background: var(--bg); font-size: 13px; color: var(--muted); user-select: none; }
+.status-bar { flex: none; height: 36px; display: flex; align-items: center; gap: .25em; padding: 0 12px; background: var(--bg); font-size: 13px; color: var(--muted); user-select: none; }
 .status-spacer { flex: 1; }
 .status-pos { font-variant-numeric: tabular-nums; padding: 0 .5em; color: var(--muted); }
 
@@ -563,7 +567,14 @@ html, body { margin: 0; height: 100%; }
 .breadcrumb {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: .1em;
   overflow-x: auto; white-space: nowrap;
+  /* The trail scrolls (very long paths stay reachable by trackpad) but never
+     SHOWS a scrollbar — a persistent bar under the footer text reads as a
+     rendering glitch, not chrome. Pairs with breadcrumb.ts's render(), which
+     rests the scroll at the RIGHT end so the current folder stays visible
+     and only the root side clips. */
+  scrollbar-width: none;
 }
+.breadcrumb::-webkit-scrollbar { display: none; }
 .breadcrumb-seg {
   flex: none; background: transparent; border: none; border-radius: var(--radius-sm, 6px);
   color: var(--muted); font: inherit; font-size: 13px; line-height: 1.4;
@@ -945,6 +956,10 @@ html, body { margin: 0; height: 100%; }
 .explorer-star.is-favorite,
 .explorer-label:hover .explorer-star.is-favorite,
 .explorer-star.is-favorite:hover { color: var(--sidebar-accent); }
+/* Favorited = FILLED bookmark (the glyph is Lucide `bookmark` now — see
+   icons.ts): fill flips the same stroke silhouette to solid, a cleaner
+   on-state than color alone at 16px. */
+.explorer-star.is-favorite .icon { fill: currentColor; }
 .explorer-star:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
 .explorer-star .icon { width: 1em; height: 1em; }
 /* Non-markdown files: visible for context, but greyed + inert (mermark opens
@@ -1499,11 +1514,11 @@ html, body { margin: 0; height: 100%; }
    calc(13em / 11) restores the 13px-base size against this 11px-base parent. */
 .favorites-header-glyph .icon { width: calc(13em / 11); height: calc(13em / 11); }
 .favorites-header-label { flex: 1 1 auto; }
-.favorites-list { display: flex; flex-direction: column; padding: 2px 4px 8px; }
-.favorites-empty { padding: .5em; color: var(--sidebar-muted); }
+.favorites-list { display: flex; flex-direction: column; padding: 2px 6px 8px; }
+.favorites-empty { padding: 2px 12px 8px; font-size: calc(11em / 13); color: var(--sidebar-muted); }
 .favorites-empty[hidden] { display: none; }
 .favorites-item {
-  position: relative; display: flex; flex-direction: column; gap: 1px; width: 100%;
+  position: relative; display: flex; flex-direction: column; gap: 2px; width: 100%;
   text-align: left; background: transparent; border: none;
   border-radius: var(--radius-sm, 6px);
   color: var(--sidebar-fg); font: inherit; padding: 4px 2em 4px 8px; cursor: pointer;
@@ -1512,12 +1527,20 @@ html, body { margin: 0; height: 100%; }
 .favorites-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
 .favorites-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
 .favorites-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
-.favorites-name { font-size: 1em; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Name line: folder glyph + name. The glyph carries the sidebar accent (the
+   explorer tree's "openable container" signal, same vocabulary); the path
+   caption below indents to the name's left edge so the two lines read as one
+   card, not two strays. */
+.favorites-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.favorites-glyph { flex: none; display: inline-flex; width: calc(14em / 13); height: calc(14em / 13); color: var(--sidebar-accent); }
+.favorites-glyph .icon { width: 100%; height: 100%; }
+.favorites-name { flex: 1 1 auto; min-width: 0; font-size: 1em; font-weight: 500; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.favorites-item .path-label { padding-left: calc(14em / 13 + 6px); }
 /* Left-truncating path label: see .path-label above (shared with the
    recent panel's former .recent-path rule; favorites-panel.ts builds it via
    chrome/path-label.ts's truncatedPathLabel). */
 .favorites-remove {
-  position: absolute; top: 4px; right: 4px;
+  position: absolute; top: 50%; transform: translateY(-50%); right: 6px;
   display: flex; align-items: center; justify-content: center;
   width: calc(18em / 13); height: calc(18em / 13); padding: 0;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);

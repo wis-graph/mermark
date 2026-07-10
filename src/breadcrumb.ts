@@ -67,6 +67,12 @@ export function createBreadcrumb({ onJump }: BreadcrumbHandlers): Breadcrumb {
       if (i === segments.length - 1) btn.setAttribute("aria-current", "true");
       el.append(btn);
     });
+    // Anchor the view to the RIGHT end: when the trail overflows, the current
+    // folder (the segment that identifies "where am I") must stay visible and
+    // the root side is what clips — the opposite of the default scroll-left
+    // resting position. Trackpad scroll still reaches the clipped ancestors
+    // (the scrollbar itself is hidden in CSS — see .breadcrumb).
+    el.scrollLeft = el.scrollWidth;
   };
 
   // Single delegated listener (recent/outline/explorer single-path shape):

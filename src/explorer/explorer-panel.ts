@@ -319,7 +319,7 @@ export function createExplorerPanel({
       const star = create("button", "explorer-star") as HTMLButtonElement;
       star.type = "button";
       star.tabIndex = -1;
-      star.append(icon("star"));
+      star.append(icon("bookmark"));
       renderFavoriteStar(star, isFavorite(e.path));
       label.append(star);
     }

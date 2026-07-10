@@ -88,7 +88,7 @@ export function createFavoritesSection({
 
   const header = create("div", "favorites-header sidebar-header");
   const headerGlyph = create("span", "favorites-header-glyph");
-  headerGlyph.append(icon("star"));
+  headerGlyph.append(icon("bookmark"));
   const headerLabel = create("span", "favorites-header-label");
   headerLabel.textContent = "즐겨찾기";
   header.append(headerGlyph, headerLabel);
@@ -110,8 +110,15 @@ export function createFavoritesSection({
       const item = create("button", "favorites-item") as HTMLButtonElement;
       item.type = "button";
       item.dataset.path = path;
+      // Name line: a leading folder glyph anchors the row (the same "openable
+      // container" signal the explorer tree uses), name beside it; the path
+      // label below indents to the name's left edge (CSS padding-left).
+      const nameRow = create("span", "favorites-name-row");
+      const glyph = create("span", "favorites-glyph");
+      glyph.append(icon("folder"));
       const name = create("span", "favorites-name");
       name.textContent = basename(path);
+      nameRow.append(glyph, name);
       // Left-truncating path label (shared with recent-panel.ts — see
       // chrome/path-label.ts for the rtl+<bdi> DOM/CSS rule this builds).
       const dir = truncatedPathLabel(path);
@@ -120,7 +127,7 @@ export function createFavoritesSection({
       remove.dataset.remove = "true";
       remove.setAttribute("aria-label", "제거");
       remove.append(icon("x"));
-      item.append(name, dir, remove);
+      item.append(nameRow, dir, remove);
       item.title = path;
       listEl.append(item);
     }

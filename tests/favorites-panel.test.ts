@@ -40,10 +40,10 @@ describe("favorites section: shell", () => {
     expect((s as unknown as Record<string, unknown>).onOpen).toBeUndefined();
   });
 
-  it("has a header labelled 즐겨찾기 with an .icon-star glyph (decorative, no add button)", () => {
+  it("has a header labelled 즐겨찾기 with an .icon-bookmark glyph (decorative, no add button)", () => {
     const s = mkSection();
     expect(s.el.querySelector(".favorites-header")?.textContent).toContain("즐겨찾기");
-    expect(s.el.querySelector(".favorites-header .icon-star")).toBeTruthy();
+    expect(s.el.querySelector(".favorites-header .icon-bookmark")).toBeTruthy();
     expect(s.el.querySelector(".favorites-add")).toBeNull();
   });
 });
