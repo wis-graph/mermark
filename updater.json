@@ -1,11 +1,11 @@
 {
-  "version": "0.5.1",
-  "notes": "mermark v0.5.1 버전 자동 릴리즈 업데이트",
-  "pub_date": "2026-07-10T17:46:54Z",
+  "version": "0.5.2",
+  "notes": "mermark v0.5.2 버전 자동 릴리즈 업데이트",
+  "pub_date": "2026-07-10T20:42:33Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzdna1BZaDBOWm1CSDlTTGN5bWh0TFdUOUNCK25oeENTZzVZWU9OdEd4c2pDb1ljeE9RSnZVbHR4T2Y5L2NERnhpN3BCN3VWbHFWbE16c0VNS2hJamdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzA1NTEzCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnllRCtKZlQ2Q2Z2c0ZXZ0ltKzhYQVFWSG53VnFOaUVYajBHdWZWYkF0NE5sWHlTak4zZTJkR09aMkR4S0V4ZXNGb0ZBMXNueFBkK2FMa043a0xKekFnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.1/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzZKaE50dFNqYlBzalh5UXh3TjRQSGZHWkFzck90NlRGcURLcEpZSlU3NFpYSWVnYUtVQ3hmSU04YlNEMVVZZ3l3UmMyRnpDa1pXY2Q0WFFVYTFYdkFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzE2MTE0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ck5uTG9XQmpOYUUwbi9wVGNMbmFzQzBWUmpzVk5rQm5KeGNqMGdicmVzVVlEbzc0cWdUc0N5ZExUT2NwcFdTODZJd1pOdnJIb3drRXNuSVVYZjVhZkJnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.2/mermark.app.tar.gz"
     }
   }
 }
