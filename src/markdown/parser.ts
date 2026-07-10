@@ -214,14 +214,53 @@ const footnoteExt: MarkdownConfig = {
   ],
 };
 
+/** True at `pos` iff a literal `==` pair sits there (not e.g. a lone `=`). */
+function isEqualsPair(cx: InlineContext, pos: number): boolean {
+  return cx.char(pos) === EQUALS && cx.char(pos + 1) === EQUALS;
+}
+
+/** Closer guard: the `==` at `pos` must be preceded by a non-space (symmetry
+ *  with the opener guard) so ` ==` never closes a highlight mid-word-boundary. */
+function precededByNonSpace(cx: InlineContext, pos: number): boolean {
+  const prev = cx.char(pos - 1);
+  return prev !== SPACE && prev !== TAB;
+}
+
+/** Opener guard: a `==` pair only opens a highlight when it isn't the start of
+ *  a triple `===` and is immediately followed by non-space content — this is
+ *  what keeps `a == b` and `====` as plain prose. */
+function isHighlightOpener(cx: InlineContext, pos: number): boolean {
+  if (cx.char(pos + 2) === EQUALS) return false; // a 3rd `=` → `===`, not a mark
+  const first = cx.char(pos + 2);
+  return first !== SPACE && first !== TAB && first !== NEWLINE && first >= 0;
+}
+
+/** True iff no newline sits between `from` and `to` — highlights never cross a line. */
+function spansSingleLine(cx: InlineContext, from: number, to: number): boolean {
+  return !cx.slice(from, to).includes("\n");
+}
+
+/** Delimiter marker for an unresolved `==` opener. No `resolve`/`mark` fields:
+ *  matching is done eagerly below (like GFM's Link/Image), not by lezer's
+ *  automatic same-line-agnostic resolver, because that's the only way to keep
+ *  the single-line guard — the built-in resolver pairs any open+close of the
+ *  same type regardless of what's between them (see Strikethrough), which
+ *  would let a highlight span paragraph-internal line breaks. */
+const HighlightStart = {};
+
 /**
  * ==highlight== — the `==` twin of GFM Strikethrough (which `@lezer/markdown`'s
- * GFM only defines for `~~`). Guards mirror inline math so prose stays plain:
- * the opener must be a `==` pair followed by a non-space (so `a == b` and the
- * triple `===` never open), the body must be non-empty and on one line (no
- * newline crossing). Tree-based, so code fences / inline code disable it for
- * free. Split into open/close HighlightMark children so the decorator can
- * conceal just the markers.
+ * GFM only defines for `~~`). Every `==` pair is offered to this parser (both
+ * as a potential closer of an already-open highlight and as a potential new
+ * opener); when a valid opener is left unconsumed, `addDelimiter` registers it
+ * and inline parsing continues normally through the body — so nested markup
+ * (`**bold**`, `` `code` ``, links) gets parsed recursively instead of being
+ * swallowed by a one-shot span. Guards mirror inline math so prose stays
+ * plain: the opener must be a `==` pair followed by a non-space (so `a == b`
+ * and the triple `===` never open), the closer must be preceded by a
+ * non-space, and the body must stay on one line. Tree-based, so code fences /
+ * inline code disable it for free. Split into open/close HighlightMark
+ * children so the decorator can conceal just the markers.
  */
 const highlightExt: MarkdownConfig = {
   defineNodes: [{ name: "Highlight" }, { name: "HighlightMark" }],
@@ -230,24 +269,23 @@ const highlightExt: MarkdownConfig = {
       name: "Highlight",
       before: "Emphasis",
       parse(cx: InlineContext, next: number, pos: number): number {
-        // opener: exactly a `==` pair (a 3rd `=` → `===`, treated as not a mark)
-        if (next !== EQUALS || cx.char(pos + 1) !== EQUALS) return -1;
-        if (cx.char(pos + 2) === EQUALS) return -1;
-        // opener must be followed by a non-space → `a == b` stays prose
-        const first = cx.char(pos + 2);
-        if (first === SPACE || first === TAB || first === NEWLINE || first < 0) return -1;
-        for (let i = pos + 2; i < cx.end; i++) {
-          const ch = cx.char(i);
-          if (ch === NEWLINE) return -1; // inline only — never cross a line
-          if (ch !== EQUALS || cx.char(i + 1) !== EQUALS) continue;
-          const prev = cx.char(i - 1); // closer must be preceded by a non-space (symmetry)
-          if (prev === SPACE || prev === TAB) continue;
-          return cx.addElement(
-            cx.elt("Highlight", pos, i + 2, [
-              cx.elt("HighlightMark", pos, pos + 2),
-              cx.elt("HighlightMark", i, i + 2),
-            ]),
-          );
+        if (next !== EQUALS || !isEqualsPair(cx, pos)) return -1;
+
+        if (precededByNonSpace(cx, pos)) {
+          const openIdx = cx.findOpeningDelimiter(HighlightStart);
+          if (openIdx !== null) {
+            const open = cx.getDelimiterAt(openIdx);
+            if (open && spansSingleLine(cx, open.to, pos)) {
+              const content = cx.takeContent(openIdx);
+              content.unshift(cx.elt("HighlightMark", open.from, open.to));
+              content.push(cx.elt("HighlightMark", pos, pos + 2));
+              return cx.addElement(cx.elt("Highlight", open.from, pos + 2, content));
+            }
+          }
+        }
+
+        if (isHighlightOpener(cx, pos)) {
+          return cx.addDelimiter(HighlightStart, pos, pos + 2, true, false);
         }
         return -1;
       },
