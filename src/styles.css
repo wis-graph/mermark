@@ -80,6 +80,25 @@
   --h4-tracking: -0.005em;
   --h5-tracking: 0;
   --h6-tracking: 0;
+  /* SELECTION PERMEABILITY RULE: any surface background painted ON/INSIDE .cm-line
+     must use this translucent derivative. drawSelection()'s hideNativeSelection kills
+     native ::selection inside .cm-line (vim on AND off), so the only selection paint
+     there is .cm-selectionLayer at z-index -1 — an opaque line background occludes it. */
+  --surface-veil: color-mix(in srgb, var(--surface) 60%, transparent);
+  /* SIDEBAR CONTRAST RULE (테마별 반전): 사이드바는 에디터의 반대 명도 — dark는
+     밝은 pole, light/claude는 어두운 pole, var(--bg) 8% 앵커(≤20% = pole-dominant
+     불변식)가 커스텀 테마 가독성 보장. --sidebar-bg의 var(--bg) 앵커는 커스텀
+     JSON 테마가 documentElement에 인라인 주입하는 --bg를(:root/data-theme 규칙을
+     이기며) 자동으로 따라가는 zero-drift 메커니즘(--surface-veil과 동일 기법)이지만,
+     bg 가중치를 8%로 묶어 pole 쪽이 지배하게 함으로써 어떤 커스텀 bg가 들어와도
+     사이드바 bg 명도가 pole ±8% 대역에 갇힌다 — 그래서 아래 고정 --sidebar-fg/
+     muted/accent/border(전역 --fg/--muted/--accent/--border가 아님)가 항상 읽힌다.
+     실측 근거: _workspace/01_architect_design.md 결정 2·3·5. */
+  --sidebar-bg: color-mix(in srgb, var(--bg) 8%, #f9f7f3);
+  --sidebar-fg: #1c1917;
+  --sidebar-muted: #57524c;
+  --sidebar-accent: #1d6fb8;
+  --sidebar-border: rgba(0,0,0,.16);
 }
 :root[data-theme="light"] {
   /* light = brand editorial default */
@@ -93,6 +112,12 @@
   --highlight-bg: #fff3a3;      /* soft pastel mark on the bright editorial canvas */
   /* light = link blue (#1d6fb8) tint at low alpha on the bright canvas */
   --selection-bg: rgba(29, 111, 184, 0.25);
+  /* SIDEBAR CONTRAST RULE (light ratio, 어두운 pole) — see :root's --sidebar-bg comment. */
+  --sidebar-bg: color-mix(in srgb, var(--bg) 8%, #09090b);
+  --sidebar-fg: #ececea;
+  --sidebar-muted: #a3a09a;
+  --sidebar-accent: #a8c8e8;
+  --sidebar-border: rgba(255,255,255,.14);
 }
 /* claude = the Anthropic editorial palette: tinted-cream canvas + warm-ink text,
    coral reserved for action/link/code (coral is scarce). These 18 color values are
@@ -129,6 +154,15 @@
      `serif` generic catches last, so Korean headings fall back to the OS Hangul
      sans rather than breaking (the Cormorant-no-Hangul history). */
   --font-heading: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+  /* SIDEBAR CONTRAST RULE (claude ratio, 어두운 웜 pole) — see :root's
+     --sidebar-bg comment. accent는 브랜드 coral(#cc785c)이 아니라 밝힌
+     #e0906f — near-black sbg 위에서 비텍스트 ≥3:1을 확보하기 위한 튜닝
+     (design doc "claude 온기 노트"). */
+  --sidebar-bg: color-mix(in srgb, var(--bg) 8%, #090604);
+  --sidebar-fg: #f0eee9;
+  --sidebar-muted: #a8a29e;
+  --sidebar-accent: #e0906f;
+  --sidebar-border: rgba(255,255,255,.12);
 }
 /* Heading font swap for claude only. Same specificity tier as
    `.cm-editor .cm-line.cm-heading` (the --reading-font rule) but with the
@@ -227,7 +261,10 @@ html, body { margin: 0; height: 100%; }
 /* folded-content placeholder (…) — CM hard-codes a light pill; theme it. */
 /* ZOOM GUARD: placeholder sits inside .cm-content (the measure tree), so only
    metrics-inert properties are allowed here — vertical-align centers the glyph
-   against the line box without touching line-height/font-size/padding. */
+   against the line box without touching line-height/font-size/padding.
+   DELIBERATE EXCEPTION to the SELECTION PERMEABILITY RULE (:root): the fold pill
+   keeps an opaque --surface. Selecting across a collapsed pill is a rare
+   interaction, and the solid-pill identity wins over selection show-through here. */
 .cm-editor .cm-foldPlaceholder { background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); margin: 0 .25em; padding: 0 .45em; vertical-align: middle; }
 
 /* themed scrollbar — the editor scrolls inside .cm-scroller */
@@ -243,12 +280,22 @@ html, body { margin: 0; height: 100%; }
 /* Text selection. drawSelection() paints the EditorState selection into the
    .cm-selectionBackground overlay layer (this is what makes vim visual mode
    visible — vim sets selection ranges programmatically with no native DOM
-   selection to paint, and its hideNativeSelection kills ::selection in vim mode).
-   CM bakes a faint default fill into .cm-selectionBackground via a runtime theme,
-   so the `.cm-editor` prefix + `!important` is needed to substitute our token.
-   Native ::selection mirrors the same token for non-CM text (and edit-mode drag
-   when vim is off); inside vim mode vim forces ::selection transparent and the
-   drawSelection layer takes over. Measure-inert overlay — ZOOM GUARD holds. */
+   selection to paint). CM bakes a faint default fill into .cm-selectionBackground
+   via a runtime theme, so the `.cm-editor` prefix + `!important` is needed to
+   substitute our token.
+   drawSelection() also unconditionally installs `hideNativeSelection`, which
+   forces `.cm-line ::selection` transparent — MODE-INDEPENDENT (vim on AND off).
+   So inside `.cm-line`, native ::selection never paints; the .cm-selectionBackground
+   overlay above is the only selection paint there (and it sits at z-index -1,
+   which is why in-line surface backgrounds must use --surface-veil, not an
+   opaque --surface — see the SELECTION PERMEABILITY RULE at :root).
+   The ::selection rule below stays live only through its `.cm-content ::selection`
+   arm: it targets content OUTSIDE .cm-line — block-widget DOM (e.g. read-mode
+   `.cm-codeblock`) where hideNativeSelection's `.cm-line`-scoped kill switch does
+   not reach, so native ::selection still paints there and needs its own color
+   token. (The sibling `.cm-line ::selection` arm is a dead subset — hideNativeSelection
+   forces it transparent — kept only for selector symmetry.) Measure-inert overlay
+   — ZOOM GUARD holds. */
 .cm-editor .cm-selectionBackground { background: var(--selection-bg) !important; }
 .cm-editor .cm-content ::selection,
 .cm-editor .cm-line ::selection { background: var(--selection-bg); }
@@ -257,7 +304,7 @@ html, body { margin: 0; height: 100%; }
 .cm-strong { font-weight: 700; color: var(--bold-color, inherit); }
 .cm-em { font-style: italic; color: var(--italic-color, inherit); }
 .cm-strike { text-decoration: line-through; }
-.cm-inline-code { font-family: ui-monospace, monospace; letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface); color: var(--code-color, inherit); }
+.cm-inline-code { font-family: ui-monospace, monospace; letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface-veil); color: var(--code-color, inherit); }
 /* ==highlight== → a fluorescent <mark>. Pin a dark ink on the highlight so it
    stays legible on dark theme too, where --fg flips to white and white-on-yellow
    would wash out. --highlight-bg gives each theme its own fluorescent tone, and
@@ -282,7 +329,7 @@ html, body { margin: 0; height: 100%; }
 .cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: .6em; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
 /* revealed (editing) fenced code keeps a code background, so it still reads as a
    code block while you edit it. */
-.cm-code-line { background: var(--surface); font-family: ui-monospace, monospace; letter-spacing: normal; }
+.cm-code-line { background: var(--surface-veil); font-family: ui-monospace, monospace; letter-spacing: normal; }
 /* Block-widget vertical spacing MUST be padding, not margin: CM measures a
    widget's height via offsetHeight (which excludes margin), so a margin here
    desyncs the height map and makes vertical cursor motion skip lines below. */
@@ -320,7 +367,7 @@ html, body { margin: 0; height: 100%; }
 .cm-math-inline { padding: 0 .15em; }
 /* blockquote: a left rule + soft tint, kept whether focused or not. */
 .cm-blockquote { border-left: 3px solid var(--border); background: color-mix(in srgb, var(--muted) 9%, transparent); padding-left: .75em; }
-.cm-callout { background: var(--surface); border-left: 3px solid var(--accent); padding-left: .75em; }
+.cm-callout { background: var(--surface-veil); border-left: 3px solid var(--accent); padding-left: .75em; }
 .cm-callout-head { font-weight: 700; }
 /* head widget: icon + title chip rendered in place of the `[!type] title` source.
    Colours come from currentColor (icon stroke=currentColor), so each type's head
@@ -613,7 +660,38 @@ html, body { margin: 0; height: 100%; }
 /* Shared LEFT SIDEBAR shell for the explorer + outline asides (VSCode-style, one
    at a time). A .workspace child left of the editor host, OUTSIDE the editor
    scroll host — zero decorations, ⌘± zoom guard holds. Theme tokens only (no
-   hardcoded hex) so dark / light / claude stay consistent. */
+   hardcoded hex) so dark / light / claude stay consistent. Background/foreground
+   are the --sidebar-bg/fg/muted/accent/border tokens (SIDEBAR CONTRAST RULE,
+   :root above) — a strong theme-inverted tone, not --surface, and internal
+   text/icons consume --sidebar-* exclusively (never the global --fg/--muted/
+   --accent/--border, see remap below).
+
+   SIDEBAR ZOOM RULE (_workspace/01_architect_design.md 확정 1~4): --font-scale
+   multiplication happens in EXACTLY ONE place — this root's font-size calc.
+   Every sidebar-scoped descendant below (explorer/outline/recent/favorites,
+   including glyphs/hit-targets) declares its size as a 13px-BASE EM FRACTION
+   (e.g. 11px child -> calc(11em / 13)), never a fresh px literal and never its
+   own * var(--font-scale, ...) multiplication — that would compound the zoom.
+   This holds because no intermediate layer (.explorer-label/.recent-item/
+   .favorites-item/.explorer-tree/.outline-tree etc.) declares its own
+   font-size — em always resolves against THIS root's 13px * scale, one
+   level, no compounding. Guard: tests/sidebar-zoom.test.ts (T1 asserts this
+   exact calc form; T2 sweeps every sidebar-, outline-, explorer-, recent-,
+   favorites- prefixed rule and path-label in the sheet for a stray px
+   font-size).
+
+   TWO EXCEPTIONS found by audit 04 (2026-07-11), both now fixed:
+   1. Any sidebar glyph living in a <button> (.explorer-star, .favorites-remove)
+      MUST declare `font: inherit` explicitly. A <button> is exempted from
+      normal inheritance by the UA stylesheet, which gives it its own
+      font-size (~13.33px on macOS Chrome, NOT --font-scale-aware) — so a
+      bare `em` inside it resolves against that fixed UA size, not this
+      root's 13px*scale, and silently ignores zoom.
+   2. .sidebar-header is NOT a leaf — it declares its own font-size
+      (calc(11em / 13), an 11px-base) and hosts a glyph child
+      (.favorites-header-glyph .icon). Any em inside .sidebar-header's
+      subtree resolves against the 11px base, not the 13px root base — use
+      calc(13em / 11) there to recover a 13px-base size (see that rule). */
 .sidebar-aside {
   /* width = --sidebar-width (SSOT: sidebarWidthSetting via cssVarSink, main.ts).
      min-width:160px stays as a CSS floor too — a second, redundant safety net
@@ -621,9 +699,9 @@ html, body { margin: 0; height: 100%; }
   flex: none; width: var(--sidebar-width, 240px); min-width: 160px;
   display: flex; flex-direction: column;
   overflow-y: auto;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  font-size: 13px; color: var(--fg);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
+  font-size: calc(13px * var(--font-scale, 1)); color: var(--sidebar-fg);
   user-select: none;
 }
 .sidebar-aside[hidden] { display: none; }
@@ -645,33 +723,33 @@ html, body { margin: 0; height: 100%; }
 }
 .sidebar-header {
   flex: none; padding: 8px 10px 4px;
-  font-size: 11px; font-weight: 600; letter-spacing: .02em;
-  color: var(--muted);
+  font-size: calc(11em / 13); font-weight: 600; letter-spacing: .02em;
+  color: var(--sidebar-muted);
 }
 
 /* Outline (table of contents) LEFT SIDEBAR — the outline shares the sidebar
    shell above; only its heading list styling is bespoke. */
 .outline-tree { display: flex; flex-direction: column; padding: 2px 4px 8px; }
-.outline-empty { padding: .5em; color: var(--muted); }
+.outline-empty { padding: .5em; color: var(--sidebar-muted); }
 .outline-empty[hidden] { display: none; }
 .outline-item {
   display: block; width: 100%; text-align: left;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: var(--fg); font: inherit; font-size: 13px; line-height: 1.4;
+  color: var(--sidebar-fg); font: inherit; font-size: 1em; line-height: 1.4;
   padding: 3px 8px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background-color .12s ease;
 }
-.outline-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.outline-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
-.outline-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.outline-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
+.outline-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
+.outline-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
 /* Depth indent: each level steps in; h1 is the trunk. */
 .outline-h1 { padding-left: 8px; font-weight: 600; }
 .outline-h2 { padding-left: 20px; }
 .outline-h3 { padding-left: 32px; }
-.outline-h4 { padding-left: 44px; color: var(--muted); }
-.outline-h5 { padding-left: 56px; color: var(--muted); }
-.outline-h6 { padding-left: 68px; color: var(--muted); }
+.outline-h4 { padding-left: 44px; color: var(--sidebar-muted); }
+.outline-h5 { padding-left: 56px; color: var(--sidebar-muted); }
+.outline-h6 { padding-left: 68px; color: var(--sidebar-muted); }
 
 /* File explorer LEFT SIDEBAR — shares the .sidebar-aside shell above. Its header
    shows the current ROOT PATH (dynamic), so no uppercasing (paths are
@@ -700,29 +778,43 @@ html, body { margin: 0; height: 100%; }
   display: flex; align-items: center; gap: 4px;
   padding: 3px 6px 3px calc(4px + (var(--level, 1) - 1) * 14px);
   border-radius: var(--radius-sm, 6px);
-  color: var(--fg); line-height: 1.5; cursor: pointer;
+  color: var(--sidebar-fg); line-height: 1.5; cursor: pointer;
   white-space: nowrap; overflow: hidden;
   outline: none;
   transition: background-color .12s ease;
 }
-.explorer-item > .explorer-label:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.explorer-item > .explorer-label:hover { background: color-mix(in srgb, var(--sidebar-fg) 6%, transparent); }
 /* Focus (keyboard cursor) = a ring; Selection (open file) = a fill. Distinct
-   styles so they read differently and can co-exist (ring over fill). --accent
-   drives both, falling back to --caret when a theme omits an accent. The state
-   classes stay on .explorer-item (TS untouched); CSS targets its label row. */
-.explorer-item.is-selected > .explorer-label { background: color-mix(in srgb, var(--accent, var(--caret)) 16%, transparent); }
-.explorer-item.is-focused > .explorer-label { box-shadow: inset 0 0 0 1.5px var(--accent, var(--caret)); }
-.explorer-chevron { flex: none; display: inline-flex; width: 16px; height: 16px; color: var(--muted); transition: transform .15s ease; }
+   styles so they read differently and can co-exist (ring over fill). --sidebar-accent
+   drives both — always declared in :root (SIDEBAR CONTRAST RULE), so the
+   old `var(--accent, var(--caret))` fallback (for a theme that might omit
+   accent) no longer has a reason to exist. The state classes stay on
+   .explorer-item (TS untouched); CSS targets its label row. */
+.explorer-item.is-selected > .explorer-label { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); }
+.explorer-item.is-focused > .explorer-label { box-shadow: inset 0 0 0 1.5px var(--sidebar-accent); }
+.explorer-chevron { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); color: var(--sidebar-muted); transition: transform .15s ease; }
 .explorer-chevron-empty { visibility: hidden; }
 .explorer-dir[aria-expanded="true"] > .explorer-label > .explorer-chevron { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .explorer-chevron { transition: none; } }
-.explorer-glyph { flex: none; display: inline-flex; color: var(--muted); }
+/* G2/G3 (SIDEBAR ZOOM RULE): .explorer-glyph had no CSS size at all — the
+   svg's own width="16" height="16" attribute (icons.ts:179~180, shared by
+   every 16px icon() consumer, not just the sidebar) was the only thing
+   sizing it, and CSS attribute defaults don't scale with --font-scale. CSS
+   always wins over the attribute once declared, so these two new rules give
+   the glyph and its chevron sibling the SAME em box (16/13, matching G1) and
+   make the inner <svg> fill that box (100%) instead of trusting the fixed
+   attribute. icons.ts itself stays untouched — it's a shared factory used
+   well outside the sidebar (e.g. .chrome-btn .icon). */
+.explorer-chevron .icon,
+.explorer-glyph .icon { width: 100%; height: 100%; }
+.explorer-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); color: var(--sidebar-muted); }
 /* Folder glyph carries an accent tint (openable container signal); file glyphs
-   stay --muted, and the chevron stays --muted (accent is on the glyph only, so
-   the disclosure twisty and the container color are separate signals). `..`
-   (.explorer-up, not .explorer-dir) is excluded → stays --muted. Theme var only,
-   no hard-coded hex, so all three themes track their own --accent. */
-.explorer-dir > .explorer-label > .explorer-glyph { color: var(--accent); }
+   stay --sidebar-muted, and the chevron stays --sidebar-muted (accent is on the
+   glyph only, so the disclosure twisty and the container color are separate
+   signals). `..` (.explorer-up, not .explorer-dir) is excluded → stays
+   --sidebar-muted. Sidebar var only (no hard-coded hex, no global --accent),
+   so all three themes track their own --sidebar-accent. */
+.explorer-dir > .explorer-label > .explorer-glyph { color: var(--sidebar-accent); }
 .explorer-name { overflow: hidden; text-overflow: ellipsis; }
 .explorer-up > .explorer-label { font-weight: 600; }
 /* Folder-row favorite star (M5, design 분기2/6/제약). tabindex=-1 (out of the
@@ -734,22 +826,22 @@ html, body { margin: 0; height: 100%; }
    hex): dark/light/claude all derive their own faint/hover/filled shades. */
 .explorer-star {
   flex: none; margin-left: auto; display: flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; padding: 0;
+  width: calc(20em / 13); height: calc(20em / 13); padding: 0;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: color-mix(in srgb, var(--muted) 45%, transparent);
-  cursor: pointer;
+  color: color-mix(in srgb, var(--sidebar-muted) 45%, transparent);
+  cursor: pointer; font: inherit;
   transition: color .12s ease, background-color .12s ease;
 }
-.explorer-label:hover .explorer-star { color: var(--fg); }
-.explorer-star:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
+.explorer-label:hover .explorer-star { color: var(--sidebar-fg); }
+.explorer-star:hover { background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); color: var(--sidebar-fg); }
 .explorer-star.is-favorite,
 .explorer-label:hover .explorer-star.is-favorite,
-.explorer-star.is-favorite:hover { color: var(--accent); }
-.explorer-star:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
-.explorer-star .icon { width: 13px; height: 13px; }
+.explorer-star.is-favorite:hover { color: var(--sidebar-accent); }
+.explorer-star:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
+.explorer-star .icon { width: 1em; height: 1em; }
 /* Non-markdown files: visible for context, but greyed + inert (mermark opens
    markdown only — a click is a no-op, not a broken read_file view). */
-.explorer-file.is-nonmd > .explorer-label { color: var(--muted); cursor: default; }
+.explorer-file.is-nonmd > .explorer-label { color: var(--sidebar-muted); cursor: default; }
 .explorer-file.is-nonmd > .explorer-label:hover { background: transparent; }
 /* A folder's lazily-loaded children group: a vertical block below the label.
    Indent is on each child item (via --level), so the group itself adds none. */
@@ -1246,18 +1338,18 @@ html, body { margin: 0; height: 100%; }
    flex, [hidden] display, background, border are all inherited from there), so
    only the list-specific rules below are bespoke. */
 .recent-list { display: flex; flex-direction: column; padding: 2px 4px 8px; }
-.recent-empty { padding: .5em; color: var(--muted); }
+.recent-empty { padding: .5em; color: var(--sidebar-muted); }
 .recent-empty[hidden] { display: none; }
 .recent-item {
   display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: var(--fg); font: inherit; padding: 4px 8px; cursor: pointer;
+  color: var(--sidebar-fg); font: inherit; padding: 4px 8px; cursor: pointer;
   overflow: hidden; transition: background-color .12s ease;
 }
-.recent-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.recent-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
-.recent-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
-.recent-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
+.recent-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
+.recent-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
+.recent-name { font-size: 1em; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Shared LEFT-truncating path label (src/chrome/path-label.ts's
    truncatedPathLabel) — used by both this panel and the favorites section
    below, so the rule lives in one place instead of two duplicated blocks
@@ -1270,7 +1362,7 @@ html, body { margin: 0; height: 100%; }
    visible). CSS-only — no JS width measurement. */
 .path-label {
   direction: rtl; text-align: left;
-  font-size: 11px; color: var(--muted);
+  font-size: calc(11em / 13); color: var(--sidebar-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .path-label > bdi { direction: ltr; unicode-bidi: isolate; }
@@ -1285,44 +1377,49 @@ html, body { margin: 0; height: 100%; }
    job (.explorer-star above) — the header's star is a decorative glyph only. */
 .explorer-favorites {
   flex: none; max-height: 40vh; overflow-y: auto;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--sidebar-border);
   display: flex; flex-direction: column;
 }
 .favorites-header {
   display: flex; align-items: center; gap: 6px;
 }
-.favorites-header-glyph { flex: none; display: inline-flex; color: var(--muted); }
-.favorites-header-glyph .icon { width: 13px; height: 13px; }
+.favorites-header-glyph { flex: none; display: inline-flex; color: var(--sidebar-muted); }
+/* G6 fix (audit 04, 🔴 2): this glyph lives inside .favorites-header.sidebar-header
+   (favorites-panel.ts:89~94), and .sidebar-header declares font-size: calc(11em / 13)
+   -- an 11px-BASE em, not the 13px root base. So a plain 1em here resolved to
+   11px*scale (a silent 13->11px shrink at scale=1), not the intended 13px*scale.
+   calc(13em / 11) restores the 13px-base size against this 11px-base parent. */
+.favorites-header-glyph .icon { width: calc(13em / 11); height: calc(13em / 11); }
 .favorites-header-label { flex: 1 1 auto; }
 .favorites-list { display: flex; flex-direction: column; padding: 2px 4px 8px; }
-.favorites-empty { padding: .5em; color: var(--muted); }
+.favorites-empty { padding: .5em; color: var(--sidebar-muted); }
 .favorites-empty[hidden] { display: none; }
 .favorites-item {
   position: relative; display: flex; flex-direction: column; gap: 1px; width: 100%;
   text-align: left; background: transparent; border: none;
   border-radius: var(--radius-sm, 6px);
-  color: var(--fg); font: inherit; padding: 4px 26px 4px 8px; cursor: pointer;
+  color: var(--sidebar-fg); font: inherit; padding: 4px 2em 4px 8px; cursor: pointer;
   overflow: hidden; transition: background-color .12s ease;
 }
-.favorites-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.favorites-item:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
-.favorites-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
-.favorites-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.favorites-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
+.favorites-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
+.favorites-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
+.favorites-name { font-size: 1em; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Left-truncating path label: see .path-label above (shared with the
    recent panel's former .recent-path rule; favorites-panel.ts builds it via
    chrome/path-label.ts's truncatedPathLabel). */
 .favorites-remove {
   position: absolute; top: 4px; right: 4px;
   display: flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; padding: 0;
+  width: calc(18em / 13); height: calc(18em / 13); padding: 0;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: var(--muted); cursor: pointer; opacity: 0;
+  color: var(--sidebar-muted); cursor: pointer; opacity: 0; font: inherit;
   transition: opacity .12s ease, background-color .12s ease, color .12s ease;
 }
 .favorites-item:hover .favorites-remove,
 .favorites-item:focus-within .favorites-remove { opacity: 1; }
-.favorites-remove:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
-.favorites-remove .icon { width: 12px; height: 12px; }
+.favorites-remove:hover { background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); color: var(--sidebar-fg); }
+.favorites-remove .icon { width: calc(12em / 13); height: calc(12em / 13); }
 
 /* Keybind settings control (단축키 category). One row per rebindable action:
    label · current chord · 재정의 (capture) · 기본값 (reset), with 전체 리셋 on

@@ -118,6 +118,45 @@ describe("highlight parsing", () => {
       ["Highlight", "==marked=="],
     ]);
   });
+
+  describe("nested inline markup inside ==highlight==", () => {
+    it("parses ==**bold**== with a StrongEmphasis child", () => {
+      expect(nodesOf("==**bold**==", "Highlight", "StrongEmphasis")).toEqual([
+        ["Highlight", "==**bold**=="],
+        ["StrongEmphasis", "**bold**"],
+      ]);
+    });
+    it("parses ==*em*== with an Emphasis child", () => {
+      expect(nodesOf("==*em*==", "Highlight", "Emphasis")).toEqual([
+        ["Highlight", "==*em*=="],
+        ["Emphasis", "*em*"],
+      ]);
+    });
+    it("parses ==`code`== with an InlineCode child", () => {
+      expect(nodesOf("==`code`==", "Highlight", "InlineCode")).toEqual([
+        ["Highlight", "==`code`=="],
+        ["InlineCode", "`code`"],
+      ]);
+    });
+    it("parses ==[link](url)== with a Link child", () => {
+      expect(nodesOf("==[link](url)==", "Highlight", "Link")).toEqual([
+        ["Highlight", "==[link](url)=="],
+        ["Link", "[link](url)"],
+      ]);
+    });
+    it("still parses the reverse **==hl==** (Emphasis wrapping Highlight)", () => {
+      expect(nodesOf("**==hl==**", "Highlight", "StrongEmphasis")).toEqual([
+        ["StrongEmphasis", "**==hl==**"],
+        ["Highlight", "==hl=="],
+      ]);
+    });
+    it("mixes plain text and nested markup in one highlight", () => {
+      expect(nodesOf("==a **b** c==", "Highlight", "StrongEmphasis")).toEqual([
+        ["Highlight", "==a **b** c=="],
+        ["StrongEmphasis", "**b**"],
+      ]);
+    });
+  });
 });
 
 // M7 (CJK-friendly bold) is implemented as a live-preview decoration layer,
