@@ -176,12 +176,17 @@
 body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); margin: 0; }
 
 html, body { margin: 0; height: 100%; }
-/* #app is a flex column: editor fills the space, a fixed status bar sits below. */
+/* #app is a flex column with ONE child, .workspace, which fills the window. */
 #app { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-/* .workspace is the flex ROW between #app's column and the editor: the explorer
-   sidebar (left) + the editor host (right). The status bar stays full-width
-   below it. */
+/* .workspace is a flex ROW spanning the FULL window height: the sidebar rail
+   (left, one of the .sidebar-aside panels, full top~bottom) + .main-column
+   (right). Full height here — not just around the editor — is what makes the
+   rail a proper VS Code/Slack-style vertical rail instead of a box pinched
+   between a full-width header and footer. */
 .workspace { flex: 1; min-height: 0; display: flex; flex-direction: row; }
+/* .main-column is the right-hand editor column: title-bar / editor-host /
+   status-bar stacked, scoped to the space right of the sidebar rail. */
+.main-column { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .editor-host { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
 .cm-editor { height: 100%; }
 /* Center the reading column (width = --measure, a ch count). CM makes .cm-scroller a flex row with the
@@ -490,14 +495,19 @@ html, body { margin: 0; height: 100%; }
 .cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); }
 .cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); }
 
-/* Top title-bar — custom window chrome, OUTSIDE .workspace (#app = column(
-   .title-bar, .workspace, .status-bar)). Same "no .cm-content/.cm-line here"
-   rule as the status bar below: zero contact with the ZOOM GUARD. macOS keeps
-   the native Overlay traffic lights (drawn by the OS on top of the webview,
-   set up on the Rust side via with_document_chrome) and this strip only
-   reserves an inset so its content doesn't collide with them. Other platforms
-   get decorations(false) on the Rust side, so the right-aligned window-controls
-   cluster below is the ONLY window chrome those platforms have. */
+/* Top title-bar — custom window chrome, scoped to .main-column (#app =
+   column(.workspace = row(sidebar-aside*, sash, .main-column = column(
+   .title-bar, .editor-host, .status-bar)))). Same "no .cm-content/.cm-line
+   here" rule as the status bar below: zero contact with the ZOOM GUARD. macOS
+   keeps the native Overlay traffic lights (drawn by the OS on top of the
+   webview, set up on the Rust side via with_document_chrome) and this strip
+   only reserves an inset so its content doesn't collide with them — but only
+   when the sidebar rail is CLOSED and .main-column starts at the window's
+   left edge (see the mac inset drop rule below .sidebar-aside for the OPEN
+   case, where .sidebar-top-strip takes over traffic-light clearance instead).
+   Other platforms get decorations(false) on the Rust side, so the
+   right-aligned window-controls cluster below is the ONLY window chrome
+   those platforms have. */
 :root {
   --traffic-light-inset: 78px; /* mac native traffic-light cluster width — realistic tune spot */
   /* Close-button hover only: OS convention red (Windows-style), not a brand
@@ -519,8 +529,10 @@ html, body { margin: 0; height: 100%; }
 
 /* Bottom status bar — all editor chrome lives here, out of the content. A
    shadcn/Raycast-toned strip: taller (36px) for a comfortable hit area, surface
-   bg under a hairline top, 13px body. The status bar sits OUTSIDE the CM measure
-   root, so none of this touches the ZOOM GUARD (no .cm-content/.cm-line here). */
+   bg under a hairline top, 13px body. Scoped to .main-column (below
+   .editor-host), so it spans the editor column's width, not the window's —
+   the status bar sits OUTSIDE the CM measure root either way, so none of this
+   touches the ZOOM GUARD (no .cm-content/.cm-line here). */
 .status-bar { flex: none; height: 36px; display: flex; align-items: center; gap: .25em; padding: 0 .5em; border-top: 1px solid var(--border); background: var(--surface); font-size: 13px; color: var(--muted); user-select: none; }
 .status-spacer { flex: 1; }
 .status-pos { font-variant-numeric: tabular-nums; padding: 0 .5em; color: var(--muted); }
@@ -706,12 +718,33 @@ html, body { margin: 0; height: 100%; }
 }
 .sidebar-aside[hidden] { display: none; }
 
-/* Drag sash: a thin divider between the left sidebar shell and the editor
-   host (src/sidebar/sash.ts). Visibility is CSS-only — hidden unless a
+/* Full-height rail's window-chrome band (title-bar.ts createSidebarTopStrip) —
+   same 36px height as .title-bar. sticky + an opaque --sidebar-bg: the
+   .sidebar-aside itself is the scroll container (outline/recent scroll as a
+   single region), so on scroll the strip stays pinned at the top and content
+   never bleeds up past it into the mac traffic-light area (explorer scrolls
+   its own inner tree, so sticky here is a harmless no-op for it). No
+   font-size declaration — SIDEBAR ZOOM RULE's px-font-size sweep
+   (tests/sidebar-zoom.test.ts T2) only forbids sizing TEXT in px; this is a
+   window-chrome height, the same category as .title-bar's own 36px. */
+.sidebar-top-strip { flex: none; position: sticky; top: 0; z-index: 1; height: 36px; background: var(--sidebar-bg); }
+
+/* When the rail is open, the traffic lights sit on the rail (the strip above
+   clears them there), NOT on .main-column — .title-bar is no longer the
+   window's left edge, so its mac inset goes back to ordinary padding. When
+   the rail is closed, .main-column IS the left edge again and .title-bar.mac
+   (above) keeps its full --traffic-light-inset. Same sibling-combinator
+   pattern as the sash rule below (aside precedes .main-column in DOM order),
+   so open/close tracks via CSS alone — no JS state to sync. */
+.sidebar-aside:not([hidden]) ~ .main-column > .title-bar.mac { padding-left: .5em; }
+
+/* Drag sash: a thin divider between the left sidebar rail and .main-column
+   (src/sidebar/sash.ts). Visibility is CSS-only — hidden unless a
    .sidebar-aside sibling is open (general sibling combinator), so it never
    needs JS to track closeOtherSidebars/open-close state. Theme tokens only
    (no hardcoded hex): a 1px --border line at rest, an --accent tint on hover
-   or while dragging. */
+   or while dragging. Now spans the full window height (both sides of it —
+   the rail and .main-column — are full-height siblings of .workspace). */
 .workspace-sash {
   display: none; flex: none; width: 5px; cursor: col-resize;
   background: var(--border);

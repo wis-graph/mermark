@@ -44,7 +44,7 @@ import { createSettingsButton } from "./settings/panel/modal";
 import { copyBundleToClipboard } from "./bundle";
 import { registerHandler, installDispatcher, bindKeybindings } from "./shortcuts/registry";
 import { arrangeStatusBar } from "./status-bar";
-import { createTitleBar, arrangeTitleBar } from "./title-bar";
+import { createTitleBar, arrangeTitleBar, createSidebarTopStrip } from "./title-bar";
 import { createBreadcrumb } from "./breadcrumb";
 import { createRecentPanel } from "./recent/recent-panel";
 import { pushRecent, pruneMissing } from "./recent/recent-docs";
@@ -196,24 +196,23 @@ async function boot() {
   const root = document.querySelector<HTMLDivElement>("#app")!;
   const file = new URLSearchParams(location.search).get("file");
 
-  // #app is a flex column: the editor scrolls inside `host`, with a title-bar
-  // pinned above it (sidebar toggles, open-path, mode/theme/settings — M2) and
-  // a status bar pinned below it (save state, cursor position, M3's breadcrumb
-  // slot) — no more controls floating over the content. host + bar are built
-  // ONCE; re-opening a file swaps only the editor inside host.
+  // #app is a flex column holding ONE child, .workspace, which is now a flex
+  // ROW spanning the full window height: the sidebar rail (left, full-height —
+  // see the strip loop below) + .main-column (right: title-bar / editor-host /
+  // status-bar). This keeps the dark rail from being clipped top/bottom by a
+  // full-width header/footer (the pre-rail layout's problem). host + bar are
+  // built ONCE; re-opening a file swaps only the editor inside host. host is
+  // unchanged inside .main-column, so every host.querySelector(".cm-scroller")
+  // reference, the measure tree, and the ⌘± zoom guard are untouched.
   root.innerHTML = "";
   const host = el("div", "editor-host");
-  // .workspace is a flex ROW: the explorer sidebar (left) + the editor host
-  // (right). The status bar stays full-width below it (VSCode-style), so
-  // #app = column( titleBar, workspace(row: aside | host), bar ). host is
-  // unchanged inside workspace, so every host.querySelector(".cm-scroller")
-  // reference, the measure tree, and the ⌘± zoom guard are untouched — the
-  // title-bar strip sits entirely outside .workspace.
   const workspace = el("div", "workspace");
-  workspace.append(host);
+  const main = el("div", "main-column");
   const bar = el("div", "status-bar");
   const titleBar = createTitleBar();
-  root.append(titleBar.el, workspace, bar);
+  main.append(titleBar.el, host, bar);
+  workspace.append(main);
+  root.append(workspace);
 
   // Boot mode = the panel's defaultMode (seed the live modeSetting from it),
   // then read it. After boot, ⌘E only moves modeSetting; defaultMode re-seeds
@@ -412,7 +411,7 @@ async function boot() {
   });
   // The explorer + outline + recent are LEFT sidebars (not footer popovers):
   // mount all three as the leading children of .workspace so they sit left of
-  // the editor host. They are mutually exclusive (one visible at a time via
+  // .main-column. They are mutually exclusive (one visible at a time via
   // closeOtherSidebars, 3-way as of M5 — favorites is no longer a sibling
   // sidebar, it's hosted INSIDE explorer.aside, see favoritesSlot above), so
   // their left-to-right order is never seen simultaneously — prepend order
@@ -420,12 +419,18 @@ async function boot() {
   workspace.prepend(outline.aside);
   workspace.prepend(explorer.aside);
   workspace.prepend(recent.aside);
-  // The drag sash sits between whichever left sidebar is open and the editor
-  // host. DOM order: recent.aside, explorer.aside, outline.aside, sash, host.
+  // Full-height rail's window-chrome band: each aside gets its own
+  // sidebar-top-strip (mac traffic-light clearance + drag region — see
+  // title-bar.ts). This is the shell's (main.ts's) job, not each panel's, so
+  // the panels stay unaware of window chrome (dependency direction: shell →
+  // panel, never the reverse).
+  for (const aside of [recent.aside, explorer.aside, outline.aside]) aside.prepend(createSidebarTopStrip());
+  // The drag sash sits between whichever left sidebar is open and .main-column.
+  // DOM order: recent.aside, explorer.aside, outline.aside, sash, main-column.
   // Its own visibility is CSS-only (styles.css: hidden unless a sidebar
   // sibling is open) — no JS coupling to closeOtherSidebars needed.
   const sash = createSidebarSash();
-  host.before(sash.el);
+  main.before(sash.el);
 
   // The recent panel is a sink of recentDocsSetting: re-render on every change
   // (no-op while closed). Single subscription — no hand fan-out.

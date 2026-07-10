@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => winMock,
 }));
 
-import { createTitleBar } from "../src/title-bar";
+import { createTitleBar, createSidebarTopStrip } from "../src/title-bar";
 
 describe("title-bar", () => {
   beforeEach(() => {
@@ -77,5 +77,16 @@ describe("title-bar", () => {
     const buttons = el.querySelectorAll(".window-controls button");
     expect(buttons.length).toBe(3);
     buttons.forEach((b) => expect(b.hasAttribute("data-tauri-drag-region")).toBe(false));
+  });
+
+  // Full-height sidebar rail (_workspace/01_architect_design.md): the rail's
+  // window-chrome band. Same shape as createDragSpacer — a childless element
+  // carrying data-tauri-drag-region (M1 rule: a child WITHOUT the attribute
+  // is a dead zone for window dragging).
+  it("createSidebarTopStrip: className, drag-region attribute, no children", () => {
+    const strip = createSidebarTopStrip();
+    expect(strip.className).toBe("sidebar-top-strip");
+    expect(strip.hasAttribute("data-tauri-drag-region")).toBe(true);
+    expect(strip.childElementCount).toBe(0);
   });
 });

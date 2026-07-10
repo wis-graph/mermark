@@ -8,7 +8,7 @@ import {
 // ---------------------------------------------------------------------------
 // Left-sidebar width sash: a thin draggable divider between the sidebar shell
 // (.sidebar-aside, shared by the explorer + outline panels — one shell, one
-// width) and the editor host. Visibility is CSS-only
+// width) and .main-column (title-bar/editor-host/status-bar). Visibility is CSS-only
 // (`.sidebar-aside:not([hidden]) ~ .workspace-sash { display: block }` in
 // styles.css) — this module never toggles visibility itself, so the sash
 // auto-hides when both sidebars are closed and auto-shows when either opens,

@@ -1,6 +1,7 @@
-// Custom title-bar chrome strip — the plain-DOM crown of #app, sitting above
-// .workspace (see main.ts boot: #app = column(.title-bar, .workspace, .status-bar)).
-// Same shape as status-bar.ts: no framework, no reactive plumbing, cold-load ~0.
+// Custom title-bar chrome strip — the plain-DOM crown of .main-column, sitting
+// above .editor-host (see main.ts boot: #app = row(.sidebar-aside*, sash,
+// .main-column = column(.title-bar, .editor-host, .status-bar))). Same shape
+// as status-bar.ts: no framework, no reactive plumbing, cold-load ~0.
 //
 // Platform contract (design M1): macOS keeps the native traffic lights via the
 // Rust-side Overlay title-bar style (with_document_chrome in lib.rs) — this
@@ -168,6 +169,21 @@ function insertBeforeWindowControls(bar: HTMLElement, ...els: HTMLElement[]): vo
 function createDragSpacer(): HTMLElement {
   const s = document.createElement("span");
   s.className = "title-spacer";
+  s.setAttribute("data-tauri-drag-region", "");
+  return s;
+}
+
+/** The window-chrome band at the top of the full-height sidebar rail (same
+ *  36px height as .title-bar). Two jobs: (1) mac — the native Overlay traffic
+ *  lights sit above this band, so it pushes rail content (.sidebar-header)
+ *  below the lights instead of the title-bar (which no longer starts at the
+ *  window's left edge once the rail is open); (2) every platform — a window
+ *  drag region, same M1 rule as createDragSpacer: a child WITHOUT the
+ *  attribute is a dead zone, so this stays a single childless element.
+ *  Pure construction (no wiring) — main.ts prepends one per aside. */
+export function createSidebarTopStrip(): HTMLElement {
+  const s = document.createElement("div");
+  s.className = "sidebar-top-strip";
   s.setAttribute("data-tauri-drag-region", "");
   return s;
 }
