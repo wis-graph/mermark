@@ -22,18 +22,36 @@ export function extensionOf(name: string): string {
   return name.slice(dot + 1).toLowerCase();
 }
 
+/** Extensions mermark treats as images — the single owner of "is this file an
+ *  image" for BOTH the explorer's open-gate (isImageEntry) and its icon glyph
+ *  (EXT_ICON below, derived from this set so the two can never disagree).
+ *  Keyed by the lowercased extension `extensionOf` returns. */
+export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+  "avif",
+]);
+
+/** Is `ext` (already lowercased by `extensionOf`) one mermark renders as an
+ *  image? Pure query — the single source the explorer's open-gate consults. */
+export function isImageExtension(ext: string): boolean {
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
 /** Extension → curated icon id. A tight set (one shared icon per file family)
  *  so the explorer reads at a glance; anything not listed falls back to the
- *  generic `file`. Keyed by the lowercased extension `extensionOf` returns. */
+ *  generic `file`. Keyed by the lowercased extension `extensionOf` returns.
+ *  Image extensions are spread in from IMAGE_EXTENSIONS so the icon map and
+ *  the open-policy set can never drift apart. */
 const EXT_ICON: Readonly<Record<string, IconName>> = {
   md: "file-text",
   markdown: "file-text",
-  png: "file-image",
-  jpg: "file-image",
-  jpeg: "file-image",
-  gif: "file-image",
-  svg: "file-image",
-  webp: "file-image",
+  ...Object.fromEntries([...IMAGE_EXTENSIONS].map((ext) => [ext, "file-image" as const])),
   json: "braces",
   js: "file-code",
   ts: "file-code",

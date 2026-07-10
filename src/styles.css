@@ -175,7 +175,12 @@
 }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); margin: 0; }
 
-html, body { margin: 0; height: 100%; }
+/* The shell owns the viewport: body itself NEVER scrolls (every scroll lives in
+   an inner component — .cm-scroller, .sidebar-aside, modal panes). overflow:
+   hidden kills stray body scrollbars; overscroll-behavior: none stops inner
+   scrollers from CHAINING into the body when they hit their end (the macOS
+   rubber-band "whole window shifts" propagation, 2026-07-11 report). */
+html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
 /* #app is a flex column with ONE child, .workspace, which fills the window. */
 #app { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 /* .workspace is a flex ROW spanning the FULL window height: the sidebar rail
@@ -241,18 +246,20 @@ html, body { margin: 0; height: 100%; }
 .cm-editor .cm-cursor { border-left-color: var(--caret); }
 .cm-editor .cm-content { caret-color: var(--caret); }
 /* fold toggles sit in the gutter, which `justify-content: center` parks right
-   beside the centered column. Markers stay faint until you hover the editor. */
+   beside the centered column. Markers rest at a discoverable whisper (.3 — a
+   fully-hidden rest state made the feature invisible, 2026-07-11 design pass)
+   and firm up when the editor is hovered. */
 /* `.cm-editor` prefix beats CM's runtime gutter theme (a light-grey bg + border
    that otherwise shows as a pale bar down the left edge in dark mode). */
 .cm-editor .cm-gutters { background: transparent; border-right: none; color: var(--muted); }
-.cm-foldGutter { width: 1.1em; }
+.cm-foldGutter { width: 1.4em; }
 /* Fold marker: a chevron SVG (foldMarkerDOM) that rotates instead of swapping
    glyphs. The span owns color/opacity transitions; the SVG owns the rotation. */
-.cm-fold-marker { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--muted); opacity: 0; transition: opacity .12s, color .12s; }
-.cm-fold-marker svg { width: .9em; height: .9em; display: block; transition: transform .15s ease; transform-origin: center; }
+.cm-fold-marker { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--muted); opacity: .3; transition: opacity .12s, color .12s; }
+.cm-fold-marker svg { width: 1.1em; height: 1.1em; display: block; transition: transform .15s ease; transform-origin: center; }
 /* open = chevron down (rotate 0); closed = chevron right (rotate -90°). */
 .cm-fold-marker-closed svg { transform: rotate(-90deg); }
-.cm-editor:hover .cm-fold-marker { opacity: .5; }
+.cm-editor:hover .cm-fold-marker { opacity: .75; }
 .cm-fold-marker:hover { opacity: 1 !important; color: var(--fg); }
 /* a collapsed section always shows its toggle at full strength (not the muted
    hover-fade color the expanded chevron uses) — closed folds must read as
@@ -291,9 +298,17 @@ html, body { margin: 0; height: 100%; }
    drawSelection() also unconditionally installs `hideNativeSelection`, which
    forces `.cm-line ::selection` transparent — MODE-INDEPENDENT (vim on AND off).
    So inside `.cm-line`, native ::selection never paints; the .cm-selectionBackground
-   overlay above is the only selection paint there (and it sits at z-index -1,
-   which is why in-line surface backgrounds must use --surface-veil, not an
-   opaque --surface — see the SELECTION PERMEABILITY RULE at :root).
+   overlay above is the only selection paint there.
+   LAYER ORDER (2026-07-11 design pass): CM ships the selection layer at
+   z-index -1 (UNDER the content), which meant every opaque in-line background
+   (==highlight==, custom-theme chips, …) punched a hole in the selection.
+   The --surface-veil translucency (SELECTION PERMEABILITY RULE, :root) fixed
+   the big surfaces but is whack-a-mole by nature. The layer now sits ABOVE
+   the content (z-index 1): --selection-bg is 22~35% alpha in every theme, so
+   glyphs stay legible under the wash and the selection is guaranteed visible
+   over ANY background — no per-element veil needed for visibility (veils stay
+   for their own aesthetics). The layer is pointer-events:none (CM default),
+   so clicks/widget interactions pass through unchanged.
    The ::selection rule below stays live only through its `.cm-content ::selection`
    arm: it targets content OUTSIDE .cm-line — block-widget DOM (e.g. read-mode
    `.cm-codeblock`) where hideNativeSelection's `.cm-line`-scoped kill switch does
@@ -302,6 +317,10 @@ html, body { margin: 0; height: 100%; }
    forces it transparent — kept only for selector symmetry.) Measure-inert overlay
    — ZOOM GUARD holds. */
 .cm-editor .cm-selectionBackground { background: var(--selection-bg) !important; }
+/* !important: CM's layer() writes z-index as an INLINE style on the layer div
+   (above:false → -2), and only an !important sheet rule outranks an inline
+   style. Same escalation the .cm-selectionBackground token above needs. */
+.cm-editor .cm-selectionLayer { z-index: 1 !important; }
 .cm-editor .cm-content ::selection,
 .cm-editor .cm-line ::selection { background: var(--selection-bg); }
 /* ZOOM GUARD: these add/replace `color` ONLY (theme-editor per-element colors).
@@ -331,7 +350,13 @@ html, body { margin: 0; height: 100%; }
    mode `.cm-code-line` (which gets wrapping for free from
    EditorView.lineWrapping on the real editor line). */
 .cm-codeblock code { font-family: ui-monospace, monospace; letter-spacing: normal; white-space: pre-wrap; overflow-wrap: anywhere; }
-.cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: .6em; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
+.cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: 2.4em; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
+/* Copy-to-clipboard button: hidden until the code block is hovered (or the
+   button itself has focus/hover), fixed to the top-right corner regardless of
+   scroll since `.cm-codeblock` is the `position: relative` host. */
+.cm-codeblock-copy { position: absolute; top: .4em; right: .4em; width: 1.6em; height: 1.6em; display: inline-flex; align-items: center; justify-content: center; padding: 0; line-height: 1; background: color-mix(in srgb, var(--surface) 85%, transparent); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); cursor: pointer; opacity: 0; transition: opacity .12s ease, color .12s ease; }
+.cm-codeblock:hover .cm-codeblock-copy, .cm-codeblock-copy:focus-visible { opacity: .8; }
+.cm-codeblock-copy:hover { opacity: 1; color: var(--fg); }
 /* revealed (editing) fenced code keeps a code background, so it still reads as a
    code block while you edit it. */
 .cm-code-line { background: var(--surface-veil); font-family: ui-monospace, monospace; letter-spacing: normal; }
@@ -682,6 +707,54 @@ html, body { margin: 0; height: 100%; }
 .conflict-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
 .conflict-use-external { color: #d97706; border-color: color-mix(in srgb, #d97706 55%, transparent); }
 .conflict-use-external:hover { background: #d97706; color: #fff; border-color: #d97706; }
+
+/* Image viewer: a body-level lightbox for explorer image clicks, structurally
+   identical to the conflict modal (sibling of .editor-host, outside the CM
+   measure tree → ZOOM GUARD holds). Checkerboard stage gives transparent PNGs
+   contrast; fit sizing never force-enlarges a small image. */
+.viewer-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, #000 55%, transparent);
+}
+.image-viewer {
+  position: relative;
+  display: flex; flex-direction: column; gap: 10px;
+  max-width: 94vw; max-height: 92vh;
+  padding: 16px; border-radius: var(--radius-lg, 12px);
+  background: var(--bg); color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  box-shadow: 0 16px 48px color-mix(in srgb, #000 35%, transparent);
+}
+.image-viewer-close {
+  position: absolute; top: 8px; right: 8px; z-index: 1;
+  width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; line-height: 1; font-size: 15px; cursor: pointer;
+  background: var(--surface); color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: var(--radius-sm, 6px);
+}
+.image-viewer-close:hover { color: var(--fg); }
+.image-viewer-stage {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  /* checkerboard: two theme-neutral tones so transparent PNG edges are visible
+     in both light and dark. */
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--fg) 8%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--fg) 8%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--fg) 8%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--fg) 8%, transparent) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
+}
+.image-viewer-img { display: block; max-width: 90vw; max-height: 85vh; object-fit: contain; }
+.image-viewer-caption { text-align: center; font-size: 12.5px; color: var(--muted); }
+/* attachPanZoom's reset button (shared with mermaid) — reposition only, same
+   is-transformed show/hide rule as .cm-mermaid. */
+.image-viewer .cm-mermaid-reset { top: .6em; right: .6em; }
 
 /* Open-by-path input row: a thin bar pinned just above the status bar (lives
    outside #app's scroll host, so no .cm-content/.cm-line involved → ZOOM GUARD
@@ -1253,6 +1326,17 @@ html, body { margin: 0; height: 100%; }
 .settings-cat:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); color: var(--fg); }
 .settings-cat.active { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); font-weight: 600; }
 .settings-cat.active::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 3px; height: 1.1em; border-radius: var(--radius-pill); background: var(--accent); }
+/* 업데이트 확인 인라인 결과/설치 제안 (modal.ts) — Tauri v2 웹뷰는 JS
+   confirm/alert가 no-op이라 다이얼로그 대신 설정 사이드바 안에 그린다. */
+.update-note { margin: 2px 4px 6px; padding: 8px 10px; border-radius: var(--radius-md, 8px); background: color-mix(in srgb, var(--fg) 5%, transparent); font-size: 12px; line-height: 1.5; color: var(--fg); display: flex; flex-direction: column; gap: 8px; }
+.update-note[hidden] { display: none; }
+.update-note.is-error { color: #dc2626; background: color-mix(in srgb, #dc2626 10%, transparent); }
+.update-actions { display: flex; gap: 6px; }
+.update-install, .update-later { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: var(--radius-sm, 6px); cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--fg); }
+.update-install { background: var(--accent); color: var(--bg); border-color: transparent; font-weight: 500; }
+.update-install:hover { opacity: .9; }
+.update-install:disabled { opacity: .6; cursor: default; }
+.update-later:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
 .settings-pane { flex: 1; min-width: 0; padding: 1.4em 1.6em; overflow-y: auto; }
 
 /* Rows: roomier padding + hairline-soft dividers; label in Inter, control right. */
@@ -1472,7 +1556,14 @@ html, body { margin: 0; height: 100%; }
 .recent-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
 .recent-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
 .recent-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
-.recent-name { font-size: 1em; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Name line: document glyph + name — the favorites card shape (see
+   .favorites-name-row below), file glyphs muted per the explorer vocabulary
+   (folder=accent, file=muted). */
+.recent-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.recent-glyph { flex: none; display: inline-flex; width: calc(14em / 13); height: calc(14em / 13); color: var(--sidebar-muted); }
+.recent-glyph .icon { width: 100%; height: 100%; }
+.recent-name { flex: 1 1 auto; min-width: 0; font-size: 1em; font-weight: 500; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-item .path-label { padding-left: calc(14em / 13 + 6px); }
 /* Shared LEFT-truncating path label (src/chrome/path-label.ts's
    truncatedPathLabel) — used by both this panel and the favorites section
    below, so the rule lives in one place instead of two duplicated blocks

@@ -7,7 +7,7 @@ import { groups, type Group } from "../registry";
 import { RENDER, runTeardown } from "./controls";
 import type { Setting, Control } from "../store";
 import { icon } from "../../icons";
-import { check } from "@tauri-apps/plugin-updater";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 
@@ -117,30 +117,75 @@ function buildModal(): SettingsModal {
   updateBtn.style.color = "var(--accent)";
   updateBtn.append(icon("refresh-cw"), " 업데이트 확인");
 
+  // 결과/설치 제안이 그려지는 인라인 슬롯. Tauri v2 웹뷰(wry)는 window.confirm/
+  // alert를 구현하지 않은 조용한 no-op이라(2026-07-11 실사용 확인: 업데이트를
+  // 찾아도 confirm()이 창 없이 false를 반환해 버튼이 "죽은" 것처럼 보였다),
+  // 브라우저 다이얼로그 대신 사이드바 안에 DOM으로 그린다.
+  const updateNote = document.createElement("div");
+  updateNote.className = "update-note";
+  updateNote.hidden = true;
+
+  /** 한 줄 결과 표시 (최신/실패). Command (void). */
+  const showUpdateNote = (text: string, isError: boolean): void => {
+    updateNote.replaceChildren(text);
+    updateNote.classList.toggle("is-error", isError);
+    updateNote.hidden = false;
+  };
+
+  /** 발견된 업데이트의 설치 제안 카드: 버전 + [지금 설치하고 재시작] [나중에].
+   *  confirm() 대체 — 설치는 명시적 클릭으로만 진행된다. Command (void). */
+  const offerUpdateInstall = (update: Update): void => {
+    updateNote.replaceChildren();
+    updateNote.classList.remove("is-error");
+    const msg = document.createElement("div");
+    msg.textContent = `v${update.version} 업데이트가 있습니다`;
+    const actions = document.createElement("div");
+    actions.className = "update-actions";
+    const install = document.createElement("button");
+    install.type = "button";
+    install.className = "update-install";
+    install.textContent = "지금 설치하고 재시작";
+    install.addEventListener("click", async () => {
+      install.disabled = true;
+      install.textContent = "다운로드 중...";
+      try {
+        await update.downloadAndInstall();
+        await relaunch();
+      } catch (err) {
+        console.error(err);
+        showUpdateNote(`설치 실패: ${err}`, true);
+      }
+    });
+    const later = document.createElement("button");
+    later.type = "button";
+    later.className = "update-later";
+    later.textContent = "나중에";
+    later.addEventListener("click", () => {
+      updateNote.hidden = true;
+    });
+    actions.append(install, later);
+    updateNote.append(msg, actions);
+    updateNote.hidden = false;
+  };
+
   let isChecking = false;
   updateBtn.addEventListener("click", async () => {
     if (isChecking) return;
     isChecking = true;
     updateBtn.disabled = true;
     updateBtn.textContent = "확인 중...";
+    updateNote.hidden = true;
 
     try {
       const update = await check();
       if (update) {
-        const confirmed = confirm(
-          `새로운 업데이트가 있습니다!\n\n버전: ${update.version}\n게시일: ${update.date ?? "N/A"}\n\n지금 설치하고 재시작하시겠습니까?`
-        );
-        if (confirmed) {
-          updateBtn.textContent = "설치 중...";
-          await update.downloadAndInstall();
-          await relaunch();
-        }
+        offerUpdateInstall(update);
       } else {
-        alert("최신 버전을 사용 중입니다.");
+        showUpdateNote("최신 버전을 사용 중입니다.", false);
       }
     } catch (err) {
       console.error(err);
-      alert(`업데이트 확인 실패:\n${err}`);
+      showUpdateNote(`업데이트 확인 실패: ${err}`, true);
     } finally {
       isChecking = false;
       updateBtn.disabled = false;
@@ -148,6 +193,7 @@ function buildModal(): SettingsModal {
     }
   });
   sidebar.appendChild(updateBtn);
+  sidebar.appendChild(updateNote);
 
   /** Tear down every control currently in the pane (run their stashed unsubscribe
    *  fns) before the DOM is discarded, so no stale subscription survives a swap or

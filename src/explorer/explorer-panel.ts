@@ -1,6 +1,6 @@
 import { icon } from "../icons";
-import { extensionOf, iconNameForEntry } from "./file-icons";
-import { normalizePath } from "../path";
+import { extensionOf, iconNameForEntry, isImageExtension } from "./file-icons";
+import { basename, normalizePath } from "../path";
 import { renderSidebarButton } from "../sidebar-toggle";
 
 /** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
@@ -85,6 +85,12 @@ export interface ExplorerHandlers {
   /** Open an absolute path in the current window. Injected so the panel reuses
    *  main's read_file → commitBeforeSwitch → openInWindow path (no new open code). */
   onOpenFile(absPath: string): void;
+  /** Open an image file in the lightbox viewer. Optional — GATES image entries
+   *  the same way isFavorite/onToggleFavorite gate the favorite star: only when
+   *  injected does an image row lose `.is-nonmd` and become clickable/Enterable
+   *  (see isOpenableEntry). Callers that omit it (existing tests, standalone
+   *  use) keep the pre-viewer behavior exactly — images stay greyed + inert. */
+  onOpenImage?(absPath: string): void;
   /** Called when this sidebar opens, so main can close the other left sidebar
    *  (mutual exclusion). Optional — omitted in unit tests / standalone use. */
   onOpen?(): void;
@@ -140,6 +146,13 @@ function isMarkdownEntry(name: string): boolean {
   return extensionOf(name) === "md";
 }
 
+/** An image file the viewer knows how to display — isMarkdownEntry's sister
+ *  rule, sharing the same `extensionOf` parsing so the two gates never
+ *  disagree on where a name's extension is. Pure query. */
+function isImageEntry(name: string): boolean {
+  return isImageExtension(extensionOf(name));
+}
+
 /** Swap a folder node's glyph to match its open state (`folder` ↔ `folder-open`).
  *  Command (void). Called from the SAME command that sets `aria-expanded`
  *  (expandFolder / collapseFolder) so the glyph and the state can't drift. The
@@ -165,6 +178,7 @@ export function createExplorerPanel({
   listDir,
   getBaseDir,
   onOpenFile,
+  onOpenImage,
   onOpen,
   onRootChange,
   isFavorite,
@@ -172,6 +186,14 @@ export function createExplorerPanel({
   favoritesSlot,
   focusFavorites,
 }: ExplorerHandlers): ExplorerPanel {
+  /** "Does clicking/Entering this row open something?" — isMarkdownEntry's
+   *  reach extended by the gated image case: an image row is only openable
+   *  when onOpenImage was actually injected (isFavorite/onToggleFavorite
+   *  gating shape), so callers that omit it keep every non-md row inert
+   *  exactly as before. Drives BOTH the `.is-nonmd` dim (makeEntry) and the
+   *  activation branch (activateItem) from one rule. Pure query. */
+  const isOpenableEntry = (name: string): boolean =>
+    isMarkdownEntry(name) || (!!onOpenImage && isImageEntry(name));
   const button = create("button", "chrome-btn explorer-btn icon-only") as HTMLButtonElement;
   button.title = "파일 탐색기 (⌘B · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · .. 상위)";
 
@@ -294,7 +316,7 @@ export function createExplorerPanel({
     item.dataset.level = String(level);
     item.style.setProperty("--level", String(level));
     if (e.is_dir) item.setAttribute("aria-expanded", "false");
-    if (!e.is_dir && !isMarkdownEntry(e.name)) item.classList.add("is-nonmd");
+    if (!e.is_dir && !isOpenableEntry(e.name)) item.classList.add("is-nonmd");
 
     const chevron = create("span", e.is_dir ? "explorer-chevron" : "explorer-chevron explorer-chevron-empty");
     if (e.is_dir) chevron.append(icon("chevron-right"));
@@ -413,13 +435,17 @@ export function createExplorerPanel({
     // canonical root"), never a stored value: the very next renderTree call
     // (via changeRoot) resolves it back to canonical, so it can't accumulate.
     up.dataset.path = `${rootPath}/..`;
-    const upChevron = create("span", "explorer-chevron explorer-chevron-empty");
+    // No chevron spacer here (unlike file rows, explorer-panel:299): `..` is a
+    // NAVIGATION row, not a tree node — its glyph sits flush left in the
+    // chevron column, aligned with the folder chevrons above/below it. A
+    // hidden spacer made it the only left-indented row in the tree (2026-07-11
+    // design pass).
     const upGlyph = create("span", "explorer-glyph");
     upGlyph.append(icon("corner-left-up"));
     const upName = create("span", "explorer-name");
     upName.textContent = "..";
     const upLabel = create("div", "explorer-label");
-    upLabel.append(upChevron, upGlyph, upName);
+    upLabel.append(upGlyph, upName);
     up.append(upLabel);
     up.title = "상위 폴더로 (클릭 / Enter)";
     tree.append(up);
@@ -455,11 +481,12 @@ export function createExplorerPanel({
       toggleFolder(item);
       return;
     }
-    if (item.classList.contains("is-nonmd")) return; // non-md is greyed + inert
+    if (item.classList.contains("is-nonmd")) return; // non-md/non-image is greyed + inert
     const path = item.dataset.path;
     if (!path) return;
     selectItem(item);
-    onOpenFile(path);
+    if (onOpenImage && isImageEntry(basename(path))) onOpenImage(path);
+    else onOpenFile(path);
   };
 
   /** → key rule: closed folder = open / open folder = step to first child /

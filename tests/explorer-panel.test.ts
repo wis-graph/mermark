@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createExplorerPanel, type DirEntry } from "../src/explorer/explorer-panel";
+import { createExplorerPanel, type DirEntry, type ExplorerHandlers } from "../src/explorer/explorer-panel";
 
 // ---------------------------------------------------------------------------
 // Explorer LEFT SIDEBAR — a lazy folder tree built from an INJECTED listDir()
@@ -45,11 +45,7 @@ afterEach(() => {
 const flush = () => new Promise<void>((r) => setTimeout(r, 0));
 
 /** Open the panel and settle the initial renderTree. */
-async function openPanel(opts: {
-  listDir: (p: string) => Promise<DirEntry[]>;
-  getBaseDir: () => string;
-  onOpenFile: (p: string) => void;
-}) {
+async function openPanel(opts: ExplorerHandlers) {
   const panel = createExplorerPanel(opts);
   host.append(panel.button, panel.aside);
   panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -488,6 +484,65 @@ describe("explorer: opens markdown only (6)", () => {
     expect(nameOf(focusedItem(panel.aside))).toBe("pic.png");
     press(panel.aside, "Enter");
     expect(onOpenFile).toHaveBeenCalledTimes(1); // Enter on non-md is inert too
+  });
+});
+
+// K. Image entries open via the gated onOpenImage handler (image viewer) -------
+// Same gating shape as isFavorite/onToggleFavorite: onOpenImage injected → an
+// image row loses `.is-nonmd` and becomes openable; omitted → pre-viewer
+// behavior (image row stays greyed + inert) is preserved exactly, which the
+// "6. Only .md opens" describe above already guards.
+describe("explorer: image entries open via onOpenImage when injected (K)", () => {
+  it("injected: image row is NOT .is-nonmd, click selects + calls onOpenImage(absPath), never onOpenFile", async () => {
+    const onOpenFile = vi.fn();
+    const onOpenImage = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile,
+      onOpenImage,
+    });
+
+    const png = items(panel.aside).find((e) => nameOf(e) === "pic.png") as HTMLElement;
+    expect(png.classList.contains("is-nonmd")).toBe(false);
+
+    clickItem(png);
+    expect(onOpenImage).toHaveBeenCalledTimes(1);
+    expect(onOpenImage).toHaveBeenCalledWith("/root/pic.png");
+    expect(onOpenFile).not.toHaveBeenCalled();
+    expect(png.getAttribute("aria-selected")).toBe("true"); // selectItem still runs
+  });
+
+  it("injected: Enter on a focused image row is equivalent to click (single activateItem path)", async () => {
+    const onOpenImage = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      onOpenImage,
+    });
+
+    press(panel.aside, "End"); // focus pic.png (last visible)
+    expect(nameOf(focusedItem(panel.aside))).toBe("pic.png");
+    press(panel.aside, "Enter");
+    expect(onOpenImage).toHaveBeenCalledTimes(1);
+    expect(onOpenImage).toHaveBeenCalledWith("/root/pic.png");
+  });
+
+  it("md rows still route to onOpenFile even when onOpenImage is injected (no cross-wiring)", async () => {
+    const onOpenFile = vi.fn();
+    const onOpenImage = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile,
+      onOpenImage,
+    });
+
+    const md = items(panel.aside).find((e) => nameOf(e) === "a.md") as HTMLElement;
+    clickItem(md);
+    expect(onOpenFile).toHaveBeenCalledWith("/root/a.md");
+    expect(onOpenImage).not.toHaveBeenCalled();
   });
 });
 

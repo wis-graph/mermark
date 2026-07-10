@@ -1,6 +1,7 @@
 import { renderSidebarButton } from "../sidebar-toggle";
 import { basename } from "../path";
 import { truncatedPathLabel } from "../chrome/path-label";
+import { icon } from "../icons";
 
 // ---------------------------------------------------------------------------
 // Recent-documents LEFT SIDEBAR chrome — the same shell as the file explorer /
@@ -94,12 +95,19 @@ export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandl
     for (const path of recent) {
       const item = create("button", "recent-item");
       item.dataset.path = path;
+      // Name line: leading document glyph + name — the favorites card shape
+      // (favorites-panel.ts), muted like the explorer's file glyphs (the
+      // folder=accent / file=muted vocabulary).
+      const nameRow = create("span", "recent-name-row");
+      const glyph = create("span", "recent-glyph");
+      glyph.append(icon("file-text"));
       const name = create("span", "recent-name");
       name.textContent = basename(path);
+      nameRow.append(glyph, name);
       // Left-truncating path label (shared with favorites-panel.ts — see
       // chrome/path-label.ts for the rtl+<bdi> DOM/CSS rule this builds).
       const dir = truncatedPathLabel(path);
-      item.append(name, dir);
+      item.append(nameRow, dir);
       item.title = path;
       listEl.append(item);
     }

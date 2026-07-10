@@ -118,6 +118,7 @@
 - **설정 패널** — 테마 프리셋 드롭다운(다크/라이트/클로드 3종 select), 테마 비주얼 에디터(스워치 그리드 + JSON), 모드/Vim/타이포그래피.
 - **테마 프리셋** — 빌트인 3종: 다크 · 라이트 · **클로드**(Anthropic 에디토리얼 — 크림 캔버스 `#faf9f5` + 잉크 본문, 코랄 link/code, 시스템 세리프 헤딩). 프리셋 선택은 JSON 테마와 코히런스 유지(`loadPreset`/`syncJsonToPreset`).
 - **타이포그래피** — DESIGN.md(ElevenLabs) 타입 시스템, Pretendard 번들, 헤딩 스케일·트래킹. 클로드 테마는 헤딩에 시스템 세리프(`--font-heading`) 적용, 본문은 산스 유지.
+- **이미지 뷰어 (라이트박스)** — 탐색기에서 이미지 파일(`png/jpg/jpeg/gif/webp/svg/bmp/avif`, `file-icons.ts`의 `IMAGE_EXTENSIONS`가 단일 소유) 클릭/Enter → **body-level 오버레이**(`.viewer-backdrop` > `.image-viewer[role=dialog]`, conflict-modal과 동일 골격: Esc/backdrop클릭/닫기버튼, `.editor-host` inert, 이전 focus 복원). **문서 수명주기 무접촉**(스왑 아님 — 열려 있던 마크다운 문서·오토세이브·워처·nav history 전부 그대로, welcome 화면에서도 동일 동작). 이미지 소스는 `resolveImageUrl`(`markdown/image.ts`) 재사용(신규 IPC 0). 체커보드 스테이지 + fit 크기(`max-width:90vw; max-height:85vh; object-fit:contain`, 강제 확대 없음), 하단 캡션(`파일명 — 가로×세로`, 로드 실패 시 안내 문구로 대체). **줌/팬은 mermaid의 `attachPanZoom` 재사용**(타입만 `SVGElement | HTMLImageElement`로 확장, 동작 변경 0 — `panZoomSetting` 공유 게이트). 탐색기 확장점은 optional `onOpenImage`(isFavorite와 동일 게이팅 패턴 — 주입 시에만 이미지가 openable, 미주입 호출자는 기존 `is-nonmd` inert 동작 그대로). don't-stack 싱글턴(`main.ts`의 `openViewer` 슬롯, `openConflict`와 동일 패턴).
 
 ---
 

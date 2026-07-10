@@ -61,6 +61,7 @@ import {
 } from "./history/nav-history";
 import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./file-watch";
 import { openConflictModal } from "./conflict/conflict-modal";
+import { openImageViewer } from "./viewer/image-viewer";
 import { icon, type IconName } from "./icons";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
@@ -334,6 +335,11 @@ async function boot() {
     favoriteFoldersSetting.set(isFavorite(list, abs) ? removeFavorite(list, abs) : pushFavorite(list, abs));
   }
 
+  // Image lightbox don't-stack slot — same shape as `openConflict` below: only
+  // one viewer at a time, and opening a second image closes the first rather
+  // than stacking overlays.
+  let openViewer: { close(): void } | null = null;
+
   // ── File explorer LEFT SIDEBAR. A lazy tree rooted at the live document's
   //    folder: click reads children (list_dir), `..` single-clicks/Enters
   //    upward, a markdown file click/Enter reuses main's open path (read_file →
@@ -343,7 +349,10 @@ async function boot() {
   //    renders/toggles each folder row's favorite star (isFavorite/
   //    onToggleFavorite) — explorer never imports the favorites domain itself,
   //    it only receives a DOM node + two closures (same injection shape as
-  //    listDir/onOpenFile).
+  //    listDir/onOpenFile). onOpenImage opens the lightbox viewer (§ image
+  //    viewer design) — unlike onOpenFile it never branches on `!file`: the
+  //    viewer is a body-level overlay, not a document swap, so it works the
+  //    same whether or not a markdown document is open (welcome screen included).
   const explorer = createExplorerPanel({
     listDir: (p) => invoke<DirEntry[]>("list_dir", { path: p }),
     getBaseDir: () => currentBaseDir,
@@ -355,6 +364,10 @@ async function boot() {
         await commitBeforeSwitch();
         openInWindow(absPath, fresh);
       }
+    },
+    onOpenImage: (absPath) => {
+      openViewer?.close();
+      openViewer = openImageViewer(absPath);
     },
     onOpen: () => closeOtherSidebars("explorer"),
     onRootChange: (root) => breadcrumb.render(root),

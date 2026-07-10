@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extensionOf, iconNameForEntry } from "../src/explorer/file-icons";
+import { extensionOf, iconNameForEntry, isImageExtension } from "../src/explorer/file-icons";
 
 // ---------------------------------------------------------------------------
 // Pure extension parsing + icon map. No DOM, no backend — just the two named
@@ -64,5 +64,25 @@ describe("iconNameForEntry: folders swap on open state; files map by extension",
     expect(iconNameForEntry("bin.xyz", false, false)).toBe("file");
     expect(iconNameForEntry("README", false, false)).toBe("file");
     expect(iconNameForEntry(".gitignore", false, false)).toBe("file");
+  });
+});
+
+describe("isImageExtension: the single image-extension SSOT (explorer open-gate + icon map)", () => {
+  it("recognizes every image extension mermark opens in the viewer", () => {
+    for (const ext of ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]) {
+      expect(isImageExtension(ext)).toBe(true);
+    }
+  });
+
+  it("rejects non-image extensions and uppercase input (extensionOf already lowercases)", () => {
+    expect(isImageExtension("md")).toBe(false);
+    expect(isImageExtension("ts")).toBe(false);
+    expect(isImageExtension("")).toBe(false);
+    expect(isImageExtension("PNG")).toBe(false);
+  });
+
+  it("iconNameForEntry maps bmp/avif to file-image (EXT_ICON derives from IMAGE_EXTENSIONS)", () => {
+    expect(iconNameForEntry("shot.bmp", false, false)).toBe("file-image");
+    expect(iconNameForEntry("a.avif", false, false)).toBe("file-image");
   });
 });

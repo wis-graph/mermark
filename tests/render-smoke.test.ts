@@ -219,6 +219,24 @@ describe("full-editor render smoke", () => {
     e.view.destroy();
   });
 
+  it("renders a copy button on a code block widget and copies the raw code on click", () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const doc = "intro\n\n```ts\nconst a = 1;\n```\n\ntail";
+    const e = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "edit" });
+    e.view.dispatch({ selection: { anchor: 0 } });
+    (e.view as unknown as { measure(): void }).measure();
+    const btn = e.view.contentDOM.querySelector(".cm-codeblock-copy");
+    expect(btn).not.toBeNull();
+    expect(btn?.getAttribute("aria-label")).toBe("코드 복사");
+    // clicking the button copies the fence's raw code body, not the fence markers
+    btn?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(writeText).toHaveBeenCalledWith("const a = 1;");
+    // the click landed on the button, not on a caret placement inside the block
+    expect(e.view.contentDOM.querySelector(".cm-codeblock")).not.toBeNull();
+    e.view.destroy();
+  });
+
   it("renders a mermaid fence as a block widget (StateField path); reveals raw on caret entry", () => {
     const doc = "intro\n\n```mermaid\ngraph TD\n  A-->B\n```\n\ntail";
     const view = mount(host, doc);

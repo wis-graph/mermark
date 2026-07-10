@@ -237,7 +237,7 @@ function isTransformed(state: PanZoomState): boolean {
  *  the dblclick + reset toggle; pan/wheel pass false for instant feedback. */
 function updateTransform(
   host: HTMLElement,
-  svg: SVGElement,
+  svg: SVGElement | HTMLImageElement,
   state: PanZoomState,
   withTransition = false,
 ): void {
@@ -251,8 +251,14 @@ function updateTransform(
  *  zoom. Returns a `destroy()` that removes every listener (host + window). When
  *  the panZoom setting is off the diagram stays fully static (no transform,
  *  no listeners) and destroy() is a safe no-op. Defensive in jsdom: never
- *  throws (getBoundingClientRect/transform are tolerated as missing). */
-export function attachPanZoom(host: HTMLElement, svg: SVGElement): { destroy(): void } {
+ *  throws (getBoundingClientRect/transform are tolerated as missing).
+ *
+ *  `svg` accepts `SVGElement | HTMLImageElement` — the image lightbox
+ *  (viewer/image-viewer.ts) reuses this same handler for a plain `<img>`.
+ *  The body only ever touches `style.transform`/`getBoundingClientRect`,
+ *  which both element kinds support identically, so this is a type
+ *  widening only — zero behavior change for the existing mermaid callers. */
+export function attachPanZoom(host: HTMLElement, svg: SVGElement | HTMLImageElement): { destroy(): void } {
   if (panZoomSetting.get() === "off") return { destroy() {} };
 
   svg.style.transformOrigin = "0 0";
