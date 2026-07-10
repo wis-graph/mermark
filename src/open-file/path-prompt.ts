@@ -51,12 +51,15 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => 
 };
 
 export function createOpenPathPrompt({ bar, onOpen }: OpenPathHandlers): OpenPathPrompt {
-  const button = create("button", "chrome-btn open-path") as HTMLButtonElement;
+  const button = create("button", "chrome-btn open-path icon-only") as HTMLButtonElement;
   button.append(icon("folder-open"));
   const buttonLabel = create("span", "chrome-btn-label");
   buttonLabel.textContent = "경로 열기";
   button.append(buttonLabel);
   button.title = "경로를 입력해 다른 문서를 이 창에서 엽니다";
+  // Icon-only chrome hides .chrome-btn-label visually (styles.css) — the
+  // accessible name needs an explicit source, so this doubles as aria-label.
+  button.setAttribute("aria-label", "경로 열기");
 
   const input = create("input", "open-path-input") as HTMLInputElement;
   input.type = "text";

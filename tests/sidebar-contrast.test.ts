@@ -176,6 +176,15 @@ describe("sidebar strong-contrast palette (style contract)", () => {
     ".favorites-item:focus-visible",
     ".favorites-remove",
     ".favorites-remove:hover",
+    // M6 (_workspace/01_architect_design.md rehome + design-polish pass):
+    // the left command group's buttons repaint in --sidebar-* tokens when
+    // they rehome into a rail's .sidebar-top-strip; the combined
+    // selected+focused explorer row is a new selector (was two separate
+    // rules), both still --sidebar-* only.
+    ".explorer-item.is-selected.is-focused > .explorer-label",
+    ".sidebar-top-strip .chrome-btn",
+    ".sidebar-top-strip .chrome-btn:hover",
+    '.sidebar-top-strip .chrome-btn[aria-expanded="true"]',
   ];
 
   it.each(THEME_BLOCKS)("$name declares --sidebar-bg anchored to var(--bg)", ({ selector }) => {
@@ -235,13 +244,25 @@ describe("sidebar strong-contrast palette (style contract)", () => {
     expect(block).not.toMatch(/var\(--surface\)/);
   });
 
-  it.each([".title-bar", ".status-bar", ".cm-codeblock", ".settings-modal"])(
+  it.each([".cm-codeblock", ".settings-modal"])(
     "%s keeps its existing background: var(--surface) (--surface consumers untouched)",
     (selector) => {
       const block = ruleBlock(selector);
       expect(block).toMatch(/background:\s*var\(--surface\)/);
     },
   );
+
+  // M6 design-polish pass (contract CHANGE, not a regression): 심리스 크롬 —
+  // .title-bar/.status-bar now paint --bg (the same canvas color as the
+  // editor), not --surface. The two-tone contrast that used to separate
+  // "chrome" from "canvas" lives only in the sidebar rail (--sidebar-bg) now.
+  // This also fixes the light/claude theme luminance inversion where the old
+  // --surface chrome read lighter than the --bg canvas beneath it.
+  it.each([".title-bar", ".status-bar"])("%s paints --bg, not --surface (seamless chrome)", (selector) => {
+    const block = ruleBlock(selector);
+    expect(block).toMatch(/background:\s*var\(--bg\)/);
+    expect(block).not.toMatch(/var\(--surface\)/);
+  });
 
   it.each([
     ["dark", null],

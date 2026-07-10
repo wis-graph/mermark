@@ -19,12 +19,15 @@ import { getVersion } from "@tauri-apps/api/app";
  *  .window-controls started owning the far-right slot on win/linux). */
 export function createSettingsButton(): HTMLButtonElement {
   const btn = document.createElement("button");
-  btn.className = "chrome-btn settings-btn";
+  btn.className = "chrome-btn settings-btn icon-only";
   const label = document.createElement("span");
   label.className = "chrome-btn-label";
   label.textContent = "설정";
   btn.append(icon("settings"), label);
   btn.title = "설정";
+  // Icon-only chrome hides .chrome-btn-label visually (styles.css) — the
+  // accessible name needs an explicit source, so this doubles as aria-label.
+  btn.setAttribute("aria-label", "설정");
   let modal: SettingsModal | null = null;
   btn.addEventListener("click", () => {
     if (!modal) modal = buildModal(); // lazy build on first open

@@ -45,4 +45,7 @@ export function renderSidebarButton(
   button.replaceChildren(icon(iconName), label);
   button.setAttribute("aria-expanded", String(isOpen));
   button.setAttribute("aria-controls", controlsId);
+  // Icon-only chrome hides .chrome-btn-label visually (styles.css) — the
+  // accessible name needs an explicit source, so this doubles as aria-label.
+  button.setAttribute("aria-label", labelText);
 }

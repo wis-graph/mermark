@@ -44,7 +44,7 @@ import { createSettingsButton } from "./settings/panel/modal";
 import { copyBundleToClipboard } from "./bundle";
 import { registerHandler, installDispatcher, bindKeybindings } from "./shortcuts/registry";
 import { arrangeStatusBar } from "./status-bar";
-import { createTitleBar, arrangeTitleBar, createSidebarTopStrip } from "./title-bar";
+import { createTitleBar, arrangeTitleBar, createSidebarTopStrip, createLeftCommandGroup, installLeftGroupRehoming } from "./title-bar";
 import { createBreadcrumb } from "./breadcrumb";
 import { createRecentPanel } from "./recent/recent-panel";
 import { pushRecent, pruneMissing } from "./recent/recent-docs";
@@ -85,6 +85,11 @@ function setButtonContent(btn: HTMLElement, name: IconName, label?: string): voi
     const text = el("span", "chrome-btn-label");
     text.textContent = label;
     btn.append(text);
+    // Icon-only chrome (design decision: 아이콘 온리 + 심리스 크롬) visually
+    // hides .chrome-btn-label (styles.css) — the accessible name still needs
+    // an explicit source, so this doubles as the aria-label. `title` (set by
+    // each call site) supplies the hover tooltip on top of it.
+    btn.setAttribute("aria-label", label);
   }
 }
 
@@ -122,7 +127,7 @@ function makeSaveStatus(): {
 
 /** Edit/read toggle that lives in the title-bar (icon + label). */
 function makeModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode) => void } {
-  const btn = el("button", "chrome-btn mode-toggle");
+  const btn = el("button", "chrome-btn mode-toggle icon-only");
   const render = (m: PreviewMode) => {
     setButtonContent(btn, m === "edit" ? "square-pen" : "eye", m === "edit" ? "편집" : "리더");
     btn.title = m === "edit" ? "편집 모드 (⌘E: 리더 모드로)" : "리더 모드 (⌘E: 편집 모드로)";
@@ -383,18 +388,24 @@ async function boot() {
     onOpen: () => closeOtherSidebars("recent"),
   });
 
-  // Title-bar order (single contract, arrangeTitleBar owns it): 탐색기 · 최근 ·
-  // 목차 · 경로열기 · [drag spacer] · 모드 · 테마 · ⚙, window-controls always
-  // last (win/linux). M5: 즐겨찾기 button REMOVED (see title-bar.ts) — the
-  // ⌘⇧B action now reveals the explorer's hosted favorites section instead
-  // (registerHandler("favorites.toggle", ...) below). createSettingsButton
-  // only builds the button + lazy modal wiring — position is this call's
-  // job, not modal.ts's (M2 decision).
-  arrangeTitleBar(titleBar.el, {
+  // Title-bar order (single contract, arrangeTitleBar owns it): leftGroup
+  // (탐색기 · 최근 · 목차 · 경로열기) · [drag spacer] · 모드 · 테마 · ⚙,
+  // window-controls always last (win/linux). M5: 즐겨찾기 button REMOVED (see
+  // title-bar.ts) — the ⌘⇧B action now reveals the explorer's hosted
+  // favorites section instead (registerHandler("favorites.toggle", ...)
+  // below). createSettingsButton only builds the button + lazy modal wiring —
+  // position is this call's job, not modal.ts's (M2 decision). M6: the left
+  // four buttons are pre-assembled into ONE leftGroup (createLeftCommandGroup)
+  // so installLeftGroupRehoming (below, after the strip loop) can move them
+  // as a unit into whichever rail is open.
+  const leftGroup = createLeftCommandGroup({
     explorer: explorer.button,
     recent: recent.button,
     outline: outline.button,
     openPath: prompt.button,
+  });
+  arrangeTitleBar(titleBar.el, {
+    leftGroup,
     mode: mode.btn,
     theme: themeBtn.btn,
     settings: createSettingsButton(),
@@ -425,6 +436,11 @@ async function boot() {
   // the panels stay unaware of window chrome (dependency direction: shell →
   // panel, never the reverse).
   for (const aside of [recent.aside, explorer.aside, outline.aside]) aside.prepend(createSidebarTopStrip());
+  // M6 rehome: the left command group moves into whichever rail's strip is
+  // open (or back to the title-bar when none is) — see title-bar.ts's
+  // installLeftGroupRehoming header comment for why this is a single
+  // MutationObserver rather than a callback threaded into each panel.
+  installLeftGroupRehoming({ asides: [recent.aside, explorer.aside, outline.aside], bar: titleBar.el, group: leftGroup });
   // The drag sash sits between whichever left sidebar is open and .main-column.
   // DOM order: recent.aside, explorer.aside, outline.aside, sash, main-column.
   // Its own visibility is CSS-only (styles.css: hidden unless a sidebar

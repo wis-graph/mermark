@@ -43,12 +43,16 @@ export function makeThemeToggle(onToggle: () => void): {
     // cycles dark→light→claude→dark via nextPreset, so each label names where a
     // click lands). moon=dark, sun=light, palette=claude.
     btn.replaceChildren(icon(t === "dark" ? "moon" : t === "light" ? "sun" : "palette"));
-    btn.title =
+    const label =
       t === "dark"
         ? "다크 모드 (클릭: 라이트)"
         : t === "light"
           ? "라이트 모드 (클릭: 클로드)"
           : "클로드 테마 (클릭: 다크)";
+    btn.title = label;
+    // Icon-only (no visible .chrome-btn-label here) — aria-label is the ONLY
+    // accessible-name source, so it must track the same text as the tooltip.
+    btn.setAttribute("aria-label", label);
   };
   btn.addEventListener("click", onToggle);
   return { btn, render };

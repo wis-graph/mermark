@@ -515,8 +515,23 @@ html, body { margin: 0; height: 100%; }
      --caret above, so component rules below stay hex-free. */
   --window-close-hover: #e81123;
 }
-.title-bar { flex: none; height: 36px; display: flex; align-items: center; padding: 0 .5em; border-bottom: 1px solid var(--border); background: var(--surface); user-select: none; -webkit-user-select: none; }
+/* Seamless chrome (design decision: 심리스 크롬): the title-bar paints --bg,
+   the SAME canvas color as the editor below it — not --surface. The two-tone
+   contrast that used to separate "chrome" from "canvas" now lives entirely in
+   the sidebar rail (--sidebar-bg), which stays inverted; the header/footer
+   read as an extension of the canvas, with only a hairline border marking the
+   seam. This also fixes the light-theme luminance inversion where a white
+   chrome strip sat visually ABOVE a grey canvas (--surface was lighter than
+   --bg in light/claude). gap: 2px is the 12px-inset-grid button spacing
+   (shared with .left-command-group below). */
+.title-bar { flex: none; height: 36px; display: flex; align-items: center; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--border); background: var(--bg); user-select: none; -webkit-user-select: none; }
 .title-bar.mac { padding-left: var(--traffic-light-inset); }
+/* The left command group wrapper (title-bar.ts's createLeftCommandGroup) —
+   hosts the 탐색기·최근·목차·경로열기 buttons as ONE rehomable unit (M6).
+   Same 2px button gap as .title-bar itself (12px-inset-grid), so the buttons
+   read identically whether the group sits in the title-bar or a rail's
+   .sidebar-top-strip. */
+.left-command-group { display: flex; align-items: center; gap: 2px; }
 /* The flexible filler arrangeTitleBar (title-bar.ts) inserts between the left
    command group and the right mode/theme/settings cluster. Same shape as
    .status-spacer below — kept as a separate class since footer's spacer plays
@@ -533,7 +548,9 @@ html, body { margin: 0; height: 100%; }
    .editor-host), so it spans the editor column's width, not the window's —
    the status bar sits OUTSIDE the CM measure root either way, so none of this
    touches the ZOOM GUARD (no .cm-content/.cm-line here). */
-.status-bar { flex: none; height: 36px; display: flex; align-items: center; gap: .25em; padding: 0 .5em; border-top: 1px solid var(--border); background: var(--surface); font-size: 13px; color: var(--muted); user-select: none; }
+/* Seamless chrome (see .title-bar above): --bg, not --surface, so the footer
+   reads as canvas too — only the hairline top border marks the seam. */
+.status-bar { flex: none; height: 36px; display: flex; align-items: center; gap: .25em; padding: 0 12px; border-top: 1px solid var(--border); background: var(--bg); font-size: 13px; color: var(--muted); user-select: none; }
 .status-spacer { flex: 1; }
 .status-pos { font-variant-numeric: tabular-nums; padding: 0 .5em; color: var(--muted); }
 
@@ -568,20 +585,36 @@ html, body { margin: 0; height: 100%; }
    title-bar — the class is bar-agnostic chrome, not tied to one strip. */
 .chrome-btn { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-md, 8px); height: 28px; padding: 0 10px; font: inherit; font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
 .chrome-btn .icon { flex: none; width: 16px; height: 16px; display: block; }
-.chrome-btn-label { white-space: nowrap; }
+/* Icon-only chrome (design decision: 아이콘 온리, 라벨은 툴팁으로): every
+   .chrome-btn-label is visually hidden — NOT display:none, which would strip
+   it from the accessible name. The classic clip-rect pattern keeps it exposed
+   to assistive tech while occupying zero visual space; each call site also
+   sets aria-label to the same text as a second, explicit source (see
+   setButtonContent/renderSidebarButton), and `title` supplies the hover tooltip. */
+.chrome-btn-label {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 .chrome-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
 .chrome-btn:active { background: color-mix(in srgb, var(--fg) 12%, transparent); }
 .chrome-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent); }
-/* Icon-only buttons (theme toggle): square so the glyph sits centered, not lopsided. */
+/* Icon-only buttons: square so the glyph sits centered, not lopsided. All 7
+   chrome buttons (탐색기·최근·목차·경로열기·모드·테마·⚙) carry this class now
+   (design decision: 아이콘 온리) — not just the theme toggle. */
 .chrome-btn.icon-only { padding: 0; width: 28px; justify-content: center; }
 
 /* Sidebar-toggle active/"pressed" state (VSCode activity-bar style): the button
    whose sidebar is open reads visually pressed via aria-expanded alone — icon
    identity (folder/history/list-tree/…) never changes, only this background/color
    do. Scoped to .chrome-btn so it can't bleed onto the explorer tree's own
-   aria-expanded (folder-row disclosure, a different class). Theme vars only. */
-.chrome-btn[aria-expanded="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--fg); }
-.chrome-btn[aria-expanded="true"]:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+   aria-expanded (folder-row disclosure, a different class). Theme vars only.
+   Title-bar scope (this rule): --accent, a light wash. When the same button
+   sits in a rail's .sidebar-top-strip instead, the --sidebar-* scoped rule
+   below wins on specificity and repaints it in the sidebar's own palette —
+   the two never disagree because only one of them is ever the button's
+   actual parent at a time (M6 rehome). */
+.chrome-btn[aria-expanded="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.chrome-btn[aria-expanded="true"]:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 
 /* Save status: icon + label, color states preserved from the old emoji version
    (saved/saving muted, error red, conflict amber). The status word lives in
@@ -727,7 +760,24 @@ html, body { margin: 0; height: 100%; }
    font-size declaration — SIDEBAR ZOOM RULE's px-font-size sweep
    (tests/sidebar-zoom.test.ts T2) only forbids sizing TEXT in px; this is a
    window-chrome height, the same category as .title-bar's own 36px. */
-.sidebar-top-strip { flex: none; position: sticky; top: 0; z-index: 1; height: 36px; background: var(--sidebar-bg); }
+.sidebar-top-strip { flex: none; position: sticky; top: 0; z-index: 1; height: 36px; display: flex; align-items: center; overflow: hidden; padding: 0 .5em; background: var(--sidebar-bg); }
+/* M6 rehome: when the left command group lands here, mac's native traffic
+   lights sit ABOVE this strip (see the header comment above), so its buttons
+   must start clear of them — same --traffic-light-inset token .title-bar.mac
+   uses. Width budget: 4 icon-only buttons at 28px = 112px; the default
+   240px rail leaves 240-78=162px on mac, well over budget. At the 160px rail
+   floor (82px mac-adjusted) the trailing button clips under overflow:hidden —
+   an accepted degradation (design decision, not fixed in this scope). */
+.sidebar-top-strip.mac { padding-left: var(--traffic-light-inset); }
+/* Sidebar-scoped chrome-btn palette (SIDEBAR CONTRAST RULE): a button that
+   rehomes into the rail must repaint in --sidebar-* tokens, not the
+   title-bar's global --muted/--accent — the rail is the strong-contrast
+   surface, so its icon buttons need to read against --sidebar-bg. Wins over
+   the bare .chrome-btn rules above on specificity alone (no source-order
+   dependency). */
+.sidebar-top-strip .chrome-btn { color: var(--sidebar-muted); }
+.sidebar-top-strip .chrome-btn:hover { color: var(--sidebar-fg); background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
+.sidebar-top-strip .chrome-btn[aria-expanded="true"] { color: var(--sidebar-accent); background: color-mix(in srgb, var(--sidebar-accent) 14%, transparent); }
 
 /* When the rail is open, the traffic lights sit on the rail (the strip above
    clears them there), NOT on .main-column — .title-bar is no longer the
@@ -747,7 +797,12 @@ html, body { margin: 0; height: 100%; }
    the rail and .main-column — are full-height siblings of .workspace). */
 .workspace-sash {
   display: none; flex: none; width: 5px; cursor: col-resize;
-  background: var(--border);
+  /* Seamless chrome: transparent at rest (the header/footer/canvas are all
+     --bg now, so a --border-tinted rest state would be the only remaining
+     visible seam-marker between rail and canvas) — the accent tint below is
+     reserved for hover/dragging, i.e. only when the sash is actually
+     interactive. */
+  background: transparent;
 }
 .sidebar-aside:not([hidden]) ~ .workspace-sash { display: block; }
 .workspace-sash:hover,
@@ -755,14 +810,14 @@ html, body { margin: 0; height: 100%; }
   background: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 .sidebar-header {
-  flex: none; padding: 8px 10px 4px;
+  flex: none; padding: 10px 12px 6px;
   font-size: calc(11em / 13); font-weight: 600; letter-spacing: .02em;
   color: var(--sidebar-muted);
 }
 
 /* Outline (table of contents) LEFT SIDEBAR — the outline shares the sidebar
    shell above; only its heading list styling is bespoke. */
-.outline-tree { display: flex; flex-direction: column; padding: 2px 4px 8px; }
+.outline-tree { display: flex; flex-direction: column; padding: 2px 6px 8px; }
 .outline-empty { padding: .5em; color: var(--sidebar-muted); }
 .outline-empty[hidden] { display: none; }
 .outline-item {
@@ -799,7 +854,7 @@ html, body { margin: 0; height: 100%; }
 .explorer-header {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.explorer-tree { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 2px 4px 8px; }
+.explorer-tree { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 2px 6px 8px; }
 /* An item is a vertical BLOCK: its label row on top, its children group below.
    The old row-flex on .explorer-item pulled the children group up beside the
    name (527faf6 bug); the flex now lives on .explorer-label only. */
@@ -823,8 +878,28 @@ html, body { margin: 0; height: 100%; }
    old `var(--accent, var(--caret))` fallback (for a theme that might omit
    accent) no longer has a reason to exist. The state classes stay on
    .explorer-item (TS untouched); CSS targets its label row. */
-.explorer-item.is-selected > .explorer-label { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); }
-.explorer-item.is-focused > .explorer-label { box-shadow: inset 0 0 0 1.5px var(--sidebar-accent); }
+/* Selection = a fill + a left accent bar (the open file's row is identifiable
+   even when the fill alone reads too faint against the sidebar's inverted
+   palette). */
+.explorer-item.is-selected > .explorer-label {
+  background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--sidebar-accent);
+}
+/* Focus (keyboard cursor) = a ring — but ONLY while the tree itself holds
+   focus (:focus-within). Un-gated, .is-focused (the roving-tabindex cursor,
+   set independent of DOM focus — see explorer-panel.ts) painted a ring on
+   boot before the user ever touched the keyboard, a stray "focused-looking"
+   row with no actual focus behind it. Gating on the tree's real focus state
+   ties the ring to an actual keyboard interaction. */
+.explorer-tree:focus-within .explorer-item.is-focused > .explorer-label { box-shadow: inset 0 0 0 1.5px var(--sidebar-accent); }
+/* Both states at once (the open file IS the keyboard cursor, a common case):
+   combine the accent bar and the ring into one box-shadow list — this rule's
+   specificity beats both single-state rules above, so it always wins over
+   whichever one would otherwise clobber the other (box-shadow doesn't merge
+   across separate rules on its own). */
+.explorer-tree:focus-within .explorer-item.is-selected.is-focused > .explorer-label {
+  box-shadow: inset 2px 0 0 var(--sidebar-accent), inset 0 0 0 1.5px var(--sidebar-accent);
+}
 .explorer-chevron { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); color: var(--sidebar-muted); transition: transform .15s ease; }
 .explorer-chevron-empty { visibility: hidden; }
 .explorer-dir[aria-expanded="true"] > .explorer-label > .explorer-chevron { transform: rotate(90deg); }
@@ -1410,7 +1485,7 @@ html, body { margin: 0; height: 100%; }
    job (.explorer-star above) — the header's star is a decorative glyph only. */
 .explorer-favorites {
   flex: none; max-height: 40vh; overflow-y: auto;
-  border-top: 1px solid var(--sidebar-border);
+  margin-top: 4px; border-top: 1px solid var(--sidebar-border); padding-top: 4px;
   display: flex; flex-direction: column;
 }
 .favorites-header {
