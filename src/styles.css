@@ -664,7 +664,34 @@ html, body { margin: 0; height: 100%; }
    are the --sidebar-bg/fg/muted/accent/border tokens (SIDEBAR CONTRAST RULE,
    :root above) — a strong theme-inverted tone, not --surface, and internal
    text/icons consume --sidebar-* exclusively (never the global --fg/--muted/
-   --accent/--border, see remap below). */
+   --accent/--border, see remap below).
+
+   SIDEBAR ZOOM RULE (_workspace/01_architect_design.md 확정 1~4): --font-scale
+   multiplication happens in EXACTLY ONE place — this root's font-size calc.
+   Every sidebar-scoped descendant below (explorer/outline/recent/favorites,
+   including glyphs/hit-targets) declares its size as a 13px-BASE EM FRACTION
+   (e.g. 11px child -> calc(11em / 13)), never a fresh px literal and never its
+   own * var(--font-scale, ...) multiplication — that would compound the zoom.
+   This holds because no intermediate layer (.explorer-label/.recent-item/
+   .favorites-item/.explorer-tree/.outline-tree etc.) declares its own
+   font-size — em always resolves against THIS root's 13px * scale, one
+   level, no compounding. Guard: tests/sidebar-zoom.test.ts (T1 asserts this
+   exact calc form; T2 sweeps every sidebar-, outline-, explorer-, recent-,
+   favorites- prefixed rule and path-label in the sheet for a stray px
+   font-size).
+
+   TWO EXCEPTIONS found by audit 04 (2026-07-11), both now fixed:
+   1. Any sidebar glyph living in a <button> (.explorer-star, .favorites-remove)
+      MUST declare `font: inherit` explicitly. A <button> is exempted from
+      normal inheritance by the UA stylesheet, which gives it its own
+      font-size (~13.33px on macOS Chrome, NOT --font-scale-aware) — so a
+      bare `em` inside it resolves against that fixed UA size, not this
+      root's 13px*scale, and silently ignores zoom.
+   2. .sidebar-header is NOT a leaf — it declares its own font-size
+      (calc(11em / 13), an 11px-base) and hosts a glyph child
+      (.favorites-header-glyph .icon). Any em inside .sidebar-header's
+      subtree resolves against the 11px base, not the 13px root base — use
+      calc(13em / 11) there to recover a 13px-base size (see that rule). */
 .sidebar-aside {
   /* width = --sidebar-width (SSOT: sidebarWidthSetting via cssVarSink, main.ts).
      min-width:160px stays as a CSS floor too — a second, redundant safety net
@@ -674,7 +701,7 @@ html, body { margin: 0; height: 100%; }
   overflow-y: auto;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--sidebar-border);
-  font-size: 13px; color: var(--sidebar-fg);
+  font-size: calc(13px * var(--font-scale, 1)); color: var(--sidebar-fg);
   user-select: none;
 }
 .sidebar-aside[hidden] { display: none; }
@@ -696,7 +723,7 @@ html, body { margin: 0; height: 100%; }
 }
 .sidebar-header {
   flex: none; padding: 8px 10px 4px;
-  font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  font-size: calc(11em / 13); font-weight: 600; letter-spacing: .02em;
   color: var(--sidebar-muted);
 }
 
@@ -708,7 +735,7 @@ html, body { margin: 0; height: 100%; }
 .outline-item {
   display: block; width: 100%; text-align: left;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: var(--sidebar-fg); font: inherit; font-size: 13px; line-height: 1.4;
+  color: var(--sidebar-fg); font: inherit; font-size: 1em; line-height: 1.4;
   padding: 3px 8px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background-color .12s ease;
@@ -765,11 +792,22 @@ html, body { margin: 0; height: 100%; }
    .explorer-item (TS untouched); CSS targets its label row. */
 .explorer-item.is-selected > .explorer-label { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); }
 .explorer-item.is-focused > .explorer-label { box-shadow: inset 0 0 0 1.5px var(--sidebar-accent); }
-.explorer-chevron { flex: none; display: inline-flex; width: 16px; height: 16px; color: var(--sidebar-muted); transition: transform .15s ease; }
+.explorer-chevron { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); color: var(--sidebar-muted); transition: transform .15s ease; }
 .explorer-chevron-empty { visibility: hidden; }
 .explorer-dir[aria-expanded="true"] > .explorer-label > .explorer-chevron { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .explorer-chevron { transition: none; } }
-.explorer-glyph { flex: none; display: inline-flex; color: var(--sidebar-muted); }
+/* G2/G3 (SIDEBAR ZOOM RULE): .explorer-glyph had no CSS size at all — the
+   svg's own width="16" height="16" attribute (icons.ts:179~180, shared by
+   every 16px icon() consumer, not just the sidebar) was the only thing
+   sizing it, and CSS attribute defaults don't scale with --font-scale. CSS
+   always wins over the attribute once declared, so these two new rules give
+   the glyph and its chevron sibling the SAME em box (16/13, matching G1) and
+   make the inner <svg> fill that box (100%) instead of trusting the fixed
+   attribute. icons.ts itself stays untouched — it's a shared factory used
+   well outside the sidebar (e.g. .chrome-btn .icon). */
+.explorer-chevron .icon,
+.explorer-glyph .icon { width: 100%; height: 100%; }
+.explorer-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); color: var(--sidebar-muted); }
 /* Folder glyph carries an accent tint (openable container signal); file glyphs
    stay --sidebar-muted, and the chevron stays --sidebar-muted (accent is on the
    glyph only, so the disclosure twisty and the container color are separate
@@ -788,10 +826,10 @@ html, body { margin: 0; height: 100%; }
    hex): dark/light/claude all derive their own faint/hover/filled shades. */
 .explorer-star {
   flex: none; margin-left: auto; display: flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; padding: 0;
+  width: calc(20em / 13); height: calc(20em / 13); padding: 0;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
   color: color-mix(in srgb, var(--sidebar-muted) 45%, transparent);
-  cursor: pointer;
+  cursor: pointer; font: inherit;
   transition: color .12s ease, background-color .12s ease;
 }
 .explorer-label:hover .explorer-star { color: var(--sidebar-fg); }
@@ -800,7 +838,7 @@ html, body { margin: 0; height: 100%; }
 .explorer-label:hover .explorer-star.is-favorite,
 .explorer-star.is-favorite:hover { color: var(--sidebar-accent); }
 .explorer-star:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
-.explorer-star .icon { width: 13px; height: 13px; }
+.explorer-star .icon { width: 1em; height: 1em; }
 /* Non-markdown files: visible for context, but greyed + inert (mermark opens
    markdown only — a click is a no-op, not a broken read_file view). */
 .explorer-file.is-nonmd > .explorer-label { color: var(--sidebar-muted); cursor: default; }
@@ -1311,7 +1349,7 @@ html, body { margin: 0; height: 100%; }
 .recent-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
 .recent-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
 .recent-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
-.recent-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-name { font-size: 1em; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Shared LEFT-truncating path label (src/chrome/path-label.ts's
    truncatedPathLabel) — used by both this panel and the favorites section
    below, so the rule lives in one place instead of two duplicated blocks
@@ -1324,7 +1362,7 @@ html, body { margin: 0; height: 100%; }
    visible). CSS-only — no JS width measurement. */
 .path-label {
   direction: rtl; text-align: left;
-  font-size: 11px; color: var(--sidebar-muted);
+  font-size: calc(11em / 13); color: var(--sidebar-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .path-label > bdi { direction: ltr; unicode-bidi: isolate; }
@@ -1346,7 +1384,12 @@ html, body { margin: 0; height: 100%; }
   display: flex; align-items: center; gap: 6px;
 }
 .favorites-header-glyph { flex: none; display: inline-flex; color: var(--sidebar-muted); }
-.favorites-header-glyph .icon { width: 13px; height: 13px; }
+/* G6 fix (audit 04, 🔴 2): this glyph lives inside .favorites-header.sidebar-header
+   (favorites-panel.ts:89~94), and .sidebar-header declares font-size: calc(11em / 13)
+   -- an 11px-BASE em, not the 13px root base. So a plain 1em here resolved to
+   11px*scale (a silent 13->11px shrink at scale=1), not the intended 13px*scale.
+   calc(13em / 11) restores the 13px-base size against this 11px-base parent. */
+.favorites-header-glyph .icon { width: calc(13em / 11); height: calc(13em / 11); }
 .favorites-header-label { flex: 1 1 auto; }
 .favorites-list { display: flex; flex-direction: column; padding: 2px 4px 8px; }
 .favorites-empty { padding: .5em; color: var(--sidebar-muted); }
@@ -1355,28 +1398,28 @@ html, body { margin: 0; height: 100%; }
   position: relative; display: flex; flex-direction: column; gap: 1px; width: 100%;
   text-align: left; background: transparent; border: none;
   border-radius: var(--radius-sm, 6px);
-  color: var(--sidebar-fg); font: inherit; padding: 4px 26px 4px 8px; cursor: pointer;
+  color: var(--sidebar-fg); font: inherit; padding: 4px 2em 4px 8px; cursor: pointer;
   overflow: hidden; transition: background-color .12s ease;
 }
 .favorites-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
 .favorites-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
 .favorites-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
-.favorites-name { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.favorites-name { font-size: 1em; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Left-truncating path label: see .path-label above (shared with the
    recent panel's former .recent-path rule; favorites-panel.ts builds it via
    chrome/path-label.ts's truncatedPathLabel). */
 .favorites-remove {
   position: absolute; top: 4px; right: 4px;
   display: flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; padding: 0;
+  width: calc(18em / 13); height: calc(18em / 13); padding: 0;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: var(--sidebar-muted); cursor: pointer; opacity: 0;
+  color: var(--sidebar-muted); cursor: pointer; opacity: 0; font: inherit;
   transition: opacity .12s ease, background-color .12s ease, color .12s ease;
 }
 .favorites-item:hover .favorites-remove,
 .favorites-item:focus-within .favorites-remove { opacity: 1; }
 .favorites-remove:hover { background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); color: var(--sidebar-fg); }
-.favorites-remove .icon { width: 12px; height: 12px; }
+.favorites-remove .icon { width: calc(12em / 13); height: calc(12em / 13); }
 
 /* Keybind settings control (단축키 category). One row per rebindable action:
    label · current chord · 재정의 (capture) · 기본값 (reset), with 전체 리셋 on
