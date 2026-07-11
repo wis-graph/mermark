@@ -1,11 +1,11 @@
 {
-  "version": "0.5.4",
-  "notes": "mermark v0.5.4 버전 자동 릴리즈 업데이트",
-  "pub_date": "2026-07-10T22:24:35Z",
+  "version": "0.5.5",
+  "notes": "### Added\n\n- **설정 '버전' 화면**: 설정에 버전 항목이 생겼다. 현재 버전을 크게 보여주고, 업데이트 확인·설치와 최근 버전들의 변경 내역을 한 화면에서 볼 수 있다. 새 버전이 있으면 무엇이 바뀌는지 변경 내역이 설치 카드에 함께 표시된다.\n- **업데이트 다운로드 진행률**: 업데이트 설치 시 진행 막대와 \"다운로드 중... 43% (4.2 / 9.8 MB)\" 식 진행 상황이 표시된다.\n- **탐색기에서 새 창으로 열기**: 파일을 ⌘+클릭(Windows/Linux는 Ctrl+클릭)하거나 ⌘+Enter를 누르면 새 창에서 열린다.\n\n### Fixed\n\n- **형광펜 안 굵게가 안 되던 경우**: `==하이라이트==` 안에서 따옴표 붙은 한글 굵게(`**\"이런 것\"**처럼`)가 일반 글자로 표시되던 문제를 고쳤다.\n- **목록 줄바꿈 들여쓰기**: 목록 항목이 길어 자동 줄바꿈될 때 이어지는 줄이 글자 시작점보다 깊이 들어가던 것을 첫 줄 글자에 정확히 맞췄다.",
+  "pub_date": "2026-07-11T00:32:21Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzZvc0lVeERWbnhHUE4rNXR6eUVHckdGTDIwTWoydkc3cXlLcXF2U0FMc3pOWTJjRTYzc2wxdUdrWE40KzEzNS9pL2U5UTdxVFQ3dExhd0w0RmhoNEFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzIyMjM3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClBZcDlDWGFHSHZUK09OMm1zalNmOWhJdVAyQUk1TklXOEVLbVRuM0RReWhzV2VUaE8rSVB5UHc2V0lBNVpmc2lMQU4xUUN5KytEZjhXY3JUMjJ2c0FRPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.4/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3dod0xqeFU4S2gxaUg1RStOUDU3UmRFOHVTbHU0QWVDNWJIdStQSEZUaHlsZUwxa0wvSnBZTE9qMmQ4Y1Qvcmt4KzRYb21kRUtPQzNueVkycnRoK3dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzI5OTE0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmY5TVV2ZGhoTTkrcmFZR08xU1NlUDMrL3RpOXBpd0ZKZWZsWncyazBJTGg0eFRBNHlqNFBza0l5MWsyNzE0OHpTK3hGTnNDb0MrWXlFdXdJd1ZscUNBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.5/mermark.app.tar.gz"
     }
   }
 }
