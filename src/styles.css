@@ -1110,8 +1110,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* thematic break (---) → a horizontal rule filling the line */
 .cm-hr { display: inline-block; width: 100%; height: 0; margin: 0; border: none; border-top: 1px solid var(--border); vertical-align: middle; }
 
-.cm-bullet { display: inline-block; width: .30em; height: .30em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
-.cm-bullet-collapsed { box-shadow: 0 0 0 .26em color-mix(in srgb, var(--muted) 50%, transparent); }
+/* The bullet widget replaces "- " (dash + its one trailing space — list.ts)
+   and its box is EXACTLY --list-marker wide: row1 text therefore starts at
+   the same column the wrapped rows' hanging indent (padding-inline-start,
+   below) puts them — alignment by construction, immune to font metrics and
+   ⌘± zoom. The dot itself is a ::before child so the collapsed halo ring
+   hugs the dot, not the widened box. */
+.cm-bullet { display: inline-block; width: var(--list-marker, 1.3em); }
+.cm-bullet::before { content: ""; display: inline-block; width: .30em; height: .30em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); margin-left: .1em; }
+.cm-bullet-collapsed::before { box-shadow: 0 0 0 .26em color-mix(in srgb, var(--muted) 50%, transparent); }
 
 /* ── list wrap hanging indent + nested indent guides (P2+P3, one line-class
    family) ────────────────────────────────────────────────────────────────
@@ -1326,18 +1333,59 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .settings-cat:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); color: var(--fg); }
 .settings-cat.active { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); font-weight: 600; }
 .settings-cat.active::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 3px; height: 1.1em; border-radius: var(--radius-pill); background: var(--accent); }
-/* 업데이트 확인 인라인 결과/설치 제안 (modal.ts) — Tauri v2 웹뷰는 JS
-   confirm/alert가 no-op이라 다이얼로그 대신 설정 사이드바 안에 그린다. */
-.update-note { margin: 2px 4px 6px; padding: 8px 10px; border-radius: var(--radius-md, 8px); background: color-mix(in srgb, var(--fg) 5%, transparent); font-size: 12px; line-height: 1.5; color: var(--fg); display: flex; flex-direction: column; gap: 8px; }
-.update-note[hidden] { display: none; }
-.update-note.is-error { color: #dc2626; background: color-mix(in srgb, #dc2626 10%, transparent); }
-.update-actions { display: flex; gap: 6px; }
-.update-install, .update-later { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: var(--radius-sm, 6px); cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--fg); }
-.update-install { background: var(--accent); color: var(--bg); border-color: transparent; font-weight: 500; }
-.update-install:hover { opacity: .9; }
-.update-install:disabled { opacity: .6; cursor: default; }
-.update-later:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
 .settings-pane { flex: 1; min-width: 0; padding: 1.4em 1.6em; overflow-y: auto; }
+
+/* "버전" 카테고리 패널 (version-pane.ts) — 큼직한 단독 뷰: 버전 표기 + 주 액션 +
+   상태 영역. Tauri v2 웹뷰는 JS confirm/alert가 no-op이라 설치 제안/진행률을
+   다이얼로그 대신 이 패널 안에 실제 DOM으로 그린다. */
+.version-pane { display: flex; flex-direction: column; gap: 1.2em; max-width: 420px; }
+.version-pane-heading { font-size: 16px; font-weight: 600; color: var(--fg); }
+.version-pane-number { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fg); }
+.version-check-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: .5em; height: 40px; padding: 0 20px; background: var(--accent); color: var(--bg); border: none; border-radius: var(--radius-md, 8px); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: opacity .12s ease; }
+.version-check-btn:hover { opacity: .9; }
+.version-check-btn:disabled { opacity: .6; cursor: default; }
+.version-status { min-height: 2.4em; } /* reserves space so the check/available/error swap doesn't jump the layout */
+.version-status-row { display: flex; align-items: center; gap: .5em; font-size: 15px; color: var(--fg); }
+.version-status-row .icon { width: 16px; height: 16px; }
+.version-status-row.is-ok .icon { color: var(--accent); }
+.version-spin { animation: version-spin-rotate 0.8s linear infinite; }
+@keyframes version-spin-rotate { to { transform: rotate(360deg); } }
+.version-status-error { color: #dc2626; background: color-mix(in srgb, #dc2626 10%, transparent); padding: 8px 10px; border-radius: var(--radius-md, 8px); font-size: 13px; line-height: 1.5; }
+.version-update-card { display: flex; flex-direction: column; gap: .7em; padding: 1em 1.2em; border-radius: var(--radius-md, 8px); background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.version-update-title { font-size: 16px; font-weight: 600; color: var(--fg); }
+.version-update-date { font-size: 12px; color: var(--muted); }
+.version-update-actions { display: flex; gap: .6em; }
+.version-install-btn { display: inline-flex; align-items: center; height: 40px; padding: 0 20px; background: var(--accent); color: var(--bg); border: none; border-radius: var(--radius-md, 8px); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: opacity .12s ease; }
+.version-install-btn:hover { opacity: .9; }
+.version-install-btn:disabled { opacity: .6; cursor: default; }
+.version-later-btn { display: inline-flex; align-items: center; height: 40px; padding: 0 16px; background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-md, 8px); font: inherit; font-size: 14px; cursor: pointer; }
+.version-later-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
+.version-later-btn:disabled { opacity: .6; cursor: default; }
+.version-progress { display: flex; flex-direction: column; gap: .5em; }
+.version-progress[hidden] { display: none; }
+.version-progress-caption { font-size: 13px; color: var(--muted); }
+.version-progress-track { width: 100%; height: 8px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--fg) 8%, transparent); overflow: hidden; }
+.version-progress-fill { height: 100%; width: 0%; border-radius: var(--radius-pill); background: var(--accent); transition: width .15s ease; }
+
+/* Release notes embedded inside the update-available card (update.body, same
+   ### 카테고리 / - bullet shape as 변경 내역, rendered via the same groups).
+   max-height + scroll: a long release note shouldn't push the install/later
+   buttons off-panel. */
+.version-update-notes { display: flex; flex-direction: column; gap: .6em; max-height: 160px; overflow-y: auto; padding-right: .4em; }
+.version-update-notes .version-changelog-cat { font-size: 12px; }
+.version-update-notes .version-changelog-list { font-size: 13px; }
+
+/* "변경 내역" section: CHANGELOG.md's newest few version sections. */
+.version-changelog { display: flex; flex-direction: column; gap: 1em; padding-top: .4em; border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+.version-changelog-heading { font-size: 14px; font-weight: 600; color: var(--fg); }
+.version-changelog-section { display: flex; flex-direction: column; gap: .5em; }
+.version-changelog-section-head { display: flex; align-items: baseline; gap: .6em; }
+.version-changelog-version { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg); }
+.version-changelog-date { font-size: 12px; color: var(--muted); }
+.version-changelog-group { display: flex; flex-direction: column; gap: .3em; }
+.version-changelog-cat { font-size: 13px; font-weight: 600; color: var(--muted); }
+.version-changelog-list { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: .3em; }
+.version-changelog-list li { font-size: 13px; line-height: 1.5; color: var(--fg); }
 
 /* Rows: roomier padding + hairline-soft dividers; label in Inter, control right. */
 .settings-row { display: flex; align-items: center; gap: 1em; padding: .8em 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
@@ -1680,14 +1728,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   margin: 0.8em 0;
   margin-top: auto;
   opacity: 0.5;
-}
-
-.settings-version-info {
-  font-size: 11px;
-  opacity: 0.6;
-  padding: 4px 8px;
-  text-align: center;
-  font-family: monospace;
 }
 
 /* ── 웰컴 화면 스타일 ──────────────────────────────────────────────────────── */

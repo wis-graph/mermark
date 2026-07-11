@@ -29,27 +29,48 @@ if [ ! -f "$DMG_PATH" ] || [ ! -f "$TAR_PATH" ] || [ ! -f "$SIG_PATH" ]; then
   exit 1
 fi
 
+# 릴리즈 노트 = CHANGELOG.md의 최신 버전 섹션 본문.
+# GH Release 본문과 updater.json의 notes에 같은 내용이 들어가, 앱의
+# "업데이트가 있습니다" 카드가 실제 변경 내역을 보여줄 수 있다 (2026-07-11).
+# 섹션을 못 찾으면(형식 이탈) 기존 한 줄 문구로 폴백한다.
+NOTES=$(python3 - <<'PY'
+import re
+text = open("CHANGELOG.md", encoding="utf-8").read()
+m = re.search(r"^## \[[^\]]+\][^\n]*\n(.*?)(?=^## \[|\Z)", text, re.S | re.M)
+body = m.group(1).strip() if m else ""
+print(body.rstrip("-").strip() or "")
+PY
+)
+[ -z "$NOTES" ] && NOTES="mermark $TAG 버전 자동 릴리즈 업데이트"
+
 echo "=== 1. GitHub Release ($TAG) 생성 및 파일 업로드 ==="
-/opt/homebrew/bin/gh release create "$TAG" "$DMG_PATH" "$TAR_PATH" "$SIG_PATH" --title "$TAG" --notes "mermark $TAG 버전 자동 릴리즈 업데이트"
+/opt/homebrew/bin/gh release create "$TAG" "$DMG_PATH" "$TAR_PATH" "$SIG_PATH" --title "$TAG" --notes "$NOTES"
 
 echo "=== 2. updater.json 갱신 및 GitHub 배포 ==="
 # 서명 파일 내용 읽기
 SIG_CONTENT=$(cat "$SIG_PATH")
 
-# updater.json 생성
-cat <<EOF > updater.json
-{
-  "version": "$VERSION",
-  "notes": "mermark $TAG 버전 자동 릴리즈 업데이트",
-  "pub_date": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "platforms": {
-    "darwin-aarch64": {
-      "signature": "$SIG_CONTENT",
-      "url": "https://github.com/wis-graph/mermark/releases/download/$TAG/mermark.app.tar.gz"
-    }
-  }
-}
-EOF
+# updater.json 생성 — notes에 멀티라인 마크다운이 들어가므로 heredoc 문자열
+# 치환 대신 python json.dump로 이스케이프를 보장한다.
+NOTES="$NOTES" SIG_CONTENT="$SIG_CONTENT" VERSION="$VERSION" TAG="$TAG" python3 - <<'PY'
+import json, os, datetime
+json.dump(
+    {
+        "version": os.environ["VERSION"],
+        "notes": os.environ["NOTES"],
+        "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "platforms": {
+            "darwin-aarch64": {
+                "signature": os.environ["SIG_CONTENT"],
+                "url": f"https://github.com/wis-graph/mermark/releases/download/{os.environ['TAG']}/mermark.app.tar.gz",
+            }
+        },
+    },
+    open("updater.json", "w", encoding="utf-8"),
+    ensure_ascii=False,
+    indent=2,
+)
+PY
 
 echo "updater.json 파일이 갱신되었습니다. GitHub main 브랜치로 푸시합니다..."
 git add updater.json

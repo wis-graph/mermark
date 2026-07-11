@@ -169,14 +169,22 @@ export function findCjkBoldRuns(text: string): CjkBoldRun[] {
 // into StrongEmphasis (so re-styling would double-apply), or the position
 // lands inside an unrelated inline feature (code/wikilink/math/etc.) whose
 // raw text this scan must not touch.
+//
+// Highlight / Strikethrough are deliberately NOT in this set (removed
+// 2026-07-11): they are transparent CONTAINERS whose bodies the parser
+// re-parses recursively — bare `**…**` inside them is exactly as unstyled as
+// in a plain paragraph, so the rescue must reach it. With them listed,
+// `==**"따옴표"**입니다==` (std flanking fails at the close: punct before,
+// CJK after) lost its rescue and rendered plain while the same text outside
+// the highlight bolded — the reported bug. The remaining entries are either
+// raw-text territory (code/math/wikilink) or the double-apply guard
+// (Emphasis/StrongEmphasis: that pair IS already bold).
 const STYLED_ANCESTORS = new Set([
   "Emphasis",
   "StrongEmphasis",
   "InlineCode",
   "CodeText",
   "FencedCode",
-  "Highlight",
-  "Strikethrough",
   "InlineMath",
   "Wikilink",
   "WikilinkEmbed",

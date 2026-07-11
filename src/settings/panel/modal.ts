@@ -7,9 +7,7 @@ import { groups, type Group } from "../registry";
 import { RENDER, runTeardown } from "./controls";
 import type { Setting, Control } from "../store";
 import { icon } from "../../icons";
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { getVersion } from "@tauri-apps/api/app";
+import { renderVersionPane } from "./version-pane";
 
 /** Build a ⚙ chrome button that opens the settings modal. Boot-cheap: only the
  *  button is created now; the modal DOM is built on first open. Position is the
@@ -84,6 +82,14 @@ function buildModal(): SettingsModal {
   document.body.appendChild(backdrop);
 
   const gs = groups();
+  // Every sidebar button (registry categories + the standalone "버전" category
+  // below) shares one active-toggle so only one is ever highlighted, regardless
+  // of which side of the divider it's on.
+  const allCatButtons: HTMLButtonElement[] = [];
+  const markActive = (target: HTMLButtonElement): void => {
+    for (const b of allCatButtons) b.classList.toggle("active", b === target);
+  };
+
   const catButtons = gs.map((g) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -91,109 +97,23 @@ function buildModal(): SettingsModal {
     b.textContent = g.name;
     b.addEventListener("click", () => selectCategory(g));
     sidebar.appendChild(b);
+    allCatButtons.push(b);
     return { b, group: g };
   });
 
-  // 1. 구분선
+  // 구분선 아래 "버전" 카테고리: 다른 카테고리와 동형 버튼이지만 registry rows가
+  // 아니라 renderVersionPane()의 커스텀 DOM을 pane에 얹는다.
   const divider = document.createElement("div");
   divider.className = "settings-sidebar-divider";
   sidebar.appendChild(divider);
 
-  // 2. 버전 정보 표시용 텍스트 영역
-  const versionInfo = document.createElement("div");
-  versionInfo.className = "settings-version-info";
-  versionInfo.textContent = "v0.4.0"; // fallback 하드코딩
-  sidebar.appendChild(versionInfo);
-
-  // 비동기로 실제 앱 버전 가져와서 반영
-  getVersion().then((v) => {
-    if (v) versionInfo.textContent = `v${v}`;
-  }).catch(() => {});
-
-  // 3. 업데이트 확인 버튼
-  const updateBtn = document.createElement("button");
-  updateBtn.type = "button";
-  updateBtn.className = "settings-cat update-btn";
-  updateBtn.style.color = "var(--accent)";
-  updateBtn.append(icon("refresh-cw"), " 업데이트 확인");
-
-  // 결과/설치 제안이 그려지는 인라인 슬롯. Tauri v2 웹뷰(wry)는 window.confirm/
-  // alert를 구현하지 않은 조용한 no-op이라(2026-07-11 실사용 확인: 업데이트를
-  // 찾아도 confirm()이 창 없이 false를 반환해 버튼이 "죽은" 것처럼 보였다),
-  // 브라우저 다이얼로그 대신 사이드바 안에 DOM으로 그린다.
-  const updateNote = document.createElement("div");
-  updateNote.className = "update-note";
-  updateNote.hidden = true;
-
-  /** 한 줄 결과 표시 (최신/실패). Command (void). */
-  const showUpdateNote = (text: string, isError: boolean): void => {
-    updateNote.replaceChildren(text);
-    updateNote.classList.toggle("is-error", isError);
-    updateNote.hidden = false;
-  };
-
-  /** 발견된 업데이트의 설치 제안 카드: 버전 + [지금 설치하고 재시작] [나중에].
-   *  confirm() 대체 — 설치는 명시적 클릭으로만 진행된다. Command (void). */
-  const offerUpdateInstall = (update: Update): void => {
-    updateNote.replaceChildren();
-    updateNote.classList.remove("is-error");
-    const msg = document.createElement("div");
-    msg.textContent = `v${update.version} 업데이트가 있습니다`;
-    const actions = document.createElement("div");
-    actions.className = "update-actions";
-    const install = document.createElement("button");
-    install.type = "button";
-    install.className = "update-install";
-    install.textContent = "지금 설치하고 재시작";
-    install.addEventListener("click", async () => {
-      install.disabled = true;
-      install.textContent = "다운로드 중...";
-      try {
-        await update.downloadAndInstall();
-        await relaunch();
-      } catch (err) {
-        console.error(err);
-        showUpdateNote(`설치 실패: ${err}`, true);
-      }
-    });
-    const later = document.createElement("button");
-    later.type = "button";
-    later.className = "update-later";
-    later.textContent = "나중에";
-    later.addEventListener("click", () => {
-      updateNote.hidden = true;
-    });
-    actions.append(install, later);
-    updateNote.append(msg, actions);
-    updateNote.hidden = false;
-  };
-
-  let isChecking = false;
-  updateBtn.addEventListener("click", async () => {
-    if (isChecking) return;
-    isChecking = true;
-    updateBtn.disabled = true;
-    updateBtn.textContent = "확인 중...";
-    updateNote.hidden = true;
-
-    try {
-      const update = await check();
-      if (update) {
-        offerUpdateInstall(update);
-      } else {
-        showUpdateNote("최신 버전을 사용 중입니다.", false);
-      }
-    } catch (err) {
-      console.error(err);
-      showUpdateNote(`업데이트 확인 실패: ${err}`, true);
-    } finally {
-      isChecking = false;
-      updateBtn.disabled = false;
-      updateBtn.replaceChildren(icon("refresh-cw"), " 업데이트 확인");
-    }
-  });
-  sidebar.appendChild(updateBtn);
-  sidebar.appendChild(updateNote);
+  const versionCatBtn = document.createElement("button");
+  versionCatBtn.type = "button";
+  versionCatBtn.className = "settings-cat";
+  versionCatBtn.textContent = "버전";
+  versionCatBtn.addEventListener("click", () => selectVersionCategory());
+  sidebar.appendChild(versionCatBtn);
+  allCatButtons.push(versionCatBtn);
 
   /** Tear down every control currently in the pane (run their stashed unsubscribe
    *  fns) before the DOM is discarded, so no stale subscription survives a swap or
@@ -203,8 +123,11 @@ function buildModal(): SettingsModal {
   }
 
   // The category currently shown in the pane — re-selected on open() so a reopen
-  // rebuilds it with fresh subscriptions (close() tears the old ones down).
-  let activeGroup: Group | null = null;
+  // rebuilds it with fresh subscriptions (close() tears the old ones down). The
+  // "버전" pane carries no Setting subscription, so it's tracked as a bare tag
+  // rather than a Group.
+  type ActiveCategory = { kind: "group"; group: Group } | { kind: "version" };
+  let active: ActiveCategory | null = null;
 
   /** Swap the pane to a category's controls and mark its sidebar button active.
    *  Command/CQS: mutates the DOM, returns nothing. */
@@ -222,8 +145,20 @@ function buildModal(): SettingsModal {
       if (labelCell) labelCell.textContent = entry.ui.label;
       pane.appendChild(labeled);
     }
-    for (const { b, group } of catButtons) b.classList.toggle("active", group === g);
-    activeGroup = g;
+    const found = catButtons.find((c) => c.group === g);
+    if (found) markActive(found.b);
+    active = { kind: "group", group: g };
+  }
+
+  /** Swap the pane to the 버전 category. Same teardown discipline as
+   *  selectCategory even though the version pane has no subscriptions today —
+   *  keeps the swap contract uniform if that ever changes. */
+  function selectVersionCategory(): void {
+    teardownPane();
+    pane.replaceChildren();
+    pane.appendChild(renderVersionPane());
+    markActive(versionCatBtn);
+    active = { kind: "version" };
   }
 
   // First category ("테마") selected on open.
@@ -250,7 +185,8 @@ function buildModal(): SettingsModal {
       // Rebuild the active category so its controls re-subscribe (close() tore the
       // prior subscriptions down). Guards the reopen-after-close case from showing
       // a pane whose reflect closures are dead.
-      if (activeGroup) selectCategory(activeGroup);
+      if (active?.kind === "group") selectCategory(active.group);
+      else if (active?.kind === "version") selectVersionCategory();
       backdrop.hidden = false;
       editorHost()?.setAttribute("inert", ""); // editor underneath is non-interactive
       document.addEventListener("keydown", onKeydown, true);

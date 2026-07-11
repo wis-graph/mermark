@@ -12,7 +12,9 @@ const EXPLORER_ASIDE_ID = "explorer-aside";
 // a folder's children are read on CLICK via the injected listDir() (never on
 // hover — WCAG 1.4.13), a top `..` entry single-clicks/Enters upward (root
 // change), and clicking/Entering a markdown file opens it in the current window
-// through the injected onOpenFile().
+// through the injected onOpenFile(). ⌘/Ctrl+click or ⌘+Enter on a markdown file
+// instead routes to onOpenFileNewWindow() — a brand-new window, same as a
+// wikilink click.
 //
 // The tree is a WAI-ARIA Tree (APG): role=tree > role=treeitem > role=group,
 // roving tabindex (exactly one item is tab-focusable), and a full keyboard set
@@ -91,6 +93,15 @@ export interface ExplorerHandlers {
    *  (see isOpenableEntry). Callers that omit it (existing tests, standalone
    *  use) keep the pre-viewer behavior exactly — images stay greyed + inert. */
   onOpenImage?(absPath: string): void;
+  /** Open a markdown file in a brand-new window (⌘/Ctrl+click, or ⌘+Enter from
+   *  the keyboard). Optional — GATED the same way onOpenImage gates images:
+   *  when omitted, a modifier'd activation just falls through to onOpenFile
+   *  (current-window open), so existing callers keep today's behavior exactly.
+   *  Markdown-only by design — an image row is already claimed by onOpenImage
+   *  before this branch is reached, so this never fires for images. Injected
+   *  so main owns the actual window-spawning call (reuses open_path — the same
+   *  command wikilink clicks already use to open a file in a new window). */
+  onOpenFileNewWindow?(absPath: string): void;
   /** Called when this sidebar opens, so main can close the other left sidebar
    *  (mutual exclusion). Optional — omitted in unit tests / standalone use. */
   onOpen?(): void;
@@ -179,6 +190,7 @@ export function createExplorerPanel({
   getBaseDir,
   onOpenFile,
   onOpenImage,
+  onOpenFileNewWindow,
   onOpen,
   onRootChange,
   isFavorite,
@@ -195,7 +207,7 @@ export function createExplorerPanel({
   const isOpenableEntry = (name: string): boolean =>
     isMarkdownEntry(name) || (!!onOpenImage && isImageEntry(name));
   const button = create("button", "chrome-btn explorer-btn icon-only") as HTMLButtonElement;
-  button.title = "파일 탐색기 (⌘B · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · .. 상위)";
+  button.title = "파일 탐색기 (⌘B · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · ⌘클릭/⌘Enter 새 창 · .. 상위)";
 
   const aside = create("aside", "explorer-aside sidebar-aside");
   aside.id = EXPLORER_ASIDE_ID;
@@ -471,8 +483,13 @@ export function createExplorerPanel({
   /** The SINGLE activation path, shared by click + Enter (like mermaid's single
    *  clickEntry): file → open (markdown only; non-md is inert), folder → toggle,
    *  `..` → change root. Selection moves only here (opening a file), never on
-   *  arrow navigation. Command (void). */
-  const activateItem = (item: HTMLElement): void => {
+   *  arrow navigation. `newWindow` (⌘/Ctrl+click, ⌘+Enter) redirects a markdown
+   *  file's open to onOpenFileNewWindow instead of onOpenFile — checked AFTER
+   *  the image branch, so an image row is never affected (images stay v1-scoped
+   *  to onOpenImage/current-context regardless of the modifier), and gated by
+   *  the handler being injected at all, so omitting it keeps a modifier'd click
+   *  behaving exactly like a plain one. Command (void). */
+  const activateItem = (item: HTMLElement, newWindow = false): void => {
     if (item.classList.contains("explorer-up")) {
       if (item.dataset.path) changeRoot(item.dataset.path);
       return;
@@ -486,6 +503,7 @@ export function createExplorerPanel({
     if (!path) return;
     selectItem(item);
     if (onOpenImage && isImageEntry(basename(path))) onOpenImage(path);
+    else if (newWindow && onOpenFileNewWindow) onOpenFileNewWindow(path);
     else onOpenFile(path);
   };
 
@@ -610,7 +628,7 @@ export function createExplorerPanel({
     const item = target.closest(".explorer-item") as HTMLElement | null;
     if (!item) return;
     focusItem(item);
-    activateItem(item);
+    activateItem(item, e.metaKey || e.ctrlKey);
   });
 
   /** Space-key rule (WCAG 2.1.1): TOGGLE the FOCUSED folder's favorite
@@ -658,7 +676,7 @@ export function createExplorerPanel({
         break;
       case "Enter":
         e.preventDefault();
-        activateItem(item);
+        activateItem(item, e.metaKey); // ⌘+Enter = open in a new window
         break;
       case "Home":
         e.preventDefault();

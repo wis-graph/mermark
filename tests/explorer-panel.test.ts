@@ -63,8 +63,18 @@ const focusedItem = (aside: HTMLElement) =>
 const nameOf = (item: HTMLElement | null) => item?.querySelector(".explorer-name")?.textContent;
 const press = (aside: HTMLElement, key: string) =>
   treeOf(aside).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+/** ⌘+<key> — used for the new-window Enter activation (metaKey only, no ctrlKey
+ *  equivalent per design: keyboard is ⌘+Enter, mouse is ⌘/Ctrl+click). */
+const pressMeta = (aside: HTMLElement, key: string) =>
+  treeOf(aside).dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, bubbles: true }));
 const clickItem = (item: HTMLElement) =>
   item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+/** ⌘/Ctrl+click — the new-window modifier. `mod` selects which key is held so
+ *  both mac (meta) and other platforms (ctrl) are covered by the same helper. */
+const clickItemMod = (item: HTMLElement, mod: "meta" | "ctrl" = "meta") =>
+  item.dispatchEvent(
+    new MouseEvent("click", { bubbles: true, metaKey: mod === "meta", ctrlKey: mod === "ctrl" })
+  );
 
 // 1. Click expands (NOT hover) + cache -----------------------------------------
 describe("explorer: click expands, hover does nothing (1)", () => {
@@ -543,6 +553,112 @@ describe("explorer: image entries open via onOpenImage when injected (K)", () =>
     clickItem(md);
     expect(onOpenFile).toHaveBeenCalledWith("/root/a.md");
     expect(onOpenImage).not.toHaveBeenCalled();
+  });
+});
+
+// L. ⌘/Ctrl+click and ⌘+Enter open a markdown file in a NEW WINDOW ------------
+// Same gating shape as onOpenImage: onOpenFileNewWindow injected → a modifier'd
+// activation on a markdown row calls it instead of onOpenFile; omitted →
+// falls through to the plain onOpenFile (pre-existing behavior, unaffected by
+// the modifier). Never applies to images or folders/`..` (only reached past
+// the onOpenImage branch in activateItem).
+describe("explorer: ⌘/Ctrl+click and ⌘+Enter open in a new window when injected (L)", () => {
+  it("⌘+click on a markdown row calls onOpenFileNewWindow, never onOpenFile", async () => {
+    const onOpenFile = vi.fn();
+    const onOpenFileNewWindow = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile,
+      onOpenFileNewWindow,
+    });
+
+    const md = items(panel.aside).find((e) => nameOf(e) === "a.md") as HTMLElement;
+    clickItemMod(md, "meta");
+    expect(onOpenFileNewWindow).toHaveBeenCalledTimes(1);
+    expect(onOpenFileNewWindow).toHaveBeenCalledWith("/root/a.md");
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+click on a markdown row also calls onOpenFileNewWindow (non-mac modifier)", async () => {
+    const onOpenFile = vi.fn();
+    const onOpenFileNewWindow = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile,
+      onOpenFileNewWindow,
+    });
+
+    const md = items(panel.aside).find((e) => nameOf(e) === "a.md") as HTMLElement;
+    clickItemMod(md, "ctrl");
+    expect(onOpenFileNewWindow).toHaveBeenCalledTimes(1);
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
+  it("⌘+Enter on a focused markdown row calls onOpenFileNewWindow, never onOpenFile", async () => {
+    const onOpenFile = vi.fn();
+    const onOpenFileNewWindow = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile,
+      onOpenFileNewWindow,
+    });
+
+    press(panel.aside, "ArrowDown"); // ".." -> "sub"
+    press(panel.aside, "ArrowDown"); // "sub" -> "a.md"
+    expect(nameOf(focusedItem(panel.aside))).toBe("a.md");
+    pressMeta(panel.aside, "Enter");
+    expect(onOpenFileNewWindow).toHaveBeenCalledTimes(1);
+    expect(onOpenFileNewWindow).toHaveBeenCalledWith("/root/a.md");
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
+  it("plain Enter/click on a markdown row still calls onOpenFile even when onOpenFileNewWindow is injected", async () => {
+    const onOpenFile = vi.fn();
+    const onOpenFileNewWindow = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile,
+      onOpenFileNewWindow,
+    });
+
+    const md = items(panel.aside).find((e) => nameOf(e) === "a.md") as HTMLElement;
+    clickItem(md);
+    expect(onOpenFile).toHaveBeenCalledWith("/root/a.md");
+    expect(onOpenFileNewWindow).not.toHaveBeenCalled();
+  });
+
+  it("⌘+click falls through to onOpenFile when onOpenFileNewWindow is not injected (gated, no crash)", async () => {
+    const onOpenFile = vi.fn();
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile });
+
+    const md = items(panel.aside).find((e) => nameOf(e) === "a.md") as HTMLElement;
+    clickItemMod(md, "meta");
+    expect(onOpenFile).toHaveBeenCalledTimes(1);
+    expect(onOpenFile).toHaveBeenCalledWith("/root/a.md");
+  });
+
+  it("⌘+click on an image row still calls onOpenImage, never onOpenFileNewWindow (images excluded)", async () => {
+    const onOpenFile = vi.fn();
+    const onOpenImage = vi.fn();
+    const onOpenFileNewWindow = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile,
+      onOpenImage,
+      onOpenFileNewWindow,
+    });
+
+    const png = items(panel.aside).find((e) => nameOf(e) === "pic.png") as HTMLElement;
+    clickItemMod(png, "meta");
+    expect(onOpenImage).toHaveBeenCalledTimes(1);
+    expect(onOpenImage).toHaveBeenCalledWith("/root/pic.png");
+    expect(onOpenFileNewWindow).not.toHaveBeenCalled();
+    expect(onOpenFile).not.toHaveBeenCalled();
   });
 });
 

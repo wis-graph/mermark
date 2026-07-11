@@ -113,6 +113,26 @@ describe("alreadyStyled", () => {
     const tree = parser.parse(doc);
     expect(alreadyStyled(tree, 0)).toBe(false);
   });
+  // Highlight/Strikethrough are transparent CONTAINERS (their bodies re-parse
+  // recursively), not raw-text territory — a bare `**` inside them still needs
+  // the CJK rescue. Regression for the 2026-07-11 report: `==**"따옴표"**입니다==`
+  // rendered plain because Highlight sat in STYLED_ANCESTORS and killed the
+  // rescue that the identical text outside a highlight received.
+  it("is false inside a ==Highlight== body (rescue must reach it)", () => {
+    const doc = '앞 ==**"따옴표"**입니다== 뒤';
+    const tree = parser.parse(doc);
+    expect(alreadyStyled(tree, doc.indexOf("**"))).toBe(false);
+  });
+  it("is false inside a ~~Strikethrough~~ body", () => {
+    const doc = '~~**"따옴표"**입니다~~';
+    const tree = parser.parse(doc);
+    expect(alreadyStyled(tree, doc.indexOf("**"))).toBe(false);
+  });
+  it("stays true for inline code nested INSIDE a highlight (raw text wins)", () => {
+    const doc = "==a `**code**` b==";
+    const tree = parser.parse(doc);
+    expect(alreadyStyled(tree, doc.indexOf("**code"))).toBe(true);
+  });
 });
 
 // --- standardBoldFlank ↔ real lezer equivalence trip wire -------------------

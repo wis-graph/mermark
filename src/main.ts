@@ -353,6 +353,8 @@ async function boot() {
   //    viewer design) — unlike onOpenFile it never branches on `!file`: the
   //    viewer is a body-level overlay, not a document swap, so it works the
   //    same whether or not a markdown document is open (welcome screen included).
+  //    onOpenFileNewWindow (⌘/Ctrl+click, ⌘+Enter) reuses open_path — the same
+  //    IPC command wikilink clicks already use to spawn a new document window.
   const explorer = createExplorerPanel({
     listDir: (p) => invoke<DirEntry[]>("list_dir", { path: p }),
     getBaseDir: () => currentBaseDir,
@@ -368,6 +370,14 @@ async function boot() {
     onOpenImage: (absPath) => {
       openViewer?.close();
       openViewer = openImageViewer(absPath);
+    },
+    // ⌘/Ctrl+click or ⌘+Enter on a markdown row: open it in a brand-new window.
+    // Reuses open_path — the same command wikilink clicks already invoke to
+    // spawn a new document window — so no new backend command is needed.
+    onOpenFileNewWindow: (absPath) => {
+      invoke("open_path", { path: absPath }).catch((err) => {
+        console.error("Failed to open in a new window", err);
+      });
     },
     onOpen: () => closeOtherSidebars("explorer"),
     onRootChange: (root) => breadcrumb.render(root),
