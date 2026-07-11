@@ -1,11 +1,11 @@
 {
-  "version": "0.5.7",
-  "notes": "### Fixed\n\n- **목록 불릿 계층 구분이 사라지던 문제**: 중첩 목록에서 단계별 불릿 위치가 구분되지 않고 틀어지던 회귀를 복구했다. 0.5.5~0.5.6에서 시도한 목록 줄바꿈 정렬 방식(불릿 간격 조정 포함)이 원인이어서 해당 변경을 0.5.4의 안정 동작으로 되돌렸다. 줄바꿈 들여쓰기 간격 조정은 이후 버전에서 다시 다듬을 예정.",
-  "pub_date": "2026-07-11T16:35:16Z",
+  "version": "0.5.8",
+  "notes": "### Fixed\n\n- **목록 줄바꿈 들여쓰기 정렬**: 긴 목록 항목이 자동 줄바꿈될 때 이어지는 줄이 윗줄 글자 시작점보다 깊게 들어가던 것을 글자 시작점에 정확히 맞췄다(실측 기준). 불릿 점의 위치·크기·계층 구분은 그대로다. 중첩 목록과 번호 목록(1. 2. …)의 줄바꿈도 각자 글자 시작점에 정렬된다.\n- **터미널로 실행하면 업데이트 확인이 실패하던 문제**: `mermark` 명령으로 연 앱에서 \"업데이트 확인\"이 항상 오류가 나던 것을 고쳤다. 명령어 설치 방식을 바꿨으므로 기존 설치자는 `./scripts/install-cli.sh`를 한 번 다시 실행하면 된다.",
+  "pub_date": "2026-07-11T17:14:44Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzdIclNPRmp5SklDZ2dwUFphV0pucTlaK05FSjU0YmpMNWw1bkZXRCswcjVmeTRGMGVqaU16MytNN3JoTDNhUUl5dWRaRUJBM2Z1Nmhnc0pJYjNvOFFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzg3NjY2CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmNPYXprTVI5dmwrUVhGS0p2N29oSHh4MVRyVU02MUx3dzVLS1FOS1J1S3R5QWV5OWN1OGVBTGlLMW5zK1h2OE5iVW9SendQWkZzMVh6bzZ1L2tJSkFBPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.7/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzN4WkpCbHZ5ZFh6Y1hpN0JGendVQXFNaTFia1pGdHRIb0ZmN0M4L3dqTmVpVC9IRysvRXhCQW9QZ0UxQzIwcmJZNUpBNWZENWM5K3dCYUdCQXRvdEFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzkwMDYzCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnZQRHVYRnNFUERRTDQ5UENvUm54TUZkaWM0SW5JRnBydm1qSEN3QW5HT0h3S0dqVTljVyttampXcU5hQ01ieGtJQmpkdEx6bW9qK3VrNjlDUld3MkRnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.8/mermark.app.tar.gz"
     }
   }
 }
