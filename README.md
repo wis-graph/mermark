@@ -36,10 +36,11 @@ The binary lands at `src-tauri/target/release/mermark` (plus a platform bundle).
 
 ## Install the `mermark` command
 
-**macOS / Linux** — symlink the binary onto your PATH:
+**macOS / Linux** — install a wrapper script onto your PATH (a symlink would
+break the in-app updater for CLI-launched instances):
 
 ```bash
-./scripts/install-cli.sh            # links to /usr/local/bin/mermark
+./scripts/install-cli.sh            # installs /usr/local/bin/mermark
 ./scripts/install-cli.sh ~/bin/mermark   # or a custom destination
 ```
 

@@ -23,6 +23,17 @@ export function listItemDepth(item: SyntaxNode): number {
   return depth;
 }
 
+/** True when this ListItem's marker is an ordered one ("1." / "2)" …). The
+ *  hanging indent must equal the RENDERED marker width, and a visible "1. "
+ *  is wider than the concealed bullet dot + its space — so the line class
+ *  splits the --list-marker token per marker kind (styles.css .cm-list-ordered). */
+function isOrderedItem(item: SyntaxNode, text: (from: number, to: number) => string): boolean {
+  const mark = item.getChild("ListMark");
+  if (!mark) return false;
+  const ch = text(mark.from, Math.min(mark.from + 1, mark.to));
+  return ch >= "0" && ch <= "9";
+}
+
 /** Depth-based line class for every list item's first source line — drives
  *  hanging indent (P2) and the nested indent guide (P3) purely through CSS.
  *  Nested ListItem nodes are visited independently by the tree walk, so each
@@ -33,6 +44,7 @@ export const listLine: InlineFeature = {
   enter(node, ctx) {
     const depth = Math.min(listItemDepth(node), MAX_DEPTH);
     const lineFrom = ctx.state.doc.lineAt(node.from).from;
-    ctx.line(lineFrom, `cm-list-line cm-list-d${depth}`);
+    const ordered = isOrderedItem(node, (a, b) => ctx.state.sliceDoc(a, b));
+    ctx.line(lineFrom, `cm-list-line cm-list-d${depth}${ordered ? " cm-list-ordered" : ""}`);
   },
 };
