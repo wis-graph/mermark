@@ -33,18 +33,9 @@ export const list: InlineFeature = {
       });
     }
 
-    // Swallow the ONE space after the dash into the widget (when present):
-    // the rendered row is then [widget][text] with the widget sized to exactly
-    // --list-marker (styles.css .cm-bullet), so row1's text column equals the
-    // wrapped rows' hanging indent BY CONSTRUCTION — no font-metric guessing.
-    // (2026-07-11 report: wraps over-indented past the text column, because
-    // dot+space ≈ .56em while the hang is --list-marker.) The mark still
-    // un-conceals whole when the caret enters the line, so "- " stays editable.
-    const markEnd =
-      ctx.state.sliceDoc(node.to, node.to + 1) === " " ? node.to + 1 : node.to;
     ctx.push({
       from: node.from,
-      to: markEnd,
+      to: node.to,
       deco: Decoration.replace({ widget: new BulletWidget(collapsed) }),
       conceal: true,
     });

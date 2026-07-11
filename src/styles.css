@@ -1110,15 +1110,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* thematic break (---) → a horizontal rule filling the line */
 .cm-hr { display: inline-block; width: 100%; height: 0; margin: 0; border: none; border-top: 1px solid var(--border); vertical-align: middle; }
 
-/* The bullet widget replaces "- " (dash + its one trailing space — list.ts)
-   and its box is EXACTLY --list-marker wide: row1 text therefore starts at
-   the same column the wrapped rows' hanging indent (padding-inline-start,
-   below) puts them — alignment by construction, immune to font metrics and
-   ⌘± zoom. The dot itself is a ::before child so the collapsed halo ring
-   hugs the dot, not the widened box. */
-.cm-bullet { display: inline-block; width: var(--list-marker, .85em); }
-.cm-bullet::before { content: ""; display: inline-block; width: .30em; height: .30em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); margin-left: .08em; }
-.cm-bullet-collapsed::before { box-shadow: 0 0 0 .26em color-mix(in srgb, var(--muted) 50%, transparent); }
+.cm-bullet { display: inline-block; width: .30em; height: .30em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
+.cm-bullet-collapsed { box-shadow: 0 0 0 .26em color-mix(in srgb, var(--muted) 50%, transparent); }
 
 /* ── list wrap hanging indent + nested indent guides (P2+P3, one line-class
    family) ────────────────────────────────────────────────────────────────
@@ -1143,20 +1136,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    the heading typescale rules use (see `.cm-editor .cm-line.cm-hN`). */
 .cm-editor .cm-line.cm-list-line {
   --list-step: 1.1em;   /* per-level indent, ≈ the source's 4-space nesting */
-  /* Rendered-marker width = the hang column. TIGHT by design (2026-07-11
-     "끔찍한 간격" report: a 1.3em bullet box left a cavernous dot→text gap):
-     bullet rows conceal "- " into a .85em widget (dot .3em + breathing room),
-     so text sits close to the dot and wraps land exactly under it. Ordered
-     rows keep their visible "1. " marker (~1.4em incl. the space), so
-     list-line.ts splits them out via .cm-list-ordered below. */
-  --list-marker: .85em;
+  --list-marker: 1.3em; /* marker + trailing space width */
   --guide: color-mix(in srgb, var(--border) 70%, transparent);
 }
-/* "1. " (digit+period+space) measures ≈1.0em in the reading font (CDP-measured
-   delta 0 at 1em) — matched to the single-digit case (the overwhelming
-   majority; "10."+ wraps land a touch left, an accepted static-CSS
-   compromise). */
-.cm-editor .cm-line.cm-list-line.cm-list-ordered { --list-marker: 1em; }
 .cm-editor .cm-line.cm-list-d1 {
   padding-inline-start: calc(0 * var(--list-step) + var(--list-marker));
   text-indent: calc(-1 * (0 * var(--list-step) + var(--list-marker)));
