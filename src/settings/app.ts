@@ -49,7 +49,10 @@ export const themeJsonSetting = registerSetting<ThemeJson>({
   default: builtInTheme(systemTheme()),
   parse: parseTheme,
   serialize: serializeTheme,
-  ui: { label: "테마 JSON", group: "테마", control: { kind: "json" } },
+  // "테마 색상" (not "테마 JSON"): the panel row IS the swatch grid — raw JSON
+  // is a collapsed accordion inside it, so the old label named the least-
+  // visible part of the UI instead of what the row actually shows.
+  ui: { label: "테마 색상", group: "테마", control: { kind: "json" } },
 });
 
 /** The "what preset does the status-bar toggle land on next" rule, in ONE named
@@ -94,7 +97,12 @@ const FONT_STACKS = [
   { value: '"Pretendard Variable", Pretendard, system-ui, sans-serif', label: "Pretendard (Sans · 한글)" },
   { value: INTER_STACK, label: "Inter (Sans)" },
   { value: "Georgia, 'Times New Roman', serif", label: "Georgia (Serif)" },
-  { value: "ui-monospace, monospace", label: "Monospace" },
+  // Same modern-monospace fallback chain as styles.css's --font-mono token
+  // (2026-07-12 design-polish pass — ui-monospace alone fell back to generic
+  // Courier on engines without the keyword). A previously-saved raw value of
+  // the old "ui-monospace, monospace" string still parses fine (parse is a
+  // pass-through), so this is a forward-only default change, not a migration.
+  { value: "ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, Monaco, \"JetBrains Mono\", \"Cascadia Code\", Consolas, monospace", label: "Monospace" },
 ];
 
 /** Font family for the reading column. A CSS font stack. Default pinned to Inter

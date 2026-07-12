@@ -1,6 +1,7 @@
 import { WidgetType } from "@codemirror/view";
 import { boundedCache } from "./bounded-cache";
-import { panZoomSetting, themeForceSetting } from "../settings/app";
+import { panZoomSetting, themeForceSetting, themeJsonSetting } from "../settings/app";
+import { builtInTheme, type Theme as ThemeJson } from "../settings/theme-schema";
 import type { Theme } from "../theme";
 
 type Mermaid = typeof import("mermaid").default;
@@ -22,6 +23,48 @@ export function effectiveMermaidTheme(appTheme: Theme): MermaidTheme {
   }
 }
 
+/** Which palette mermaid's themeVariables should derive from: the SSOT
+ *  themeJsonSetting normally (so a custom JSON theme — and live swatch edits —
+ *  are followed automatically), but a themeForce pin overrides it with that
+ *  preset's own built-in palette regardless of the live JSON theme, mirroring
+ *  effectiveMermaidTheme's override branch so both rules agree. `appTheme` is
+ *  unused in the "follow" branch (the JSON theme alone decides) but kept in
+ *  the signature — prefixed `_` — for symmetry with effectiveMermaidTheme/
+ *  mermaidThemeVariables, which every call site already threads through. Pure
+ *  query. */
+export function mermaidPaletteSource(_appTheme: Theme): ThemeJson["colors"] {
+  switch (themeForceSetting.get()) {
+    case "dark":
+      return builtInTheme("dark").colors;
+    case "light":
+      return builtInTheme("light").colors;
+    default:
+      return themeJsonSetting.get().colors;
+  }
+}
+
+/** Mermaid `themeVariables`, derived from the app's theme SSOT via
+ *  mermaidPaletteSource — so diagrams pick up the surrounding canvas/ink/border
+ *  palette instead of mermaid's own default purple. edgeLabelBackground = bg
+ *  is the direct fix for the grey label chip that otherwise occludes
+ *  connecting lines (it becomes canvas-colored, so the line just breaks under
+ *  it instead of showing a floating grey pill). Pure query. */
+export function mermaidThemeVariables(appTheme: Theme): Record<string, string | boolean> {
+  const colors = mermaidPaletteSource(appTheme);
+  return {
+    darkMode: effectiveMermaidTheme(appTheme) === "dark",
+    background: colors.bg,
+    primaryColor: colors.surface,
+    primaryTextColor: colors.fg,
+    primaryBorderColor: colors.muted,
+    lineColor: colors.muted,
+    secondaryColor: colors.surface,
+    tertiaryColor: colors.bg,
+    edgeLabelBackground: colors.bg,
+    fontFamily: '"Inter", system-ui, sans-serif',
+  };
+}
+
 // The last app theme passed to refreshMermaidTheme, remembered so the themeForce
 // self-subscription can re-bake without main.ts handing it the app theme again.
 let lastAppTheme: Theme = "dark";
@@ -33,7 +76,12 @@ function loadMermaid(): Promise<Mermaid> {
     mermaidLoader = import("mermaid").then(({ default: m }) => {
       const appTheme: Theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
       lastAppTheme = appTheme;
-      m.initialize({ startOnLoad: false, securityLevel: "strict", theme: effectiveMermaidTheme(appTheme) });
+      m.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "base",
+        themeVariables: mermaidThemeVariables(appTheme),
+      });
       return m;
     });
   return mermaidLoader;
@@ -60,7 +108,12 @@ export function refreshMermaidTheme(theme: Theme) {
   svgCache.clear();
   if (mermaidLoader) {
     mermaidLoader.then((m) =>
-      m.initialize({ startOnLoad: false, securityLevel: "strict", theme: effectiveMermaidTheme(theme) }),
+      m.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "base",
+        themeVariables: mermaidThemeVariables(theme),
+      }),
     );
   }
 }

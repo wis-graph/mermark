@@ -5,8 +5,11 @@ import {
   clampZoom,
   zoomAtCursor,
   attachPanZoom,
+  mermaidPaletteSource,
+  mermaidThemeVariables,
 } from "../src/markdown/mermaid-widget";
-import { panZoomSetting, themeForceSetting } from "../src/settings/app";
+import { panZoomSetting, themeForceSetting, themeJsonSetting } from "../src/settings/app";
+import { builtInTheme } from "../src/settings/theme-schema";
 
 /** Build a host + a minimal svg-like element with stubbed geometry, since jsdom
  *  has no real layout. `rect` is what both host and svg return from
@@ -358,5 +361,52 @@ describe("MermaidWidget.eq captures panZoom (live toggle re-creates the widget)"
     const a = new MermaidWidget("graph TD");
     const b = new MermaidWidget("graph TD");
     expect(a.eq(b)).toBe(true);
+  });
+});
+
+describe("mermaidThemeVariables (mermaid palette derived from the app theme SSOT)", () => {
+  afterEach(() => {
+    themeForceSetting.set("follow");
+    themeJsonSetting.set(builtInTheme("dark"));
+  });
+
+  it("derives from the light preset when themeJson is light (follow)", () => {
+    themeForceSetting.set("follow");
+    themeJsonSetting.set(builtInTheme("light"));
+    const vars = mermaidThemeVariables("light");
+    expect(vars.darkMode).toBe(false);
+    expect(vars.background).toBe("#f5f5f5");
+    expect(vars.primaryColor).toBe("#ffffff"); // surface
+    expect(vars.primaryTextColor).toBe("#0c0a09"); // fg
+    expect(vars.edgeLabelBackground).toBe("#f5f5f5"); // bg — fixes the grey label chip
+  });
+
+  it("derives from the dark preset when themeJson is dark (follow)", () => {
+    themeForceSetting.set("follow");
+    themeJsonSetting.set(builtInTheme("dark"));
+    const vars = mermaidThemeVariables("dark");
+    expect(vars.darkMode).toBe(true);
+    expect(vars.background).toBe("#131110");
+  });
+
+  it("mermaidPaletteSource follows themeJson when themeForce is follow", () => {
+    themeForceSetting.set("follow");
+    themeJsonSetting.set(builtInTheme("light"));
+    expect(mermaidPaletteSource("dark")).toEqual(builtInTheme("light").colors);
+  });
+
+  it("a themeForce pin overrides the live themeJson with the pinned preset's palette", () => {
+    themeForceSetting.set("light");
+    themeJsonSetting.set(builtInTheme("dark")); // live JSON theme is dark…
+    expect(mermaidPaletteSource("dark")).toEqual(builtInTheme("light").colors); // …but pin wins
+  });
+
+  it("tracks a live custom themeJson edit immediately (e.g. a swatch drag)", () => {
+    themeForceSetting.set("follow");
+    themeJsonSetting.set({
+      ...builtInTheme("dark"),
+      colors: { ...builtInTheme("dark").colors, surface: "#222222" },
+    });
+    expect(mermaidThemeVariables("dark").primaryColor).toBe("#222222");
   });
 });

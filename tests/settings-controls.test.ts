@@ -92,6 +92,17 @@ describe("select control", () => {
     s.set("y");
     expect((row.querySelector("select") as HTMLSelectElement).value).toBe("y");
   });
+
+  it("wraps the select in .settings-select-wrap (positioning context for the themed chevron)", () => {
+    const s = defineSetting<string>({ key: "c.sel4", default: "x" });
+    const row = RENDER.select(s, {
+      kind: "select",
+      options: [{ value: "x", label: "X" }],
+    });
+    const wrap = row.querySelector(".settings-select-wrap");
+    expect(wrap).not.toBeNull();
+    expect(wrap?.querySelector("select")).not.toBeNull();
+  });
 });
 
 describe("slider control", () => {

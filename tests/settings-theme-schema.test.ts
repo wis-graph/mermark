@@ -148,7 +148,7 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
   it("dark matches styles.css:4-16 (core) + the promotion rule (extended)", () => {
     const dark = builtInTheme("dark");
     expect(dark.colors).toEqual({
-      bg: "#0c0a09",
+      bg: "#131110",
       fg: "#ffffff",
       accent: "#a8c8e8",
       link: "#a8c8e8",

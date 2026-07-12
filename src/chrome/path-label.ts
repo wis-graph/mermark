@@ -19,6 +19,8 @@
 // for free.
 // ---------------------------------------------------------------------------
 
+import { basename } from "../path";
+
 /** `<span class="path-label"><bdi>path</bdi></span>` — the single DOM
  *  builder for the left-truncating path label. Callers append the result
  *  next to a basename headline; they never construct the bdi/rtl structure
@@ -31,4 +33,14 @@ export function truncatedPathLabel(path: string): HTMLElement {
   bdi.textContent = path;
   el.append(bdi);
   return el;
+}
+
+/** Whether a path's label row would duplicate the name headline right above
+ *  it: true when the path has NO directory component, so its basename IS the
+ *  whole path (e.g. a bare "x.md" opened from the CLI, or a favorited folder
+ *  passed in already-bare). Callers gate their truncatedPathLabel() append on
+ *  `!redundantPathLabel(path)` instead of always rendering a second line that
+ *  repeats the name verbatim. Pure query. */
+export function redundantPathLabel(path: string): boolean {
+  return basename(path) === path;
 }

@@ -1,6 +1,6 @@
 import { renderSidebarButton } from "../sidebar-toggle";
 import { basename } from "../path";
-import { truncatedPathLabel } from "../chrome/path-label";
+import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
 import { icon } from "../icons";
 
 // ---------------------------------------------------------------------------
@@ -104,10 +104,12 @@ export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandl
       const name = create("span", "recent-name");
       name.textContent = basename(path);
       nameRow.append(glyph, name);
+      item.append(nameRow);
       // Left-truncating path label (shared with favorites-panel.ts — see
       // chrome/path-label.ts for the rtl+<bdi> DOM/CSS rule this builds).
-      const dir = truncatedPathLabel(path);
-      item.append(nameRow, dir);
+      // Skipped when the path has no directory component (e.g. a bare
+      // "x.md") — it would just repeat the name line verbatim.
+      if (!redundantPathLabel(path)) item.append(truncatedPathLabel(path));
       item.title = path;
       listEl.append(item);
     }

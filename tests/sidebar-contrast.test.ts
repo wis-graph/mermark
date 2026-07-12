@@ -129,7 +129,7 @@ describe("sidebar strong-contrast palette (style contract)", () => {
     { name: "claude", selector: ':root[data-theme="claude"]' },
   ] as const;
 
-  const EXPECTED_POLE_IS_LIGHT: Record<string, boolean> = { dark: true, light: false, claude: false };
+  const EXPECTED_POLE_IS_LIGHT: Record<string, boolean> = { dark: false, light: false, claude: false };
 
   // Design decision 4's full remap table, sidebar-scoped selectors that carry
   // a color declaration — the sweep's source of truth. `.workspace-sash` is

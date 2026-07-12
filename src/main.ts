@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { homeDir, documentDir } from "@tauri-apps/api/path";
-import { dirOf, resolveOpenPath, normalizePath, basename } from "./path";
+import { dirOf, resolveOpenPath, normalizePath } from "./path";
 import { createOpenPathPrompt } from "./open-file/path-prompt";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -42,13 +42,15 @@ import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./sett
 import { createSidebarSash } from "./sidebar/sash";
 import { createSettingsButton } from "./settings/panel/modal";
 import { copyBundleToClipboard } from "./bundle";
-import { registerHandler, installDispatcher, bindKeybindings } from "./shortcuts/registry";
+import { registerHandler, installDispatcher, bindKeybindings, effectiveBinding } from "./shortcuts/registry";
+import { displayChord } from "./shortcuts/keys";
 import { arrangeStatusBar } from "./status-bar";
 import { createTitleBar, arrangeTitleBar, createSidebarTopStrip, createLeftCommandGroup, installLeftGroupRehoming } from "./title-bar";
 import { createBreadcrumb } from "./breadcrumb";
 import { createRecentPanel } from "./recent/recent-panel";
 import { pushRecent, pruneMissing } from "./recent/recent-docs";
 import { createFavoritesSection } from "./favorites/favorites-panel";
+import { createWelcomePane } from "./welcome/welcome-pane";
 import { pushFavorite, removeFavorite, isFavorite } from "./favorites/favorite-folders";
 import {
   makeHistory,
@@ -729,6 +731,16 @@ async function boot() {
     refreshMermaidTheme(t);
     current?.refresh();
   });
+  // mermaid's themeVariables are now derived from themeJsonSetting (SSOT), so a
+  // JSON-only change (e.g. a swatch edit) must also re-bake mermaid even when
+  // themeSetting itself doesn't change. loadPreset() writes both settings, so a
+  // preset switch double-fires this + the themeSetting subscription above —
+  // refreshMermaidTheme is idempotent (cache clear + version bump), so the only
+  // cost is one redundant redraw pass, accepted rather than adding de-dupe.
+  themeJsonSetting.subscribe(() => {
+    refreshMermaidTheme(themeSetting.get());
+    current?.refresh();
+  });
   // Editor-behavior sinks: the settings are the writers, the live editor is the
   // single sink for each (no hand fan-out). autosaveDelay/conflictPolicy were
   // seeded via mountEditor opts; these keep them live across re-mounts.
@@ -824,7 +836,23 @@ async function boot() {
 
   if (!file) {
     host.classList.add("welcome-host");
-    renderWelcomeScreen(host, explorer);
+    host.append(
+      createWelcomePane({
+        getFavorites: () => favoriteFoldersSetting.get(),
+        getRecent: () => recentDocsSetting.get(),
+        onJumpFolder: (folder) => explorer.jumpToRoot(folder),
+        onOpenFile: (doc) => {
+          location.href = `index.html?file=${encodeURIComponent(doc)}`;
+        },
+        // Reuses the existing explorer-toggle flow — no native folder picker,
+        // no new Tauri command (IPC-surface constraint, design decision ③).
+        onOpenFolder: () => explorer.button.click(),
+        openFolderChord: (() => {
+          const bound = effectiveBinding("explorer.toggle");
+          return bound ? displayChord(bound) : null;
+        })(),
+      }),
+    );
     return;
   }
 
@@ -836,105 +864,6 @@ async function boot() {
   } catch (e) {
     host.textContent = `Failed to open: ${String(e)}`;
   }
-}
-
-function renderWelcomeScreen(
-  host: HTMLElement,
-  explorer: ReturnType<typeof createExplorerPanel>
-) {
-  const pane = el("div", "welcome-pane");
-
-  // 1. 즐겨찾기 섹션
-  const favSection = el("div", "welcome-section");
-  const favHeader = el("h2", "welcome-title");
-  favHeader.textContent = "즐겨찾기";
-  favSection.append(favHeader);
-
-  const renderFavorites = () => {
-    const folders = favoriteFoldersSetting.get();
-    const listContainer = el("div", "welcome-list");
-    if (folders.length === 0) {
-      const empty = el("div", "welcome-empty");
-      empty.textContent = "등록된 즐겨찾기 폴더가 없습니다.";
-      listContainer.append(empty);
-    } else {
-      folders.forEach((folder) => {
-        const row = el("div", "welcome-row welcome-folder-row");
-        const iconSpan = el("span", "welcome-icon");
-        iconSpan.append(icon("folder"));
-
-        const name = el("span", "welcome-name");
-        name.textContent = basename(folder) || folder;
-
-        const pathInfo = el("span", "welcome-path");
-        pathInfo.textContent = folder;
-
-        row.append(iconSpan, name, pathInfo);
-        row.addEventListener("click", () => {
-          explorer.jumpToRoot(folder);
-        });
-        listContainer.append(row);
-      });
-    }
-    return listContainer;
-  };
-
-  let favList = renderFavorites();
-  favSection.append(favList);
-  pane.append(favSection);
-
-  favoriteFoldersSetting.subscribe(() => {
-    const next = renderFavorites();
-    favList.replaceWith(next);
-    favList = next;
-  });
-
-  // 2. 최근 문서 섹션
-  const recSection = el("div", "welcome-section");
-  const recHeader = el("h2", "welcome-title");
-  recHeader.textContent = "최근 문서";
-  recSection.append(recHeader);
-
-  const renderRecents = () => {
-    const docs = recentDocsSetting.get();
-    const listContainer = el("div", "welcome-list");
-    if (docs.length === 0) {
-      const empty = el("div", "welcome-empty");
-      empty.textContent = "최근 열어본 문서가 없습니다.";
-      listContainer.append(empty);
-    } else {
-      docs.forEach((doc) => {
-        const row = el("div", "welcome-row welcome-file-row");
-        const iconSpan = el("span", "welcome-icon");
-        iconSpan.append(icon("file-text"));
-
-        const name = el("span", "welcome-name");
-        name.textContent = basename(doc);
-
-        const pathInfo = el("span", "welcome-path");
-        pathInfo.textContent = doc;
-
-        row.append(iconSpan, name, pathInfo);
-        row.addEventListener("click", () => {
-          location.href = `index.html?file=${encodeURIComponent(doc)}`;
-        });
-        listContainer.append(row);
-      });
-    }
-    return listContainer;
-  };
-
-  let recList = renderRecents();
-  recSection.append(recList);
-  pane.append(recSection);
-
-  recentDocsSetting.subscribe(() => {
-    const next = renderRecents();
-    recList.replaceWith(next);
-    recList = next;
-  });
-
-  host.append(pane);
 }
 
 boot();

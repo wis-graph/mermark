@@ -41,6 +41,19 @@ describe("recent panel", () => {
     expect(items[0].querySelector(".path-label > bdi")?.textContent).toBe("/notes/alpha.md");
   });
 
+  it("omits the .path-label when the path has no directory component (redundant with the name)", () => {
+    const { button, aside } = createRecentPanel({
+      getRecent: () => ["x.md", "/a/y.md"],
+      onOpenFile: () => {},
+    });
+    host.append(button, aside);
+    button.click();
+    const items = aside.querySelectorAll(".recent-item");
+    expect(items[0].querySelector(".recent-name")?.textContent).toBe("x.md");
+    expect(items[0].querySelector(".path-label")).toBeNull(); // "x.md" === basename("x.md")
+    expect(items[1].querySelector(".path-label")).not.toBeNull(); // "/a/y.md" has a dir part
+  });
+
   it("shows the empty state when there is no history", () => {
     const { button, aside } = createRecentPanel({ getRecent: () => [], onOpenFile: () => {} });
     host.append(button, aside);

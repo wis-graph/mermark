@@ -111,13 +111,24 @@ function contrastRatio(rgbA, rgbB) {
 // Direction-agnostic two-tone strength: does the sidebar read as a STRONG
 // contrast band against the body canvas (either direction), not merely a
 // recessed shade of the same tone?
+//
+// NOTE (design decision 3, revised 2026-07-12): dark no longer targets this
+// invariant. Its sidebar is now deliberately a SUBTLE one-step-brighter dark
+// (not a stark light-pole inversion — the prior #f9f7f3-pole sidebar next to a
+// near-black canvas read as glare), so its measured two-tone contrast ratio
+// legitimately drops well below 7. This is an ACCEPTED, intentional change,
+// not a regression — see allThemesHighContrast below, which is expected to be
+// false post-change (dark is the reason) while light/claude stay >=7.
 function isHighContrast(sidebarRgb, bodyRgb) {
   return contrastRatio(sidebarRgb, bodyRgb) >= 7;
 }
 
-// The per-theme inversion contract (design decision 3): dark's sidebar is the
-// LIGHT pole against a dark canvas; light/claude's sidebar is the DARK pole
-// against a bright canvas.
+// The per-theme inversion DIRECTION contract (design decision 3): dark's
+// sidebar stays the LIGHTER pole relative to its own (near-black) canvas —
+// unchanged by the 2026-07-12 repolarization, which only pulled the pole's
+// ABSOLUTE lightness down (from #f9f7f3 to #211d1a) so the two are close in
+// the same dark family instead of a stark inversion. light/claude keep the
+// DARK pole against their bright canvas.
 const EXPECTED_SIDEBAR_POLARITY = { dark: "sidebar-lighter", light: "sidebar-darker", claude: "sidebar-darker" };
 function expectedSidebarPolarity(theme) {
   return EXPECTED_SIDEBAR_POLARITY[theme] ?? null;

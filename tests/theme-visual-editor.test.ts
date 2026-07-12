@@ -57,6 +57,41 @@ describe("Theme Visual Editor", () => {
     });
   });
 
+  it("keeps 18 color inputs total but only 9 circular swatches (core column only)", () => {
+    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
+    host.appendChild(el);
+    // 2026-07-12 design-polish pass: the markdown column's circular swatches
+    // were dropped (all 9 rendered as identical black-ink circles — zero
+    // information, since the column already has a live text preview). The
+    // color <input> stays for every card (still the click target); only the
+    // circle is core-only now.
+    expect(host.querySelectorAll(".theme-swatch-input").length).toBe(18);
+    expect(host.querySelectorAll(".theme-swatch-color").length).toBe(9);
+  });
+
+  it("markdown (previewVar) cards carry is-preview and render no circular swatch", () => {
+    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
+    host.appendChild(el);
+    for (const key of ["h1", "h2", "h3", "h4", "h5", "h6", "bold", "italic", "code"]) {
+      const preview = host.querySelector(`.theme-preview-${key}`)!;
+      const card = preview.closest(".theme-swatch-card")!;
+      expect(card.classList.contains("is-preview"), `${key} card missing is-preview`).toBe(true);
+      expect(card.querySelector(".theme-swatch-color"), `${key} card still has a circle`).toBeNull();
+      expect(card.querySelector(".theme-swatch-input"), `${key} card lost its color input`).not.toBeNull();
+    }
+  });
+
+  it("core cards do NOT carry is-preview and keep their circular swatch", () => {
+    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
+    host.appendChild(el);
+    const coreKeys = ["bg", "fg", "surface", "border", "accent", "link", "muted", "highlightBg", "highlight"];
+    const cards = host.querySelectorAll(".theme-swatch-card");
+    for (let i = 0; i < coreKeys.length; i++) {
+      expect(cards[i]!.classList.contains("is-preview")).toBe(false);
+      expect(cards[i]!.querySelector(".theme-swatch-color")).not.toBeNull();
+    }
+  });
+
   it("binds markdown preview elements to their CSS color vars", () => {
     const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
     host.appendChild(el);
@@ -158,7 +193,7 @@ describe("parseTheme backward-compat", () => {
     const parsed = parseTheme(legacyEightKeyJson("dark"));
     expect(parsed).not.toBeNull();
     // core 8 keys preserved verbatim
-    expect(parsed!.colors.bg).toBe("#0c0a09");
+    expect(parsed!.colors.bg).toBe("#131110");
     expect(parsed!.colors.fg).toBe("#ffffff");
     expect(parsed!.colors.accent).toBe("#a8c8e8");
     expect(parsed!.colors.muted).toBe("#a8a29e");

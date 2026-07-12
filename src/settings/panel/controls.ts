@@ -72,6 +72,10 @@ function renderSegmented<T>(setting: Setting<T>, control: Extract<Control<T>, { 
 
 function renderSelect<T>(setting: Setting<T>, control: Extract<Control<T>, { kind: "select" }>): HTMLElement {
   const { row: r, cell } = row("");
+  // The wrap gives the themed chevron (styles.css's .settings-select-wrap::after)
+  // a positioning context — a bare <select> has none of its own for a ::after.
+  const wrap = document.createElement("span");
+  wrap.className = "settings-select-wrap";
   const select = document.createElement("select");
   select.className = "settings-select";
   // The option's DOM value IS the setting value (round-1 selects are string-valued:
@@ -89,7 +93,8 @@ function renderSelect<T>(setting: Setting<T>, control: Extract<Control<T>, { kin
   const reflect = (v: T) => (select.value = String(v));
   reflect(setting.get());
   setting.subscribe(reflect);
-  cell.appendChild(select);
+  wrap.appendChild(select);
+  cell.appendChild(wrap);
   return r;
 }
 
@@ -197,13 +202,10 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
 
   ALL_CARDS.forEach(({ key, label: cardLabel, previewVar }) => {
     const card = document.createElement("div");
-    card.className = "theme-swatch-card";
-
-    const wrapper = document.createElement("div");
-    wrapper.className = "theme-swatch-wrapper";
-
-    const swatch = document.createElement("div");
-    swatch.className = "theme-swatch-color";
+    // Markdown cards (previewVar set) get `is-preview`: no circular swatch (see
+    // below) — the card itself becomes the click target, styles.css gives it
+    // the hover/focus affordance a bare label wouldn't have.
+    card.className = previewVar ? "theme-swatch-card is-preview" : "theme-swatch-card";
 
     const input = document.createElement("input");
     input.type = "color";
@@ -221,10 +223,7 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
       };
       setting.set(updatedTheme);
     });
-
-    wrapper.append(swatch, input);
     colorInputs[key] = input;
-    swatchColors[key] = swatch;
 
     const label = document.createElement("span");
     label.className = "theme-swatch-label";
@@ -237,7 +236,24 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
     }
     label.textContent = cardLabel;
 
-    card.append(wrapper, label);
+    if (previewVar) {
+      // No circular swatch: it added zero information here (all 9 markdown
+      // circles rendered as the same ink-black dot, and the card already has
+      // a live text preview). The color input overlays the WHOLE card
+      // (styles.css's `.theme-swatch-card.is-preview .theme-swatch-input`,
+      // the same invisible-overlay technique `.theme-swatch-wrapper` used for
+      // just the circle, scaled up to the card) so clicking anywhere on the
+      // row opens the native picker.
+      card.append(input, label);
+    } else {
+      const wrapper = document.createElement("div");
+      wrapper.className = "theme-swatch-wrapper";
+      const swatch = document.createElement("div");
+      swatch.className = "theme-swatch-color";
+      wrapper.append(swatch, input);
+      swatchColors[key] = swatch;
+      card.append(wrapper, label);
+    }
     grid.appendChild(card);
   });
 

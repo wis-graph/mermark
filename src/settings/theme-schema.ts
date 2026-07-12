@@ -290,7 +290,7 @@ export function builtInTheme(name: PresetName): Theme {
   return {
     name: "dark",
     colors: {
-      bg: "#0c0a09",
+      bg: "#131110",
       fg: "#ffffff",
       accent: "#a8c8e8",
       link: "#a8c8e8",

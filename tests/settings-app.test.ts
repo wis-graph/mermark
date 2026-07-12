@@ -159,7 +159,10 @@ describe("app settings", () => {
     const { groups } = await import("../src/settings/registry");
     const theme = groups().find((g) => g.name === "테마");
     expect(theme).toBeDefined();
-    expect(theme!.entries.some((e) => e.ui.label === "테마 JSON")).toBe(true);
+    // 2026-07-12 design-polish pass: relabeled "테마 JSON" -> "테마 색상" — the
+    // panel row is a swatch grid (JSON is a collapsed accordion inside it), so
+    // the old label named the least-visible part of the UI, not what's shown.
+    expect(theme!.entries.some((e) => e.ui.label === "테마 색상")).toBe(true);
   });
 
   // ── Claude preset: parse, dropdown control, toggle cycle ────────────────────

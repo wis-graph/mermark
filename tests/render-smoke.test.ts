@@ -190,6 +190,17 @@ describe("full-editor render smoke", () => {
     ed.view.destroy();
   });
 
+  it("consecutive heading cluster: a heading right after another heading gets cm-heading-cont, one after body text does not", () => {
+    const doc = "# A\n\n## B\n\n본문\n\n## C";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    (ed.view as unknown as { measure(): void }).measure();
+    const h2Lines = ed.view.contentDOM.querySelectorAll(".cm-h2");
+    expect(h2Lines.length).toBe(2);
+    expect(h2Lines[0]!.classList.contains("cm-heading-cont")).toBe(true); // B follows heading A
+    expect(h2Lines[1]!.classList.contains("cm-heading-cont")).toBe(false); // C follows body text
+    ed.view.destroy();
+  });
+
   it("renders a table inside a blockquote without > leaking into cells (D4)", () => {
     const doc = "intro\n\n> | A | B |\n> |---|---|\n> | 1 | 2 |\n\nend";
     const view = mount(host, doc);

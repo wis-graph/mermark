@@ -66,6 +66,14 @@ describe("favorites section: list rendering", () => {
     expect(items[1].querySelector(".favorites-name")?.textContent).toBe("notes");
   });
 
+  it("omits the .path-label when a favorited path has no directory component", () => {
+    const s = mkSection({ getFavorites: () => ["docs", "/y/notes"] });
+    const items = s.el.querySelectorAll(".favorites-item");
+    expect(items[0].querySelector(".favorites-name")?.textContent).toBe("docs");
+    expect(items[0].querySelector(".path-label")).toBeNull(); // "docs" === basename("docs")
+    expect(items[1].querySelector(".path-label")).not.toBeNull();
+  });
+
   it("shows the empty state when there are no favorites", () => {
     const s = mkSection({ getFavorites: () => [] });
     expect(s.el.querySelector<HTMLElement>(".favorites-empty")!.hidden).toBe(false);

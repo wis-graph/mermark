@@ -1,6 +1,6 @@
 import { icon } from "../icons";
 import { basename } from "../path";
-import { truncatedPathLabel } from "../chrome/path-label";
+import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
 
 // ---------------------------------------------------------------------------
 // Favorites BOTTOM SECTION (M5) — a split-pane section hosted INSIDE the
@@ -119,15 +119,18 @@ export function createFavoritesSection({
       const name = create("span", "favorites-name");
       name.textContent = basename(path);
       nameRow.append(glyph, name);
-      // Left-truncating path label (shared with recent-panel.ts — see
-      // chrome/path-label.ts for the rtl+<bdi> DOM/CSS rule this builds).
-      const dir = truncatedPathLabel(path);
       const remove = create("button", "favorites-remove") as HTMLButtonElement;
       remove.type = "button";
       remove.dataset.remove = "true";
       remove.setAttribute("aria-label", "제거");
       remove.append(icon("x"));
-      item.append(nameRow, dir, remove);
+      item.append(nameRow);
+      // Left-truncating path label (shared with recent-panel.ts — see
+      // chrome/path-label.ts for the rtl+<bdi> DOM/CSS rule this builds).
+      // Skipped when the path has no directory component — it would just
+      // repeat the name line verbatim (redundantPathLabel).
+      if (!redundantPathLabel(path)) item.append(truncatedPathLabel(path));
+      item.append(remove);
       item.title = path;
       listEl.append(item);
     }
