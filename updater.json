@@ -1,11 +1,11 @@
 {
-  "version": "0.5.8",
-  "notes": "### Fixed\n\n- **목록 줄바꿈 들여쓰기 정렬**: 긴 목록 항목이 자동 줄바꿈될 때 이어지는 줄이 윗줄 글자 시작점보다 깊게 들어가던 것을 글자 시작점에 정확히 맞췄다(실측 기준). 불릿 점의 위치·크기·계층 구분은 그대로다. 중첩 목록과 번호 목록(1. 2. …)의 줄바꿈도 각자 글자 시작점에 정렬된다.\n- **터미널로 실행하면 업데이트 확인이 실패하던 문제**: `mermark` 명령으로 연 앱에서 \"업데이트 확인\"이 항상 오류가 나던 것을 고쳤다. 명령어 설치 방식을 바꿨으므로 기존 설치자는 `./scripts/install-cli.sh`를 한 번 다시 실행하면 된다.",
-  "pub_date": "2026-07-11T17:14:44Z",
+  "version": "0.5.9",
+  "notes": "### Added\n\n- **웰컴 화면 '폴더 열기' 버튼**: 즐겨찾기와 최근 문서가 비어 있을 때 폴더 열기 버튼과 단축키 안내(⌘B)가 표시되어, 처음 실행해도 다음 행동이 보인다.\n\n### Changed\n\n- **Mermaid 다이어그램이 앱 테마를 따름**: 라이트/클로드/다크 어느 테마에서든 다이어그램의 상자·글자·선 색이 문서와 한 톤으로 렌더되고, 화살표 위 라벨이 연결선을 가리지 않는다. 테마를 바꾸면 다이어그램도 즉시 새 색으로 다시 그려진다.\n- **다크 모드 톤 정돈**: 눈부시던 밝은 사이드바가 에디터보다 한 단계 밝은 어두운 톤으로 바뀌고, 순흑에 가깝던 배경도 살짝 부드러워져 장문 읽기가 편해졌다.\n- **코드 글꼴과 줄바꿈 정렬**: 코드가 현대적인 고정폭 글꼴(SF Mono 계열)로 표시되고, 긴 코드 줄이 자동 줄바꿈될 때 이어지는 줄이 코드 들여쓰기에 맞춰 정렬된다.\n- **연속 제목 간격**: 제목 바로 아래 제목이 이어지는 구간의 위아래 간격이 정돈되어 문서 위계가 자연스러워졌다.\n- **설정 화면 다듬기**: 카테고리 선택 시 뜨던 파란 테두리를 앱 색상으로 교체, 드롭다운·슬라이더를 앱 스타일로 통일, 설정 창 뒤 배경이 테마 톤으로 은은하게 가려진다. '테마 JSON' 항목은 '테마 색상'으로 바뀌고, 굵게·기울임 등 마크다운 스타일 색은 검정 원 대신 실제 스타일이 적용된 미리보기 글자로 보여준다.\n- **최근 문서 표기**: 파일 이름과 경로가 같은 항목의 중복 표기를 없앴다.",
+  "pub_date": "2026-07-12T01:09:42Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzN4WkpCbHZ5ZFh6Y1hpN0JGendVQXFNaTFia1pGdHRIb0ZmN0M4L3dqTmVpVC9IRysvRXhCQW9QZ0UxQzIwcmJZNUpBNWZENWM5K3dCYUdCQXRvdEFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzkwMDYzCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnZQRHVYRnNFUERRTDQ5UENvUm54TUZkaWM0SW5JRnBydm1qSEN3QW5HT0h3S0dqVTljVyttampXcU5hQ01ieGtJQmpkdEx6bW9qK3VrNjlDUld3MkRnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.8/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzIweExCaGF0ckIrZmtka05RbkorL2lIME1VampFZ3pObmxXdHRmSGNVbEIxbmFVdXdFRUpiaTBVTmRqZlpZOG9tSkN2cUxFYWIvNnFYaUgwYThCSnd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzODE4NTQ3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClowT0xVOXUzQ3lvV0dsc3FRRXJRVlF3a29RQSt1bkdoUXdRcndFNldxZ2lmVEFBeUI4QnNkREJXZzg3ME9lTHd1Y0U5UmtNdFoyR1dERHoyTmQyZ0N3PT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.9/mermark.app.tar.gz"
     }
   }
 }
