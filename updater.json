@@ -1,11 +1,11 @@
 {
-  "version": "0.5.9",
-  "notes": "### Added\n\n- **웰컴 화면 '폴더 열기' 버튼**: 즐겨찾기와 최근 문서가 비어 있을 때 폴더 열기 버튼과 단축키 안내(⌘B)가 표시되어, 처음 실행해도 다음 행동이 보인다.\n\n### Changed\n\n- **Mermaid 다이어그램이 앱 테마를 따름**: 라이트/클로드/다크 어느 테마에서든 다이어그램의 상자·글자·선 색이 문서와 한 톤으로 렌더되고, 화살표 위 라벨이 연결선을 가리지 않는다. 테마를 바꾸면 다이어그램도 즉시 새 색으로 다시 그려진다.\n- **다크 모드 톤 정돈**: 눈부시던 밝은 사이드바가 에디터보다 한 단계 밝은 어두운 톤으로 바뀌고, 순흑에 가깝던 배경도 살짝 부드러워져 장문 읽기가 편해졌다.\n- **코드 글꼴과 줄바꿈 정렬**: 코드가 현대적인 고정폭 글꼴(SF Mono 계열)로 표시되고, 긴 코드 줄이 자동 줄바꿈될 때 이어지는 줄이 코드 들여쓰기에 맞춰 정렬된다.\n- **연속 제목 간격**: 제목 바로 아래 제목이 이어지는 구간의 위아래 간격이 정돈되어 문서 위계가 자연스러워졌다.\n- **설정 화면 다듬기**: 카테고리 선택 시 뜨던 파란 테두리를 앱 색상으로 교체, 드롭다운·슬라이더를 앱 스타일로 통일, 설정 창 뒤 배경이 테마 톤으로 은은하게 가려진다. '테마 JSON' 항목은 '테마 색상'으로 바뀌고, 굵게·기울임 등 마크다운 스타일 색은 검정 원 대신 실제 스타일이 적용된 미리보기 글자로 보여준다.\n- **최근 문서 표기**: 파일 이름과 경로가 같은 항목의 중복 표기를 없앴다.",
-  "pub_date": "2026-07-12T01:09:42Z",
+  "version": "0.5.10",
+  "notes": "### Added\n\n- **본문 너비 슬라이더**: 화면 하단(상태바)에서 본문 글 너비를 슬라이더로 바로 조절할 수 있다. 설정 › 타이포그래피의 '본문 너비'와 같은 값이라 어느 쪽에서 바꿔도 함께 반영된다. 표가 좁아 답답할 때 너비를 넓히면 표도 함께 넓어진다.\n- **자동 업데이트 확인과 원클릭 설치**: 앱을 켜면 새 버전을 자동으로 확인하고, 업데이트가 있으면 화면 하단에 업데이트 버튼이 나타난다. 버튼을 누르면 바로 그 자리에서 다운로드 진행률이 보이고, 다 받으면 '설치하고 재시작'을 눌러 즉시 새 버전으로 업데이트된다. 설정 › 버전에서 수동으로 확인·설치하는 흐름도 그대로 쓸 수 있다.\n- **폴더 즐겨찾기 순서 변경**: 사이드바 즐겨찾기의 폴더를 드래그해 원하는 순서로 재정렬할 수 있다.\n\n### Fixed\n\n- **표의 한글 열이 세로로 쪼개지던 문제**: 표에서 한글이 많은 열이 한 글자씩 세로로 줄바꿈되어 읽기 힘들던 것을 고쳤다. 이제 각 열이 최소 너비를 확보하고, 한글은 띄어쓰기 단위로만 줄바꿈된다. 아주 긴 링크처럼 끊을 수 없는 내용이 있으면 표가 가로로 스크롤된다.\n- **경로 열기 버튼이 닫히지 않던 문제**: 제목 표시줄의 경로 열기 버튼을 다시 누르면 입력창이 닫히도록 토글된다.\n- **중첩 목록의 세로 가이드선 어긋남**: 중첩 목록 왼쪽의 연한 세로 안내선이 상위 항목 위치와 어긋나 여백에 떠 보이던 것을 항목 열에 맞췄다.\n- **라이트 테마 체크박스 색**: 할 일 목록 체크박스가 라이트 테마에서 브라우저 기본 파란색으로 나오던 것을 앱 테마 색상으로 통일했다.\n\n### Changed\n\n- **웰컴 화면 단순화**: 즐겨찾기와 최근 문서가 모두 비어 있을 때, 비어 있음을 세 번 반복하던 화면을 앱 심볼 + '폴더 열기' + 단축키 안내의 단일 화면으로 정리했다. 항목이 하나라도 있으면 기존 카드 목록을 그대로 보여준다.\n- **라이트 테마 다이어그램 노드 색**: 라이트 테마에서 Mermaid 다이어그램 노드가 순백이라 배경에서 도드라지던 것을 카드 배경 톤으로 살짝 낮췄다.\n- **설정 '웹폰트' 설명 위치**: 우측에 눌려 답답하던 설명 문구를 입력칸 아래로 옮겨 읽기 편하게 했다.",
+  "pub_date": "2026-07-13T12:25:11Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzIweExCaGF0ckIrZmtka05RbkorL2lIME1VampFZ3pObmxXdHRmSGNVbEIxbmFVdXdFRUpiaTBVTmRqZlpZOG9tSkN2cUxFYWIvNnFYaUgwYThCSnd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzODE4NTQ3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClowT0xVOXUzQ3lvV0dsc3FRRXJRVlF3a29RQSt1bkdoUXdRcndFNldxZ2lmVEFBeUI4QnNkREJXZzg3ME9lTHd1Y0U5UmtNdFoyR1dERHoyTmQyZ0N3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.9/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzR6RFNHaXNvTDBZb1UxaXE5US9WZDlsNTlaR2FlWm13a2trOWRUbWVqSUNkR1BCNWpWajFUTWFlQXhlZVV1bTluRnNGYUxLRnlKQ0E1a3VPdkh2OWdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzOTQ1Mjk2CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnVzREpGaE9aWFBCSmlrQ2VOUDU3UXRYMkg4R1hxb2srR2JvUGtpQW9rTmQ3VzJ6cGFtQ2ZHa1dkOUNmNGhDbVBNcCtvVG15bTNKR0xJb0VnbHVXMERnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.10/mermark.app.tar.gz"
     }
   }
 }
