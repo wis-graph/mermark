@@ -101,6 +101,21 @@ export function createOpenPathPrompt({ bar, onOpen }: OpenPathHandlers): OpenPat
     else activate();
   });
 
+  // Domain rule (2026-07-12 design-polish batch ②): a press on the toggle
+  // button while editing must read as a toggle, not as a blur-cancel. On a
+  // real device the input's blur fires on mousedown, BEFORE the button's own
+  // click — the button never takes focus, but the input still loses it. That
+  // blur runs deactivate() first, so the following click's toggle branch sees
+  // an already-closed bar and re-activates: "pressing again doesn't close it."
+  // Blocking the mousedown's default keeps focus on the input, so blur never
+  // fires and the click handler's existing toggle logic is the only thing
+  // that runs. jsdom's `button.click()` doesn't raise blur, which is why the
+  // prior suite never caught this — see the added test's manual event replay.
+  const keepEditingFocusOnTogglePress = (e: MouseEvent): void => {
+    e.preventDefault();
+  };
+  button.addEventListener("mousedown", keepEditingFocusOnTogglePress);
+
   // Esc cancels (restore the bar, editor untouched). Enter submits the path.
   input.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {

@@ -21,6 +21,14 @@ target/
 # mermark-dev harness handoff artifacts (audit trail, not source)
 _workspace*/
 
+# Agent / orchestration scratch (not product source)
+.omc/
+.agents/
+.test/
+scratchpad/
+DESIGN_CLAUDE.md
+docs/superpowers/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

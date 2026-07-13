@@ -116,4 +116,27 @@ describe("open-path title-bar prompt (inline / bar-becomes-input)", () => {
     input.dispatchEvent(new FocusEvent("blur"));
     expect(bar.classList.contains("path-editing")).toBe(false);
   });
+
+  // Regression (2026-07-12 design-polish batch ②): on a real device, pressing
+  // the toggle button while editing fires the input's blur BEFORE the button's
+  // click (WKWebView/macOS moves focus to body on mousedown even though the
+  // button itself never receives it). jsdom's button.click() doesn't raise
+  // blur, so the prior suite never caught this — this test reproduces the
+  // real event order by hand: mousedown → (if not prevented) blur → click.
+  // Without the mousedown guard, blur's deactivate() fires first, then click's
+  // toggle sees no `.path-editing` and re-activates — "second press doesn't
+  // close it" as observed on-device.
+  it("stays closed on the toggle press even with the real mousedown-before-blur race", () => {
+    const { button, input } = createOpenPathPrompt({ bar, onOpen: async () => {} });
+    bar.appendChild(button);
+    button.click();
+    expect(bar.classList.contains("path-editing")).toBe(true);
+
+    const md = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    button.dispatchEvent(md);
+    if (!md.defaultPrevented) input.dispatchEvent(new FocusEvent("blur"));
+    button.click();
+
+    expect(bar.classList.contains("path-editing")).toBe(false);
+  });
 });

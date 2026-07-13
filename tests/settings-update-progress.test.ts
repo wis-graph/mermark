@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { downloadPercent, formatDownloadProgress } from "../src/settings/panel/update-progress";
+import { downloadPercent, formatDownloadProgress } from "../src/update/update-progress";
 
 describe("downloadPercent", () => {
   it("computes a 0-100 percentage from downloaded/total bytes", () => {

@@ -242,4 +242,16 @@ describe("text control (P0 web-font name input)", () => {
     expect(input.placeholder).toBe("예: Noto Sans KR");
     expect(row.textContent).toContain("도움말");
   });
+
+  it("adds settings-row-has-help when the control has help text (so CSS wraps it below the input)", () => {
+    const s = defineSetting<string>({ key: "c.txt5", default: "" });
+    const row = RENDER.text(s, { kind: "text", help: "도움말" });
+    expect(row.classList.contains("settings-row-has-help")).toBe(true);
+  });
+
+  it("does NOT add settings-row-has-help when the control has no help text", () => {
+    const s = defineSetting<string>({ key: "c.txt6", default: "" });
+    const row = RENDER.text(s, { kind: "text" });
+    expect(row.classList.contains("settings-row-has-help")).toBe(false);
+  });
 });

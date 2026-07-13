@@ -108,6 +108,69 @@ describe("settings modal — 버전 category", () => {
     expect(backdrop.querySelector(".version-later-btn")).not.toBeNull();
   });
 
+  it("mounting the pane with an already-found update (e.g. the boot auto-check) renders the install card without a click", async () => {
+    // Simulates ensureCheckedOnce() having already run (boot auto-check) and
+    // found an update BEFORE this pane ever mounts — update-flow is the
+    // shared SSOT, so the pane just queries it at mount time (no re-check).
+    vi.mocked(check).mockResolvedValue({
+      version: "8.8.8",
+      date: "2026-06-01",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const { checkNow } = await import("../src/update/update-flow");
+    await checkNow();
+
+    const backdrop = openModal();
+    const versionBtn = [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-cat")].find(
+      (b) => b.textContent === "버전",
+    )!;
+    versionBtn.click(); // mounts the pane — no check-button click follows
+
+    expect(backdrop.querySelector(".version-update-title")?.textContent).toBe("v8.8.8 업데이트가 있습니다");
+    expect(backdrop.querySelector(".version-install-btn")).not.toBeNull();
+  });
+
+  it("mounting the pane while a download is already in progress does NOT show an install card (footer owns that state)", async () => {
+    // Reproduces 04_audit_report.md #2: the footer button started a download
+    // for this same found update (phase="downloading"), then the settings
+    // panel is opened. Mounting must not render a stale "install now" card
+    // that would no-op on click and misreport "설치 실패" — that progress
+    // belongs to the footer until it resolves.
+    let rejectDownload!: (err: Error) => void;
+    vi.mocked(check).mockResolvedValue({
+      version: "7.7.7",
+      date: "2026-05-01",
+      download: vi.fn(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectDownload = reject;
+          }),
+      ),
+      install: vi.fn(() => Promise.resolve()),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const { checkNow, startDownload, updatePhase } = await import("../src/update/update-flow");
+    await checkNow();
+    const downloading = startDownload(); // not awaited — leaves phase mid-flight
+    expect(updatePhase()).toBe("downloading");
+
+    const backdrop = openModal();
+    const versionBtn = [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-cat")].find(
+      (b) => b.textContent === "버전",
+    )!;
+    versionBtn.click(); // mounts the pane mid-download — no check-button click
+
+    expect(backdrop.querySelector(".version-update-title")).toBeNull();
+    expect(backdrop.querySelector(".version-install-btn")).toBeNull();
+
+    // Restore a guard-compatible phase ("found") before the next test runs —
+    // this file shares update-flow's module state across tests (no
+    // vi.resetModules(), see file header note).
+    rejectDownload(new Error("test cleanup"));
+    await downloading;
+    expect(updatePhase()).toBe("found");
+  });
+
   it("renders the 변경 내역 section from CHANGELOG.md below the update UI", () => {
     const backdrop = openModal();
     const versionBtn = [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-cat")].find(

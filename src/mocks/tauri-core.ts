@@ -283,8 +283,6 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
     case "open_url":
       console.info("[mock] open_url", a.url);
       return undefined as T;
-    case "get_version":
-      return "0.4.0" as T;
     case "check":
       // `@tauri-apps/plugin-updater`'s `check()` calls
       // `invoke("plugin:updater|check", ...)`; the "plugin:" prefix is

@@ -627,6 +627,46 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .status-spacer { flex: 1; }
 .status-pos { font-variant-numeric: tabular-nums; padding: 0 .5em; color: var(--muted); }
 
+/* Footer reading-width slider (status-bar-width.ts) — a compact live control over
+   --measure, leading the right cluster. Reuses the settings-slider track/thumb
+   idiom at footer scale; understated (muted thumb) at rest, --accent on hover to
+   match the footer's quiet register. Not in the editor measure tree (zoom-guard). */
+.status-width { display: inline-flex; align-items: center; padding: 0 .4em; cursor: pointer; }
+.status-width-slider {
+  appearance: none; -webkit-appearance: none;
+  width: 84px; height: 3px; border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--fg) 14%, transparent); outline: none; cursor: pointer;
+}
+.status-width-slider::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none;
+  width: 11px; height: 11px; border-radius: var(--radius-pill);
+  background: var(--muted); border: 2px solid var(--bg); cursor: pointer; transition: background .12s ease;
+}
+.status-width:hover .status-width-slider::-webkit-slider-thumb { background: var(--accent); }
+.status-width-slider:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+
+/* Footer update button (status-bar-update.ts) — hidden at rest (idle/checking);
+   appears once update-flow finds a version, leads the right cluster (left of
+   the width slider). Found/downloaded states get an --accent wash (an actual
+   action is available); downloading/installing are quiet/disabled footer tone,
+   matching the understated register of the rest of the footer. Not in the
+   editor measure tree (zoom-guard). */
+.status-update { display: inline-flex; align-items: center; gap: .4em; padding: 0 .4em; }
+.status-update-btn {
+  appearance: none; border: none; background: transparent; cursor: pointer;
+  font: inherit; font-size: 12px; padding: .2em .5em; border-radius: var(--radius-sm, 4px);
+  color: var(--muted);
+}
+.status-update[data-state="found"] .status-update-btn,
+.status-update[data-state="downloaded"] .status-update-btn { color: var(--accent); font-weight: 600; }
+.status-update[data-state="found"] .status-update-btn:hover,
+.status-update[data-state="downloaded"] .status-update-btn:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.status-update-btn:disabled { cursor: default; opacity: .8; }
+.status-update-btn:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
+.status-update-caption { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
 /* Footer BREADCRUMB (M3) — the current explorer root's ancestors, leftmost and
    full-width (arrangeStatusBar's breadcrumb slot). `overflow-x: auto` is the
    first line of defense against very long paths (no shrinking the row height
@@ -1088,9 +1128,18 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .explorer-children { display: block; }
 .explorer-children[hidden] { display: none; }
 
+/* overflow-x: auto is the fallback for ultra-long unbroken tokens (long URLs,
+   etc.) that keep-all can't wrap — it was dead code before word-break: keep-all
+   below gave it a job: cells that can't shrink below min-width just scroll
+   instead of forcing a column collapse. */
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }
-.cm-table { border-collapse: collapse; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); }
-.cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; }
+.cm-table { table-layout: auto; border-collapse: collapse; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); }
+/* keep-all: CJK breaks only at natural word/space boundaries, never mid-syllable
+   (the 1-glyph-per-line collapse this fixes). min-width: 6ch is a floor so a
+   narrow CJK column can't be squeezed to zero width. Do NOT add
+   overflow-wrap: anywhere here — it re-permits arbitrary mid-token breaks on
+   overflow, which defeats keep-all (CJK collapse would return conditionally). */
+.cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; word-break: keep-all; min-width: 6ch; }
 .cm-table th { background: var(--surface); font-weight: 700; }
 
 /* Frontmatter (Obsidian-style properties): a 2-column key/value table from the
@@ -1104,8 +1153,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Task checkbox: a native <input> kept for click/keyboard/:checked semantics,
    canvas-ized with appearance:none so we draw the box + check ourselves. Sized in
    em so it rides the .cm-line zoom (--font-scale) instead of the browser's fixed
-   ~13px native box (the old zoom-decoupling bug). Checked fill reuses --link; the
-   ::after tick is two rotated borders that scale/fade in on toggle. */
+   ~13px native box (the old zoom-decoupling bug). Checked fill uses --accent (a
+   checkbox is an emphasis element, not a link — see 2026-07-12 design-polish
+   pass); the ::after tick is two rotated borders that scale/fade in on toggle. */
 .cm-task-checkbox {
   appearance: none;
   -webkit-appearance: none;
@@ -1127,8 +1177,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   transition: background-color .15s ease, border-color .15s ease;
 }
 .cm-task-checkbox:checked {
-  background: var(--link);
-  border-color: var(--link);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .cm-task-checkbox::after {
   content: "";
@@ -1154,7 +1204,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* thematic break (---) → a horizontal rule filling the line */
 .cm-hr { display: inline-block; width: 100%; height: 0; margin: 0; border: none; border-top: 1px solid var(--border); vertical-align: middle; }
 
-.cm-bullet { display: inline-block; width: .30em; height: .30em; border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
+.cm-bullet { display: inline-block; width: var(--bullet-size); height: var(--bullet-size); border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
 .cm-bullet-collapsed { box-shadow: 0 0 0 .26em color-mix(in srgb, var(--muted) 50%, transparent); }
 
 /* ── list wrap hanging indent + nested indent guides (P2+P3, one line-class
@@ -1189,6 +1239,19 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   --list-step: 1.165em;
   --list-marker: .59em;
   --guide: color-mix(in srgb, var(--border) 70%, transparent);
+  /* Guide alignment is DERIVED, not a re-measured literal (2026-07-12
+     design-polish batch ③ — the prior .55em was a stale constant that drifted
+     out of sync with the bullet after a marker-metrics change). Two contracts
+     hold regardless of --list-step/--list-marker retuning: (a) hanging indent
+     — text-indent exactly cancels padding-inline-start, so row1 starts at
+     line-local x=0 (CDP-verified); (b) the bullet is row1's leading glyph. So
+     an ancestor's dot CENTER sits at that ancestor's depth-index * --list-step
+     + half the dot's own width — --guide-col below. Each d{n} guide's k-th
+     term (0-based) then targets the ancestor at depth k: k*--list-step +
+     --guide-col. As long as (a)/(b) hold, guides auto-follow any future
+     --list-step/--list-marker/--bullet-size change — no more stale constants. */
+  --bullet-size: .30em;
+  --guide-col: calc(var(--bullet-size) / 2);
 }
 /* Ordered rows keep their visible "1. " marker (digit+period+space = 16.09px
    ≈ 1em, CDP-measured) — single-digit fit; "10."+ wraps land a touch left, an
@@ -1203,7 +1266,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   text-indent: calc(-1 * (1 * var(--list-step) + var(--list-marker)));
   background-image: linear-gradient(var(--guide) 0 100%);
   background-size: 1px 100%;
-  background-position: calc(0 * var(--list-step) + .55em) 0;
+  background-position: calc(0 * var(--list-step) + var(--guide-col)) 0;
   background-repeat: no-repeat;
 }
 .cm-editor .cm-line.cm-list-d3 {
@@ -1214,8 +1277,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
     linear-gradient(var(--guide) 0 100%);
   background-size: 1px 100%, 1px 100%;
   background-position:
-    calc(0 * var(--list-step) + .55em) 0,
-    calc(1 * var(--list-step) + .55em) 0;
+    calc(0 * var(--list-step) + var(--guide-col)) 0,
+    calc(1 * var(--list-step) + var(--guide-col)) 0;
   background-repeat: no-repeat, no-repeat;
 }
 .cm-editor .cm-line.cm-list-d4 {
@@ -1227,9 +1290,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
     linear-gradient(var(--guide) 0 100%);
   background-size: 1px 100%, 1px 100%, 1px 100%;
   background-position:
-    calc(0 * var(--list-step) + .55em) 0,
-    calc(1 * var(--list-step) + .55em) 0,
-    calc(2 * var(--list-step) + .55em) 0;
+    calc(0 * var(--list-step) + var(--guide-col)) 0,
+    calc(1 * var(--list-step) + var(--guide-col)) 0,
+    calc(2 * var(--list-step) + var(--guide-col)) 0;
   background-repeat: no-repeat, no-repeat, no-repeat;
 }
 .cm-editor .cm-line.cm-list-d5 {
@@ -1242,10 +1305,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
     linear-gradient(var(--guide) 0 100%);
   background-size: 1px 100%, 1px 100%, 1px 100%, 1px 100%;
   background-position:
-    calc(0 * var(--list-step) + .55em) 0,
-    calc(1 * var(--list-step) + .55em) 0,
-    calc(2 * var(--list-step) + .55em) 0,
-    calc(3 * var(--list-step) + .55em) 0;
+    calc(0 * var(--list-step) + var(--guide-col)) 0,
+    calc(1 * var(--list-step) + var(--guide-col)) 0,
+    calc(2 * var(--list-step) + var(--guide-col)) 0,
+    calc(3 * var(--list-step) + var(--guide-col)) 0;
   background-repeat: no-repeat, no-repeat, no-repeat, no-repeat;
 }
 .cm-editor .cm-line.cm-list-d6 {
@@ -1259,11 +1322,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
     linear-gradient(var(--guide) 0 100%);
   background-size: 1px 100%, 1px 100%, 1px 100%, 1px 100%, 1px 100%;
   background-position:
-    calc(0 * var(--list-step) + .55em) 0,
-    calc(1 * var(--list-step) + .55em) 0,
-    calc(2 * var(--list-step) + .55em) 0,
-    calc(3 * var(--list-step) + .55em) 0,
-    calc(4 * var(--list-step) + .55em) 0;
+    calc(0 * var(--list-step) + var(--guide-col)) 0,
+    calc(1 * var(--list-step) + var(--guide-col)) 0,
+    calc(2 * var(--list-step) + var(--guide-col)) 0,
+    calc(3 * var(--list-step) + var(--guide-col)) 0,
+    calc(4 * var(--list-step) + var(--guide-col)) 0;
   background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
 }
 
@@ -1484,6 +1547,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .settings-select:focus { padding: calc(.45em - 1px) calc(2em - 1px) calc(.45em - 1px) calc(.6em - 1px); }
 .settings-json:focus { padding: calc(.7em - 1px) calc(.8em - 1px); }
 .settings-text-help { margin-top: .4em; font-size: 12px; color: var(--muted); }
+/* A text row whose control has a help hint (controls.ts's renderText) wraps
+   the control cell so the input keeps its own line and the hint drops below
+   it full-width, instead of being squeezed to the input's right in the row's
+   flex layout (2026-07-12 design-polish pass, tour-13). Generic — any future
+   help-bearing text control gets this automatically. */
+.settings-row-has-help .settings-row-control { flex-wrap: wrap; }
+.settings-row-has-help .settings-text-help { flex-basis: 100%; }
 /* Wraps .settings-select (controls.ts's renderSelect) so the themed chevron
    below can be absolutely positioned against a sized box — a bare <select>
    has no positioning context of its own for a ::after pseudo-element. */
@@ -1821,6 +1891,26 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .favorites-remove:hover { background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); color: var(--sidebar-fg); }
 .favorites-remove .icon { width: calc(12em / 13); height: calc(12em / 13); }
 
+/* Drag-to-reorder feedback (2026-07-12 design-polish batch ①). The sidebar
+   sits outside the editor's measured reading column, so these are plain px
+   (no zoom-guard em requirement — same reasoning as .workspace-sash). The
+   item being dragged just dims; the drop target gets a 2px accent line at
+   the edge the item would land on (before = above, after = below the last
+   item), reusing --accent/--border rather than introducing new tokens. */
+.favorites-item.favorites-drag-source { opacity: .4; }
+.favorites-item.favorites-drop-before::before,
+.favorites-item.favorites-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.favorites-item.favorites-drop-before::before { top: -1px; }
+.favorites-item.favorites-drop-after::after { bottom: -1px; }
+
 /* Keybind settings control (단축키 category). One row per rebindable action:
    label · current chord · 재정의 (capture) · 기본값 (reset), with 전체 리셋 on
    top. Theme tokens only. */
@@ -1992,3 +2082,29 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   color: var(--muted);
   text-align: center;
 }
+
+/* Blank-slate hero (2026-07-12 design-polish pass, tour-11): when both
+   favorites and recent docs are empty (welcome-pane.ts's isBlankSlate /
+   reflectBlankSlate), the two empty-state sections would otherwise repeat
+   "nothing here" three times over (CTA + two dashed empty cards). Instead
+   collapse to a single centered hero: word-mark + CTA, no empty cards. Any
+   list gaining an entry drops .is-blank-slate and the grid layout returns
+   untouched (DOM isn't rebuilt — only this class toggles). */
+.welcome-mark {
+  display: none;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+  text-align: center;
+}
+.welcome-pane.is-blank-slate .welcome-mark { display: block; }
+.welcome-pane.is-blank-slate .welcome-section { display: none; }
+.welcome-pane.is-blank-slate {
+  flex: 1;
+  justify-content: center;
+  align-items: center;
+  min-height: 100%;
+  gap: 1.5rem;
+}
+.welcome-pane.is-blank-slate .welcome-cta { max-width: 360px; }

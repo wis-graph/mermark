@@ -8,11 +8,21 @@
 // progress are drawn as real DOM here instead of a dialog. modal.ts just mounts
 // this pane into .settings-pane like any registry category; this module owns
 // the version/update DOM and its wiring exclusively.
-import { check, type Update, type DownloadEvent } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
 import { icon } from "../../icons";
-import { downloadPercent, formatDownloadProgress } from "./update-progress";
+import { downloadPercent, formatDownloadProgress } from "../../update/update-progress";
+import {
+  checkNow,
+  foundUpdate,
+  lastCheckResult,
+  updatePhase,
+  canStartDownload,
+  canInstall,
+  startDownload,
+  installAndRelaunch,
+  type FoundUpdate,
+} from "../../update/update-flow";
 import { parseChangelogGroups, parseChangelogSections, type ChangelogGroup, type ChangelogSection } from "./changelog";
 import { renderInlineMarkdown } from "../../markdown/inline-render";
 // Bundled as a plain string at build time (vite's `?raw` — see src/vite-env.d.ts
@@ -62,17 +72,29 @@ export function renderVersionPane(): HTMLElement {
     isChecking = true;
     checkBtn.disabled = true;
     showChecking(status);
-    try {
-      const update = await check();
-      if (update) showAvailable(status, update, checkBtn);
-      else showUpToDate(status);
-    } catch (err) {
-      showError(status, `업데이트 확인 실패: ${err}`);
-    } finally {
-      isChecking = false;
-      checkBtn.disabled = false;
-    }
+    // checkNow() itself never throws — update-flow swallows check() failures
+    // internally (lastCheckResult()==="error") so the boot auto-check can
+    // stay silent. The pane surfaces that same outcome via the query instead
+    // of a try/catch, keeping one error policy in one place (update-flow).
+    await checkNow();
+    const result = lastCheckResult();
+    if (result === "found") showAvailable(status, foundUpdate()!, checkBtn);
+    else if (result === "none") showUpToDate(status);
+    else showError(status, "업데이트 확인 실패");
+    isChecking = false;
+    checkBtn.disabled = false;
   });
+
+  // Mount-time: reuse an already-found update (e.g. the boot auto-check, or
+  // an earlier open of this same pane) instead of forcing a redundant click —
+  // this is the visible payoff of ensureCheckedOnce's dedupe (design C-3).
+  // Gated on canStartDownload(phase) (phase === "found"): if the footer
+  // button already moved this same update into downloading/downloaded, that
+  // progress belongs to the footer — mounting here must not draw a stale
+  // "install now" card that would no-op on click and misreport as a failure
+  // (04_audit_report.md #2).
+  const existing = foundUpdate();
+  if (existing && canStartDownload(updatePhase())) showAvailable(status, existing, checkBtn);
 
   root.appendChild(renderChangelog());
 
@@ -178,7 +200,7 @@ function showError(status: HTMLElement, message: string): void {
 /** The found-an-update card: version + optional publish date + big install/later
  *  actions + a progress slot (hidden until install starts). Command/CQS: void —
  *  wires the install click, doesn't return anything for the caller to hold. */
-function showAvailable(status: HTMLElement, update: Update, checkBtn: HTMLButtonElement): void {
+function showAvailable(status: HTMLElement, update: FoundUpdate, checkBtn: HTMLButtonElement): void {
   status.replaceChildren();
   const card = document.createElement("div");
   card.className = "version-update-card";
@@ -232,27 +254,34 @@ function showAvailable(status: HTMLElement, update: Update, checkBtn: HTMLButton
   progress.append(caption, track);
   card.appendChild(progress);
 
-  install.addEventListener("click", () => startInstall(update, { install, later, checkBtn, progress, caption, fill, status }));
+  install.addEventListener("click", () => void startInstall({ install, later, checkBtn, progress, caption, fill, status }));
 
   status.appendChild(card);
 }
 
-/** Drive downloadAndInstall → relaunch, updating the progress bar/caption from
- *  each DownloadEvent (Started fixes the total, Progress accumulates, Finished
- *  announces the impending relaunch). Locks 나중에/업데이트 확인 for the
- *  duration so the flow can't be abandoned or restarted mid-install. */
-function startInstall(
-  update: Update,
-  els: {
-    install: HTMLButtonElement;
-    later: HTMLButtonElement;
-    checkBtn: HTMLButtonElement;
-    progress: HTMLElement;
-    caption: HTMLElement;
-    fill: HTMLElement;
-    status: HTMLElement;
-  },
-): void {
+/** Drive startDownload → installAndRelaunch (update-flow's own two-step split
+ *  of what used to be a single downloadAndInstall call — same 1-click UX,
+ *  shared state machine with the footer button), updating the progress
+ *  bar/caption from each DownloadEvent (Started fixes the total, Progress
+ *  accumulates, Finished announces the impending relaunch). Locks 나중에/업데이트
+ *  확인 for the duration so the flow can't be abandoned or restarted mid-install.
+ *
+ *  Neither startDownload nor installAndRelaunch throws — update-flow swallows
+ *  failures internally and reverts its phase (found/downloaded) so the footer
+ *  button stays retryable. This pane surfaces the same outcome by re-querying
+ *  the phase after each await rather than a try/catch (one error policy, one
+ *  owner: update-flow). A successful installAndRelaunch relaunches the process
+ *  (phase stays "installing" — there is no further transition to observe), so
+ *  only a phase that reverted counts as a failure here. */
+async function startInstall(els: {
+  install: HTMLButtonElement;
+  later: HTMLButtonElement;
+  checkBtn: HTMLButtonElement;
+  progress: HTMLElement;
+  caption: HTMLElement;
+  fill: HTMLElement;
+  status: HTMLElement;
+}): Promise<void> {
   const { install, later, checkBtn, progress, caption, fill, status } = els;
   install.disabled = true;
   later.disabled = true;
@@ -262,23 +291,29 @@ function startInstall(
 
   let downloaded = 0;
   let total: number | null = null;
-  update
-    .downloadAndInstall((ev: DownloadEvent) => {
-      if (ev.event === "Started") {
-        total = ev.data.contentLength ?? null;
-      } else if (ev.event === "Progress") {
-        downloaded += ev.data.chunkLength;
-        caption.textContent = formatDownloadProgress(downloaded, total);
-        const pct = downloadPercent(downloaded, total);
-        if (pct != null) fill.style.width = `${pct}%`;
-      } else if (ev.event === "Finished") {
-        fill.style.width = "100%";
-        caption.textContent = "설치 중... 곧 재시작됩니다";
-      }
-    })
-    .then(() => relaunch())
-    .catch((err) => {
-      checkBtn.disabled = false;
-      showError(status, `설치 실패: ${err}`);
-    });
+  await startDownload((ev: DownloadEvent) => {
+    if (ev.event === "Started") {
+      total = ev.data.contentLength ?? null;
+    } else if (ev.event === "Progress") {
+      downloaded += ev.data.chunkLength;
+      caption.textContent = formatDownloadProgress(downloaded, total);
+      const pct = downloadPercent(downloaded, total);
+      if (pct != null) fill.style.width = `${pct}%`;
+    } else if (ev.event === "Finished") {
+      fill.style.width = "100%";
+      caption.textContent = "설치 중... 곧 재시작됩니다";
+    }
+  });
+  if (!canInstall(updatePhase())) {
+    checkBtn.disabled = false;
+    showError(status, "설치 실패: 다운로드에 실패했습니다");
+    return;
+  }
+  await installAndRelaunch();
+  if (updatePhase() === "downloaded") {
+    // Reverted — install() or relaunch() failed; a success never reaches
+    // here (the process relaunches instead).
+    checkBtn.disabled = false;
+    showError(status, "설치 실패: 다시 시도해주세요");
+  }
 }

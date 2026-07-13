@@ -70,6 +70,11 @@ export interface FavoritesHandlers {
   /** Remove a folder from favorites. Injected so main is the single
    *  favoriteFoldersSetting writer (set(removeFavorite(...))). */
   onRemove(absPath: string): void;
+  /** Move `absPath` to `toIndex` (drag release or Alt+↑/↓). Injected so main
+   *  stays the single favoriteFoldersSetting writer
+   *  (set(reorderFavorite(...))) — this section only emits the intent, same
+   *  shape as onJump/onRemove (2026-07-12 design-polish batch ①). */
+  onReorder(absPath: string, toIndex: number): void;
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
@@ -78,10 +83,43 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => 
   return e;
 };
 
+// Pixels of pointer travel before a press is read as a drag rather than a
+// click (2026-07-12 design-polish batch ①). Below this, pointerup fires the
+// click-era meaning (jump/remove); above it, release commits a reorder.
+const DRAG_THRESHOLD_PX = 4;
+
+/** "Insertion index = how many item midpoints sit above the pointer" — the
+ *  domain rule for translating a drop position into a list index, named so
+ *  the pointermove handler doesn't bury it in an inline loop. Boundary
+ *  behavior falls out for free: pointer above every midpoint → 0, pointer
+ *  below every midpoint → midYs.length (the caller/reorderFavorite clamps
+ *  that to the last valid index). Pure query, exported for unit testing. */
+export function pickDropIndex(midYs: number[], pointerY: number): number {
+  return midYs.filter((y) => y < pointerY).length;
+}
+
+/** Regression fix (code-auditor 04_audit_report.md #1, 2026-07-13): pickDropIndex
+ *  and reorderFavorite's `toIndex` speak two DIFFERENT index languages that
+ *  happen to agree everywhere except a downward interior drop. pickDropIndex
+ *  answers "how many items (dragged one included) are still above the
+ *  pointer in the PRE-removal list" — an insert-BEFORE position. reorderFavorite
+ *  splices the dragged item OUT first, then inserts at `toIndex` into that
+ *  now-shorter POST-removal list — a final-position index. Moving an item
+ *  downward past its own old slot means the pre-removal insert-before index
+ *  overcounts by exactly one (it counted the dragged item itself as "above
+ *  the pointer"), so it must be decremented before reaching reorderFavorite;
+ *  moving upward (or dropping in place) needs no correction, since removing
+ *  the source doesn't shift anything before the target. Pure query, exported
+ *  for unit testing. */
+export function dropIndexToFinalIndex(insertBeforeIndex: number, fromIndex: number): number {
+  return insertBeforeIndex > fromIndex ? insertBeforeIndex - 1 : insertBeforeIndex;
+}
+
 export function createFavoritesSection({
   getFavorites,
   onJump,
   onRemove,
+  onReorder,
 }: FavoritesHandlers): FavoritesSection {
   const el = create("section", "explorer-favorites");
   el.setAttribute("aria-label", "즐겨찾기");
@@ -99,10 +137,47 @@ export function createFavoritesSection({
   empty.hidden = true;
   el.append(header, listEl, empty);
 
+  // Pointer-drag reorder state (2026-07-12 design-polish batch ①). Set on
+  // pointerdown over an item, cleared on pointerup/pointercancel/refresh.
+  // "DRAG = PREVIEW, RELEASE = COMMIT" (same idiom as sidebar/sash.ts): only
+  // pointerup ever calls onReorder — pointermove just repositions the drop
+  // indicator, so a mid-drag refresh (another view mutating the setting)
+  // never races a half-applied commit.
+  let dragCandidate: {
+    path: string;
+    item: HTMLElement;
+    startY: number;
+    fromIndex: number;
+    isRemove: boolean;
+  } | null = null;
+  let dragging = false;
+  let dragOverIndex: number | null = null;
+
+  const clearDropIndicators = (): void => {
+    listEl
+      .querySelectorAll(".favorites-drop-before, .favorites-drop-after")
+      .forEach((el) => el.classList.remove("favorites-drop-before", "favorites-drop-after"));
+  };
+
+  /** End a drag WITHOUT committing (used by both pointerup's non-commit path
+   *  and pointercancel) — strips the visual drag state only. Command (void). */
+  const endDragVisuals = (): void => {
+    dragCandidate?.item.classList.remove("favorites-drag-source");
+    clearDropIndicators();
+    dragging = false;
+    dragOverIndex = null;
+  };
+
   /** Rebuild the list from the live setting. Unlike the M4 aside, there's no
    *  hidden-panel gate any more — the section is always mounted and visible
    *  whenever the explorer is open, so refresh() always does real work. */
   const refresh = (): void => {
+    // A refresh mid-drag means the underlying list changed out from under us
+    // (another view's write) — the DOM nodes the drag was tracking are about
+    // to be destroyed, so drop the drag state rather than let it dangle.
+    dragCandidate = null;
+    dragging = false;
+    dragOverIndex = null;
     const favorites = getFavorites();
     listEl.replaceChildren();
     empty.hidden = favorites.length > 0;
@@ -137,20 +212,114 @@ export function createFavoritesSection({
   };
   refresh();
 
-  // Click an item → jump to it (single delegated mousedown listener, matching
-  // recent/outline). The remove button is checked FIRST so removing an item
-  // never also fires a jump. No self-close (there's no aside to close any
-  // more — the section stays mounted).
-  listEl.addEventListener("mousedown", (e) => {
+  // Click-or-drag on an item (single delegated pointer listener, matching the
+  // pre-existing "one listener per list" convention recent/outline/this
+  // section all use — no per-item handlers). 2026-07-12 design-polish batch
+  // ①: this REPLACES the previous mousedown-fires-immediately behavior
+  // (mousedown→jump/remove) with a pointer 3-phase read, because jumping on
+  // press would make a drag impossible to start. This is a DELIBERATE meaning
+  // shift (mousedown → pointerup) scoped to this reorderable list only —
+  // recent/outline keep their mousedown-fires-immediately behavior.
+  //
+  //   pointerdown: record the candidate (path/item/startY/fromIndex/isRemove
+  //     — the remove-button check happens HERE, at press, so it reflects
+  //     what was actually pressed even if the pointer later drifts off it).
+  //   pointermove: past a DRAG_THRESHOLD_PX travel, enter drag mode (dim the
+  //     source, compute the drop index via pickDropIndex, show a
+  //     before/after indicator). Below threshold: no visual change yet — the
+  //     press still reads as a pending click.
+  //   pointerup: if dragging, commit via onReorder ONLY if the index actually
+  //     moved (RELEASE = COMMIT, matching sash.ts's drag idiom); otherwise
+  //     replay the click-era meaning (remove-button check first, else jump).
+  //   pointercancel: strip the visual state, commit nothing.
+  listEl.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return; // primary (left) button only
+    const target = e.target as HTMLElement;
+    const item = target.closest(".favorites-item") as HTMLElement | null;
+    if (!item?.dataset.path) return;
+    e.preventDefault(); // no focus/text-selection jitter, matches prior mousedown intent
+    const items = Array.from(listEl.querySelectorAll<HTMLElement>(".favorites-item"));
+    dragCandidate = {
+      path: item.dataset.path,
+      item,
+      startY: e.clientY,
+      fromIndex: items.indexOf(item),
+      isRemove: target.closest(".favorites-remove") !== null,
+    };
+    listEl.setPointerCapture?.(e.pointerId);
+  });
+
+  listEl.addEventListener("pointermove", (e) => {
+    if (!dragCandidate) return;
+    if (!dragging) {
+      if (Math.abs(e.clientY - dragCandidate.startY) <= DRAG_THRESHOLD_PX) return;
+      dragging = true;
+      dragCandidate.item.classList.add("favorites-drag-source");
+    }
+    const items = Array.from(listEl.querySelectorAll<HTMLElement>(".favorites-item"));
+    const midYs = items.map((it) => {
+      const r = it.getBoundingClientRect();
+      return r.top + r.height / 2;
+    });
+    const idx = pickDropIndex(midYs, e.clientY);
+    clearDropIndicators();
+    if (idx >= items.length) items[items.length - 1]?.classList.add("favorites-drop-after");
+    else items[idx]?.classList.add("favorites-drop-before");
+    dragOverIndex = idx;
+  });
+
+  listEl.addEventListener("pointerup", () => {
+    if (!dragCandidate) return;
+    const { path, isRemove, fromIndex } = dragCandidate;
+    const wasDragging = dragging;
+    const toIndex = dragOverIndex;
+    endDragVisuals();
+    dragCandidate = null;
+    if (wasDragging) {
+      const finalIndex = toIndex === null ? fromIndex : dropIndexToFinalIndex(toIndex, fromIndex);
+      if (finalIndex !== fromIndex) {
+        onReorder(path, finalIndex);
+        return;
+      }
+      // Net-zero drag (crossed DRAG_THRESHOLD_PX but released back over its
+      // own original slot) falls through to the click-era meaning below
+      // instead of silently swallowing the release (code-auditor 🟡,
+      // 2026-07-13) — same remove-checked-first priority as an ordinary
+      // non-dragging click, since "no net move" reads as "the user meant to
+      // press this," not "the user meant to reorder."
+    }
+    if (isRemove) {
+      onRemove(path);
+      return;
+    }
+    onJump(path);
+  });
+
+  listEl.addEventListener("pointercancel", () => {
+    endDragVisuals();
+    dragCandidate = null;
+  });
+
+  // Keyboard reorder (WCAG 2.1.1 — drag must have a non-pointer equivalent).
+  // Alt+↑/↓ on a focused item moves it one slot; the setting's listener
+  // notification is synchronous (settings/store.ts), so by the time onReorder
+  // returns, refresh() has already rebuilt the list — re-find the item by
+  // its (still-live) path and restore focus to it so repeated presses keep
+  // working without the user losing their place.
+  listEl.addEventListener("keydown", (e) => {
+    if (!e.altKey || (e.code !== "ArrowUp" && e.code !== "ArrowDown")) return;
     const target = e.target as HTMLElement;
     const item = target.closest(".favorites-item") as HTMLElement | null;
     if (!item?.dataset.path) return;
     e.preventDefault();
-    if (target.closest(".favorites-remove")) {
-      onRemove(item.dataset.path);
-      return;
-    }
-    onJump(item.dataset.path);
+    const items = Array.from(listEl.querySelectorAll<HTMLElement>(".favorites-item"));
+    const idx = items.indexOf(item);
+    const path = item.dataset.path;
+    onReorder(path, idx + (e.code === "ArrowDown" ? 1 : -1));
+    const restored = Array.from(listEl.querySelectorAll<HTMLElement>(".favorites-item")).find(
+      (el) => el.dataset.path === path,
+    );
+    restored?.focus();
   });
 
   const focusFirst = (): void => {

@@ -7,6 +7,8 @@ import {
   attachPanZoom,
   mermaidPaletteSource,
   mermaidThemeVariables,
+  isPureWhite,
+  mermaidNodeFill,
 } from "../src/markdown/mermaid-widget";
 import { panZoomSetting, themeForceSetting, themeJsonSetting } from "../src/settings/app";
 import { builtInTheme } from "../src/settings/theme-schema";
@@ -376,9 +378,21 @@ describe("mermaidThemeVariables (mermaid palette derived from the app theme SSOT
     const vars = mermaidThemeVariables("light");
     expect(vars.darkMode).toBe(false);
     expect(vars.background).toBe("#f5f5f5");
-    expect(vars.primaryColor).toBe("#ffffff"); // surface
+    // surface is pure white in the light preset (tour-02: nodes floated off the
+    // off-white canvas) — mermaidNodeFill tints it toward bg instead of using it
+    // verbatim (2026-07-12 design-polish pass ⑤).
+    expect(vars.primaryColor).toBe("#fafafa");
+    expect(vars.secondaryColor).toBe("#fafafa");
     expect(vars.primaryTextColor).toBe("#0c0a09"); // fg
     expect(vars.edgeLabelBackground).toBe("#f5f5f5"); // bg — fixes the grey label chip
+  });
+
+  it("leaves claude's non-white surface untouched (byte-identical to before ⑤)", () => {
+    themeForceSetting.set("follow");
+    themeJsonSetting.set(builtInTheme("claude"));
+    const vars = mermaidThemeVariables("dark");
+    expect(vars.primaryColor).toBe("#efe9de");
+    expect(vars.secondaryColor).toBe("#efe9de");
   });
 
   it("derives from the dark preset when themeJson is dark (follow)", () => {
@@ -408,5 +422,44 @@ describe("mermaidThemeVariables (mermaid palette derived from the app theme SSOT
       colors: { ...builtInTheme("dark").colors, surface: "#222222" },
     });
     expect(mermaidThemeVariables("dark").primaryColor).toBe("#222222");
+  });
+});
+
+describe("isPureWhite (2026-07-12 design-polish pass ⑤)", () => {
+  it("recognizes #fff/#ffffff/white case-insensitively", () => {
+    expect(isPureWhite("#fff")).toBe(true);
+    expect(isPureWhite("#FFF")).toBe(true);
+    expect(isPureWhite("#ffffff")).toBe(true);
+    expect(isPureWhite("#FFFFFF")).toBe(true);
+    expect(isPureWhite("white")).toBe(true);
+    expect(isPureWhite("WHITE")).toBe(true);
+  });
+
+  it("rejects any non-white color", () => {
+    expect(isPureWhite("#efe9de")).toBe(false);
+    expect(isPureWhite("#f5f5f5")).toBe(false);
+    expect(isPureWhite("#000000")).toBe(false);
+  });
+});
+
+describe("mermaidNodeFill (2026-07-12 design-polish pass ⑤)", () => {
+  it("mixes surface halfway toward bg when surface is pure white", () => {
+    expect(mermaidNodeFill({ surface: "#ffffff", bg: "#f5f5f5" } as never)).toBe("#fafafa");
+  });
+
+  it("returns surface verbatim when it isn't pure white", () => {
+    expect(mermaidNodeFill({ surface: "#efe9de", bg: "#131110" } as never)).toBe("#efe9de");
+  });
+
+  // Regression (code-auditor 🔴 #1, 2026-07-12): isPureWhite accepts the
+  // shorthand "#fff" and the CSS keyword "white" too, but mixHex only parses
+  // 6-digit hex — mermaidNodeFill must normalize to "#ffffff" before mixing,
+  // not pass either non-6-digit form straight through.
+  it("mixes correctly when surface is the shorthand #fff", () => {
+    expect(mermaidNodeFill({ surface: "#fff", bg: "#f5f5f5" } as never)).toBe("#fafafa");
+  });
+
+  it("mixes correctly when surface is the CSS keyword white", () => {
+    expect(mermaidNodeFill({ surface: "white", bg: "#f5f5f5" } as never)).toBe("#fafafa");
   });
 });

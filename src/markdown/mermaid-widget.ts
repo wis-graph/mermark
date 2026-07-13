@@ -43,6 +43,45 @@ export function mermaidPaletteSource(_appTheme: Theme): ThemeJson["colors"] {
   }
 }
 
+/** True for pure white in any of the forms a theme's surface color might use
+ *  (`#fff`, `#ffffff`, `white`), case-insensitively. Pure query. */
+export function isPureWhite(color: string): boolean {
+  const c = color.trim().toLowerCase();
+  return c === "#fff" || c === "#ffffff" || c === "white";
+}
+
+/** Channel-wise 50% linear blend of two '#rrggbb' hex colors. Assumes 6-digit
+ *  hex input for BOTH arguments — callers must normalize first (isPureWhite
+ *  accepts `#fff`/`white` too, which this function cannot parse; see
+ *  mermaidNodeFill, which passes the canonical "#ffffff" rather than the
+ *  original surface string). Pure query, the shared math mermaidNodeFill uses
+ *  to derive its tint. */
+function mixHex(a: string, b: string): string {
+  const mix = (i: number) => {
+    const ca = parseInt(a.slice(1 + i * 2, 3 + i * 2), 16);
+    const cb = parseInt(b.slice(1 + i * 2, 3 + i * 2), 16);
+    return Math.round((ca + cb) / 2)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${mix(0)}${mix(1)}${mix(2)}`;
+}
+
+/** Domain rule (2026-07-12 design-polish pass ⑤, tour-02): a pure-white
+ *  `surface` floats off the canvas as a mermaid node fill, so nodes built from
+ *  it are tinted halfway toward `bg` instead of used verbatim. Themes whose
+ *  surface is already tinted (claude `#efe9de`, dark `#1c1917`) pass through
+ *  unchanged — this is a palette-shape rule, not a per-theme branch, so a
+ *  custom JSON theme with a pure-white surface gets the same treatment. Pure
+ *  query. */
+export function mermaidNodeFill(colors: ThemeJson["colors"]): string {
+  // isPureWhite(colors.surface) being true only proves whiteness, not that
+  // colors.surface is itself 6-digit hex ("#fff"/"white" also pass it) — mix
+  // the canonical "#ffffff" instead of the original string so mixHex always
+  // gets input it can parse.
+  return isPureWhite(colors.surface) ? mixHex("#ffffff", colors.bg) : colors.surface;
+}
+
 /** Mermaid `themeVariables`, derived from the app's theme SSOT via
  *  mermaidPaletteSource — so diagrams pick up the surrounding canvas/ink/border
  *  palette instead of mermaid's own default purple. edgeLabelBackground = bg
@@ -51,14 +90,15 @@ export function mermaidPaletteSource(_appTheme: Theme): ThemeJson["colors"] {
  *  it instead of showing a floating grey pill). Pure query. */
 export function mermaidThemeVariables(appTheme: Theme): Record<string, string | boolean> {
   const colors = mermaidPaletteSource(appTheme);
+  const nodeFill = mermaidNodeFill(colors);
   return {
     darkMode: effectiveMermaidTheme(appTheme) === "dark",
     background: colors.bg,
-    primaryColor: colors.surface,
+    primaryColor: nodeFill,
     primaryTextColor: colors.fg,
     primaryBorderColor: colors.muted,
     lineColor: colors.muted,
-    secondaryColor: colors.surface,
+    secondaryColor: nodeFill,
     tertiaryColor: colors.bg,
     edgeLabelBackground: colors.bg,
     fontFamily: '"Inter", system-ui, sans-serif',

@@ -30,6 +30,15 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
   return e;
 };
 
+/** Domain rule (2026-07-12 design-polish pass, tour-11): the welcome pane is a
+ *  "blank slate" — a single centered hero instead of two empty-state sections
+ *  stacked under the CTA — only when BOTH favorites and recent docs are empty.
+ *  Either list having an entry means there's real content to show, so the
+ *  pane falls back to the existing grid layout. Pure query. */
+export function isBlankSlate(favorites: string[], recent: string[]): boolean {
+  return favorites.length === 0 && recent.length === 0;
+}
+
 export interface WelcomePaneHandlers {
   /** The current favorite folders. A closure over favoriteFoldersSetting so
    *  the pane always reads the live value (SSOT) when it re-renders — see the
@@ -70,6 +79,22 @@ export function createWelcomePane({
   openFolderChord,
 }: WelcomePaneHandlers): HTMLElement {
   const pane = el("div", "welcome-pane");
+
+  // Command: toggle the blank-slate hero mode on the pane root. Reads the
+  // CURRENT getFavorites/getRecent (not a snapshot), so it's safe to call
+  // after either setting has changed. Must be called from BOTH subscriptions
+  // below (a lone-side call would leave the hero stuck after the other list
+  // gains an entry) — see the module header for why this pane self-subscribes
+  // at all. CQS: void.
+  const reflectBlankSlate = (): void => {
+    pane.classList.toggle("is-blank-slate", isBlankSlate(getFavorites(), getRecent()));
+  };
+
+  // 0.a Word-mark shown ONLY in blank-slate mode (CSS-gated) — no image asset
+  // pulled into the cold-load path, just a styled text mark above the CTA.
+  const mark = el("div", "welcome-mark");
+  mark.textContent = "mermark";
+  pane.append(mark);
 
   // 0. CTA — the empty-state action (design review tour-11): open a folder
   // via the existing explorer flow, with a keyboard-shortcut hint beside it.
@@ -135,6 +160,7 @@ export function createWelcomePane({
     const next = renderFavorites();
     favList.replaceWith(next);
     favList = next;
+    reflectBlankSlate();
   });
 
   // 2. 최근 문서 섹션
@@ -181,7 +207,9 @@ export function createWelcomePane({
     const next = renderRecents();
     recList.replaceWith(next);
     recList = next;
+    reflectBlankSlate();
   });
 
+  reflectBlankSlate(); // initial mount: both sections are in the DOM by now
   return pane;
 }

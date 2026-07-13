@@ -45,13 +45,16 @@ import { copyBundleToClipboard } from "./bundle";
 import { registerHandler, installDispatcher, bindKeybindings, effectiveBinding } from "./shortcuts/registry";
 import { displayChord } from "./shortcuts/keys";
 import { arrangeStatusBar } from "./status-bar";
+import { makeWidthSlider } from "./status-bar-width";
+import { makeUpdateButton } from "./status-bar-update";
+import { ensureCheckedOnce } from "./update/update-flow";
 import { createTitleBar, arrangeTitleBar, createSidebarTopStrip, createLeftCommandGroup, installLeftGroupRehoming } from "./title-bar";
 import { createBreadcrumb } from "./breadcrumb";
 import { createRecentPanel } from "./recent/recent-panel";
 import { pushRecent, pruneMissing } from "./recent/recent-docs";
 import { createFavoritesSection } from "./favorites/favorites-panel";
 import { createWelcomePane } from "./welcome/welcome-pane";
-import { pushFavorite, removeFavorite, isFavorite } from "./favorites/favorite-folders";
+import { pushFavorite, removeFavorite, isFavorite, reorderFavorite } from "./favorites/favorite-folders";
 import {
   makeHistory,
   pushHistory,
@@ -236,6 +239,8 @@ async function boot() {
   const mode = makeModeToggle();
   const pos = el("span", "status-pos");
   const spacer = el("span", "status-spacer");
+  const widthSlider = makeWidthSlider();
+  const updateBtn = makeUpdateButton();
   const save = makeSaveStatus();
   // live theme switch: cycle the preset (nextPreset = dark→light→claude→dark, the
   // SSOT for the toggle order) via loadPreset, which writes themeJson + themeSetting
@@ -325,6 +330,7 @@ async function boot() {
     getFavorites: () => favoriteFoldersSetting.get(),
     onJump: (abs) => explorer.jumpToRoot(abs),
     onRemove: (abs) => favoriteFoldersSetting.set(removeFavorite(favoriteFoldersSetting.get(), abs)),
+    onReorder: (abs, to) => favoriteFoldersSetting.set(reorderFavorite(favoriteFoldersSetting.get(), abs, to)),
   });
 
   /** "Star = membership toggle" — the ONE domain rule for what a folder-row
@@ -436,12 +442,16 @@ async function boot() {
     settings: createSettingsButton(),
   });
   // Footer order (single contract, arrangeStatusBar owns it): 브레드크럼 ·
-  // spacer · save · pos (pos far right). M3: the placeholder span is now the
-  // real breadcrumb chrome — its content tracks the explorer's live root via
-  // onRootChange (above) + the openInWindow seed (below).
+  // spacer · update · width · save · pos (pos far right). M3: the placeholder
+  // span is now the real breadcrumb chrome — its content tracks the
+  // explorer's live root via onRootChange (above) + the openInWindow seed
+  // (below). update leads the right cluster (hidden unless update-flow found
+  // a version — see status-bar-update.ts), followed by width.
   arrangeStatusBar(bar, {
     breadcrumb: breadcrumb.el,
     spacer,
+    update: updateBtn.el,
+    width: widthSlider.el,
     save: save.el,
     pos,
   });
@@ -833,6 +843,15 @@ async function boot() {
   // changes. Persistence is handled by the store.
   modeSetting.bind(mode.render); // initial label + on change
   modeSetting.subscribe((m) => current?.setMode(m));
+  // Boot-time auto-check for updates (design C-5): deferred via setTimeout so
+  // it costs nothing on cold load / first paint, and placed BEFORE the
+  // welcome/editor branch below so it fires whichever screen boot() ends up
+  // showing. ensureCheckedOnce is idempotent and boot() itself only runs once
+  // per webview load, so this can never double-check. Failures (offline, etc)
+  // are swallowed inside update-flow — nothing to catch here.
+  setTimeout(() => {
+    void ensureCheckedOnce();
+  }, 2000);
 
   if (!file) {
     host.classList.add("welcome-host");

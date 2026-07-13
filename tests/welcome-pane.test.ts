@@ -1,6 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createWelcomePane } from "../src/welcome/welcome-pane";
+import { createWelcomePane, isBlankSlate } from "../src/welcome/welcome-pane";
 import { favoriteFoldersSetting, recentDocsSetting } from "../src/settings/app";
+
+describe("isBlankSlate", () => {
+  it("is true only when both favorites and recent are empty", () => {
+    expect(isBlankSlate([], [])).toBe(true);
+  });
+
+  it("is false when favorites has an entry", () => {
+    expect(isBlankSlate(["f"], [])).toBe(false);
+  });
+
+  it("is false when recent has an entry", () => {
+    expect(isBlankSlate([], ["d"])).toBe(false);
+  });
+});
 
 describe("createWelcomePane", () => {
   let host: HTMLElement;
@@ -161,5 +175,78 @@ describe("createWelcomePane", () => {
     expect(host.querySelectorAll(".welcome-file-row").length).toBe(0);
     recentDocsSetting.set(["/a/y.md"]);
     expect(host.querySelectorAll(".welcome-file-row").length).toBe(1);
+  });
+});
+
+describe("createWelcomePane blank-slate hero (2026-07-12 design-polish pass, tour-11)", () => {
+  let host: HTMLElement;
+
+  beforeEach(() => {
+    localStorage.clear();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+
+  afterEach(() => {
+    host.remove();
+    favoriteFoldersSetting.set([]);
+    recentDocsSetting.set([]);
+  });
+
+  it("has is-blank-slate and a .welcome-mark when both lists are empty at mount", () => {
+    const pane = createWelcomePane({
+      getFavorites: () => [],
+      getRecent: () => [],
+      onJumpFolder: () => {},
+      onOpenFile: () => {},
+      onOpenFolder: () => {},
+      openFolderChord: null,
+    });
+    host.append(pane);
+    expect(pane.classList.contains("is-blank-slate")).toBe(true);
+    expect(pane.querySelector(".welcome-mark")).not.toBeNull();
+  });
+
+  it("has no is-blank-slate when a favorite exists at mount", () => {
+    const pane = createWelcomePane({
+      getFavorites: () => ["/a/b"],
+      getRecent: () => [],
+      onJumpFolder: () => {},
+      onOpenFile: () => {},
+      onOpenFolder: () => {},
+      openFolderChord: null,
+    });
+    host.append(pane);
+    expect(pane.classList.contains("is-blank-slate")).toBe(false);
+  });
+
+  it("drops is-blank-slate once favoriteFoldersSetting gains an entry (subscribe reflects the transition)", () => {
+    const pane = createWelcomePane({
+      getFavorites: () => favoriteFoldersSetting.get(),
+      getRecent: () => [],
+      onJumpFolder: () => {},
+      onOpenFile: () => {},
+      onOpenFolder: () => {},
+      openFolderChord: null,
+    });
+    host.append(pane);
+    expect(pane.classList.contains("is-blank-slate")).toBe(true);
+    favoriteFoldersSetting.set(["/a/b"]);
+    expect(pane.classList.contains("is-blank-slate")).toBe(false);
+  });
+
+  it("drops is-blank-slate once recentDocsSetting gains an entry (subscribe reflects the transition)", () => {
+    const pane = createWelcomePane({
+      getFavorites: () => [],
+      getRecent: () => recentDocsSetting.get(),
+      onJumpFolder: () => {},
+      onOpenFile: () => {},
+      onOpenFolder: () => {},
+      openFolderChord: null,
+    });
+    host.append(pane);
+    expect(pane.classList.contains("is-blank-slate")).toBe(true);
+    recentDocsSetting.set(["/a/y.md"]);
+    expect(pane.classList.contains("is-blank-slate")).toBe(false);
   });
 });

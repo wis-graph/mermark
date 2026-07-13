@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pushFavorite, removeFavorite, isFavorite } from "../src/favorites/favorite-folders";
+import { pushFavorite, removeFavorite, isFavorite, reorderFavorite } from "../src/favorites/favorite-folders";
 
 // favorite-folders.ts is a CURATION list (append + no cap + no auto-prune),
 // the opposite domain from recent-docs.ts's MRU list (prepend + cap + prune)
@@ -56,5 +56,39 @@ describe("isFavorite", () => {
 
   it("matches a normalization-equivalent variant", () => {
     expect(isFavorite(["/a"], "/a/")).toBe(true);
+  });
+});
+
+// reorderFavorite: user-driven curation only (drag/keyboard) — never called
+// automatically, unlike recent-docs' MRU reordering. See favorite-folders.ts
+// header for the curation-vs-MRU domain contrast.
+describe("reorderFavorite", () => {
+  it("moves an item from front to back", () => {
+    expect(reorderFavorite(["/a", "/b", "/c"], "/a", 2)).toEqual(["/b", "/c", "/a"]);
+  });
+
+  it("moves an item from back to front", () => {
+    expect(reorderFavorite(["/a", "/b", "/c"], "/c", 0)).toEqual(["/c", "/a", "/b"]);
+  });
+
+  it("clamps a negative toIndex to 0", () => {
+    expect(reorderFavorite(["/a", "/b", "/c"], "/c", -5)).toEqual(["/c", "/a", "/b"]);
+  });
+
+  it("clamps a toIndex past the end to len-1", () => {
+    expect(reorderFavorite(["/a", "/b", "/c"], "/a", 99)).toEqual(["/b", "/c", "/a"]);
+  });
+
+  it("is a no-op (content) when the path isn't in the list", () => {
+    expect(reorderFavorite(["/a", "/b"], "/z", 0)).toEqual(["/a", "/b"]);
+  });
+
+  it("returns the SAME reference when the move is a no-op (already in place)", () => {
+    const list = ["/a", "/b", "/c"];
+    expect(reorderFavorite(list, "/b", 1)).toBe(list);
+  });
+
+  it("finds the target via normalization equivalence (/a/ ≡ /a)", () => {
+    expect(reorderFavorite(["/a", "/b", "/c"], "/a/", 2)).toEqual(["/b", "/c", "/a"]);
   });
 });

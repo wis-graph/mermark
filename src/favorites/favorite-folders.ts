@@ -15,6 +15,8 @@
 //   cap               | 15 (clamp)                 | none (user curation)
 //   auto-prune        | pruneMissing (open failed) | none (never destroy curation)
 //   normalization     | none (raw dedupe)          | normalizePath before dedupe
+//   reorder           | n/a (order is MRU-derived) | user-explicit only (drag/keyboard,
+//                     |                             | never automatic — see reorderFavorite)
 
 import { normalizePath } from "../path";
 
@@ -40,4 +42,24 @@ export function removeFavorite(list: string[], absPath: string): string[] {
 export function isFavorite(list: string[], absPath: string): boolean {
   const p = normalizePath(absPath);
   return list.some((x) => normalizePath(x) === p);
+}
+
+/** Move `absPath` to `toIndex` in the list (2026-07-12 design-polish batch ①
+ *  — drag/keyboard reorder). Reorder = EXPLICIT USER CURATION ONLY, never an
+ *  automatic side effect of add/remove/open (unlike pushRecent's MRU
+ *  reshuffling — see the module header contrast table). `toIndex` is clamped
+ *  to `[0, list.length - 1]`; an absent path is a no-op (content unchanged);
+ *  a same-position move returns the ORIGINAL reference (not just an
+ *  equal-content copy) so a caller can cheaply detect "nothing changed"
+ *  before committing to the setting. Pure query. */
+export function reorderFavorite(list: string[], absPath: string, toIndex: number): string[] {
+  const p = normalizePath(absPath);
+  const fromIndex = list.findIndex((x) => normalizePath(x) === p);
+  if (fromIndex === -1) return list;
+  const clamped = Math.min(Math.max(toIndex, 0), list.length - 1);
+  if (clamped === fromIndex) return list;
+  const next = [...list];
+  const [item] = next.splice(fromIndex, 1);
+  next.splice(clamped, 0, item);
+  return next;
 }

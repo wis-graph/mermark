@@ -172,8 +172,8 @@ export const fontSizeSetting = registerSetting<number>({
   ui: { label: "본문 크기", group: "타이포그래피", control: { kind: "slider", min: 12, max: 24, step: 1, unit: "px" } },
 });
 
-const READING_WIDTH_MIN_CH = 40; // gradable lower bound (~too narrow below this)
-const READING_WIDTH_MAX_CH = 90; // gradable upper bound (Butterick: lines get too long past ~75–90)
+export const READING_WIDTH_MIN_CH = 40; // gradable lower bound (~too narrow below this)
+export const READING_WIDTH_MAX_CH = 90; // gradable upper bound (Butterick: lines get too long past ~75–90)
 const READING_WIDTH_DEFAULT_CH = 68; // Butterick/iA Writer measure (45–75 char range)
 
 /** The "valid reading measure (ch)" rule (40–90ch) in one named place. parse and

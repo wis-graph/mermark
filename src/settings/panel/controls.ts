@@ -142,6 +142,11 @@ function renderText(setting: Setting<string>, control: Extract<Control<string>, 
   setting.subscribe(reflect);
   cell.appendChild(input);
   if (control.help) {
+    // .settings-row-has-help (styles.css) wraps the control row so the hint
+    // lands BELOW the input instead of squeezed beside it (2026-07-12
+    // design-polish pass) — a general layout rule for any text control with
+    // help, not a web-font-only exception.
+    r.classList.add("settings-row-has-help");
     const hint = document.createElement("div");
     hint.className = "settings-text-help";
     hint.textContent = control.help;
