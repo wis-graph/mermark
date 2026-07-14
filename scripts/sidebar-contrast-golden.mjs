@@ -270,18 +270,80 @@ await page.waitForTimeout(500);
 await openOutline();
 const customState = await readSidebarState("custom-theme");
 
+// GATING NOTE (this golden used to compute every verdict below and never
+// gate on any of them — process.exit(1) simply didn't exist, so it always
+// exited 0 no matter what the sidebar looked like). Two of the computed
+// fields are deliberately EXCLUDED from the gate because they encode states
+// this script's own header documents as intentional, not regressions:
+//   - allThemesHighContrast: dark's sidebar is a deliberately SUBTLE
+//     one-step-brighter dark (design decision 3, 2026-07-12 repolarization —
+//     see isHighContrast's comment above), so its two-tone ratio legitimately
+//     sits well below 7. Gating on this field would permanently red the
+//     golden on a correct dark theme. Kept in the report for visibility.
+//   - customState.polarityMatches: not even computed for the custom scenario
+//     (design decision 2's documented residual limitation — an arbitrary
+//     user bg can land on either side of the theme's own polarity). There is
+//     nothing here to assert.
+// What DOES gate: polarity/legibility hold for all 3 built-in themes, the
+// custom theme stays legible, and light+claude (NOT dark) clear the >=7
+// two-tone bar — the same invariant isHighContrast documents dark as exempt
+// from.
+const nonDarkStates = themeStates.filter((s) => s.dataTheme !== "dark");
+const lightClaudeHighContrast =
+  nonDarkStates.length > 0 && nonDarkStates.every((s) => s.isHighContrast);
+
 const result = {
   themeStates,
   customState,
-  allThemesHighContrast: themeStates.every((s) => s.isHighContrast),
+  allThemesHighContrast: themeStates.every((s) => s.isHighContrast), // report-only, see GATING NOTE
   allThemesPolarityMatches: themeStates.every((s) => s.polarityMatches),
   allThemesFgLegible: themeStates.every((s) => s.sidebarFgLegible),
   allThemesMutedLegible: themeStates.every((s) => s.sidebarMutedLegible),
   customThemeFgLegible: customState.sidebarFgLegible,
+  lightClaudeHighContrast,
   errors,
 };
 
+const GATED_CHECKS = {
+  allThemesPolarityMatches: result.allThemesPolarityMatches,
+  allThemesFgLegible: result.allThemesFgLegible,
+  allThemesMutedLegible: result.allThemesMutedLegible,
+  customThemeFgLegible: result.customThemeFgLegible,
+  lightClaudeHighContrast: result.lightClaudeHighContrast,
+  noConsoleErrors: errors.length === 0,
+};
+result.allPass = Object.values(GATED_CHECKS).every(Boolean);
+
 writeFileSync(out, JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));
-console.log("\nwrote", out);
+
+if (!result.allPass) {
+  const failed = Object.entries(GATED_CHECKS).filter(([, pass]) => !pass);
+  console.error(`\n✖ FAIL — ${failed.length} gated check(s) failed:`);
+  for (const [name] of failed) {
+    if (name === "allThemesPolarityMatches") {
+      for (const s of themeStates.filter((s) => !s.polarityMatches))
+        console.error(
+          `    polarityMatches [${s.dataTheme}]: measured=${s.measuredPolarity} expected=${s.expectedPolarity}`,
+        );
+    } else if (name === "allThemesFgLegible") {
+      for (const s of themeStates.filter((s) => !s.sidebarFgLegible))
+        console.error(`    sidebarFgLegible [${s.dataTheme}]: ratio=${s.sidebarFgLegibility.toFixed(2)} (need >=7)`);
+    } else if (name === "allThemesMutedLegible") {
+      for (const s of themeStates.filter((s) => !s.sidebarMutedLegible))
+        console.error(
+          `    sidebarMutedLegible [${s.dataTheme}]: ratio=${s.sidebarMutedLegibility?.toFixed(2)} (need >=4.5)`,
+        );
+    } else if (name === "customThemeFgLegible") {
+      console.error(`    customThemeFgLegible: ratio=${customState.sidebarFgLegibility.toFixed(2)} (need >=7)`);
+    } else if (name === "lightClaudeHighContrast") {
+      for (const s of nonDarkStates.filter((s) => !s.isHighContrast))
+        console.error(`    lightClaudeHighContrast [${s.dataTheme}]: ratio=${s.twoToneContrastRatio.toFixed(2)} (need >=7)`);
+    } else if (name === "noConsoleErrors") {
+      for (const e of errors) console.error(`    console/page error: ${e}`);
+    }
+  }
+}
+console.log("\n" + (result.allPass ? "PASS" : "FAIL") + " — wrote " + out);
 await browser.close();
+process.exit(result.allPass ? 0 : 1);
