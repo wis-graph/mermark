@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { markdownLang } from "../src/markdown/parser";
 import type { EditorView } from "@codemirror/view";
-import { createOutlinePanel } from "../src/outline/outline-panel";
+import { createOutlinePanel } from "../src/sidebar/outline/outline-panel";
 
 // Outline is now a LEFT SIDEBAR <aside> (was a fixed bottom popover .outline-row):
 // a shared sidebar shell, a static "목차" header, close()/onOpen for the mutual-

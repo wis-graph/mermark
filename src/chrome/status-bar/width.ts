@@ -2,7 +2,7 @@ import {
   readingWidthSetting,
   READING_WIDTH_MIN_CH,
   READING_WIDTH_MAX_CH,
-} from "./settings/app";
+} from "../../settings/app";
 
 /** Footer reading-width slider — a compact live control over `readingWidthSetting`
  *  (the SAME SSOT as Settings › 타이포그래피 › 본문 너비; both drive `--measure`,

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createBreadcrumb } from "../src/breadcrumb";
+import { createBreadcrumb } from "../src/chrome/breadcrumb";
 
 // ---------------------------------------------------------------------------
 // Footer breadcrumb chrome — plain DOM, no editor/live-preview intersection.

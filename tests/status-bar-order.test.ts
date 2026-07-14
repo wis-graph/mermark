@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { arrangeStatusBar } from "../src/status-bar";
+import { arrangeStatusBar } from "../src/chrome/status-bar";
 
 // The status-bar (footer) layout contract, reduced by M2 (sidebar toggles /
 // open-path / mode / theme / settings all moved up to the title-bar): footer

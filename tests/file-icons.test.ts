@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extensionOf, iconNameForEntry, isImageExtension } from "../src/explorer/file-icons";
+import { extensionOf, iconNameForEntry, isImageExtension } from "../src/sidebar/explorer/file-icons";
 
 // ---------------------------------------------------------------------------
 // Pure extension parsing + icon map. No DOM, no backend — just the two named

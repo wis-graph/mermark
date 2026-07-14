@@ -1,4 +1,4 @@
-import type { IconName } from "../icons";
+import type { IconName } from "../../icons";
 
 // ---------------------------------------------------------------------------
 // Explorer file/folder icon resolution — a PURE lookup, not a setting. The

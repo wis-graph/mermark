@@ -19,7 +19,7 @@
 // for free.
 // ---------------------------------------------------------------------------
 
-import { basename } from "../path";
+import { basename } from "../document/path";
 
 /** `<span class="path-label"><bdi>path</bdi></span>` — the single DOM
  *  builder for the left-truncating path label. Callers append the result

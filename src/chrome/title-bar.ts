@@ -1,7 +1,7 @@
 // Custom title-bar chrome strip — the plain-DOM crown of .main-column, sitting
 // above .editor-host (see main.ts boot: #app = row(.sidebar-aside*, sash,
 // .main-column = column(.title-bar, .editor-host, .status-bar))). Same shape
-// as status-bar.ts: no framework, no reactive plumbing, cold-load ~0.
+// as chrome/status-bar/index.ts: no framework, no reactive plumbing, cold-load ~0.
 //
 // Platform contract (design M1): macOS keeps the native traffic lights via the
 // Rust-side Overlay title-bar style (with_document_chrome in lib.rs) — this
@@ -20,7 +20,7 @@
 // M2: the title-bar is now also the LEFT-command-group + right-cluster home
 // (sidebar toggles, open-path, mode/theme/settings) — arrangeTitleBar owns
 // that left→right order, the same "single named ordering function" contract
-// arrangeStatusBar (status-bar.ts) already established.
+// arrangeStatusBar (chrome/status-bar/index.ts) already established.
 //
 // M6 (_workspace/01_architect_design.md, rehome): when a sidebar rail is
 // open, the left command group moves OUT of the title-bar and into that
@@ -29,18 +29,18 @@
 // a second valid home for the same group, not a second bar.
 // rehomeLeftCommandGroup is the single domain rule for "which home wins";
 // the rail set + the MutationObserver watching each aside's `hidden`
-// attribute now live in sidebar-panels.ts (R9, _workspace/01_architecture.md)
+// attribute now live in sidebar/registry.ts (R9, _workspace/01_architecture.md)
 // since the rail set is dynamic (panels register at runtime) — this module
 // only keeps the pure placement rule.
 //
 // R9: the left command group itself now holds ONLY `openPath` — the
-// 탐색기/최근/목차 buttons are inserted by sidebar-panels.ts's
+// 탐색기/최근/목차 buttons are inserted by sidebar/registry.ts's
 // registerSidebarPanel/installSidebarPanels, in registration order, just
 // before openPath. "Sidebar toggles first, then open-path" is still the
 // visual contract; it's just enforced by insertion order now instead of a
 // fixed 4-slot shape.
 
-import { isMac } from "./shortcuts/keys";
+import { isMac } from "../shortcuts/keys";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export interface TitleBar {
@@ -49,7 +49,7 @@ export interface TitleBar {
 
 /** The chrome parts arrangeTitleBar lays out, left→right: `leftGroup` (the
  *  탐색기·최근·목차·경로열기 command group — createLeftCommandGroup builds the
- *  `openPath` end of it, sidebar-panels.ts inserts the panel toggles before
+ *  `openPath` end of it, sidebar/registry.ts inserts the panel toggles before
  *  it), then a drag spacer, then the `mode`/`theme`/`settings` right
  *  cluster.
  *
@@ -64,7 +64,7 @@ export interface TitleBar {
  *  they're `leftGroup`'s job now (createLeftCommandGroup), because the group
  *  rehomes as ONE element (rehomeLeftCommandGroup) and a 4-part shape here
  *  would leave that same ordering duplicated in two places. R9: the panel
- *  toggle buttons themselves moved again, into sidebar-panels.ts's
+ *  toggle buttons themselves moved again, into sidebar/registry.ts's
  *  registration order — see createLeftCommandGroup's doc. */
 export interface TitleBarParts {
   leftGroup: HTMLElement;
@@ -74,7 +74,7 @@ export interface TitleBarParts {
 }
 
 /** R9: the group's only title-bar-owned member — the sidebar toggle buttons
- *  are inserted at runtime by sidebar-panels.ts (registerSidebarPanel /
+ *  are inserted at runtime by sidebar/registry.ts (registerSidebarPanel /
  *  installSidebarPanels), always just before `openPath`. */
 export interface LeftCommandGroupParts {
   openPath: HTMLElement;
@@ -204,7 +204,7 @@ function createDragSpacer(): HTMLElement {
 
 /** Build the "왼쪽 커맨드 그룹" — the always-together unit that rehomes as ONE
  *  element (rehomeLeftCommandGroup) instead of individually-tracked buttons.
- *  R9: starts with only `openPath`; sidebar-panels.ts inserts the panel
+ *  R9: starts with only `openPath`; sidebar/registry.ts inserts the panel
  *  toggle buttons before it at registration time, so the 탐색기·최근·목차·
  *  경로열기 order still lives in exactly one place — just split between this
  *  constructor (openPath) and registration order (the toggles), rather than
@@ -228,10 +228,10 @@ export function createLeftCommandGroup(p: LeftCommandGroupParts): HTMLElement {
  *  drag region, same M1 rule as createDragSpacer. `platform` is injectable
  *  for tests, same shape as createTitleBar's opts; the real default is the
  *  host's actual platform (isMac()). Childless AT CREATION TIME only — M6:
- *  sidebar-panels.ts's rehoming observer later moves the left-command-group
+ *  sidebar/registry.ts's rehoming observer later moves the left-command-group
  *  in at runtime (that group carries its own drag-region, so the strip
  *  gaining a child doesn't create a dead zone). Pure construction (no
- *  wiring) — sidebar-panels.ts prepends one per aside on mount. */
+ *  wiring) — sidebar/registry.ts prepends one per aside on mount. */
 export function createSidebarTopStrip(opts?: { platform?: "mac" | "other" }): HTMLElement {
   const platform = opts?.platform ?? (isMac() ? "mac" : "other");
   const s = document.createElement("div");

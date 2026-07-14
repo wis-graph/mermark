@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderSidebarButton } from "../src/sidebar-toggle";
+import { renderSidebarButton } from "../src/sidebar/toggle";
 
 // The shared sidebar toggle: fixed identity icon (per view) + disclosure ARIA.
 // State (open/closed) rides in aria-expanded alone — no icon swap — so each

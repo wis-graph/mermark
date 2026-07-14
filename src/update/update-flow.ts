@@ -1,5 +1,5 @@
 // The single SSOT module for the update-checking/download/install state
-// machine — shared by the footer button (status-bar-update.ts, a persistent
+// machine — shared by the footer button (chrome/status-bar/update.ts, a persistent
 // subscriber) and the settings 버전 pane (a mount-time query-only reader; see
 // version-pane.ts's "no external subscriptions to tear down" contract). The
 // `Update` resource returned by `check()` is kept in a module-private cell —

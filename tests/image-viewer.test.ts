@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
-import { openImageViewer } from "../src/viewer/image-viewer";
+import { openImageViewer } from "../src/chrome/viewer/image-viewer";
 
 // ---------------------------------------------------------------------------
 // Image viewer — a body-level lightbox overlay for explorer image clicks,

@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: Record<string, unknown>) => invokeMock(cmd, args),
 }));
 
-import { copyBundleToClipboard } from "../src/bundle";
+import { copyBundleToClipboard } from "../src/document/bundle";
 
 const ENVELOPE = `<documents>\n<document path="note.md" title="note">\nhello\n</document>\n</documents>`;
 

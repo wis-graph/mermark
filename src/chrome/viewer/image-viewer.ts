@@ -6,9 +6,9 @@
 // come from a StateField") has no intersection here, and the ⌘± zoom measure
 // guard is untouched. Built lazily (only on an explorer image click), torn
 // down completely on close() — no persistent DOM/listeners between opens.
-import { attachPanZoom } from "../markdown/mermaid-widget";
-import { resolveImageUrl } from "../markdown/image";
-import { basename, dirOf } from "../path";
+import { attachPanZoom } from "../../markdown/mermaid-widget";
+import { resolveImageUrl } from "../../markdown/image";
+import { basename, dirOf } from "../../document/path";
 
 export interface ImageViewerHandle {
   /** Tear down: remove the DOM + listeners, stop pan/zoom, restore the editor

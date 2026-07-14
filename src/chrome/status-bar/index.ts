@@ -13,7 +13,7 @@ export interface StatusBarParts {
   /** Flexible filler pushing the right cluster to the right. */
   spacer: HTMLElement;
   /** Update button — leads the right cluster. Hidden unless update-flow has
-   *  found an update (see status-bar-update.ts); required (not optional) —
+   *  found an update (see status-bar/update.ts); required (not optional) —
    *  the slot's position is fixed now, same "contract not deferred" rule as
    *  the other required parts. */
   update: HTMLElement;

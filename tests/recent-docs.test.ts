@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pushRecent, pruneMissing, RECENT_CAP } from "../src/recent/recent-docs";
+import { pushRecent, pruneMissing, RECENT_CAP } from "../src/sidebar/recent/recent-docs";
 
 // Pure list arithmetic: dedup → front → cap (most-recent-first), and prune a
 // dead entry.

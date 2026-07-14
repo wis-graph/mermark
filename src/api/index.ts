@@ -68,6 +68,6 @@ export type { ShortcutAction } from "../shortcuts/actions";
 export { registerSetting } from "../settings/registry";
 export type { Setting, SettingDef } from "../settings/store";
 
-export { registerSidebarPanel, closeOtherSidebarPanels } from "../sidebar-panels";
-export type { SidebarPanel } from "../sidebar-panels";
-export { renderSidebarButton } from "../sidebar-toggle";
+export { registerSidebarPanel, closeOtherSidebarPanels } from "../sidebar/registry";
+export type { SidebarPanel } from "../sidebar/registry";
+export { renderSidebarButton } from "../sidebar/toggle";

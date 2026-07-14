@@ -18,7 +18,7 @@
 //   reorder           | n/a (order is MRU-derived) | user-explicit only (drag/keyboard,
 //                     |                             | never automatic — see reorderFavorite)
 
-import { normalizePath } from "../path";
+import { normalizePath } from "../../document/path";
 
 /** Add `absPath` to the favorites list: normalize it, then, if an equivalent
  *  path (post-normalization) is already present, return the list UNCHANGED

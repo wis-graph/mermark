@@ -1,4 +1,4 @@
-import { breadcrumbSegments } from "./path";
+import { breadcrumbSegments } from "../document/path";
 
 // ---------------------------------------------------------------------------
 // Footer BREADCRUMB — plain DOM chrome, same shape as recent-panel.ts /

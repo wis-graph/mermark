@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createOpenPathPrompt } from "../src/open-file/path-prompt";
+import { createOpenPathPrompt } from "../src/document/open-file/path-prompt";
 
 /** The open-by-path prompt is "bar-becomes-input": clicking the button toggles
  *  `.path-editing` on its host bar and turns it into a full-width path input (no

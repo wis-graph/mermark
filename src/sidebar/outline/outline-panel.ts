@@ -1,7 +1,7 @@
 import { EditorView } from "@codemirror/view";
-import { jumpTo } from "../markdown/footnote-nav";
-import { collectHeadings } from "../markdown/outline";
-import { renderSidebarButton } from "../sidebar-toggle";
+import { jumpTo } from "../../markdown/footnote-nav";
+import { collectHeadings } from "../../markdown/outline";
+import { renderSidebarButton } from "../toggle";
 
 // ---------------------------------------------------------------------------
 // Outline (table of contents) LEFT SIDEBAR chrome — the same shell as the file

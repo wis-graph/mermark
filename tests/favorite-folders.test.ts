@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pushFavorite, removeFavorite, isFavorite, reorderFavorite } from "../src/favorites/favorite-folders";
+import { pushFavorite, removeFavorite, isFavorite, reorderFavorite } from "../src/sidebar/favorites/favorite-folders";
 
 // favorite-folders.ts is a CURATION list (append + no cap + no auto-prune),
 // the opposite domain from recent-docs.ts's MRU list (prepend + cap + prune)

@@ -1,7 +1,7 @@
-import { icon } from "../icons";
+import { icon } from "../../icons";
 import { extensionOf, iconNameForEntry, isImageExtension } from "./file-icons";
-import { basename, normalizePath } from "../path";
-import { renderSidebarButton } from "../sidebar-toggle";
+import { basename, normalizePath } from "../../document/path";
+import { renderSidebarButton } from "../toggle";
 
 /** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
 const EXPLORER_ASIDE_ID = "explorer-aside";

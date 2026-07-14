@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createWelcomePane, isBlankSlate } from "../src/welcome/welcome-pane";
+import { createWelcomePane, isBlankSlate } from "../src/chrome/welcome/welcome-pane";
 import { favoriteFoldersSetting, recentDocsSetting } from "../src/settings/app";
 
 describe("isBlankSlate", () => {

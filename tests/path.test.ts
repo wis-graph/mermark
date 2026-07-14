@@ -7,7 +7,7 @@ import {
   formatRootLabel,
   normalizePath,
   breadcrumbSegments,
-} from "../src/path";
+} from "../src/document/path";
 
 describe("normalizePath", () => {
   // Parity with backend `commands.rs:849 test_normalize_path_resolves_dot_dot_and_dot`

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createExplorerPanel, type DirEntry, type ExplorerHandlers } from "../src/explorer/explorer-panel";
+import { createExplorerPanel, type DirEntry, type ExplorerHandlers } from "../src/sidebar/explorer/explorer-panel";
 
 // ---------------------------------------------------------------------------
 // Explorer LEFT SIDEBAR — a lazy folder tree built from an INJECTED listDir()

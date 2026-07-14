@@ -642,7 +642,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .status-spacer { flex: 1; }
 .status-pos { font-variant-numeric: tabular-nums; padding: 0 .5em; color: var(--muted); }
 
-/* Footer reading-width slider (status-bar-width.ts) — a compact live control over
+/* Footer reading-width slider (chrome/status-bar/width.ts) — a compact live control over
    --measure, leading the right cluster. Reuses the settings-slider track/thumb
    idiom at footer scale; understated (muted thumb) at rest, --accent on hover to
    match the footer's quiet register. Not in the editor measure tree (zoom-guard). */
@@ -660,7 +660,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .status-width:hover .status-width-slider::-webkit-slider-thumb { background: var(--accent); }
 .status-width-slider:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent); }
 
-/* Footer update button (status-bar-update.ts) — hidden at rest (idle/checking);
+/* Footer update button (chrome/status-bar/update.ts) — hidden at rest (idle/checking);
    appears once update-flow finds a version, leads the right cluster (left of
    the width slider). Found/downloaded states get an --accent wash (an actual
    action is available); downloading/installing are quiet/disabled footer tone,

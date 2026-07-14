@@ -1,4 +1,4 @@
-import { icon } from "../icons";
+import { icon } from "../../icons";
 
 /** Open-by-path chrome, "bar-becomes-input" style: a button that, when clicked,
  *  turns the HOST BAR ITSELF into a full-width path input — no separate row

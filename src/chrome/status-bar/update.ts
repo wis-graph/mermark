@@ -7,8 +7,8 @@ import {
   startDownload,
   installAndRelaunch,
   type UpdatePhase,
-} from "./update/update-flow";
-import { formatDownloadProgress } from "./update/update-progress";
+} from "../../update/update-flow";
+import { formatDownloadProgress } from "../../update/update-progress";
 import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 
 /** Footer update button — a persistent chrome sink over update-flow's phase

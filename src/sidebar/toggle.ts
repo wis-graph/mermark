@@ -1,4 +1,4 @@
-import { icon, type IconName } from "./icons";
+import { icon, type IconName } from "../icons";
 
 // ---------------------------------------------------------------------------
 // Shared left-sidebar toggle-button rendering. Each sidebar (explorer/recent/

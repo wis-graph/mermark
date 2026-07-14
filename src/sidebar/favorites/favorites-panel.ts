@@ -1,6 +1,6 @@
-import { icon } from "../icons";
-import { basename } from "../path";
-import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
+import { icon } from "../../icons";
+import { basename } from "../../document/path";
+import { redundantPathLabel, truncatedPathLabel } from "../../chrome/path-label";
 
 // ---------------------------------------------------------------------------
 // Favorites BOTTOM SECTION (M5) — a split-pane section hosted INSIDE the

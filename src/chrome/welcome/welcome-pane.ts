@@ -19,10 +19,10 @@
 // possibly-empty list sections and no call to action. `onOpenFolder` reuses
 // the EXISTING explorer-open flow (main injects `() => explorer.button.click()`)
 // — no new Tauri command, no new IPC surface.
-import { basename } from "../path";
-import { icon } from "../icons";
-import { redundantPathLabel } from "../chrome/path-label";
-import { favoriteFoldersSetting, recentDocsSetting } from "../settings/app";
+import { basename } from "../../document/path";
+import { icon } from "../../icons";
+import { redundantPathLabel } from "../path-label";
+import { favoriteFoldersSetting, recentDocsSetting } from "../../settings/app";
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
   const e = document.createElement(tag);

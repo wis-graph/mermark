@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTitleBar, arrangeTitleBar, createLeftCommandGroup } from "../src/title-bar";
+import { createTitleBar, arrangeTitleBar, createLeftCommandGroup } from "../src/chrome/title-bar";
 
 // The title-bar layout contract (M6 rehome, _workspace/01_architect_design.md;
 // R9, _workspace/01_architecture.md): TitleBarParts is {leftGroup, mode,
@@ -11,7 +11,7 @@ import { createTitleBar, arrangeTitleBar, createLeftCommandGroup } from "../src/
 // a permanently hosted section inside the explorer's own aside, not an
 // independent mutually-exclusive view — see favorites/favorites-panel.ts).
 // R9: createLeftCommandGroup now wraps only `openPath` — the 탐색기·최근·
-//목차 buttons are inserted by sidebar-panels.ts's registerSidebarPanel/
+//목차 buttons are inserted by sidebar/registry.ts's registerSidebarPanel/
 // installSidebarPanels at runtime, in registration order, just before
 // openPath. That "registration order + install → group order" contract is
 // asserted in tests/sidebar-panels.test.ts (T3), not here — this file only

@@ -21,7 +21,7 @@
 // `group` field on SidebarPanel until one actually shows up (YAGNI, same
 // judgment plugin-system.md rev 2 made about its wrapping layer).
 
-import { createSidebarTopStrip, rehomeLeftCommandGroup } from "./title-bar";
+import { createSidebarTopStrip, rehomeLeftCommandGroup } from "../chrome/title-bar";
 
 export interface SidebarPanel {
   /** NEVER-RENAME contract — same reason a ShortcutAction id never renames

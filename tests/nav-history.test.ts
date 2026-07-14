@@ -9,7 +9,7 @@ import {
   currentEntry,
   pruneAt,
   HISTORY_CAP,
-} from "../src/history/nav-history";
+} from "../src/document/history/nav-history";
 
 // Pure back/forward stack arithmetic (recent-docs.ts style): no DOM, no IO.
 // DISTINCT from the recent MRU list — duplicates allowed, pointer + forward

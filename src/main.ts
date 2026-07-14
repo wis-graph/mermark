@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { homeDir, documentDir } from "@tauri-apps/api/path";
-import { dirOf, resolveOpenPath, normalizePath } from "./path";
-import { createOpenPathPrompt } from "./open-file/path-prompt";
+import { dirOf, resolveOpenPath, normalizePath } from "./document/path";
+import { createOpenPathPrompt } from "./document/open-file/path-prompt";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createOutlinePanel } from "./outline/outline-panel";
-import { createExplorerPanel, type DirEntry } from "./explorer/explorer-panel";
+import { createOutlinePanel } from "./sidebar/outline/outline-panel";
+import { createExplorerPanel, type DirEntry } from "./sidebar/explorer/explorer-panel";
 import { mountEditor, type EditorController, type PreviewMode, type SaveStatus } from "./editor";
 import { onFeaturesChanged } from "./markdown/live-preview";
 import { activateExtensions } from "./extensions";
@@ -45,21 +45,21 @@ import {
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink, headingFontSink } from "./settings/sinks";
 import { createSidebarSash } from "./sidebar/sash";
 import { createSettingsButton } from "./settings/panel/modal";
-import { copyBundleToClipboard } from "./bundle";
+import { copyBundleToClipboard } from "./document/bundle";
 import { registerHandler, installDispatcher, bindKeybindings, effectiveBinding } from "./shortcuts/registry";
 import { displayChord } from "./shortcuts/keys";
-import { arrangeStatusBar } from "./status-bar";
-import { makeWidthSlider } from "./status-bar-width";
-import { makeUpdateButton } from "./status-bar-update";
+import { arrangeStatusBar } from "./chrome/status-bar";
+import { makeWidthSlider } from "./chrome/status-bar/width";
+import { makeUpdateButton } from "./chrome/status-bar/update";
 import { ensureCheckedOnce } from "./update/update-flow";
-import { createTitleBar, arrangeTitleBar, createLeftCommandGroup } from "./title-bar";
-import { registerSidebarPanel, closeOtherSidebarPanels, installSidebarPanels } from "./sidebar-panels";
-import { createBreadcrumb } from "./breadcrumb";
-import { createRecentPanel } from "./recent/recent-panel";
-import { pushRecent, pruneMissing } from "./recent/recent-docs";
-import { createFavoritesSection } from "./favorites/favorites-panel";
-import { createWelcomePane } from "./welcome/welcome-pane";
-import { pushFavorite, removeFavorite, isFavorite, reorderFavorite } from "./favorites/favorite-folders";
+import { createTitleBar, arrangeTitleBar, createLeftCommandGroup } from "./chrome/title-bar";
+import { registerSidebarPanel, closeOtherSidebarPanels, installSidebarPanels } from "./sidebar/registry";
+import { createBreadcrumb } from "./chrome/breadcrumb";
+import { createRecentPanel } from "./sidebar/recent/recent-panel";
+import { pushRecent, pruneMissing } from "./sidebar/recent/recent-docs";
+import { createFavoritesSection } from "./sidebar/favorites/favorites-panel";
+import { createWelcomePane } from "./chrome/welcome/welcome-pane";
+import { pushFavorite, removeFavorite, isFavorite, reorderFavorite } from "./sidebar/favorites/favorite-folders";
 import {
   makeHistory,
   pushHistory,
@@ -68,10 +68,10 @@ import {
   currentEntry,
   pruneAt,
   type NavHistory,
-} from "./history/nav-history";
-import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./file-watch";
-import { openConflictModal } from "./conflict/conflict-modal";
-import { openImageViewer } from "./viewer/image-viewer";
+} from "./document/history/nav-history";
+import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./document/file-watch";
+import { openConflictModal } from "./document/conflict/conflict-modal";
+import { openImageViewer } from "./chrome/viewer/image-viewer";
 import { icon, type IconName } from "./icons";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
@@ -448,7 +448,7 @@ async function boot() {
   // span is now the real breadcrumb chrome — its content tracks the
   // explorer's live root via onRootChange (above) + the openInWindow seed
   // (below). update leads the right cluster (hidden unless update-flow found
-  // a version — see status-bar-update.ts), followed by width.
+  // a version — see chrome/status-bar/update.ts), followed by width.
   arrangeStatusBar(bar, {
     breadcrumb: breadcrumb.el,
     spacer,

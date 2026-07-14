@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createRecentPanel } from "../src/recent/recent-panel";
-import { createOutlinePanel } from "../src/outline/outline-panel";
-import { createExplorerPanel, type DirEntry } from "../src/explorer/explorer-panel";
+import { createRecentPanel } from "../src/sidebar/recent/recent-panel";
+import { createOutlinePanel } from "../src/sidebar/outline/outline-panel";
+import { createExplorerPanel, type DirEntry } from "../src/sidebar/explorer/explorer-panel";
 import { EditorState } from "@codemirror/state";
 import { markdownLang } from "../src/markdown/parser";
 import type { EditorView } from "@codemirror/view";

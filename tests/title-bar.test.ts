@@ -12,7 +12,7 @@ import {
   createSidebarTopStrip,
   createLeftCommandGroup,
   rehomeLeftCommandGroup,
-} from "../src/title-bar";
+} from "../src/chrome/title-bar";
 
 describe("title-bar", () => {
   beforeEach(() => {
@@ -108,7 +108,7 @@ describe("title-bar", () => {
 // rail is open, or the title-bar when none is. rehomeLeftCommandGroup is the
 // pure "where does it go" rule — still title-bar.ts's job. The MutationObserver
 // wiring on top of it (formerly installLeftGroupRehoming, a fixed asides[]
-// array) moved to sidebar-panels.ts's installSidebarPanels — see
+// array) moved to sidebar/registry.ts's installSidebarPanels — see
 // tests/sidebar-panels.test.ts for that coverage (initial placement, open/
 // switch/close, late registration).
 describe("left-command-group rehoming", () => {

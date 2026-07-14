@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createTitleBar, createLeftCommandGroup } from "../src/title-bar";
+import { createTitleBar, createLeftCommandGroup } from "../src/chrome/title-bar";
 
 // R9 (_workspace/01_architecture.md): the left-sidebar panel registry.
-// No unregister exists (see sidebar-panels.ts's doc on why), so every test
+// No unregister exists (see sidebar/registry.ts's doc on why), so every test
 // gets a FRESH module instance via vi.resetModules() + dynamic import —
 // otherwise panels registered by an earlier test (and its 4th fake panel)
 // would leak into the next one's assertions.
 async function freshRegistry() {
-  const mod = await import("../src/sidebar-panels");
+  const mod = await import("../src/sidebar/registry");
   return mod;
 }
 

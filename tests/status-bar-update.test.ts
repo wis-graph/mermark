@@ -11,13 +11,13 @@ const relaunch = vi.fn(() => Promise.resolve());
 vi.mock("@tauri-apps/plugin-updater", () => ({ check }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch }));
 
-type StatusBarUpdateModule = typeof import("../src/status-bar-update");
+type StatusBarUpdateModule = typeof import("../src/chrome/status-bar/update");
 type FlowModule = typeof import("../src/update/update-flow");
 
 async function freshModules(): Promise<{ statusBarUpdate: StatusBarUpdateModule; flow: FlowModule }> {
   vi.resetModules();
   const flow = await import("../src/update/update-flow");
-  const statusBarUpdate = await import("../src/status-bar-update");
+  const statusBarUpdate = await import("../src/chrome/status-bar/update");
   return { statusBarUpdate, flow };
 }
 

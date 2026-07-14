@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { makeWidthSlider } from "../src/status-bar-width";
+import { makeWidthSlider } from "../src/chrome/status-bar/width";
 import {
   readingWidthSetting,
   READING_WIDTH_MIN_CH,

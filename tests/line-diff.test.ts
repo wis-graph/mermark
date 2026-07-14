@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { diffLines, toDiffLines } from "../src/diff/line-diff";
+import { diffLines, toDiffLines } from "../src/document/diff/line-diff";
 
 describe("diffLines (conflict modal line diff)", () => {
   it("marks every row 'same' for identical input", () => {

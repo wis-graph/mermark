@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { createFavoritesSection, pickDropIndex, dropIndexToFinalIndex } from "../src/favorites/favorites-panel";
-import { reorderFavorite } from "../src/favorites/favorite-folders";
+import { createFavoritesSection, pickDropIndex, dropIndexToFinalIndex } from "../src/sidebar/favorites/favorites-panel";
+import { reorderFavorite } from "../src/sidebar/favorites/favorite-folders";
 
 // Favorites is a BOTTOM SECTION (M5) hosted inside the explorer's aside — see
 // favorites-panel.ts header. Unlike the M4 aside (button/open/close/onOpen,

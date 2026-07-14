@@ -1,7 +1,7 @@
-import { renderSidebarButton } from "../sidebar-toggle";
-import { basename } from "../path";
-import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
-import { icon } from "../icons";
+import { renderSidebarButton } from "../toggle";
+import { basename } from "../../document/path";
+import { redundantPathLabel, truncatedPathLabel } from "../../chrome/path-label";
+import { icon } from "../../icons";
 
 // ---------------------------------------------------------------------------
 // Recent-documents LEFT SIDEBAR chrome — the same shell as the file explorer /

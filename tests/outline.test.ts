@@ -161,7 +161,7 @@ vi.mock("../src/markdown/footnote-nav", async (importOriginal) => ({
   jumpTo: vi.fn(),
 }));
 import { jumpTo } from "../src/markdown/footnote-nav";
-import { createOutlinePanel } from "../src/outline/outline-panel";
+import { createOutlinePanel } from "../src/sidebar/outline/outline-panel";
 import { EditorView } from "@codemirror/view";
 
 function fakeView(doc: string): EditorView {
