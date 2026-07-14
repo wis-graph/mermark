@@ -39,14 +39,26 @@ function ensureStyleInjected(): void {
   const style = document.createElement("style");
   style.id = STYLE_ID;
   style.textContent = `
-/* width/max-width unchanged. height -> max-height (04_audit_report.md
- * 재호출 4차): "height" is a FIXED size regardless of content, so a 3-row
- * sheet used to render in the same 640px box as a 10,005-row one, leaving a
- * huge dead whitespace gutter below the table. max-height keeps the same
- * CAP (large sheets still can't grow past 85vh/640px and must scroll
- * internally — 재호출 3차's containment fix is untouched) while letting a
- * small sheet's panel shrink to fit its actual content. */
-.excel-viewer { width: min(90vw, 960px); max-height: min(85vh, 640px); }
+/* px caps REMOVED (뷰어 사이즈 봉투 재설계 — 4K에서 25%×30%로 갇히던 회귀). FIRST
+ * pass here used content-driven max-width (a narrow sheet's panel shrinks
+ * to fit its table) -- WRONG for this viewer and reverted (team-lead catch,
+ * viewer-golden G6): a spreadsheet is a document you view WIDE, not a box
+ * that should hug a single-column sheet's content. A "Big" sheet with one
+ * data column shrank the whole panel down far enough that its tab strip
+ * (Data/Notes/Big), which STRETCHES to the panel's full inner width as a
+ * flex-column child, landed its rightmost tab directly under the close
+ * button -- the click-intercept G6 caught. width: 85vw (a FIXED vw
+ * fraction, not max-width / not content-driven) makes this behave like
+ * html-viewer/hwp-viewer: always wide regardless of content, well under
+ * .viewer-panel's 94vw envelope so no max-width is even needed on top of
+ * it. This does NOT reintroduce the empty-whitespace bug -- that one was
+ * about HEIGHT (a 3-row sheet in a tall fixed box), unaffected by this
+ * WIDTH change; the height fix (.excel-viewer-body's flex,
+ * .excel-viewer-sheet's flex: 0 1 auto below) still shrinks vertically to
+ * content. The close-button-overlap bug itself is ALSO closed at the root
+ * now, independent of this viewer's width -- see .viewer-panel-body's
+ * chrome-gutter padding, styles.css. */
+.excel-viewer { width: 85vw; }
 /* The LOADED state's content wrapper (renderWorkbook sets this class) — a
  * flex column so its own children (fixed-height tab strip, then the
  * flex:1/scrollable sheet) actually get flex treatment. Without this, this

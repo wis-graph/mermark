@@ -259,6 +259,32 @@ async function checkPanelChrome(page, panelSelector, captionSelector) {
           !bodyRect || !bodyContentRect
             ? false
             : bodyContentRect.bottom <= bodyRect.bottom + 4 && bodyContentRect.right <= bodyRect.right + 4,
+        // CLOSE-BUTTON-DOES-NOT-COVER-CONTENT contract (team-lead catch: a
+        // narrow-content viewer — Excel's single-column "Big" sheet —
+        // stretched its tab strip's rightmost tab directly under the close
+        // button, which G6 only caught INDIRECTLY as a click-timeout. That's
+        // hard to diagnose from a golden failure alone, so this check makes
+        // it DIRECT: does any interactive element inside the viewer's own
+        // content geometrically overlap `.viewer-panel-close`'s rect? Scoped
+        // to elements INSIDE `.viewer-panel-body` (not the whole document) —
+        // the close button obviously sits "over" the panel background by
+        // design; what must never happen is a real click target landing
+        // under it. This is the shell's own contract (checkPanelChrome runs
+        // for every viewer), so it protects Excel/HTML/HWP and any future
+        // viewer (PDF/DOCX/CSV) the same way, without a per-viewer probe.
+        closeButtonOverlapsInteractive: (() => {
+          const closeBtn = document.querySelector(".viewer-panel-close");
+          const closeRect = closeBtn?.getBoundingClientRect() ?? null;
+          if (!closeRect || !body) return false;
+          const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+          const interactive = Array.from(
+            body.querySelectorAll('button, [role="tab"], a[href], input, select, textarea'),
+          );
+          return interactive.some((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0 && overlaps(closeRect, r);
+          });
+        })(),
       };
     },
     { panelSelector, captionSelector },
@@ -514,6 +540,7 @@ const pass =
   result.g1.captionInsidePanel &&
   result.g1.bodyContainedInPanel &&
   result.g1.contentContainedInBody &&
+  !result.g1.closeButtonOverlapsInteractive &&
   result.g2.xlsxResourcesAtBoot === 0 &&
   result.g3.hasExcelViewer &&
   result.g3.tabCount === 3 &&
@@ -526,6 +553,7 @@ const pass =
   result.g3.captionInsidePanel &&
   result.g3.bodyContainedInPanel &&
   result.g3.contentContainedInBody &&
+  !result.g3.closeButtonOverlapsInteractive &&
   result.g3.tableCount === 1 &&
   // SIZE CONTRACT: a 3-row sheet's panel shrinks well under the 640px cap
   // (height -> max-height fix) instead of sitting in a fixed dead box.
@@ -541,6 +569,7 @@ const pass =
   // panel — the small G3 fixture (3 rows) would never expose this.
   result.g6.bodyContainedInPanel &&
   result.g6.contentContainedInBody &&
+  !result.g6.closeButtonOverlapsInteractive &&
   result.g6.panelInViewport &&
   result.g6.tableCount === 1 &&
   // SIZE CONTRACT (flip side of G3): the sheet's OWN box actually scrolls
@@ -558,6 +587,7 @@ const pass =
   result.g7.captionInsidePanel &&
   result.g7.bodyContainedInPanel &&
   result.g7.contentContainedInBody &&
+  !result.g7.closeButtonOverlapsInteractive &&
   // G8 — script never runs under sandbox="" (positive) AND DOES run once
   // sandbox is (adversarially) relaxed to allow-scripts (negative) — the
   // guard-both-ways pair that proves the positive isn't a no-op probe.
@@ -578,6 +608,7 @@ const pass =
   result.g10.captionInsidePanel &&
   result.g10.bodyContainedInPanel &&
   result.g10.contentContainedInBody &&
+  !result.g10.closeButtonOverlapsInteractive &&
   // G11 — script never runs via <img> (positive) AND DOES run once the same
   // markup is injected directly (negative) — the guard-both-ways pair.
   result.g11.scriptDidNotRun &&

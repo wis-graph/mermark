@@ -33,13 +33,24 @@ import { openViewerShell } from "./shell";
 import { fontScaleSetting } from "../../settings/app";
 import { pagePlaceholder, svgToDataUrl, pageAspectFrom, isNearViewport } from "./hwp-pages";
 
-/** Baseline page width (px) at `fontScale === 1.0` — an arbitrary but
- *  comfortable reading width for an A4-ish page inside the viewer panel's
- *  `min(92vw, 900px)` cap (styles.css). Zoom scales this by `fontScale`
- *  directly (design §4.2: "페이지 폭 = 기본폭 × s — transform이 아니라 width
- *  스케일" — a plain width multiply keeps text/vector edges crisp at any
- *  zoom, since the `<img>` re-rasterizes rather than being CSS-transformed). */
-const HWP_PAGE_BASE_WIDTH = 600;
+/** jsdom-only fallback baseline (px) for `pageBaseWidth` below — jsdom never
+ *  runs real layout, so `clientWidth` is always 0 there and this constant is
+ *  the only width `applyHwpZoom` can use in a vitest environment. In a real
+ *  browser this number is never read (04_audit_report.md 재호출: a fixed
+ *  600px baseline was the reason a 4K panel — now `92vw` wide, styles.css —
+ *  still rasterized pages at a 595px-equivalent original size; the panel
+ *  grew but the pages inside it didn't). */
+const HWP_PAGE_FALLBACK_WIDTH = 600;
+
+/** The page's baseline width (px) at `fontScale === 1.0` — the ACTUAL
+ *  rendered width of the page column's container, so pages fill however
+ *  big `.hwp-viewer`'s `92vw` envelope (styles.css) currently is on this
+ *  screen, rather than a constant that was blind to viewport size. Reading
+ *  `clientWidth` forces a synchronous layout, which is fine here — it's
+ *  called only on zoom change and on open, never per-frame. Pure query. */
+function pageBaseWidth(pagesEl: HTMLElement): number {
+  return pagesEl.clientWidth || HWP_PAGE_FALLBACK_WIDTH;
+}
 
 /** Apply the current zoom scale to every page's width via one CSS custom
  *  property on the scroll container (`.hwp-viewer-page`'s `width` reads
@@ -47,7 +58,7 @@ const HWP_PAGE_BASE_WIDTH = 600;
  *  change (a placeholder that hasn't rendered yet) still inherits the right
  *  width with no extra bookkeeping. Command (void) — a DOM mutation. */
 function applyHwpZoom(pagesEl: HTMLElement, scale: number): void {
-  pagesEl.style.setProperty("--hwp-page-width", `${HWP_PAGE_BASE_WIDTH * scale}px`);
+  pagesEl.style.setProperty("--hwp-page-width", `${pageBaseWidth(pagesEl) * scale}px`);
 }
 
 /** The page index a placeholder (or its rendered replacement) belongs to —
@@ -165,6 +176,20 @@ function openHwpViewer(absPath: string): ViewerHandle {
     if (content.classList.contains("hwp-viewer-pages")) applyHwpZoom(content, scale);
   });
   shell.onTeardown(unsubscribeZoom);
+  // The panel is now viewport-relative (`92vw`, styles.css) rather than a
+  // px cap, so the page column's own width — and therefore pageBaseWidth()
+  // — changes on window resize, not just on zoom. Re-apply on resize so a
+  // page already open when the OS window/display changes doesn't stay
+  // stuck at whatever size it first rendered at. `typeof window` guard
+  // mirrors observePages' IntersectionObserver feature-check for the same
+  // jsdom-has-no-real-layout reason.
+  const onResize = () => {
+    if (content.classList.contains("hwp-viewer-pages")) applyHwpZoom(content, fontScaleSetting.get());
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("resize", onResize);
+    shell.onTeardown(() => window.removeEventListener("resize", onResize));
+  }
   shell.onTeardown(() => observerHandle?.disconnect());
   shell.onTeardown(() => {
     invoke("hwp_close").catch(() => {

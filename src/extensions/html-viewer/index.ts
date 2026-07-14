@@ -52,7 +52,13 @@ function ensureStyleInjected(): void {
   const style = document.createElement("style");
   style.id = STYLE_ID;
   style.textContent = `
-.html-viewer { width: min(92vw, 1100px); max-height: min(88vh, 760px); }
+/* px caps REMOVED (뷰어 사이즈 봉투 재설계 — 4K에서 1100×760으로 갇히던 회귀). A
+ * document viewer wants to be WIDE regardless of content (an arbitrary
+ * .html file has no "narrow" natural width the way a small Excel sheet
+ * does), so unlike excel-viewer's max-width this stays a fixed vw/vh
+ * fraction of the shell's .viewer-panel envelope (94vw/92vh, styles.css)
+ * -- never a px literal that stops scaling past some fixed resolution. */
+.html-viewer { width: 92vw; max-height: 88vh; }
 /* The LOADED state's content wrapper — becomes the iframe's flex/scroll
  * boundary (mirrors excel-viewer-body's role: the outer .viewer-panel-body
  * (styles.css, shell-owned) gives every viewer's content a bounded flex

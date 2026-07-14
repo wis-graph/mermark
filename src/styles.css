@@ -867,6 +867,25 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   /* VIEWER ZOOM RULE root — the sole --font-scale multiplication point for
      every viewer (built-in + extensions). */
   font-size: calc(13px * var(--font-scale, 1));
+  /* CHROME GUTTER (team-lead catch, viewer-golden G6): the close button is
+     `position: absolute; top: 8px; right: 8px; width/height: 28px`
+     (exception below) — it straddles OUTSIDE this panel's own 16px padding
+     (8+28=36px > 16px), so it always overlapped the top ~20px of whatever a
+     viewer's content put in its top-right corner. That never showed up
+     visually as long as a viewer's top row happened to be short of the
+     panel's right edge — until a genuinely narrow-content viewer (Excel's
+     single-column "Big" sheet) stretched its tab strip to the panel's full
+     width and put a real, clickable tab directly under the button (G6's
+     click-intercept). FIX IS HERE, in the shell, not in excel-viewer: this
+     custom property is the ONE place the button's footprint (8px offset +
+     28px size + a little clearance) is expressed as a reusable number, and
+     `.viewer-panel-body` below reserves exactly that much space at its top
+     — so NO viewer, wide or narrow, present or future (PDF/DOCX/CSV), can
+     put content under the close button; that guarantee no longer depends on
+     any individual viewer's width. Kept in px (not em) — this is chrome
+     geometry tied 1:1 to the close button's own fixed px footprint
+     (VIEWER ZOOM RULE exception 2), not zoomable body content. */
+  --viewer-chrome-gutter: 44px;
 }
 /* VIEWER ZOOM RULE exception 2 (see anchor comment) — window chrome, fixed
    size, exempt from the em-fraction rule. `font: inherit` still applies
@@ -895,7 +914,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    `.excel-viewer-sheet`). display:flex + column so a viewer's content can
    itself be a flex child (fixed-height tab strip + flex:1 scrollable body)
    without reinventing that context per viewer. */
-.viewer-panel-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+/* padding-top: var(--viewer-chrome-gutter) (see .viewer-panel's anchor
+   comment) — reserves the close button's footprint so no viewer's top row
+   can ever land under it, regardless of that viewer's width. */
+.viewer-panel-body {
+  flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;
+  padding-top: var(--viewer-chrome-gutter, 44px);
+}
 
 /* Image viewer: the checkerboard stage + fit-sized <img> are IMAGE-specific
    content, not shared shell chrome — they stay keyed to `.image-viewer*`
@@ -927,8 +952,20 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    once hwp_render_page resolves (hwp-viewer.ts's security contract — never
    an inline <svg>, see that file's header comment). Sized against the
    panel's own width/height caps (design keeps CSP/capabilities untouched —
-   img-src data: is already allowed). */
-.hwp-viewer { width: min(92vw, 900px); max-height: min(88vh, 780px); }
+   img-src data: is already allowed).
+
+   px cap REMOVED (뷰어 사이즈 봉투 재설계 — 4K에서 900×780으로 갇히던 회귀): a
+   document reader wants to be WIDE like html-viewer, so this is a fixed
+   vw/vh fraction of the shell's `.viewer-panel` envelope, never a px
+   literal. The rendered PAGE image itself used to be capped independently
+   at a hardcoded 600px baseline (HWP_PAGE_BASE_WIDTH, hwp-viewer.ts) —
+   that's the deeper half of the same bug (a 4K panel this wide, with pages
+   still rasterizing at a 595px-equivalent original size, looked broken
+   even after this rule alone). hwp-viewer.ts's applyHwpZoom now derives
+   the page's baseline width from the actual rendered container width
+   instead of a constant, so pages fill however big this envelope actually
+   is; --hwp-page-width/aspect-ratio contracts below are unchanged. */
+.hwp-viewer { width: 92vw; max-height: 88vh; }
 .hwp-viewer-status { padding: 12px; color: var(--muted); font-size: 1em; }
 /* The pages column is this viewer's OWN scroll boundary inside the shell's
    .viewer-panel-body (which is flex:1/min-height:0/overflow:hidden,
@@ -1553,8 +1590,20 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    it. 55% is a middle point in the 40-60% range the design calls tunable. */
 .settings-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--bg) 55%, transparent); }
 .settings-backdrop[hidden] { display: none; }
-/* feature-card geometry: rounded.xl + surface-card + hairline + single soft drop. */
-.settings-modal { display: flex; flex-direction: column; width: min(720px, 92vw); height: min(560px, 86vh); background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-xl); overflow: hidden; box-shadow: 0 12px 48px color-mix(in srgb, #000 24%, transparent); }
+/* feature-card geometry: rounded.xl + surface-card + hairline + single soft drop.
+
+   VIEWER SIZE ENVELOPE EXCEPTION (declared, tests/viewer-size-envelope.test.ts
+   skips this selector by name): every OTHER viewer in this file/src/extensions
+   was rewritten to drop its own px cap and defer to `.viewer-panel`'s shared
+   94vw/92vh envelope (styles.css, VIEWER ZOOM RULE anchor above it) — this
+   modal deliberately keeps its OWN, larger px cap instead. Reason: it's a
+   FORM (settings-sidebar | settings-pane), not a content-driven document
+   view — on a 4K display, growing it to 94vw would put labels and their
+   controls dozens of centimeters apart, which is worse UX than a modal
+   that just doesn't get that big. The cap moved from 720×560 to 880×680
+   (team-lead: "상한 유지, 다만 넉넉하게") — still bounded, just no longer
+   cramped on an ordinary laptop screen either. */
+.settings-modal { display: flex; flex-direction: column; width: min(880px, 92vw); height: min(680px, 88vh); background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-xl); overflow: hidden; box-shadow: 0 12px 48px color-mix(in srgb, #000 24%, transparent); }
 
 /* Header: a caption-uppercase title (12px/600, +0.96px tracking) + a quiet close
    glyph, separated from the body by a hairline-soft rule. */
