@@ -53,3 +53,26 @@
   font-display: swap;
   src: url("./pretendard-variable.woff2") format("woff2-variations");
 }
+
+/* Paperlogy 600/700 (SIL OFL) — subset from the publisher's own TTF (NOT the
+   fonts-archive mirror; see LICENSES.md for why and the exact fonttools command).
+   All 11,172 Hangul syllables + jamo + Latin kept; hanja/kana dropped (they fall
+   through to system-ui). Two weights because headings render at 600 and **bold**
+   inside a heading at 700 — synthetic bold on a display face is ugly. Opt-in via
+   the 제목 글꼴 select (default stays 테마 기본); an unused @font-face costs
+   zero network (browsers fetch a face only when text actually matches it — the
+   same lazy-load contract Pretendard above already relies on). */
+@font-face {
+  font-family: "Paperlogy";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./paperlogy-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Paperlogy";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./paperlogy-700-normal.woff2") format("woff2");
+}

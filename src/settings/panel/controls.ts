@@ -94,6 +94,15 @@ function renderSelect<T>(setting: Setting<T>, control: Extract<Control<T>, { kin
   setting.subscribe(reflect);
   wrap.appendChild(select);
   cell.appendChild(wrap);
+  // Same optional-hint shape as renderText's `help` (2026-07-14, headingFont):
+  // a muted line below the control, not squeezed beside it.
+  if (control.help) {
+    r.classList.add("settings-row-has-help");
+    const hint = document.createElement("div");
+    hint.className = "settings-text-help";
+    hint.textContent = control.help;
+    cell.appendChild(hint);
+  }
   return r;
 }
 

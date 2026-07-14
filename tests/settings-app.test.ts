@@ -490,4 +490,59 @@ describe("app settings", () => {
       expect(entry!.ui.control.kind).toBe("segmented");
     });
   });
+
+  describe("headingFontSetting", () => {
+    it("defaults to \"\" (테마 기본) and persists under mermark.headingFont", async () => {
+      const { headingFontSetting } = await import("../src/settings/app");
+      expect(headingFontSetting.get()).toBe("");
+      headingFontSetting.set('"Paperlogy", system-ui, sans-serif');
+      expect(localStorage.getItem("mermark.headingFont")).toBe('"Paperlogy", system-ui, sans-serif');
+    });
+
+    it("parse round-trips any saved stack (pass-through, like fontFamilySetting)", async () => {
+      localStorage.setItem("mermark.headingFont", 'Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif');
+      const { headingFontSetting } = await import("../src/settings/app");
+      expect(headingFontSetting.get()).toBe('Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif');
+    });
+
+    it("renders in the 타이포그래피 group as a select with 3 options and a help hint", async () => {
+      await import("../src/settings/app");
+      const { groups } = await import("../src/settings/registry");
+      const typographyGroup = groups().find((g) => g.name === "타이포그래피");
+      const entry = typographyGroup!.entries.find((e) => e.ui.label === "제목 글꼴");
+      expect(entry).toBeDefined();
+      expect(entry!.ui.control.kind).toBe("select");
+      const control = entry!.ui.control as { options: { value: string; label: string }[]; help?: string };
+      expect(control.options).toHaveLength(3);
+      // The default option's label must not lie: "" is NOT "본문과 동일" (claude's
+      // theme default is Georgia, not the body font) — it's "테마 기본".
+      expect(control.options[0]).toEqual({ value: "", label: "테마 기본" });
+      expect(control.help).toBeTruthy();
+    });
+
+    it("effectiveHeadingFont: empty/whitespace choice defers to the theme (null); a stack overrides it", async () => {
+      const { effectiveHeadingFont } = await import("../src/settings/app");
+      expect(effectiveHeadingFont("")).toBeNull();
+      expect(effectiveHeadingFont("  ")).toBeNull();
+      const stack = '"Paperlogy", system-ui, sans-serif';
+      expect(effectiveHeadingFont(stack)).toBe(stack);
+    });
+
+    // Cormorant-no-Hangul guard: every non-empty heading font stack must end in a
+    // CSS generic family (serif/sans-serif) so an unmapped glyph (Korean, in the
+    // Cormorant Garamond incident) falls through to the OS font instead of
+    // breaking. Any future option added without a trailing generic goes RED here.
+    it("Cormorant-no-Hangul guard: every non-empty stack ends in a generic family", async () => {
+      await import("../src/settings/app");
+      const { groups } = await import("../src/settings/registry");
+      const typographyGroup = groups().find((g) => g.name === "타이포그래피");
+      const entry = typographyGroup!.entries.find((e) => e.ui.label === "제목 글꼴");
+      const control = entry!.ui.control as { options: { value: string; label: string }[] };
+      const generic = /(?:^|,)\s*(?:serif|sans-serif)\s*$/;
+      for (const opt of control.options) {
+        if (opt.value.trim() === "") continue; // "" is the defer-to-theme sentinel, not a stack
+        expect(opt.value).toMatch(generic);
+      }
+    });
+  });
 });

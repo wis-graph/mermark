@@ -29,6 +29,8 @@ import {
   readingWidthSetting,
   lineHeightSetting,
   headingRatioSetting,
+  headingFontSetting,
+  effectiveHeadingFont,
   autosaveDelaySetting,
   conflictPolicySetting,
   panZoomSetting,
@@ -40,7 +42,7 @@ import {
   favoriteFoldersSetting,
   sidebarWidthSetting,
 } from "./settings/app";
-import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink } from "./settings/sinks";
+import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink, headingFontSink } from "./settings/sinks";
 import { createSidebarSash } from "./sidebar/sash";
 import { createSettingsButton } from "./settings/panel/modal";
 import { copyBundleToClipboard } from "./bundle";
@@ -207,6 +209,10 @@ async function boot() {
   // Heading typescale: one ratio → six --hN-scale vars (headingScaleSink fans
   // them; styles.css multiplies each into its line's font-size calc).
   headingRatioSetting.bind(headingScaleSink());
+  // Heading font: "" defers to the theme (removes the inline var, letting
+  // claude's Georgia or --reading-font show through); a choice overrides it.
+  const applyHeadingFont = headingFontSink();
+  headingFontSetting.bind((v) => applyHeadingFont(effectiveHeadingFont(v)));
   const root = document.querySelector<HTMLDivElement>("#app")!;
   const file = new URLSearchParams(location.search).get("file");
 

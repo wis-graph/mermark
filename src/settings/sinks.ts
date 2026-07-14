@@ -72,6 +72,18 @@ export function headingScales(ratio: string): number[] {
   ];
 }
 
+/** The heading-font sink: a stack writes an inline --font-heading (outranking
+ *  the theme's own :root[data-theme] declaration); null REMOVES the property so
+ *  the theme's default (claude's Georgia) or --reading-font shows through again.
+ *  cssVarSink can't do this — it only ever sets, never removes — so this stays a
+ *  distinct sink with its own writer. Command/CQS: void. */
+export function headingFontSink(): (stack: string | null) => void {
+  return (stack) => {
+    if (stack === null) document.documentElement.style.removeProperty("--font-heading");
+    else document.documentElement.style.setProperty("--font-heading", stack);
+  };
+}
+
 /** The heading-ratio sink: fan the six computed scales onto documentElement as
  *  --h1-scale … --h6-scale in ONE place (headingRatioSetting.bind(headingScaleSink())).
  *  styles.css multiplies each --hN-scale into its line's font-size calc. One sink

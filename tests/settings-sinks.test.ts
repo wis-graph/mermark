@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { headingScales, headingScaleSink, cssVarSink, webFontSink } from "../src/settings/sinks";
-import { googleFontHref } from "../src/settings/app";
+import { headingScales, headingScaleSink, cssVarSink, webFontSink, headingFontSink } from "../src/settings/sinks";
+import { googleFontHref, effectiveHeadingFont } from "../src/settings/app";
 
 describe("headingScales (heading typescale rule)", () => {
   it("returns six per-level scales", () => {
@@ -110,5 +110,32 @@ describe("webFontSink (single owner of the <head> link + --reading-font)", () =>
     webFontSink()({ family: "Roboto&evil", stack: "Z" });
     expect(link()).toBeNull(); // invalid family → no URL → no link
     expect(document.documentElement.style.getPropertyValue("--reading-font")).toBe("Z");
+  });
+});
+
+describe("headingFontSink (single writer of the inline --font-heading override)", () => {
+  beforeEach(() => {
+    document.documentElement.style.removeProperty("--font-heading");
+  });
+
+  it("writes the chosen stack to --font-heading", () => {
+    const stack = '"Paperlogy", system-ui, sans-serif';
+    headingFontSink()(stack);
+    expect(document.documentElement.style.getPropertyValue("--font-heading")).toBe(stack);
+  });
+
+  it("removes the property on null — the theme's own default (e.g. claude's Georgia) shows through again", () => {
+    headingFontSink()('"Paperlogy", system-ui, sans-serif');
+    headingFontSink()(null);
+    expect(document.documentElement.style.getPropertyValue("--font-heading")).toBe("");
+  });
+
+  it("composes with effectiveHeadingFont exactly like main.ts's bind line", () => {
+    const apply = headingFontSink();
+    apply(effectiveHeadingFont("")); // "테마 기본" → defer
+    expect(document.documentElement.style.getPropertyValue("--font-heading")).toBe("");
+    const stack = 'Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif';
+    apply(effectiveHeadingFont(stack)); // explicit choice → override
+    expect(document.documentElement.style.getPropertyValue("--font-heading")).toBe(stack);
   });
 });

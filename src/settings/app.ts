@@ -116,6 +116,51 @@ export const fontFamilySetting = registerSetting<string>({
   ui: { label: "글꼴", group: "타이포그래피", control: { kind: "select", options: FONT_STACKS } },
 });
 
+// "" is the sentinel for "테마 기본": no inline --font-heading is written, so the
+// theme's own default (claude's Georgia, styles.css :173) or --reading-font
+// applies. NOT "본문과 동일" — claude's theme default is Georgia, not the body
+// font, so that label would lie. Same value-IS-the-stack shape and pass-through
+// parse as fontFamilySetting above.
+const HEADING_FONT_STACKS = [
+  { value: "", label: "테마 기본" },
+  { value: '"Paperlogy", system-ui, sans-serif', label: "Paperlogy (한글)" },
+  { value: 'Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif', label: "Georgia (Serif)" },
+];
+
+/** Font family for headings only (independent of the body's fontFamilySetting).
+ *  Default `""` = defer to the theme (see effectiveHeadingFont) — claude's
+ *  --font-heading (Georgia, styles.css :173) or --reading-font otherwise, so an
+ *  untouched setting reproduces today's visuals pixel-for-pixel. A non-empty
+ *  choice writes an inline --font-heading that outranks the theme's own
+ *  :root[data-theme] declaration (inline beats selector, main.ts :170-172's
+ *  documented precedence). The Georgia option is byte-identical to claude's
+ *  theme default, so picking it explicitly is observationally the same as
+ *  claude's "테마 기본". */
+export const headingFontSetting = registerSetting<string>({
+  key: "mermark.headingFont",
+  default: "",
+  parse: (raw) => (raw == null ? null : raw),
+  ui: {
+    label: "제목 글꼴",
+    group: "타이포그래피",
+    control: {
+      kind: "select",
+      options: HEADING_FONT_STACKS,
+      help: "테마가 헤딩 글꼴을 정하면 그것을 따르고, 아니면 본문 글꼴을 씁니다.",
+    },
+  },
+});
+
+/** The heading-font precedence rule in ONE named place: "" defers to the theme
+ *  (null → sink removes the inline var, letting claude's Georgia or
+ *  --reading-font show through); a non-empty choice overrides the theme (the
+ *  chosen stack, written inline). `""` is NOT "본문과 동일" — it's "yield to the
+ *  theme default", which for claude IS a heading-specific serif, not the body
+ *  font. CQS: query, pure. */
+export function effectiveHeadingFont(choice: string): string | null {
+  return choice.trim() === "" ? null : choice;
+}
+
 /** User-typed Google Fonts family name. Empty = no web font (the prior behavior);
  *  a non-empty value loads fonts.googleapis.com and takes over --reading-font (with
  *  the select stack kept as fallback). The store keeps the raw string the user

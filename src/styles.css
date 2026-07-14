@@ -169,7 +169,14 @@
   /* Headings only → system serif (the Copernicus/Tiempos slab approximation, zero
      bundle). Body stays the humanist sans (--reading-font is NOT overridden). The
      `serif` generic catches last, so Korean headings fall back to the OS Hangul
-     sans rather than breaking (the Cormorant-no-Hangul history). */
+     sans rather than breaking (the Cormorant-no-Hangul history). This is now a
+     DEFAULT, not a forced override (2026-07-14, headingFontSetting): the 헤딩 글꼴
+     select's "테마 기본" ("") writes no inline var, so this declaration is what
+     shows through — same visual as before the setting existed. An explicit user
+     choice (Paperlogy/Georgia) writes an inline --font-heading on documentElement,
+     which outranks this :root[data-theme] declaration (inline beats selector).
+     The Georgia option's value is byte-identical to this line, so picking it is
+     observationally the same as "테마 기본" here. */
   --font-heading: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
   /* SIDEBAR CONTRAST RULE (claude ratio, 어두운 웜 pole) — see :root's
      --sidebar-bg comment. accent는 브랜드 coral(#cc785c)이 아니라 밝힌
@@ -180,15 +187,6 @@
   --sidebar-muted: #a8a29e;
   --sidebar-accent: #e0906f;
   --sidebar-border: rgba(255,255,255,.12);
-}
-/* Heading font swap for claude only. Same specificity tier as
-   `.cm-editor .cm-line.cm-heading` (the --reading-font rule) but with the
-   data-theme attribute lifting it one step, so it wins. font-family is
-   measure-inert (CM measures offsetHeight vertically; family only changes glyph
-   render + horizontal advance), so the ZOOM GUARD holds — the font-size calc lines
-   are untouched. */
-:root[data-theme="claude"] .cm-editor .cm-line.cm-heading {
-  font-family: var(--font-heading);
 }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); margin: 0; }
 
@@ -542,17 +540,23 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    recompute all six from one ratio (headingScaleSink). The fallback keeps the
    previous hand-tuned constant so pre-sink first paint matches today's visuals.
    ZOOM GUARD: the * var(--font-scale, 1) factor stays so ⌘± still scales headings. */
-/* Headings follow the reading-column font (--reading-font, the Typography
-   fontFamily setting) so a font change applies to headings too — and a sans/CJK
-   stack carries the Korean glyphs the old display serif (Cormorant Garamond) lacked
-   (it shipped no Hangul, so Korean headings broke). Weight is 600: weight 300 was
-   the Cormorant *Light* display voice; in a sans it reads anemic, so a semibold
-   gives the hierarchy without going full bold. weight/family/letter-spacing are all
+/* Heading font precedence (2026-07-14, headingFontSetting): (a) an explicit user
+   choice — inline --font-heading on documentElement (headingFontSink) — beats
+   (b) the active theme's own default (claude declares --font-heading: Georgia at
+   :root[data-theme="claude"], a demoted default now, not a forced override) —
+   beats (c) --reading-font (the Typography fontFamily setting), the same
+   fallback every other theme already had before this setting existed. An
+   untouched setting ("테마 기본") reproduces exactly today's visuals: Georgia on
+   claude, the body font elsewhere. A sans/CJK --reading-font carries the Korean
+   glyphs the old display serif (Cormorant Garamond) lacked (it shipped no
+   Hangul, so Korean headings broke). Weight is 600: weight 300 was the Cormorant
+   *Light* display voice; in a sans it reads anemic, so a semibold gives the
+   hierarchy without going full bold. weight/family/letter-spacing are all
    measure-inert (CM measures offsetHeight vertically; these affect glyph render +
    horizontal advance only) so the ZOOM GUARD holds — the font-size calc lines below
    are unchanged. Per-level negative tracking comes from --hN-tracking (em, so it
    rides --font-scale zoom + the headingRatio scale). */
-.cm-editor .cm-line.cm-heading { font-weight: 600; font-family: var(--reading-font, var(--font-sans)); line-height: 1.25; padding-top: .7em; }
+.cm-editor .cm-line.cm-heading { font-weight: 600; font-family: var(--font-heading, var(--reading-font, var(--font-sans))); line-height: 1.25; padding-top: .7em; }
 /* Consecutive heading cluster (2026-07-12 design-polish pass): an unbroken
    H3→H4→H5→H6 run had NO vertical rhythm at all (only a source blank line
    separated them from body text) and read as a plain list. The base rule
