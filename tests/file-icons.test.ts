@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extensionOf, iconNameForEntry, isImageExtension } from "../src/sidebar/explorer/file-icons";
+import { extensionOf, iconNameForEntry, IMAGE_EXTENSIONS } from "../src/sidebar/explorer/file-icons";
 
 // ---------------------------------------------------------------------------
 // Pure extension parsing + icon map. No DOM, no backend — just the two named
@@ -67,22 +67,39 @@ describe("iconNameForEntry: folders swap on open state; files map by extension",
   });
 });
 
-describe("isImageExtension: the single image-extension SSOT (explorer open-gate + icon map)", () => {
-  it("recognizes every image extension mermark opens in the viewer", () => {
+// Since R11 (_workspace/01_r11.md §3), IMAGE_EXTENSIONS no longer solely owns
+// the explorer open-gate (that's the viewer registry's `viewerFor` now) — it
+// stays the single source the icon map (EXT_ICON) AND main.ts's built-in
+// image-viewer registration both derive from, so this SSOT test now checks
+// membership directly against the exported Set instead of a deleted
+// `isImageExtension` predicate.
+describe("IMAGE_EXTENSIONS: the single image-extension SSOT (icon map + built-in viewer registration)", () => {
+  it("contains every image extension mermark opens in the viewer", () => {
     for (const ext of ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]) {
-      expect(isImageExtension(ext)).toBe(true);
+      expect(IMAGE_EXTENSIONS.has(ext)).toBe(true);
     }
   });
 
-  it("rejects non-image extensions and uppercase input (extensionOf already lowercases)", () => {
-    expect(isImageExtension("md")).toBe(false);
-    expect(isImageExtension("ts")).toBe(false);
-    expect(isImageExtension("")).toBe(false);
-    expect(isImageExtension("PNG")).toBe(false);
+  it("does not contain non-image extensions or uppercase input (extensionOf already lowercases)", () => {
+    expect(IMAGE_EXTENSIONS.has("md")).toBe(false);
+    expect(IMAGE_EXTENSIONS.has("ts")).toBe(false);
+    expect(IMAGE_EXTENSIONS.has("")).toBe(false);
+    expect(IMAGE_EXTENSIONS.has("PNG")).toBe(false);
   });
 
   it("iconNameForEntry maps bmp/avif to file-image (EXT_ICON derives from IMAGE_EXTENSIONS)", () => {
     expect(iconNameForEntry("shot.bmp", false, false)).toBe("file-image");
     expect(iconNameForEntry("a.avif", false, false)).toBe("file-image");
+  });
+
+  // R11 design §3's drift guard (§9 RED-4): every extension the built-in
+  // image viewer would claim (IMAGE_EXTENSIONS, what main.ts registers) has
+  // a concrete `file-image` icon entry — not the generic fallback. A viewer
+  // registered for an extension with no icon would silently show a wrong
+  // glyph forever (this session's "test a guard both ways" lesson).
+  it("every IMAGE_EXTENSIONS member resolves to file-image, never the generic fallback", () => {
+    for (const ext of IMAGE_EXTENSIONS) {
+      expect(iconNameForEntry(`f.${ext}`, false, false)).toBe("file-image");
+    }
   });
 });

@@ -5,15 +5,15 @@
 //   node scripts/nav-trace.mjs            # run the standard regression cases
 //
 // Requires: `npm run dev:browser` running, and Chrome on CDP :9222 with the page
-// at localhost:1420/?file=x.md  (open with --remote-debugging-port=9222).
+// at localhost:1430/?file=x.md  (open with --remote-debugging-port=9222).
 import { chromium } from "playwright";
 import { assertPageRendered } from "./lib/preflight.mjs";
 
 const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();
 const b = await chromium.connectOverCDP(ver.webSocketDebuggerUrl);
-const p = b.contexts().flatMap((c) => c.pages()).find((pg) => pg.url().includes("1420"));
+const p = b.contexts().flatMap((c) => c.pages()).find((pg) => pg.url().includes("1430")) ?? b.contexts().flatMap((c) => c.pages())[0];
 await p.setViewportSize({ width: 1200, height: 1000 });
-await p.goto("http://localhost:1420/?file=x.md", { waitUntil: "networkidle" });
+await p.goto("http://localhost:1430/?file=x.md", { waitUntil: "networkidle" });
 await p.waitForTimeout(1200);
 
 await p.evaluate(() => {

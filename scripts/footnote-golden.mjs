@@ -18,14 +18,16 @@
 //   node scripts/footnote-golden.mjs /tmp/footnote.json
 //
 // Assumes `npm run dev:browser` + Chrome --remote-debugging-port=9222 running,
-// page at localhost:1420/?file=x.md. (qa-verifier rewrites 9222→9333 / 1420→1430
-// for the isolated profile, same `__iso__` sed pattern as the nav harness.)
+// page at localhost:1430/?file=x.md. (Port 1430, not 1420: `tauri dev` owns 1420
+// — see the PORT SPLIT note in vite.config.ts. A qa run may still rewrite the CDP
+// port 9222→9333 for an isolated Chrome profile, same `__iso__` sed pattern as the
+// nav harness; the vite port no longer needs rewriting.)
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
 import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/footnote-golden.json";
-const url = process.argv[3] ?? "http://localhost:1420/?file=x.md";
+const url = process.argv[3] ?? "http://localhost:1430/?file=x.md";
 
 // Landing tolerance: the definition's vertical center must sit within this many
 // px of the viewport center after widgets settle. 60px ≈ a couple of lines — far

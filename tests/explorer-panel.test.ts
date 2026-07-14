@@ -497,62 +497,89 @@ describe("explorer: opens markdown only (6)", () => {
   });
 });
 
-// K. Image entries open via the gated onOpenImage handler (image viewer) -------
-// Same gating shape as isFavorite/onToggleFavorite: onOpenImage injected → an
-// image row loses `.is-nonmd` and becomes openable; omitted → pre-viewer
-// behavior (image row stays greyed + inert) is preserved exactly, which the
-// "6. Only .md opens" describe above already guards.
-describe("explorer: image entries open via onOpenImage when injected (K)", () => {
-  it("injected: image row is NOT .is-nonmd, click selects + calls onOpenImage(absPath), never onOpenFile", async () => {
+// K. Non-md entries open via the gated canOpenWithViewer/onOpenWithViewer
+// pair (R11, _workspace/01_r11.md §4/§9 RED-2) ---------------------------
+// Same gating shape as isFavorite/onToggleFavorite: both injected AND the
+// query claims the filename → a row loses `.is-nonmd` and becomes openable;
+// either omitted, or the query returns false, → pre-R11 behavior (row stays
+// greyed + inert) is preserved exactly, which the "6. Only .md opens" describe
+// above already guards. `canOpenWithViewer` here stands in for a real
+// `viewerFor(extensionOf(name)) != null` query — the panel never knows it's
+// a "viewer" at all, it only calls the injected predicate.
+const isPngName = (name: string) => name.endsWith(".png");
+
+describe("explorer: non-md entries open via canOpenWithViewer/onOpenWithViewer when injected (K)", () => {
+  it("injected + claimed: row is NOT .is-nonmd, click selects + calls onOpenWithViewer(absPath), never onOpenFile", async () => {
     const onOpenFile = vi.fn();
-    const onOpenImage = vi.fn();
+    const onOpenWithViewer = vi.fn();
     const panel = await openPanel({
       listDir: vi.fn(fakeTree()),
       getBaseDir: () => "/root",
       onOpenFile,
-      onOpenImage,
+      canOpenWithViewer: isPngName,
+      onOpenWithViewer,
     });
 
     const png = items(panel.aside).find((e) => nameOf(e) === "pic.png") as HTMLElement;
     expect(png.classList.contains("is-nonmd")).toBe(false);
 
     clickItem(png);
-    expect(onOpenImage).toHaveBeenCalledTimes(1);
-    expect(onOpenImage).toHaveBeenCalledWith("/root/pic.png");
+    expect(onOpenWithViewer).toHaveBeenCalledTimes(1);
+    expect(onOpenWithViewer).toHaveBeenCalledWith("/root/pic.png");
     expect(onOpenFile).not.toHaveBeenCalled();
     expect(png.getAttribute("aria-selected")).toBe("true"); // selectItem still runs
   });
 
-  it("injected: Enter on a focused image row is equivalent to click (single activateItem path)", async () => {
-    const onOpenImage = vi.fn();
+  it("injected: Enter on a focused claimed row is equivalent to click (single activateItem path)", async () => {
+    const onOpenWithViewer = vi.fn();
     const panel = await openPanel({
       listDir: vi.fn(fakeTree()),
       getBaseDir: () => "/root",
       onOpenFile: vi.fn(),
-      onOpenImage,
+      canOpenWithViewer: isPngName,
+      onOpenWithViewer,
     });
 
     press(panel.aside, "End"); // focus pic.png (last visible)
     expect(nameOf(focusedItem(panel.aside))).toBe("pic.png");
     press(panel.aside, "Enter");
-    expect(onOpenImage).toHaveBeenCalledTimes(1);
-    expect(onOpenImage).toHaveBeenCalledWith("/root/pic.png");
+    expect(onOpenWithViewer).toHaveBeenCalledTimes(1);
+    expect(onOpenWithViewer).toHaveBeenCalledWith("/root/pic.png");
   });
 
-  it("md rows still route to onOpenFile even when onOpenImage is injected (no cross-wiring)", async () => {
+  it("md rows still route to onOpenFile even when the viewer pair is injected (no cross-wiring)", async () => {
     const onOpenFile = vi.fn();
-    const onOpenImage = vi.fn();
+    const onOpenWithViewer = vi.fn();
     const panel = await openPanel({
       listDir: vi.fn(fakeTree()),
       getBaseDir: () => "/root",
       onOpenFile,
-      onOpenImage,
+      canOpenWithViewer: isPngName,
+      onOpenWithViewer,
     });
 
     const md = items(panel.aside).find((e) => nameOf(e) === "a.md") as HTMLElement;
     clickItem(md);
     expect(onOpenFile).toHaveBeenCalledWith("/root/a.md");
-    expect(onOpenImage).not.toHaveBeenCalled();
+    expect(onOpenWithViewer).not.toHaveBeenCalled();
+  });
+
+  it("injected but NOT claimed (canOpenWithViewer returns false): row stays .is-nonmd and inert (unregistered extension)", async () => {
+    const onOpenFile = vi.fn();
+    const onOpenWithViewer = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile,
+      canOpenWithViewer: () => false, // e.g. no viewer registered for this extension
+      onOpenWithViewer,
+    });
+
+    const png = items(panel.aside).find((e) => nameOf(e) === "pic.png") as HTMLElement;
+    expect(png.classList.contains("is-nonmd")).toBe(true);
+    clickItem(png);
+    expect(onOpenWithViewer).not.toHaveBeenCalled();
+    expect(onOpenFile).not.toHaveBeenCalled();
   });
 });
 
@@ -641,22 +668,23 @@ describe("explorer: ⌘/Ctrl+click and ⌘+Enter open in a new window when injec
     expect(onOpenFile).toHaveBeenCalledWith("/root/a.md");
   });
 
-  it("⌘+click on an image row still calls onOpenImage, never onOpenFileNewWindow (images excluded)", async () => {
+  it("⌘+click on a viewer-claimed row still calls onOpenWithViewer, never onOpenFileNewWindow (viewer rows excluded)", async () => {
     const onOpenFile = vi.fn();
-    const onOpenImage = vi.fn();
+    const onOpenWithViewer = vi.fn();
     const onOpenFileNewWindow = vi.fn();
     const panel = await openPanel({
       listDir: vi.fn(fakeTree()),
       getBaseDir: () => "/root",
       onOpenFile,
-      onOpenImage,
+      canOpenWithViewer: isPngName,
+      onOpenWithViewer,
       onOpenFileNewWindow,
     });
 
     const png = items(panel.aside).find((e) => nameOf(e) === "pic.png") as HTMLElement;
     clickItemMod(png, "meta");
-    expect(onOpenImage).toHaveBeenCalledTimes(1);
-    expect(onOpenImage).toHaveBeenCalledWith("/root/pic.png");
+    expect(onOpenWithViewer).toHaveBeenCalledTimes(1);
+    expect(onOpenWithViewer).toHaveBeenCalledWith("/root/pic.png");
     expect(onOpenFileNewWindow).not.toHaveBeenCalled();
     expect(onOpenFile).not.toHaveBeenCalled();
   });

@@ -39,6 +39,10 @@
 //    not part of the {id, button, aside, close} contract) — so an extension
 //    panel is responsible for calling this itself when it opens, exactly the
 //    way explorer/recent/outline's onOpen callbacks do (main.ts).
+// 6. VIEWER ID NEVER RENAME (R11, _workspace/01_r11.md §2) — same reasoning
+//    as #1/#4. ViewerHandle.close() MUST BE IDEMPOTENT (the shell/don't-stack
+//    slot may call it more than once). Viewer.extensions entries MUST be
+//    lowercase with no leading dot (registerViewer throws otherwise).
 //
 // CM6/Lezer packages are DELIBERATELY NOT re-exported here — an extension
 // imports `@codemirror/view`'s Decoration/WidgetType and `@lezer/common`'s
@@ -71,3 +75,12 @@ export type { Setting, SettingDef } from "../settings/store";
 export { registerSidebarPanel, closeOtherSidebarPanels } from "../sidebar/registry";
 export type { SidebarPanel } from "../sidebar/registry";
 export { renderSidebarButton } from "../sidebar/toggle";
+
+// R11 (_workspace/01_r11.md §2/§6): the non-markdown-file viewer registry +
+// the shared overlay shell + the local-file-bytes fetch rule. `viewerFor` is
+// deliberately NOT re-exported — only main.ts (the composition root) queries
+// "which viewer opens this file"; an extension registers its own viewer and
+// has no legitimate reason to query another's.
+export { registerViewer, type Viewer, type ViewerHandle } from "../chrome/viewer/registry";
+export { openViewerShell, type ViewerShell } from "../chrome/viewer/shell";
+export { readLocalFileBytes } from "../chrome/viewer/file-bytes";

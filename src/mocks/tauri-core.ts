@@ -221,6 +221,12 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
           { name: "guide.pdf", path: "/mock/vault/guide.pdf", is_dir: false },
           { name: "LICENSE", path: "/mock/vault/LICENSE", is_dir: false },
           { name: "pic.png", path: "/mock/vault/pic.png", is_dir: false },
+          // R11 (_workspace/01_r11.md §9 Step 5): the Excel-viewer golden's
+          // positive fixture. Bytes are served by Vite's browser-mode
+          // publicDir (vite.config.ts) at mock-assets/mock/vault/report.xlsx
+          // — this TREE entry only makes the row visible/openable; it never
+          // reads the file itself (list_dir doesn't touch content).
+          { name: "report.xlsx", path: "/mock/vault/report.xlsx", is_dir: false },
         ],
         "/mock/vault/notes": [
           { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },

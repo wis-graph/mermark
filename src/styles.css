@@ -807,16 +807,56 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .conflict-use-external { color: #d97706; border-color: color-mix(in srgb, #d97706 55%, transparent); }
 .conflict-use-external:hover { background: #d97706; color: #fff; border-color: #d97706; }
 
-/* Image viewer: a body-level lightbox for explorer image clicks, structurally
-   identical to the conflict modal (sibling of .editor-host, outside the CM
-   measure tree → ZOOM GUARD holds). Checkerboard stage gives transparent PNGs
-   contrast; fit sizing never force-enlarges a small image. */
+/* Viewer shell chrome (R11, _workspace/01_r11.md §5 / chrome/viewer/shell.ts):
+   the body-level lightbox/panel EVERY registered viewer (built-in image,
+   Excel, and future HTML/HWP) shares, structurally identical to the conflict
+   modal (sibling of .editor-host, outside the CM measure tree → ZOOM GUARD
+   holds). `.viewer-panel`/`.viewer-panel-close`/`.viewer-panel-caption` are
+   the SHARED chrome — background, border, shadow, close-button position,
+   caption typography — added by openViewerShell (shell.ts) to every viewer's
+   modal/close-button/caption alongside that viewer's own modalClass-derived
+   class. A viewer must NEVER need to reinvent this chrome (that reinvention
+   is exactly the audit finding that added this comment: the Excel viewer's
+   injected <style> only ever styled its OWN content — tabs/table — because
+   it correctly assumed the shell owned panel chrome, but until this change
+   that chrome was hardcoded to `.image-viewer` only, so every OTHER viewer
+   rendered with no background/border/padding/flex layout at all).
+
+   VIEWER ZOOM RULE (04_audit_report.md 재호출 4차 — "엑셀 뷰어도 ⌘±를 따라야
+   한다"): `--font-scale` multiplication happens in EXACTLY ONE place, this
+   root's font-size calc — the SAME technique and SAME variable
+   `.sidebar-aside` uses (SIDEBAR ZOOM RULE anchor comment above it). Every
+   viewer-scoped descendant (built-in image viewer AND any extension's
+   injected <style>, e.g. `.excel-viewer-table`) declares its size as a
+   13px-BASE EM FRACTION (`calc(12.5em / 13)` for a 12.5px original), never a
+   fresh px literal and never its own `* var(--font-scale, ...)`
+   multiplication — that would compound the zoom. Guard:
+   tests/viewer-zoom.test.ts (mirrors tests/sidebar-zoom.test.ts's T1/T2
+   shape) — its sweep covers BOTH this sheet's `.viewer-*`/`.image-viewer-*`
+   rules AND every injected `<style>` STRING under src/extensions/, since
+   an extension's CSS never lives in this file (design §6, fence spirit) —
+   a sweep limited to this sheet would silently let every extension ignore
+   zoom forever.
+
+   TWO EXCEPTIONS (same shape as SIDEBAR ZOOM RULE's, carried over deliberately):
+   1. `.viewer-panel-close` (✕) and any extension's own <button> that sizes
+      TEXT in em (e.g. `.excel-viewer-tab`) MUST declare `font: inherit`
+      explicitly — a <button> gets its own UA font-size (~13.33px, NOT
+      --font-scale-aware) unless the rule re-inherits. Exactly the trap
+      `.explorer-star`/`.favorites-remove` already fell into (SIDEBAR ZOOM
+      RULE exception 1) — do not re-fall into it here.
+   2. `.viewer-panel-close` is deliberately EXEMPT from the em-fraction rule
+      itself (kept at a fixed 28×28px / 15px glyph) — it is WINDOW CHROME
+      (same category as `.sidebar-top-strip`'s fixed 36px height, or a rail
+      icon button), not zoomable body text. A fixed hit-target that doesn't
+      grow with zoom is correct here; only the glyph GROWING and overflowing
+      its 28×28 box would be the bug. Do not "fix" this exception away. */
 .viewer-backdrop {
   position: fixed; inset: 0; z-index: 50;
   display: flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, #000 55%, transparent);
 }
-.image-viewer {
+.viewer-panel {
   position: relative;
   display: flex; flex-direction: column; gap: 10px;
   max-width: 94vw; max-height: 92vh;
@@ -824,16 +864,42 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   background: var(--bg); color: var(--fg);
   border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
   box-shadow: 0 16px 48px color-mix(in srgb, #000 35%, transparent);
+  /* VIEWER ZOOM RULE root — the sole --font-scale multiplication point for
+     every viewer (built-in + extensions). */
+  font-size: calc(13px * var(--font-scale, 1));
 }
-.image-viewer-close {
+/* VIEWER ZOOM RULE exception 2 (see anchor comment) — window chrome, fixed
+   size, exempt from the em-fraction rule. `font: inherit` still applies
+   (exception 1) since the ✕ glyph itself is text-sized. */
+.viewer-panel-close {
   position: absolute; top: 8px; right: 8px; z-index: 1;
   width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
-  padding: 0; line-height: 1; font-size: 15px; cursor: pointer;
+  padding: 0; line-height: 1; font: inherit; font-size: 15px; cursor: pointer;
   background: var(--surface); color: var(--muted);
   border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
   border-radius: var(--radius-sm, 6px);
 }
-.image-viewer-close:hover { color: var(--fg); }
+.viewer-panel-close:hover { color: var(--fg); }
+.viewer-panel-caption { text-align: center; font-size: calc(12.5em / 13); color: var(--muted); }
+/* Shell-owned scroll boundary (shell.ts's `body` wrapper) — a real device
+   regression found this missing: a 10,000+-row Excel sheet rendered PAST
+   the panel's fixed height because the viewer's content was a plain block
+   div appended directly as a flex item of `.viewer-panel`, so no ancestor
+   ever established a bounded, scrollable box for it. `min-height: 0`
+   overrides the flex-item default (`auto`, which lets content force the
+   box to grow past its flex-basis) — without it `flex: 1` alone does NOT
+   cap a flex child's size to available space when its content is taller.
+   `overflow: hidden` here (not `auto`) — THIS box never scrolls itself; it
+   only bounds the space a viewer's own inner element scrolls within
+   (that inner element supplies its own `overflow: auto`, e.g.
+   `.excel-viewer-sheet`). display:flex + column so a viewer's content can
+   itself be a flex child (fixed-height tab strip + flex:1 scrollable body)
+   without reinventing that context per viewer. */
+.viewer-panel-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+
+/* Image viewer: the checkerboard stage + fit-sized <img> are IMAGE-specific
+   content, not shared shell chrome — they stay keyed to `.image-viewer*`
+   (the modalClass shell.ts still adds alongside `.viewer-panel`). */
 .image-viewer-stage {
   position: relative;
   display: flex; align-items: center; justify-content: center;
@@ -850,10 +916,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   overflow: hidden;
 }
 .image-viewer-img { display: block; max-width: 90vw; max-height: 85vh; object-fit: contain; }
-.image-viewer-caption { text-align: center; font-size: 12.5px; color: var(--muted); }
 /* attachPanZoom's reset button (shared with mermaid) — reposition only, same
-   is-transformed show/hide rule as .cm-mermaid. */
-.image-viewer .cm-mermaid-reset { top: .6em; right: .6em; }
+   is-transformed show/hide rule as .cm-mermaid. Keyed to .viewer-panel (not
+   just .image-viewer) since any future viewer that reuses attachPanZoom
+   inherits the same reposition for free. */
+.viewer-panel .cm-mermaid-reset { top: .6em; right: .6em; }
 
 /* Open-by-path input row: a thin bar pinned just above the status bar (lives
    outside #app's scroll host, so no .cm-content/.cm-line involved → ZOOM GUARD

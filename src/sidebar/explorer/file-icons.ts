@@ -22,10 +22,16 @@ export function extensionOf(name: string): string {
   return name.slice(dot + 1).toLowerCase();
 }
 
-/** Extensions mermark treats as images — the single owner of "is this file an
- *  image" for BOTH the explorer's open-gate (isImageEntry) and its icon glyph
- *  (EXT_ICON below, derived from this set so the two can never disagree).
- *  Keyed by the lowercased extension `extensionOf` returns. */
+/** Extensions mermark treats as images — the source of the `file-image` icon
+ *  glyph family (EXT_ICON below, derived from this set) AND the list main.ts
+ *  registers the built-in image viewer for (`registerViewer({ id: "image",
+ *  extensions: [...IMAGE_EXTENSIONS], ... })`). Since R11
+ *  (_workspace/01_r11.md §3) this no longer solely owns "can the explorer
+ *  open this file" — that's the viewer registry's `viewerFor` now (queried
+ *  through main.ts's `canOpenWithViewer` injection, chrome/viewer/registry.ts)
+ *  — but it's still the single place both consumers derive from, so the icon
+ *  family and the registered extensions can never drift apart. Keyed by the
+ *  lowercased extension `extensionOf` returns. */
 export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
   "png",
   "jpg",
@@ -36,12 +42,6 @@ export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
   "bmp",
   "avif",
 ]);
-
-/** Is `ext` (already lowercased by `extensionOf`) one mermark renders as an
- *  image? Pure query — the single source the explorer's open-gate consults. */
-export function isImageExtension(ext: string): boolean {
-  return IMAGE_EXTENSIONS.has(ext);
-}
 
 /** Extension → curated icon id. A tight set (one shared icon per file family)
  *  so the explorer reads at a glance; anything not listed falls back to the

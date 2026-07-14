@@ -8,8 +8,12 @@
 // in the very first mount's snapshot (no reloadFeatures() needed for boot-time
 // extensions; that path exists for extensions that register LATE, e.g. after
 // an async init).
+import { registerExcelViewer } from "./excel-viewer";
+
 export function activateExtensions(): void {
-  // Register personal extensions here, e.g.:
-  //   import { registerBlockFeature } from "../api";
-  //   registerBlockFeature(myCalloutFeature);
+  // registerExcelViewer() only registers the {id, extensions, open} catalog
+  // entry (registerViewer, ../api) — it does NOT import the ~1MB `xlsx`
+  // library. That import is deferred to the viewer's own open() call (R11
+  // design §7), so this boot-time call stays cold-load-cheap.
+  registerExcelViewer();
 }

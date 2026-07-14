@@ -1,14 +1,14 @@
 // Connect to Chrome over the CDP WebSocket (the "socket") and capture everything
 // the frontend does: console, uncaught errors, failed requests. Then screenshot.
 //
-//   node scripts/cdp-debug.mjs "http://localhost:1420/?file=x.md"
+//   node scripts/cdp-debug.mjs "http://localhost:1430/?file=x.md"
 //
 // Assumes Chrome already launched with --remote-debugging-port=9222.
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
 import { assertPageRendered } from "./lib/preflight.mjs";
 
-const url = process.argv[2] ?? "http://localhost:1420/?file=x.md";
+const url = process.argv[2] ?? "http://localhost:1430/?file=x.md";
 
 // 1. find the CDP socket endpoint Chrome opened
 const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();

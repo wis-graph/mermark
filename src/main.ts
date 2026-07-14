@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { homeDir, documentDir } from "@tauri-apps/api/path";
-import { dirOf, resolveOpenPath, normalizePath } from "./document/path";
+import { dirOf, resolveOpenPath, normalizePath, basename } from "./document/path";
 import { createOpenPathPrompt } from "./document/open-file/path-prompt";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -72,6 +72,8 @@ import {
 import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./document/file-watch";
 import { openConflictModal } from "./document/conflict/conflict-modal";
 import { openImageViewer } from "./chrome/viewer/image-viewer";
+import { registerViewer, viewerFor, type Viewer } from "./chrome/viewer/registry";
+import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
 import { icon, type IconName } from "./icons";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
@@ -349,10 +351,41 @@ async function boot() {
     favoriteFoldersSetting.set(isFavorite(list, abs) ? removeFavorite(list, abs) : pushFavorite(list, abs));
   }
 
-  // Image lightbox don't-stack slot — same shape as `openConflict` below: only
-  // one viewer at a time, and opening a second image closes the first rather
-  // than stacking overlays.
+  // Viewer don't-stack slot (R11, _workspace/01_r11.md §5) — shared by every
+  // registered viewer (image, and now extensions like Excel), same shape as
+  // `openConflict` below: only one overlay at a time, opening a second closes
+  // the first rather than stacking. Stays here, not in the registry — the
+  // registry is a pure catalog (design §5: a stateful slot inside it would
+  // repeat the God-object shape R9 explicitly avoided).
   let openViewer: { close(): void } | null = null;
+
+  // The built-in image viewer registers through the SAME `registerViewer`
+  // path an extension uses (R11 design §3 — dogfooding, like R9's built-in
+  // sidebar panels going through registerSidebarPanel). IMAGE_EXTENSIONS
+  // still owns the icon-family derivation (file-icons.ts); this is now its
+  // ONLY other consumer (open-gating moved to the registry). Must run before
+  // createExplorerPanel below, so the explorer's first render already sees it
+  // (design §4's registration-order guarantee).
+  registerViewer({ id: "image", extensions: [...IMAGE_EXTENSIONS], open: openImageViewer });
+
+  /** "Which registered viewer, if any, opens this filename?" — the single
+   *  rule canOpenWithViewer/openWithViewer both derive from, so they can
+   *  never disagree about what's openable. Pure query. */
+  function viewerForEntry(name: string): Viewer | null {
+    return viewerFor(extensionOf(name));
+  }
+
+  /** Open `absPath` in its registered viewer, closing whatever the don't-stack
+   *  slot currently holds first. The single owner of that rule — every viewer
+   *  open (built-in image, any extension) funnels through here. No-op if no
+   *  viewer claims the file (defensive; canOpenWithViewer should already have
+   *  gated the caller). Command (void). */
+  function openWithViewer(absPath: string): void {
+    const v = viewerForEntry(basename(absPath));
+    if (!v) return;
+    openViewer?.close();
+    openViewer = v.open(absPath);
+  }
 
   // ── File explorer LEFT SIDEBAR. A lazy tree rooted at the live document's
   //    folder: click reads children (list_dir), `..` single-clicks/Enters
@@ -363,10 +396,12 @@ async function boot() {
   //    renders/toggles each folder row's favorite star (isFavorite/
   //    onToggleFavorite) — explorer never imports the favorites domain itself,
   //    it only receives a DOM node + two closures (same injection shape as
-  //    listDir/onOpenFile). onOpenImage opens the lightbox viewer (§ image
-  //    viewer design) — unlike onOpenFile it never branches on `!file`: the
-  //    viewer is a body-level overlay, not a document swap, so it works the
-  //    same whether or not a markdown document is open (welcome screen included).
+  //    listDir/onOpenFile). canOpenWithViewer/onOpenWithViewer (R11) open a
+  //    registered viewer (image, or any extension) — unlike onOpenFile it
+  //    never branches on `!file`: the viewer is a body-level overlay, not a
+  //    document swap, so it works the same whether or not a markdown document
+  //    is open (welcome screen included). Explorer itself never imports the
+  //    viewer registry (design §4 — dependency direction stays main.ts-only).
   //    onOpenFileNewWindow (⌘/Ctrl+click, ⌘+Enter) reuses open_path — the same
   //    IPC command wikilink clicks already use to spawn a new document window.
   const explorer = createExplorerPanel({
@@ -381,10 +416,8 @@ async function boot() {
         openInWindow(absPath, fresh);
       }
     },
-    onOpenImage: (absPath) => {
-      openViewer?.close();
-      openViewer = openImageViewer(absPath);
-    },
+    canOpenWithViewer: (name) => viewerForEntry(name) != null,
+    onOpenWithViewer: openWithViewer,
     // ⌘/Ctrl+click or ⌘+Enter on a markdown row: open it in a brand-new window.
     // Reuses open_path — the same command wikilink clicks already invoke to
     // spawn a new document window — so no new backend command is needed.

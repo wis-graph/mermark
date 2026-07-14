@@ -12,7 +12,7 @@ import { writeFileSync } from "node:fs";
 import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/mermaid-golden.json";
-const url = process.argv[3] ?? "http://localhost:1420/?file=x.md";
+const url = process.argv[3] ?? "http://localhost:1430/?file=x.md";
 const shot = out.replace(/\.json$/, ".png");
 
 const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();

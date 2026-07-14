@@ -1,5 +1,5 @@
 import { icon } from "../../icons";
-import { extensionOf, iconNameForEntry, isImageExtension } from "./file-icons";
+import { extensionOf, iconNameForEntry } from "./file-icons";
 import { basename, normalizePath } from "../../document/path";
 import { renderSidebarButton } from "../toggle";
 
@@ -87,18 +87,27 @@ export interface ExplorerHandlers {
   /** Open an absolute path in the current window. Injected so the panel reuses
    *  main's read_file → commitBeforeSwitch → openInWindow path (no new open code). */
   onOpenFile(absPath: string): void;
-  /** Open an image file in the lightbox viewer. Optional — GATES image entries
-   *  the same way isFavorite/onToggleFavorite gate the favorite star: only when
-   *  injected does an image row lose `.is-nonmd` and become clickable/Enterable
-   *  (see isOpenableEntry). Callers that omit it (existing tests, standalone
-   *  use) keep the pre-viewer behavior exactly — images stay greyed + inert. */
-  onOpenImage?(absPath: string): void;
+  /** Is a viewer registered for this filename (R11, _workspace/01_r11.md §4)?
+   *  Pure query. Optional — GATES non-markdown entries the same way
+   *  isFavorite/onToggleFavorite gate the favorite star: only when BOTH this
+   *  and `onOpenWithViewer` are injected does a claimed row lose `.is-nonmd`
+   *  and become clickable/Enterable (see isOpenableEntry). Callers that omit
+   *  it (existing tests, standalone use) keep the pre-R11 behavior exactly —
+   *  every non-md row stays greyed + inert. Generalizes the old `onOpenImage`
+   *  gate to any registered viewer (image included — it now registers too). */
+  canOpenWithViewer?(name: string): boolean;
+  /** Open `absPath` in its registered viewer. Optional, paired with
+   *  `canOpenWithViewer` (both injected or both omitted — same gating shape).
+   *  Lifecycle (don't-stack overlay slot) is the injector's job (main.ts), not
+   *  this panel's. Command (void). */
+  onOpenWithViewer?(absPath: string): void;
   /** Open a markdown file in a brand-new window (⌘/Ctrl+click, or ⌘+Enter from
-   *  the keyboard). Optional — GATED the same way onOpenImage gates images:
-   *  when omitted, a modifier'd activation just falls through to onOpenFile
-   *  (current-window open), so existing callers keep today's behavior exactly.
-   *  Markdown-only by design — an image row is already claimed by onOpenImage
-   *  before this branch is reached, so this never fires for images. Injected
+   *  the keyboard). Optional — GATED the same way canOpenWithViewer/
+   *  onOpenWithViewer gate viewer rows: when omitted, a modifier'd activation
+   *  just falls through to onOpenFile (current-window open), so existing
+   *  callers keep today's behavior exactly. Markdown-only by design — a
+   *  viewer-claimed row is already claimed by onOpenWithViewer before this
+   *  branch is reached, so this never fires for it. Injected
    *  so main owns the actual window-spawning call (reuses open_path — the same
    *  command wikilink clicks already use to open a file in a new window). */
   onOpenFileNewWindow?(absPath: string): void;
@@ -157,13 +166,6 @@ function isMarkdownEntry(name: string): boolean {
   return extensionOf(name) === "md";
 }
 
-/** An image file the viewer knows how to display — isMarkdownEntry's sister
- *  rule, sharing the same `extensionOf` parsing so the two gates never
- *  disagree on where a name's extension is. Pure query. */
-function isImageEntry(name: string): boolean {
-  return isImageExtension(extensionOf(name));
-}
-
 /** Swap a folder node's glyph to match its open state (`folder` ↔ `folder-open`).
  *  Command (void). Called from the SAME command that sets `aria-expanded`
  *  (expandFolder / collapseFolder) so the glyph and the state can't drift. The
@@ -189,7 +191,8 @@ export function createExplorerPanel({
   listDir,
   getBaseDir,
   onOpenFile,
-  onOpenImage,
+  canOpenWithViewer,
+  onOpenWithViewer,
   onOpenFileNewWindow,
   onOpen,
   onRootChange,
@@ -199,13 +202,14 @@ export function createExplorerPanel({
   focusFavorites,
 }: ExplorerHandlers): ExplorerPanel {
   /** "Does clicking/Entering this row open something?" — isMarkdownEntry's
-   *  reach extended by the gated image case: an image row is only openable
-   *  when onOpenImage was actually injected (isFavorite/onToggleFavorite
-   *  gating shape), so callers that omit it keep every non-md row inert
-   *  exactly as before. Drives BOTH the `.is-nonmd` dim (makeEntry) and the
+   *  reach extended by the gated viewer case: a non-md row is only openable
+   *  when BOTH canOpenWithViewer/onOpenWithViewer were injected AND the
+   *  injected query claims this filename (isFavorite/onToggleFavorite gating
+   *  shape), so callers that omit them keep every non-md row inert exactly
+   *  as before. Drives BOTH the `.is-nonmd` dim (makeEntry) and the
    *  activation branch (activateItem) from one rule. Pure query. */
   const isOpenableEntry = (name: string): boolean =>
-    isMarkdownEntry(name) || (!!onOpenImage && isImageEntry(name));
+    isMarkdownEntry(name) || (!!onOpenWithViewer && !!canOpenWithViewer?.(name));
   const button = create("button", "chrome-btn explorer-btn icon-only") as HTMLButtonElement;
   button.title = "파일 탐색기 (⌘B · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · ⌘클릭/⌘Enter 새 창 · .. 상위)";
 
@@ -481,14 +485,16 @@ export function createExplorerPanel({
   };
 
   /** The SINGLE activation path, shared by click + Enter (like mermaid's single
-   *  clickEntry): file → open (markdown only; non-md is inert), folder → toggle,
-   *  `..` → change root. Selection moves only here (opening a file), never on
-   *  arrow navigation. `newWindow` (⌘/Ctrl+click, ⌘+Enter) redirects a markdown
-   *  file's open to onOpenFileNewWindow instead of onOpenFile — checked AFTER
-   *  the image branch, so an image row is never affected (images stay v1-scoped
-   *  to onOpenImage/current-context regardless of the modifier), and gated by
-   *  the handler being injected at all, so omitting it keeps a modifier'd click
-   *  behaving exactly like a plain one. Command (void). */
+   *  clickEntry): file → open (markdown or a viewer-claimed file; anything else
+   *  is inert), folder → toggle, `..` → change root. Selection moves only here
+   *  (opening a file), never on arrow navigation. `newWindow` (⌘/Ctrl+click,
+   *  ⌘+Enter) redirects a markdown file's open to onOpenFileNewWindow instead
+   *  of onOpenFile — checked AFTER the viewer branch, so a viewer-claimed row is
+   *  never affected (viewer opens stay v1-scoped to onOpenWithViewer/
+   *  current-context regardless of the modifier — R11 design §4 preserves the
+   *  pre-existing image-viewer priority verbatim), and gated by the handler
+   *  being injected at all, so omitting it keeps a modifier'd click behaving
+   *  exactly like a plain one. Command (void). */
   const activateItem = (item: HTMLElement, newWindow = false): void => {
     if (item.classList.contains("explorer-up")) {
       if (item.dataset.path) changeRoot(item.dataset.path);
@@ -498,11 +504,11 @@ export function createExplorerPanel({
       toggleFolder(item);
       return;
     }
-    if (item.classList.contains("is-nonmd")) return; // non-md/non-image is greyed + inert
+    if (item.classList.contains("is-nonmd")) return; // non-md/unclaimed is greyed + inert
     const path = item.dataset.path;
     if (!path) return;
     selectItem(item);
-    if (onOpenImage && isImageEntry(basename(path))) onOpenImage(path);
+    if (onOpenWithViewer && canOpenWithViewer?.(basename(path))) onOpenWithViewer(path);
     else if (newWindow && onOpenFileNewWindow) onOpenFileNewWindow(path);
     else onOpenFile(path);
   };

@@ -32,7 +32,7 @@ const out = process.argv[2] ?? "/tmp/sidebar-zoom.json";
 // audit flagged (G4/G5/G7/G8). /mock/vault/index.md's dir (/mock/vault) has a
 // real "notes" child folder in that TREE, so opening the explorer here always
 // mounts a `.explorer-star` on that row.
-const url = process.argv[3] ?? "http://localhost:1420/?file=/mock/vault/index.md";
+const url = process.argv[3] ?? "http://localhost:1430/?file=/mock/vault/index.md";
 const shotBase = out.replace(/\.json$/, "");
 
 const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();
