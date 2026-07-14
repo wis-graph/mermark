@@ -26,10 +26,19 @@
 // open, the left command group moves OUT of the title-bar and into that
 // rail's own window-chrome band (.sidebar-top-strip) instead — the rail is
 // exactly as tall as the title-bar and sits at the same window edge, so it's
-// a second valid home for the same group, not a second bar. installLeftGroupRehoming
-// watches the asides' `hidden` attribute (the existing open/closed SSOT — the
-// same one the CSS sibling rules already key off) and calls
-// rehomeLeftCommandGroup, the single domain rule for "which home wins".
+// a second valid home for the same group, not a second bar.
+// rehomeLeftCommandGroup is the single domain rule for "which home wins";
+// the rail set + the MutationObserver watching each aside's `hidden`
+// attribute now live in sidebar-panels.ts (R9, _workspace/01_architecture.md)
+// since the rail set is dynamic (panels register at runtime) — this module
+// only keeps the pure placement rule.
+//
+// R9: the left command group itself now holds ONLY `openPath` — the
+// 탐색기/최근/목차 buttons are inserted by sidebar-panels.ts's
+// registerSidebarPanel/installSidebarPanels, in registration order, just
+// before openPath. "Sidebar toggles first, then open-path" is still the
+// visual contract; it's just enforced by insertion order now instead of a
+// fixed 4-slot shape.
 
 import { isMac } from "./shortcuts/keys";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -39,9 +48,9 @@ export interface TitleBar {
 }
 
 /** The chrome parts arrangeTitleBar lays out, left→right: `leftGroup` (the
- *  탐색기·최근·목차·경로열기 command group, pre-assembled by
- *  createLeftCommandGroup so their internal order lives in exactly one
- *  place), then a drag spacer, then the `mode`/`theme`/`settings` right
+ *  탐색기·최근·목차·경로열기 command group — createLeftCommandGroup builds the
+ *  `openPath` end of it, sidebar-panels.ts inserts the panel toggles before
+ *  it), then a drag spacer, then the `mode`/`theme`/`settings` right
  *  cluster.
  *
  *  M5: `favorites` REMOVED. Favorites is no longer an independent toggle
@@ -53,8 +62,10 @@ export interface TitleBar {
  *
  *  M6: `explorer`/`recent`/`outline`/`openPath` REMOVED from this shape —
  *  they're `leftGroup`'s job now (createLeftCommandGroup), because the group
- *  rehomes as ONE element (installLeftGroupRehoming) and a 4-part shape here
- *  would leave that same ordering duplicated in two places. */
+ *  rehomes as ONE element (rehomeLeftCommandGroup) and a 4-part shape here
+ *  would leave that same ordering duplicated in two places. R9: the panel
+ *  toggle buttons themselves moved again, into sidebar-panels.ts's
+ *  registration order — see createLeftCommandGroup's doc. */
 export interface TitleBarParts {
   leftGroup: HTMLElement;
   mode: HTMLElement;
@@ -62,13 +73,10 @@ export interface TitleBarParts {
   settings: HTMLElement;
 }
 
-/** The four buttons createLeftCommandGroup wraps, left→right: sidebar
- *  toggles first, then open-path — the same order the old TitleBarParts
- *  shape carried before M6 folded them into one group element. */
+/** R9: the group's only title-bar-owned member — the sidebar toggle buttons
+ *  are inserted at runtime by sidebar-panels.ts (registerSidebarPanel /
+ *  installSidebarPanels), always just before `openPath`. */
 export interface LeftCommandGroupParts {
-  explorer: HTMLElement;
-  recent: HTMLElement;
-  outline: HTMLElement;
   openPath: HTMLElement;
 }
 
@@ -194,18 +202,21 @@ function createDragSpacer(): HTMLElement {
   return s;
 }
 
-/** Build the "왼쪽 커맨드 그룹" — the always-together unit that rehomes as
- *  ONE element (installLeftGroupRehoming) instead of four individually-
- *  tracked buttons, so the 탐색기·최근·목차·경로열기 order lives in exactly
- *  one place (here) rather than also needing reconstruction on every rail
- *  close. Carries its own data-tauri-drag-region (M1 rule): the group can
- *  land inside either the title-bar or a rail's .sidebar-top-strip, and both
- *  need the gaps between its buttons to stay draggable. Pure creation. */
+/** Build the "왼쪽 커맨드 그룹" — the always-together unit that rehomes as ONE
+ *  element (rehomeLeftCommandGroup) instead of individually-tracked buttons.
+ *  R9: starts with only `openPath`; sidebar-panels.ts inserts the panel
+ *  toggle buttons before it at registration time, so the 탐색기·최근·목차·
+ *  경로열기 order still lives in exactly one place — just split between this
+ *  constructor (openPath) and registration order (the toggles), rather than
+ *  a single fixed 4-slot list. Carries its own data-tauri-drag-region (M1
+ *  rule): the group can land inside either the title-bar or a rail's
+ *  .sidebar-top-strip, and both need the gaps between its buttons to stay
+ *  draggable. Pure creation. */
 export function createLeftCommandGroup(p: LeftCommandGroupParts): HTMLElement {
   const group = document.createElement("div");
   group.className = "left-command-group";
   group.setAttribute("data-tauri-drag-region", "");
-  group.append(p.explorer, p.recent, p.outline, p.openPath);
+  group.append(p.openPath);
   return group;
 }
 
@@ -217,10 +228,10 @@ export function createLeftCommandGroup(p: LeftCommandGroupParts): HTMLElement {
  *  drag region, same M1 rule as createDragSpacer. `platform` is injectable
  *  for tests, same shape as createTitleBar's opts; the real default is the
  *  host's actual platform (isMac()). Childless AT CREATION TIME only — M6:
- *  main.ts's installLeftGroupRehoming later moves the left-command-group
+ *  sidebar-panels.ts's rehoming observer later moves the left-command-group
  *  in at runtime (that group carries its own drag-region, so the strip
  *  gaining a child doesn't create a dead zone). Pure construction (no
- *  wiring) — main.ts prepends one per aside. */
+ *  wiring) — sidebar-panels.ts prepends one per aside on mount. */
 export function createSidebarTopStrip(opts?: { platform?: "mac" | "other" }): HTMLElement {
   const platform = opts?.platform ?? (isMac() ? "mac" : "other");
   const s = document.createElement("div");
@@ -228,19 +239,6 @@ export function createSidebarTopStrip(opts?: { platform?: "mac" | "other" }): HT
   s.setAttribute("data-tauri-drag-region", "");
   if (platform === "mac") s.classList.add("mac");
   return s;
-}
-
-/** Which sidebar rail is currently open, if any — "at most one rail is open
- *  at a time" is the SSOT this reads (aside `hidden`), the same source the
- *  CSS sibling rules (styles.css) already key off. Pure query. */
-function visibleAside(asides: HTMLElement[]): HTMLElement | null {
-  return asides.find((a) => !a.hidden) ?? null;
-}
-
-/** The window-chrome strip prepended into a rail aside (createSidebarTopStrip),
- *  if that aside has one. Pure query. */
-function railStrip(aside: HTMLElement | null): HTMLElement | null {
-  return aside?.querySelector<HTMLElement>(":scope > .sidebar-top-strip") ?? null;
 }
 
 /** The one domain rule this feature has: the left command group lives in the
@@ -263,33 +261,6 @@ export function rehomeLeftCommandGroup(group: HTMLElement, bar: HTMLElement, str
       focused?.focus();
     }
   }
-}
-
-/** Install the MutationObserver that keeps the left command group homed in
- *  whichever rail is open (or the title-bar when none is). Watches the
- *  asides' `hidden` attribute — the existing SSOT for "which rail is open" —
- *  so no panel (explorer/recent/outline) needs an onClose/onOpen hook into
- *  window chrome (shell → panel dependency direction only, panels stay
- *  unaware of it). Runs the initial placement synchronously once; after that,
- *  MutationObserver's own microtask-batched delivery means several `hidden`
- *  flips in one task (e.g. switching rails) collapse into a single rehome
- *  call, which reads the final state — never an intermediate flicker.
- *  Command (returns the observer so a caller COULD disconnect it, though
- *  nothing currently needs to — this chrome lives for the app's lifetime). */
-export function installLeftGroupRehoming({
-  asides,
-  bar,
-  group,
-}: {
-  asides: HTMLElement[];
-  bar: HTMLElement;
-  group: HTMLElement;
-}): MutationObserver {
-  const rehome = () => rehomeLeftCommandGroup(group, bar, railStrip(visibleAside(asides)));
-  const observer = new MutationObserver(rehome);
-  for (const aside of asides) observer.observe(aside, { attributes: true, attributeFilter: ["hidden"] });
-  rehome(); // initial placement
-  return observer;
 }
 
 /** Arrange the title-bar chrome to the canonical order (design M2 §1, M5

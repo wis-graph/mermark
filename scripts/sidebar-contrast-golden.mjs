@@ -48,6 +48,7 @@
 // and window.__mermark exposed (import.meta.env.DEV).
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
+import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/sidebar-contrast.json";
 const url = process.argv[3] ?? "http://localhost:1420/?file=x.md";
@@ -207,6 +208,10 @@ await page.evaluate(() => localStorage.clear());
 await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
 await page.waitForFunction(() => !!window.__mermark, { timeout: 8000 });
 await page.waitForTimeout(500);
+// Refuse to measure a page that never rendered — see scripts/lib/preflight.mjs.
+// Once here (just before the first real measurement) is enough: every
+// subsequent goto in this script reloads the SAME already-verified bundle.
+await assertPageRendered(page, { context: "sidebar-contrast-golden" });
 await openOutline();
 
 // Cycle `.theme-toggle` (dark -> light -> claude -> dark, settings/app.ts's

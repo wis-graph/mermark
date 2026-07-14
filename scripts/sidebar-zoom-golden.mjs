@@ -21,6 +21,7 @@
 // and window.__mermark exposed (import.meta.env.DEV).
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
+import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/sidebar-zoom.json";
 // Audit 04 (2026-07-11, 🔴 1): the default x.md target has no directory in the
@@ -149,8 +150,52 @@ if (!hasHarness) {
   process.exit(2);
 }
 await page.waitForTimeout(500);
+// Refuse to measure a page that never rendered — see scripts/lib/preflight.mjs.
+// Once here (just before the first real measurement) is enough: every
+// subsequent goto in this script reloads the SAME already-verified bundle.
+await assertPageRendered(page, { context: "sidebar-zoom-golden" });
 await openExplorer();
 const before = await readZoomState("scale-1.0");
+
+// --- Mutual-exclusion e2e check (R9, _workspace/01_architecture.md) ---
+// The unit tests (tests/sidebar-panels.test.ts) already prove
+// closeOtherSidebarPanels closes fake panels; this is the only CDP-level
+// evidence that the real DOM/CSS assembly main.ts wires through
+// registerSidebarPanel/installSidebarPanels still enforces "at most one left
+// rail open at a time" after R9's rewrite. Opens outline (must close the
+// explorer scenario 1 just opened), confirms it landed open ALONE, then
+// re-opens explorer (must close outline) and confirms outline went hidden —
+// the actual regression signal. Ends with explorer open again, so scenario 2
+// below is unaffected.
+async function checkMutualExclusion() {
+  await page.evaluate(() => {
+    document.querySelector(".outline-btn")?.click();
+  });
+  await page
+    .waitForFunction(() => {
+      const aside = document.querySelector(".outline-aside");
+      return aside && !aside.hidden;
+    }, { timeout: 4000 })
+    .catch(() => {});
+  const outlineOpenedAlone = await page.evaluate(() => {
+    const outline = document.querySelector(".outline-aside");
+    const explorer = document.querySelector(".explorer-aside");
+    return !!outline && !outline.hidden && !!explorer && explorer.hidden;
+  });
+
+  await openExplorer(); // only clicks if .explorer-aside is currently hidden — true here since outline just took the rail
+  const outlineClosedAfterExplorerOpen = await page.evaluate(() => {
+    const outline = document.querySelector(".outline-aside");
+    return !!outline && outline.hidden;
+  });
+
+  return {
+    outlineOpenedAlone,
+    outlineClosedAfterExplorerOpen,
+    mutualExclusionHolds: outlineOpenedAlone && outlineClosedAfterExplorerOpen,
+  };
+}
+const mutualExclusion = await checkMutualExclusion();
 
 // --- Scenario 2: mermark.fontScale=1.5 via the REAL persisted SSOT path ---
 // (fontScaleSetting.parse -> clampFontScale -> applyFontScale on boot, main.ts)
@@ -199,6 +244,7 @@ const result = {
   before,
   after,
   teardown,
+  mutualExclusion,
   // scale=1 baseline: pixel-identical to the pre-feature fixed values.
   beforeShellIs13px: within(beforeShell, 13, 0.05),
   beforeHeaderIs11px: within(beforeHeader, 11, 0.05),
@@ -246,6 +292,7 @@ result.allPass =
   result.afterFavoritesRemoveIconIs18px &&
   result.explorerStarRespondsToZoom &&
   result.favoritesRemoveRespondsToZoom &&
+  result.mutualExclusion.mutualExclusionHolds &&
   errors.length === 0;
 
 writeFileSync(out, JSON.stringify(result, null, 2));

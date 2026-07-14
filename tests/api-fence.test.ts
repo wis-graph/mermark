@@ -28,6 +28,8 @@ const WHITELIST_ABS = [
   join(SRC, "shortcuts", "actions"),
   join(SRC, "settings", "registry"),
   join(SRC, "settings", "store"),
+  join(SRC, "sidebar-panels"),
+  join(SRC, "sidebar-toggle"),
 ];
 
 function walkTsFiles(dir: string): string[] {
@@ -138,5 +140,13 @@ describe("api fence (design §2.3 / plan Stage C-1)", () => {
     const core = await import("../src/markdown/live-preview/core");
     expect(api.hide).toBe(core.hide);
     expect(api.fencedInfo).toBe(core.fencedInfo);
+    // R9 (_workspace/01_architecture.md): sidebar-panels re-exports. SidebarPanel
+    // is a type only — erased at compile time, nothing to compare at runtime —
+    // so only the two functions get an identity check here.
+    const sidebarPanels = await import("../src/sidebar-panels");
+    expect(api.registerSidebarPanel).toBe(sidebarPanels.registerSidebarPanel);
+    expect(api.closeOtherSidebarPanels).toBe(sidebarPanels.closeOtherSidebarPanels);
+    const sidebarToggle = await import("../src/sidebar-toggle");
+    expect(api.renderSidebarButton).toBe(sidebarToggle.renderSidebarButton);
   });
 });

@@ -29,6 +29,16 @@
 //    styling that should never disappear. Getting this backwards either
 //    permanently hides source text (readers can never edit it) or never
 //    conceals a marker that should vanish on render.
+// 4. SIDEBAR PANEL ID NEVER RENAME (R9, _workspace/01_architecture.md). Same
+//    reasoning as #1 — a SidebarPanel.id may become the key future persisted
+//    state (e.g. "restore the last open panel") is stored under.
+// 5. A SIDEBAR PANEL MUST CALL closeOtherSidebarPanels(itsOwnId) FROM ITS OWN
+//    OPEN PATH. The registry owns mutual exclusion (at most one left rail
+//    panel open at a time) but cannot intercept `open()` — no common open()
+//    exists across panels (each built-in panel's open is a private closure,
+//    not part of the {id, button, aside, close} contract) — so an extension
+//    panel is responsible for calling this itself when it opens, exactly the
+//    way explorer/recent/outline's onOpen callbacks do (main.ts).
 //
 // CM6/Lezer packages are DELIBERATELY NOT re-exported here — an extension
 // imports `@codemirror/view`'s Decoration/WidgetType and `@lezer/common`'s
@@ -57,3 +67,7 @@ export type { ShortcutAction } from "../shortcuts/actions";
 
 export { registerSetting } from "../settings/registry";
 export type { Setting, SettingDef } from "../settings/store";
+
+export { registerSidebarPanel, closeOtherSidebarPanels } from "../sidebar-panels";
+export type { SidebarPanel } from "../sidebar-panels";
+export { renderSidebarButton } from "../sidebar-toggle";

@@ -50,7 +50,8 @@ import { arrangeStatusBar } from "./status-bar";
 import { makeWidthSlider } from "./status-bar-width";
 import { makeUpdateButton } from "./status-bar-update";
 import { ensureCheckedOnce } from "./update/update-flow";
-import { createTitleBar, arrangeTitleBar, createSidebarTopStrip, createLeftCommandGroup, installLeftGroupRehoming } from "./title-bar";
+import { createTitleBar, arrangeTitleBar, createLeftCommandGroup } from "./title-bar";
+import { registerSidebarPanel, closeOtherSidebarPanels, installSidebarPanels } from "./sidebar-panels";
 import { createBreadcrumb } from "./breadcrumb";
 import { createRecentPanel } from "./recent/recent-panel";
 import { pushRecent, pruneMissing } from "./recent/recent-docs";
@@ -295,29 +296,26 @@ async function boot() {
   //    shared jumpTo landing. getView is a closure over `current` so it follows
   //    re-opens. Its listener is threaded into every mount (extraExtensions)
   //    so the outline tracks the live document. ────────────────────────────────
-  // ── Footer breadcrumb. Declared BEFORE explorer (same TDZ-safe shape as
-  //    closeOtherSidebars below): its onJump only reaches into `explorer` at
+  // ── Footer breadcrumb. Declared BEFORE explorer (same TDZ-safe shape the
+  //    panels' onOpen callbacks below rely on): its onJump only reaches into `explorer` at
   //    CLICK time, by which point explorer is long since assigned, so the
   //    forward reference is safe. explorer.onRootChange (wired at its own
   //    creation, below) closes the loop the other way. ────────────────────────
   const breadcrumb = createBreadcrumb({ onJump: (abs) => explorer.jumpToRoot(abs) });
 
   // The left sidebar area holds one panel at a time (explorer OR outline,
-  // VSCode-style). Named coordinator so the "one left sidebar at a time" rule
-  // lives in one place, not an inline if at each panel. Each panel calls its
-  // onOpen when it opens; this closes whichever other left sidebar was showing.
-  // The closure is evaluated at click time, so referencing `explorer` (declared
-  // just below) is safe. close() is idempotent, so an unconditional call is fine.
-  const closeOtherSidebars = (keep: "explorer" | "outline" | "recent"): void => {
-    if (keep !== "explorer") explorer.close();
-    if (keep !== "outline") outline.close();
-    if (keep !== "recent") recent.close();
-  };
+  // VSCode-style). R9 (_workspace/01_architecture.md): mutual exclusion is
+  // now owned by the sidebar-panels registry — closeOtherSidebarPanels
+  // iterates every REGISTERED panel (built-in or extension), not a fixed
+  // 3-way union, so a 4th panel joins exclusion automatically. Each panel
+  // calls its onOpen when it opens; the closure is evaluated at click time,
+  // so referencing panel ids here is safe. close() is idempotent, so an
+  // unconditional call on the rest is fine.
   const dummyState = EditorState.create({ doc: "" });
   const dummyView = { state: dummyState } as unknown as EditorView;
   const outline = createOutlinePanel({
     getView: () => current?.view ?? dummyView,
-    onOpen: () => closeOtherSidebars("outline"),
+    onOpen: () => closeOtherSidebarPanels("outline"),
   });
 
   // ── Favorites BOTTOM SECTION (M5, hosted inside the explorer's aside — see
@@ -389,7 +387,7 @@ async function boot() {
         console.error("Failed to open in a new window", err);
       });
     },
-    onOpen: () => closeOtherSidebars("explorer"),
+    onOpen: () => closeOtherSidebarPanels("explorer"),
     onRootChange: (root) => breadcrumb.render(root),
     isFavorite: (p) => isFavorite(favoriteFoldersSetting.get(), p),
     onToggleFavorite: toggleFavorite,
@@ -418,7 +416,7 @@ async function boot() {
         }
       }
     },
-    onOpen: () => closeOtherSidebars("recent"),
+    onOpen: () => closeOtherSidebarPanels("recent"),
   });
 
   // Title-bar order (single contract, arrangeTitleBar owns it): leftGroup
@@ -427,16 +425,12 @@ async function boot() {
   // title-bar.ts) — the ⌘⇧B action now reveals the explorer's hosted
   // favorites section instead (registerHandler("favorites.toggle", ...)
   // below). createSettingsButton only builds the button + lazy modal wiring —
-  // position is this call's job, not modal.ts's (M2 decision). M6: the left
-  // four buttons are pre-assembled into ONE leftGroup (createLeftCommandGroup)
-  // so installLeftGroupRehoming (below, after the strip loop) can move them
-  // as a unit into whichever rail is open.
-  const leftGroup = createLeftCommandGroup({
-    explorer: explorer.button,
-    recent: recent.button,
-    outline: outline.button,
-    openPath: prompt.button,
-  });
+  // position is this call's job, not modal.ts's (M2 decision). R9: leftGroup
+  // now starts with only openPath — registerSidebarPanel below inserts the
+  // three panel toggle buttons before it, in registration order, so the
+  // "탐색기·최근·목차 first, then open-path" contract is still upheld even
+  // though the group is no longer built with all four in one call.
+  const leftGroup = createLeftCommandGroup({ openPath: prompt.button });
   arrangeTitleBar(titleBar.el, {
     leftGroup,
     mode: mode.btn,
@@ -457,31 +451,28 @@ async function boot() {
     save: save.el,
     pos,
   });
-  // The explorer + outline + recent are LEFT sidebars (not footer popovers):
-  // mount all three as the leading children of .workspace so they sit left of
-  // .main-column. They are mutually exclusive (one visible at a time via
-  // closeOtherSidebars, 3-way as of M5 — favorites is no longer a sibling
-  // sidebar, it's hosted INSIDE explorer.aside, see favoritesSlot above), so
-  // their left-to-right order is never seen simultaneously — prepend order
-  // among them is arbitrary.
-  workspace.prepend(outline.aside);
-  workspace.prepend(explorer.aside);
-  workspace.prepend(recent.aside);
-  // Full-height rail's window-chrome band: each aside gets its own
-  // sidebar-top-strip (mac traffic-light clearance + drag region — see
-  // title-bar.ts). This is the shell's (main.ts's) job, not each panel's, so
-  // the panels stay unaware of window chrome (dependency direction: shell →
-  // panel, never the reverse).
-  for (const aside of [recent.aside, explorer.aside, outline.aside]) aside.prepend(createSidebarTopStrip());
-  // M6 rehome: the left command group moves into whichever rail's strip is
-  // open (or back to the title-bar when none is) — see title-bar.ts's
-  // installLeftGroupRehoming header comment for why this is a single
-  // MutationObserver rather than a callback threaded into each panel.
-  installLeftGroupRehoming({ asides: [recent.aside, explorer.aside, outline.aside], bar: titleBar.el, group: leftGroup });
+  // The explorer + recent + outline are LEFT sidebars (not footer popovers).
+  // R9 (_workspace/01_architecture.md): registerSidebarPanel replaces the old
+  // 5 hardcoded call sites (mutual exclusion / DOM mount / top-strip / rehome
+  // observer / button collection) — registration order IS button order
+  // (탐색기 · 최근 · 목차, pixel-identical to the old fixed shape), and
+  // installSidebarPanels seats every registered panel into the shell + arms
+  // the rehoming observer in one call. They stay mutually exclusive (one
+  // visible at a time via closeOtherSidebarPanels, now N-way — a 4th
+  // registered panel joins automatically, the bug R9 exists to fix). aside
+  // DOM order among them is still arbitrary (mutual exclusion means it's
+  // never seen simultaneously), same as before R9.
+  registerSidebarPanel({ id: "explorer", button: explorer.button, aside: explorer.aside, close: explorer.close });
+  registerSidebarPanel({ id: "recent", button: recent.button, aside: recent.aside, close: recent.close });
+  registerSidebarPanel({ id: "outline", button: outline.button, aside: outline.aside, close: outline.close });
+  installSidebarPanels({ workspace, bar: titleBar.el, group: leftGroup, buttonAnchor: prompt.button });
   // The drag sash sits between whichever left sidebar is open and .main-column.
-  // DOM order: recent.aside, explorer.aside, outline.aside, sash, main-column.
-  // Its own visibility is CSS-only (styles.css: hidden unless a sidebar
-  // sibling is open) — no JS coupling to closeOtherSidebars needed.
+  // DOM order among the asides is arbitrary (installSidebarPanels prepends
+  // each in registration order — see its comment above); the sash is
+  // inserted right before .main-column, so it always ends up after every
+  // aside regardless of their relative order. Its own visibility is CSS-only
+  // (styles.css: hidden unless a sidebar sibling is open) — no JS coupling
+  // to closeOtherSidebarPanels needed.
   const sash = createSidebarSash();
   main.before(sash.el);
 

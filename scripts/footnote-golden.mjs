@@ -22,6 +22,7 @@
 // for the isolated profile, same `__iso__` sed pattern as the nav harness.)
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
+import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/footnote-golden.json";
 const url = process.argv[3] ?? "http://localhost:1420/?file=x.md";
@@ -49,6 +50,9 @@ page.on("console", (m) => {
 await page.setViewportSize({ width: 1000, height: 800 }); // deterministic layout
 await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
 await page.waitForTimeout(800);
+
+// Refuse to measure a page that never rendered — see scripts/lib/preflight.mjs.
+await assertPageRendered(page, { context: "footnote-golden" });
 
 // Sanity: the dev harness handle must be present (DEV build) — we read ground
 // truth from it (view geometry, doc lines) and use it to inject test docs.

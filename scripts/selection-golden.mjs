@@ -25,6 +25,7 @@
 // existing nav-trace.mjs convention this script borrows its rig from).
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
+import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/selection-golden.json";
 const url = process.argv[3] ?? "http://localhost:1420/?file=x.md";
@@ -48,6 +49,9 @@ await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
 await page.evaluate(() => localStorage.clear());
 await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
 await page.waitForTimeout(1500);
+
+// Refuse to measure a page that never rendered — see scripts/lib/preflight.mjs.
+await assertPageRendered(page, { context: "selection-golden" });
 
 // A small fixture doc that puts all three "surface veil" selectors on screen
 // at once: an inline-code span, a `[!note]` callout, and a fenced code block.

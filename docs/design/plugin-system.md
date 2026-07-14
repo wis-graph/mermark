@@ -45,10 +45,12 @@ rev 1은 서드파티 공개(Phase 4)를 전제로 안정 경계·래핑·권한
 | R6 | 에디터 확장 | `editor.ts:322-401` 하드코딩 목록, 주입구는 `opts.extraExtensions`(:253) | 컴파일타임 ❌ — v1 미개방(수요 시 재검토) |
 | R7 | 자동완성 소스 | `editor.ts:354` override 하드코딩 | 컴파일타임 ❌ — v1 미개방 |
 | R8 | Tauri command | `src-tauri/src/lib.rs` invoke_handler | 확장 대상 아님 — IPC 표면 최소화 원칙 유지 |
+| R9 | 좌측 사이드바 패널 | `src/sidebar-panels.ts` `registerSidebarPanel` | **런타임 ✅** — install 후 등록도 즉시 mount+배제+rehome(늦은/확장 등록이 installLeftGroupRehoming의 고정 배열 한계를 물려받지 않음). 계약: id never-rename(향후 "마지막 열린 패널 복원" 등 영속 상태 키가 될 수 있음) · `aside.hidden`이 열림/닫힘 SSOT · 버튼 순서 = 등록 순서 · **unregister 없음**(explorer/outline/recent 세 내장 패널 모두 teardown이 없으므로 — 배열만 splice하고 DOM/옵저버를 남기는 unregister는 거짓말 API). 상호배제가 이제 **N-way**(이전엔 main.ts의 3-way 하드코딩이라 4번째 패널을 등록해도 배제에 참여 못 하고 다른 패널 위에 겹쳐 떴다 — R9의 존재 이유) |
 
-**결론(불변)**: 완전 런타임은 R1 하나. 이번 작업(Phase 1'+2)은 R2를 완전
+**결론(불변)**: 완전 런타임은 R1·R9. 이번 작업(Phase 1'+2)은 R2를 완전
 런타임으로, R3를 런타임 레지스트리로 전환하고, R1·R2·R3를 단일 파사드
-`src/api/`로 모은다.
+`src/api/`로 모은다. R9(좌측 사이드바 패널)는 별도 세션(_workspace/01_architecture.md)에서
+같은 패턴(plain 배열 + 명명 함수, 파사드 재수출)으로 추가됐다.
 
 ---
 
