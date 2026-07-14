@@ -6,8 +6,7 @@
 import type { Setting, Control } from "../store";
 import type { Theme } from "../theme-schema";
 import { parseTheme, serializeTheme } from "../theme-schema";
-import { SHORTCUT_ACTIONS } from "../../shortcuts/actions";
-import { effectiveBinding, findConflict, suppressDispatcher } from "../../shortcuts/registry";
+import { allActions, effectiveBinding, findConflict, suppressDispatcher } from "../../shortcuts/registry";
 import { eventToChord, displayChord } from "../../shortcuts/keys";
 
 // Subscription cleanup: a control that calls setting.subscribe must hand back its
@@ -393,7 +392,7 @@ function renderKeybind(setting: Setting<Record<string, string>>): HTMLElement {
   // Per-action reflectors, run on mount and on every external setting change.
   const reflectors: Array<() => void> = [];
 
-  for (const action of SHORTCUT_ACTIONS) {
+  for (const action of allActions()) {
     const item = document.createElement("div");
     item.className = "keybind-item";
     item.dataset.id = action.id;
@@ -462,7 +461,7 @@ function renderKeybind(setting: Setting<Record<string, string>>): HTMLElement {
         if (!c) return; // lone modifier / unbindable — keep waiting
         const conflict = findConflict(c, action.id);
         if (conflict) {
-          const other = SHORTCUT_ACTIONS.find((a) => a.id === conflict);
+          const other = allActions().find((a) => a.id === conflict);
           warning.textContent = `이미 '${other?.label ?? conflict}'에 할당됨`;
           warning.hidden = false;
           endCapture();

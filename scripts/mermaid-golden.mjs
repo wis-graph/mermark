@@ -9,6 +9,7 @@
 // Assumes `npm run dev:browser` + Chrome --remote-debugging-port=9222 running.
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
+import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/mermaid-golden.json";
 const url = process.argv[3] ?? "http://localhost:1420/?file=x.md";
@@ -47,6 +48,9 @@ await page.evaluate(async () => {
   }
 });
 await page.waitForTimeout(1500); // mermaid async render after the block mounts
+
+// Refuse to measure a page that never rendered — see scripts/lib/preflight.mjs.
+await assertPageRendered(page, { context: "mermaid-golden" });
 
 /** Geometry fingerprint of every mounted .cm-mermaid. The diagram is the svg
  *  itself now (no svg-pan-zoom viewport <g>); pan/zoom is a CSS `transform` on

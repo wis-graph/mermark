@@ -10,7 +10,7 @@
 // boot (registerHandler) so this module stays free of main's boot graph.
 
 import { eventToChord } from "./keys";
-import { SHORTCUT_ACTIONS } from "./actions";
+import { SHORTCUT_ACTIONS, type ShortcutAction } from "./actions";
 import type { Setting } from "../settings/store";
 
 type Handler = () => void;
@@ -30,6 +30,22 @@ let installed = false;
 // stands down so the chord being assigned doesn't also fire its current action.
 let suppressed = false;
 
+// Runtime-registered actions (registerCommand), appended after the shipped
+// catalog — extensions get real chords/handlers instead of the "half runtime"
+// state where a handler could be registered for an id the catalog never knew,
+// so it was matched by nothing.
+const runtimeActions: ShortcutAction[] = [];
+
+/** The full action catalog every lookup/UI iteration should use: the shipped
+ *  const catalog (actions.ts) plus whatever registerCommand has added at
+ *  runtime, in registration order (shipped first — insertion order ===
+ *  settings-UI row order). The SINGLE query every SHORTCUT_ACTIONS-shaped
+ *  iteration goes through, so a runtime action is indistinguishable from a
+ *  shipped one everywhere lookups happen. Pure query. */
+export function allActions(): readonly ShortcutAction[] {
+  return [...SHORTCUT_ACTIONS, ...runtimeActions];
+}
+
 /** Bind an action id to the function that performs it. Boot calls this once per
  *  action; late/re-registration just replaces the handler. Command (void). */
 export function registerHandler(id: string, handler: Handler): void {
@@ -42,7 +58,7 @@ export function registerHandler(id: string, handler: Handler): void {
 export function effectiveBinding(id: string): string | null {
   const o = overrides[id];
   if (o != null) return o;
-  const action = SHORTCUT_ACTIONS.find((a) => a.id === id);
+  const action = allActions().find((a) => a.id === id);
   return action ? action.defaultBinding : null;
 }
 
@@ -50,7 +66,7 @@ export function effectiveBinding(id: string): string | null {
  *  edited), or null if free. Compares against effective bindings so a would-be
  *  duplicate is rejected before it shadows another command. Pure query. */
 export function findConflict(chord: string, exceptId?: string): string | null {
-  for (const a of SHORTCUT_ACTIONS) {
+  for (const a of allActions()) {
     if (a.id === exceptId) continue;
     if (effectiveBinding(a.id) === chord) return a.id;
   }
@@ -63,10 +79,59 @@ export function findConflict(chord: string, exceptId?: string): string | null {
  *  prevents duplicates from being stored. */
 function rebuildLookup(): void {
   lookup = new Map();
-  for (const a of SHORTCUT_ACTIONS) {
+  for (const a of allActions()) {
     const b = effectiveBinding(a.id);
     if (b) lookup.set(b, a.id);
   }
+}
+
+/** Fail fast on a duplicate action id (shipped or runtime) — this is a
+ *  developer error in a single-user codebase, not a recoverable UI state, so
+ *  it throws rather than silently overwriting a catalog entry. Pure query
+ *  (raises instead of returning, but reads no external state and performs no
+ *  write — named separately from registerCommand so the guard is one thing). */
+function assertNewActionId(id: string): void {
+  if (allActions().some((a) => a.id === id)) {
+    throw new Error(`registerCommand: action id "${id}" is already registered`);
+  }
+}
+
+/** Demote a new action's shipped default to null (+ warn) when it collides
+ *  with an existing effective binding. WHY this exists: rebuildLookup's "a
+ *  later action wins a duplicate chord" rule (see above) means a runtime
+ *  registration with a colliding default would otherwise silently steal a
+ *  built-in chord — the settings UI's conflict guard only runs when a user
+ *  types a chord into the capture control, not on this programmatic path.
+ *  Pure query: returns a (possibly modified) copy, does not mutate `action`. */
+function demoteConflictingDefault(action: ShortcutAction): ShortcutAction {
+  if (action.defaultBinding == null) return action;
+  const conflict = findConflict(action.defaultBinding);
+  if (conflict == null) return action;
+  console.warn(
+    `registerCommand: "${action.id}"'s default binding "${action.defaultBinding}" conflicts with "${conflict}" — registered unbound instead`,
+  );
+  return { ...action, defaultBinding: null };
+}
+
+/** Register a runtime action id + its handler in one call (catalog entry +
+ *  handler, mirroring registerHandler's injection role for the shipped
+ *  catalog). Fails fast on a duplicate id; demotes a conflicting default to
+ *  unbound (with a warning) rather than silently shadowing a built-in chord.
+ *  Returns an unregister closure that reverses all three effects (catalog
+ *  entry, handler, lookup) — the same shape store.ts's subscribe returns.
+ *  Command (void return via the closure; CQS). */
+export function registerCommand(action: ShortcutAction, run: Handler): () => void {
+  assertNewActionId(action.id);
+  const registered = demoteConflictingDefault(action);
+  runtimeActions.push(registered);
+  handlers.set(registered.id, run);
+  rebuildLookup();
+  return () => {
+    const idx = runtimeActions.indexOf(registered);
+    if (idx !== -1) runtimeActions.splice(idx, 1);
+    handlers.delete(registered.id);
+    rebuildLookup();
+  };
 }
 
 /** Subscribe the dispatcher to the keybindings setting: every change replaces

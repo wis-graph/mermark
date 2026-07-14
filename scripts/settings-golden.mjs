@@ -9,6 +9,7 @@
 // Assumes `npm run dev:browser` + Chrome --remote-debugging-port=9222 running.
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
+import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/settings-golden.json";
 const url = process.argv[3] ?? "http://localhost:1420/?file=x.md";
@@ -30,6 +31,9 @@ await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
 await page.evaluate(() => localStorage.clear());
 await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
 await page.waitForTimeout(2000); // mermaid async render
+
+// Refuse to measure a page that never rendered — see scripts/lib/preflight.mjs.
+await assertPageRendered(page, { context: "settings-golden" });
 
 const snap = (label) =>
   page.evaluate((label) => {

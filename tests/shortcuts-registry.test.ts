@@ -7,6 +7,8 @@ import {
   effectiveBinding,
   findConflict,
   dispatchChord,
+  allActions,
+  registerCommand,
 } from "../src/shortcuts/registry";
 
 function ev(init: Partial<KeyboardEventInit> & { code: string }): KeyboardEvent {
@@ -130,5 +132,107 @@ describe("shortcut registry", () => {
     registerHandler("path.copy", fn);
     expect(dispatchChord("Mod+Alt+C")).toBe(true);
     expect(fn).toHaveBeenCalledOnce();
+  });
+});
+
+// Phase 1' — runtime command registration (registerCommand). SHORTCUT_ACTIONS
+// itself stays a compile-time const (actions.ts unchanged); allActions() is
+// the single query point that fuses it with runtimeActions so a registered
+// id can actually fire (before this, a handler for an id outside the const
+// catalog was registered but never matched — "half runtime").
+describe("runtime commands (registerCommand)", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("registers a new action id and binds its default chord", () => {
+    bindKeybindings(keybindSetting("kb.rt.a"));
+    const unregister = registerCommand(
+      { id: "test.hello", label: "Test Hello", defaultBinding: "Mod+Shift+9" },
+      () => {},
+    );
+    expect(effectiveBinding("test.hello")).toBe("Mod+Shift+9");
+    unregister();
+  });
+
+  it("dispatchChord fires the registered handler", () => {
+    bindKeybindings(keybindSetting("kb.rt.b"));
+    const fn = vi.fn();
+    const unregister = registerCommand(
+      { id: "test.hello2", label: "Test Hello 2", defaultBinding: "Mod+Shift+8" },
+      fn,
+    );
+    expect(dispatchChord("Mod+Shift+8")).toBe(true);
+    expect(fn).toHaveBeenCalledOnce();
+    unregister();
+  });
+
+  it("findConflict reports the runtime action's chord, self-excludable", () => {
+    bindKeybindings(keybindSetting("kb.rt.c"));
+    const unregister = registerCommand(
+      { id: "test.hello3", label: "Test Hello 3", defaultBinding: "Mod+Shift+7" },
+      () => {},
+    );
+    expect(findConflict("Mod+Shift+7")).toBe("test.hello3");
+    expect(findConflict("Mod+Shift+7", "test.hello3")).toBeNull();
+    unregister();
+  });
+
+  it("a user override on the keybindingsSetting persists for a runtime action (id-keyed)", () => {
+    const s = keybindSetting("kb.rt.d");
+    bindKeybindings(s);
+    const unregister = registerCommand(
+      { id: "test.hello4", label: "Test Hello 4", defaultBinding: "Mod+Shift+6" },
+      () => {},
+    );
+    s.set({ "test.hello4": "Mod+7" });
+    expect(effectiveBinding("test.hello4")).toBe("Mod+7");
+    expect(dispatchChord("Mod+7")).toBe(true);
+    expect(dispatchChord("Mod+Shift+6")).toBe(false); // old default no longer mapped
+    unregister();
+  });
+
+  it("demotes a conflicting default to unbound (with a warning) and leaves the built-in intact", () => {
+    bindKeybindings(keybindSetting("kb.rt.e"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fn = vi.fn();
+    const unregister = registerCommand({ id: "test.clash", label: "Clash", defaultBinding: "Mod+E" }, fn);
+    expect(effectiveBinding("test.clash")).toBeNull(); // demoted
+    expect(effectiveBinding("mode.toggle")).toBe("Mod+E"); // built-in untouched
+    expect(warn).toHaveBeenCalled();
+    const modeFn = vi.fn();
+    registerHandler("mode.toggle", modeFn);
+    expect(dispatchChord("Mod+E")).toBe(true);
+    expect(modeFn).toHaveBeenCalledOnce();
+    expect(fn).not.toHaveBeenCalled(); // demoted action never got the chord
+    warn.mockRestore();
+    unregister();
+  });
+
+  it("fails fast on a duplicate id — a re-registration and a built-in id both throw", () => {
+    bindKeybindings(keybindSetting("kb.rt.f"));
+    const unregister = registerCommand({ id: "test.dup", label: "Dup", defaultBinding: null }, () => {});
+    expect(() => registerCommand({ id: "test.dup", label: "Dup2", defaultBinding: null }, () => {})).toThrow();
+    expect(() => registerCommand({ id: "mode.toggle", label: "Steal", defaultBinding: null }, () => {})).toThrow();
+    unregister();
+  });
+
+  it("unregister is symmetric: removes from allActions, stops dispatch, frees the chord", () => {
+    bindKeybindings(keybindSetting("kb.rt.g"));
+    const fn = vi.fn();
+    const unregister = registerCommand(
+      { id: "test.temp", label: "Temp", defaultBinding: "Mod+Shift+5" },
+      fn,
+    );
+    expect(allActions().some((a) => a.id === "test.temp")).toBe(true);
+    unregister();
+    expect(allActions().some((a) => a.id === "test.temp")).toBe(false);
+    expect(dispatchChord("Mod+Shift+5")).toBe(false);
+    expect(findConflict("Mod+Shift+5")).toBeNull();
+  });
+
+  it("a stale override for an unregistered id stays inert (no ghost firing)", () => {
+    const s = keybindSetting("kb.rt.h");
+    bindKeybindings(s);
+    s.set({ "test.gone": "Mod+8" });
+    expect(dispatchChord("Mod+8")).toBe(false);
   });
 });

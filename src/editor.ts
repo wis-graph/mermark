@@ -43,6 +43,16 @@ export interface EditorController {
   setMode(m: PreviewMode): void;
   /** Force block widgets (mermaid) to re-render — used after a live theme change. */
   refresh(): void;
+  /** Rebuild the inline/block preview extensions from the CURRENT feature
+   *  registry (markdown/live-preview's registerInlineFeature/registerBlockFeature)
+   *  and swap them in via featureCompartment.reconfigure — the same Compartment
+   *  pattern this file already uses for mode/vim. A doc-free transaction (no
+   *  `changes`/`selection`), so cursor/selection/undo-history/fold-state/
+   *  vim-mode/autosave are all outside the swapped compartment and survive
+   *  untouched; only the inline ViewPlugin + block StateField are replaced.
+   *  Used so a feature registered AFTER an editor is already open (a late
+   *  extension activation) still takes effect in that open editor. */
+  reloadFeatures(): void;
   /** True while an edit is buffered but not yet persisted to disk — including
    *  edits made after a conflict halted autosave. */
   hasUnsaved(): boolean;
@@ -279,7 +289,14 @@ export function mountEditor(
   );
   const modeCompartment = new Compartment();
   const vimCompartment = new Compartment();
+  const featureCompartment = new Compartment();
   let mode: PreviewMode = initialMode;
+
+  /** The current feature-driven extensions, rebuilt from the live registry.
+   *  Named so both the initial compartment seed (below) and reloadFeatures
+   *  build the pair identically — one definition of "what the compartment
+   *  holds", not two copies drifting apart. */
+  const featureExtensions = (): Extension[] => [inlinePreview(baseDir, filePath), blockPreview()];
 
   const controller: EditorController = {
     view: null as unknown as EditorView,
@@ -292,6 +309,9 @@ export function mountEditor(
     },
     refresh() {
       controller.view.dispatch({ effects: refreshBlocks.of(null) });
+    },
+    reloadFeatures() {
+      controller.view.dispatch({ effects: featureCompartment.reconfigure(featureExtensions()) });
     },
     hasUnsaved: () => autosave.hasWork(),
     forceSave() {
@@ -331,8 +351,12 @@ export function mountEditor(
       // columns, so Tab-indented sub-lists actually nest. Not user-configurable
       // (SSOT: no setting requested, avoid gold-plating).
       indentUnit.of("    "),
-      inlinePreview(baseDir, filePath),
-      blockPreview,
+      // Wrapped in a Compartment (same pattern as modeCompartment/vimCompartment
+      // above) so reloadFeatures() can swap in a fresh inline ViewPlugin + block
+      // StateField pair when the live-preview feature registry gains a late
+      // registration — without touching selection/undo/fold/vim/autosave, all
+      // of which live outside this compartment.
+      featureCompartment.of(featureExtensions()),
       // Footnote click navigation: ref chip → definition, def marker → first
       // reference. Capture-phase mousedown (like core's clickEntry); same
       // document, so no baseDir/filePath needed.

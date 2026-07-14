@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { defineSetting } from "../src/settings/store";
 import { RENDER, runTeardown } from "../src/settings/panel/controls";
-import { bindKeybindings, effectiveBinding } from "../src/shortcuts/registry";
+import { bindKeybindings, effectiveBinding, registerCommand } from "../src/shortcuts/registry";
 import { displayChord } from "../src/shortcuts/keys";
 import "../src/settings/app"; // registers the 단축키 category into the registry
 import { groups } from "../src/settings/registry";
@@ -115,5 +115,40 @@ describe("keybind control", () => {
 
   it("registers a 단축키 settings category", () => {
     expect(groups().some((g) => g.name === "단축키")).toBe(true);
+  });
+
+  // Phase 1' — a runtime-registered command (registerCommand) must render a
+  // row exactly like a shipped action: same effectiveBinding reflection, same
+  // capture→override flow, appended AFTER the 15 built-ins (insertion order).
+  it("a runtime command registered via registerCommand renders a row after the built-ins", () => {
+    const s = keybindSetting("kbc.rt.a");
+    bindKeybindings(s);
+    const unregister = registerCommand(
+      { id: "test.panelRow", label: "Test Panel Row", defaultBinding: "Mod+Shift+4" },
+      () => {},
+    );
+    const row = RENDER.keybind(s, { kind: "keybind" });
+    expect(chordText(row, "test.panelRow")).toBe(displayChord("Mod+Shift+4"));
+    const ids = Array.from(row.querySelectorAll<HTMLElement>(".keybind-item")).map(
+      (el) => el.dataset.id,
+    );
+    expect(ids.indexOf("test.panelRow")).toBe(ids.length - 1); // appended last
+    expect(ids.indexOf("mode.toggle")).toBeLessThan(ids.indexOf("test.panelRow"));
+    unregister();
+  });
+
+  it("capture→override works on a runtime command row", () => {
+    const s = keybindSetting("kbc.rt.b");
+    bindKeybindings(s);
+    const unregister = registerCommand(
+      { id: "test.panelRow2", label: "Test Panel Row 2", defaultBinding: null },
+      () => {},
+    );
+    const row = RENDER.keybind(s, { kind: "keybind" });
+    captureBtn(row, "test.panelRow2").click();
+    pressWindow({ metaKey: true, code: "KeyK" }); // Mod+K — unused
+    expect(s.get()["test.panelRow2"]).toBe("Mod+K");
+    expect(chordText(row, "test.panelRow2")).toBe(displayChord("Mod+K"));
+    unregister();
   });
 });

@@ -264,6 +264,33 @@ interface BlockValue {
   deco: DecorationSet;
 }
 
+/** The domain rule that makes a runtime-registered block feature list safe: a
+ *  single syntax node may become at most ONE block widget. Named because it
+ *  used to be an unstated invariant enforced only by mermaid/codeBlock's own
+ *  mutual exclusion (mermaid returns null for non-"mermaid" fences, codeBlock
+ *  claims everything else) — that hand-rolled exclusivity breaks the instant a
+ *  third feature claims FencedCode. The first feature (in registry order) to
+ *  return a non-null BlockSpec for `node` wins; later candidates are not even
+ *  tried. For the shipped 5 features this is behavior-neutral: the only two
+ *  that share a claimable node (mermaid, codeBlock, both on FencedCode) are
+ *  already mutually exclusive, so "first wins" and "collect all" produce
+ *  identical output. `emit` receives the winning spec (if any); pure w.r.t.
+ *  its inputs except for the single `emit` side effect the caller controls. */
+export function firstClaimWins(
+  features: BlockFeature[],
+  node: SyntaxNode,
+  ctx: BlockCtx,
+  emit: (spec: BlockSpec) => void,
+): void {
+  for (const f of features) {
+    const s = f.match(node, ctx);
+    if (s) {
+      emit(s);
+      return;
+    }
+  }
+}
+
 /** Decide where a vertical caret move should land so it *reveals* a block
  *  instead of leaping over it.
  *
@@ -330,10 +357,7 @@ export function blockPreview(features: BlockFeature[]): Extension {
         if (NO_BLOCKS_INSIDE.has(node.name)) return false;
         const fs = byNode.get(node.name);
         if (!fs) return;
-        for (const f of fs) {
-          const s = f.match(node.node, ctx);
-          if (s) specs.push(s);
-        }
+        firstClaimWins(fs, node.node, ctx, (s) => specs.push(s));
         return false; // claimed block nodes never nest a block widget
       },
       leave(node) {

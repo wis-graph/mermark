@@ -8,6 +8,8 @@ import { EditorView } from "@codemirror/view";
 import { createOutlinePanel } from "./outline/outline-panel";
 import { createExplorerPanel, type DirEntry } from "./explorer/explorer-panel";
 import { mountEditor, type EditorController, type PreviewMode, type SaveStatus } from "./editor";
+import { onFeaturesChanged } from "./markdown/live-preview";
+import { activateExtensions } from "./extensions";
 import { applyTheme, applyFontScale, makeThemeToggle } from "./theme";
 import {
   themeSetting,
@@ -757,6 +759,12 @@ async function boot() {
   autosaveDelaySetting.subscribe((ms) => current?.setAutosaveDelay(ms));
   conflictPolicySetting.subscribe((p) => current?.setConflictPolicy(p));
   vimModeSetting.subscribe((mode) => current?.setVimMode(mode === "on"));
+  // Feature registry SSOT sink: a late registerInlineFeature/registerBlockFeature
+  // call (an extension that finishes async init after boot, or a test) reaches
+  // the currently-open editor through the ONE subscription below — no hand
+  // fan-out to wherever registration might happen. Mirrors the
+  // themeSetting.subscribe(() => current?.refresh()) shape above.
+  onFeaturesChanged(() => current?.reloadFeatures());
   // themeForce re-bake is owned by mermaid-widget (self-subscription); main
   // only triggers the redraw it alone can dispatch.
   themeForceSetting.subscribe(() => current?.refresh());
@@ -839,6 +847,13 @@ async function boot() {
   });
   bindKeybindings(keybindingsSetting);
   installDispatcher();
+  // Personal extensions register here — after the built-in registerHandler
+  // block above, before the first openInWindow below, so any boot-time
+  // registration lands in that very first mount's snapshot (no reloadFeatures
+  // round-trip needed for extensions that register synchronously at boot;
+  // that path exists for late/async registrations instead). Cold-load cost
+  // is one call to a currently-empty function (design §2.2/§3.6).
+  activateExtensions();
   // mode is the SSOT: the button label binds to it; the live editor reacts to
   // changes. Persistence is handled by the store.
   modeSetting.bind(mode.render); // initial label + on change

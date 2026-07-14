@@ -6,6 +6,7 @@
 // Assumes Chrome already launched with --remote-debugging-port=9222.
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
+import { assertPageRendered } from "./lib/preflight.mjs";
 
 const url = process.argv[2] ?? "http://localhost:1420/?file=x.md";
 
@@ -39,6 +40,9 @@ await page.goto(url, { waitUntil: "networkidle", timeout: 15000 }).catch((e) =>
   events.push({ kind: "nav-error", text: String(e) }),
 );
 await page.waitForTimeout(1500); // let mermaid/katex async render
+
+// Refuse to measure a page that never rendered — see scripts/lib/preflight.mjs.
+await assertPageRendered(page, { context: "cdp-debug" });
 
 // 4. probe the DOM for render results
 const dom = await page.evaluate(() => ({
