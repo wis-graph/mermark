@@ -66,7 +66,7 @@ import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/viewer-golden.json";
 const url = process.argv[3] ?? "http://localhost:1430/?file=/mock/vault/index.md";
-const result = { g1: {}, g2: {}, g3: {}, g4: {}, g5: {}, g6: {}, g7: {}, g8: {}, g9: {}, errors: [] };
+const result = { g1: {}, g2: {}, g3: {}, g4: {}, g5: {}, g6: {}, g7: {}, g8: {}, g9: {}, errors: [], failedRequests: [] };
 
 const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();
 const browser = await chromium.connectOverCDP(ver.webSocketDebuggerUrl);
@@ -91,6 +91,34 @@ page.on("console", (m) => {
   if (m.type() === "error" && !isExpectedSandboxBlockMessage(m.text())) {
     result.errors.push("console: " + m.text());
   }
+});
+
+// A console error of the form "Failed to load resource: ... 404" tells you a
+// request failed but NOT WHICH ONE — Chrome omits the URL from that message.
+// This golden hit exactly that once (2026-07-14, on the HTML-viewer run) and
+// then went clean for 9 consecutive runs, instrumented, cold-cache and warm:
+// a real intermittent we could not name. So DON'T weaken the gate (a blanket
+// 404 exemption would hide the regression that actually matters here — the
+// fixture's relative <img> failing to resolve through convertFileSrc); make
+// the gate self-diagnosing instead. `failedRequests` records url + status +
+// resource type for every non-ok response, so the NEXT occurrence names
+// itself in the JSON report rather than costing another investigation.
+// Recorded, never gated on: `errors` alone still decides pass/fail.
+page.on("response", (r) => {
+  if (!r.ok()) {
+    result.failedRequests.push({
+      status: r.status(),
+      url: r.url(),
+      type: r.request().resourceType(),
+    });
+  }
+});
+page.on("requestfailed", (r) => {
+  result.failedRequests.push({
+    status: "FAILED",
+    url: r.url(),
+    error: r.failure()?.errorText ?? "",
+  });
 });
 
 await page.setViewportSize({ width: 1280, height: 900 });
