@@ -56,10 +56,19 @@ DMG_PATH="src-tauri/target/release/bundle/dmg/mermark_${VERSION}_aarch64.dmg"
 TAR_PATH="src-tauri/target/release/bundle/macos/mermark.app.tar.gz"
 SIG_PATH="src-tauri/target/release/bundle/macos/mermark.app.tar.gz.sig"
 
-# 파일이 없는 경우 다른 빌드 타겟 구조(x86_64 등)나 경로 대응을 위해 파일 감지 및 대체
+# 아키텍처만 다른 DMG(x86_64 등)는 받아들이되, **버전이 다른 DMG는 절대 받지 않는다.**
+#
+# 예전 폴백은 `find -name "mermark_*_aarch64.dmg"`였다 — 버전 자리에 와일드카드가
+# 있었다. 이번 버전 빌드가 실패해 DMG가 없으면, 그 폴백이 target/에 남아 있던
+# **이전 버전 DMG를 조용히 집어서 올렸다.** 2026-07-15 v0.7.1에서 실제로 났다:
+# notarize가 일시 실패해 0.7.1 산출물이 아예 안 만들어졌는데, 폴백이 0.7.0 DMG를
+# 주워 v0.7.1로 배포했고 updater.json은 "0.7.1"이라고 광고했다. 사용자가 업데이트를
+# 받으면 0.7.0이 깔리고, 앱은 자기가 0.7.0인데 서버가 0.7.1이라니 또 업데이트하라고
+# 뜬다 — 무한 루프.
+#
+# "다른 아키텍처 대응"이라는 의도가 "다른 버전 대응"까지 삼킨 것이다. 버전은 고정한다.
 if [ ! -f "$DMG_PATH" ]; then
-  # 대안 파일 검색
-  ALT_DMG=$(find src-tauri/target/release/bundle/dmg -name "mermark_*_aarch64.dmg" -o -name "mermark_*_x64.dmg" | head -n 1)
+  ALT_DMG=$(find src-tauri/target/release/bundle/dmg -name "mermark_${VERSION}_*.dmg" | head -n 1)
   if [ -n "$ALT_DMG" ]; then
     DMG_PATH="$ALT_DMG"
   fi
@@ -73,6 +82,32 @@ if [ ! -f "$DMG_PATH" ] || [ ! -f "$TAR_PATH" ] || [ ! -f "$SIG_PATH" ]; then
   echo " - SIG: $SIG_PATH"
   exit 1
 fi
+
+# --- 배포 게이트: 산출물이 정말 이 버전인가 -----------------------------------
+# 위의 파일 존재 검사는 "파일이 있다"만 말한다. 빌드가 실패했는데 target/에 이전
+# 버전 산출물이 남아 있으면 그것도 "있다". 그래서 **실제로 나갈 .app이 정말 $VERSION
+# 인지**를 Info.plist에서 직접 읽어 대조한다 — 파일명이 아니라 바이너리에게 묻는다.
+#
+# 기존 게이트 둘은 이 사고를 못 잡았다: 변경 내역 게이트는 dist/를 보는데 vite는
+# 성공했으니 통과했고, 서명키 게이트는 키ID만 보니 (낡은 번들의) 유효한 서명을
+# 통과시켰다. 둘 다 초록인데 낡은 바이너리가 나갔다.
+APP_PLIST="src-tauri/target/release/bundle/macos/mermark.app/Contents/Info.plist"
+if [ ! -f "$APP_PLIST" ]; then
+  echo "오류: 빌드된 앱의 Info.plist를 찾을 수 없습니다: $APP_PLIST"
+  exit 1
+fi
+APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PLIST" 2>/dev/null)
+if [ "$APP_VERSION" != "$VERSION" ]; then
+  echo "오류: 빌드된 앱의 버전이 배포하려는 버전과 다릅니다."
+  echo "      package.json: $VERSION"
+  echo "      빌드된 .app:  $APP_VERSION"
+  echo "      = 이번 버전 빌드가 실패했거나 아직 실행되지 않았고, target/에 이전"
+  echo "        빌드가 남아 있습니다. 이대로 배포하면 낡은 바이너리가 새 버전으로"
+  echo "        나가고 자동 업데이트가 무한 루프에 빠집니다."
+  echo "      해결: npm run release:build 를 다시 실행하고 **성공을 확인**하세요."
+  exit 1
+fi
+echo "✓ 산출물 버전 정합성 OK — 빌드된 .app이 $VERSION"
 
 # --- 배포 게이트: 변경 내역 정합성 -------------------------------------------
 # 앱 안 "설정 › 버전 › 변경 내역"은 version-pane이 CHANGELOG.md를 vite `?raw`로
