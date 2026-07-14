@@ -1,7 +1,7 @@
 {
   "name": "mermark",
   "private": true,
-  "version": "0.5.11",
+  "version": "0.5.12",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "release:build": "TAURI_SIGNING_PRIVATE_KEY=\"$HOME/.tauri/mermark.key\" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=\"\" tauri build",
     "test": "vitest run"
   },
   "dependencies": {
