@@ -1,11 +1,15 @@
 {
-  "version": "0.5.12",
-  "notes": "### Fixed\n\n- **설정 › 버전의 '변경 내역'에 최신 버전이 빠져 있던 문제**: v0.5.11의 변경 내역이 앱 안에서 보이지 않던 것을 고쳤다. 앱에 표시되는 변경 내역은 빌드 시점에 함께 담기는데, v0.5.11 배포에서 내역을 적기 전에 빌드가 시작돼 그 버전 항목이 통째로 누락됐다. 기능·동작 변경은 없다(v0.5.11의 링크 수정은 모두 정상 적용돼 있다).",
-  "pub_date": "2026-07-14T02:06:59Z",
+  "version": "0.6.0",
+  "notes": "### Added\n\n- **엑셀 파일 뷰어**: 탐색기에서 `.xlsx`·`.xls` 파일을 클릭하면 앱 안에서 바로 열린다. 시트가 여러 개면 상단 탭으로 넘길 수 있고, 셀에 보이던 서식(날짜·백분율·통화 등)이 그대로 표시된다. 값만 보여주며 수식을 다시 계산하지는 않는다. 아주 큰 시트는 10,000행까지만 그리고, 그 경우 아래에 \"전체 N행 중 10,000행 표시\"라고 알려준다 — 말없이 자르지 않는다.\n- **제목 글꼴 설정** (설정 › 타이포그래피 › \"제목 글꼴\"): 헤딩에 쓸 글꼴을 고를 수 있다. 테마 기본 / **Paperlogy**(한글 헤딩용, 앱에 포함) / Georgia(세리프) 3종. 기본값인 \"테마 기본\"은 지금까지의 모양 그대로다.\n- **윈도우 지원**: 이번 버전부터 윈도우용 설치 파일이 함께 배포된다. 자동 업데이트도 맥과 동일하게 동작한다. (윈도우 코드 서명은 아직 하지 않아서 첫 실행 시 SmartScreen 경고가 뜰 수 있다 — \"추가 정보 → 실행\"으로 진행하면 된다.)\n\n### Changed\n\n- **파일 뷰어가 화면을 벗어나지 않는다**: 뷰어로 연 내용이 아무리 길어도 창 안에 담기고, 넘치면 뷰어 안에서 스크롤된다.\n- **뷰어 글자 크기가 확대/축소(⌘+·⌘-)를 따른다**: 본문·탐색기와 같은 배율을 쓴다.",
+  "pub_date": "2026-07-14T12:57:16Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzYyaHVTTHdEem1jekxzdWNWdXZnTjZlR0dXZEVwY0pFcERDOWttRmIvZFhYN0ZLNnpQbGp6Y2kxYjlyS2V6WEZsTVFodmZiazBFYUNyZENaZE55akFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzOTk0NTEyCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CjRIeHh0VG5UcnViZTVMS3luQjlnTG0yRmpTYVZSYUl0ekZiNjlCL2JyT1I1L1pPbjRzN3BVL1dQR1Y4STNJdVJzVGh3TFdGbmtSQkNpRlZrT2psOUJnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.5.12/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzU5aHVmOVMrQjNuYWNDRkdxNGZVYUJtZXBOWm5zakl4blBtNWdnYmJMRmh1RDNqNnlZMkg3MTdZZlZuazBOS0ZKZFNPZ2FqNGtoZWo1L0t4QzhZaGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MDMyODYzCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkVEZWdNVlJoRGlUWE1yT0ZzMS9nSkEzMUJHQTVNMzdIVmdPSGNER0tTWDFBQzFReEhyZFJPUEttekY5RG1aN3R4RVlmYmFVa1NqUjdPSnhGRXBUL0FnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.6.0/mermark.app.tar.gz"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzZzZWNkRFpkUUppenQxaVpBa2xMV3QzaC9ibEoxRVhiR0EyS0kxcE1xVFVqd3Q0TnA3S09jSTRla3VEYUZ2cFpZYmRuZURkNXdYSi8yM2VtSlZPRHdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MDMzODIyCWZpbGU6bWVybWFya18wLjYuMF94NjQtc2V0dXAuZXhlCmFVcElNeVpDem1XV1oyVE1CSWZ6dzFQWHR6elRGekR3TWVmVjk0TzNtQ2JQMHNKanE3OWpSV2ZTdk9oMnI1K3BFYjB6WDdtc25ZSERxcU53UnRDNUFBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.6.0/mermark_0.6.0_x64-setup.exe"
     }
   }
 }
