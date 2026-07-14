@@ -62,10 +62,12 @@ directory.
 after `--`:
 
 ```bash
-npm run tauri dev -- docs/sample.md
+npm run tauri dev -- path/to/note.md
 ```
 
-`docs/sample.md` exercises every renderer.
+In browser mode (`npm run dev:browser`) the Tauri backend is mocked and a built-in
+fixture document (`SAMPLE` in `src/mocks/tauri-core.ts`) is loaded instead — that
+fixture is what the CDP golden scripts measure, and it exercises every renderer.
 
 ## Scope
 
