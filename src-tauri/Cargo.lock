@@ -2111,7 +2111,7 @@ dependencies = [
 
 [[package]]
 name = "mermark"
-version = "0.5.12"
+version = "0.6.0"
 dependencies = [
  "notify",
  "serde",

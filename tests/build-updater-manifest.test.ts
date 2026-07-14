@@ -59,6 +59,29 @@ describe("buildUpdaterManifest", () => {
     expect(next.platforms["windows-x86_64"]).toBeUndefined();
   });
 
+  it("windows is opt-in: building without it means platforms has no windows-x86_64 key at all", () => {
+    // This is the safety property the "--with-windows opt-in" design leans
+    // on entirely: a release.sh run without --with-windows never calls
+    // windowsX64Platform(), so the key is structurally absent here — not
+    // present-but-stale. A missing platform entry means the updater offers
+    // that platform's users no update (safe). A present-but-stale entry
+    // would mean handing them an old, validly-signed installer while
+    // claiming it's the new version (the exact incident this guards
+    // against).
+    const manifest = buildUpdaterManifest({
+      version: "0.6.3",
+      pubDate: "2026-08-03T00:00:00Z",
+      notes: "",
+      platforms: {
+        ...darwinAarch64Platform({ tag: "v0.6.3", signature: "MAC_SIG" }),
+      },
+    });
+
+    expect(Object.keys(manifest.platforms)).toEqual(["darwin-aarch64"]);
+    expect("windows-x86_64" in manifest.platforms).toBe(false);
+    expect(manifest.platforms["windows-x86_64"]).toBeUndefined();
+  });
+
   it("rejects an empty platforms map", () => {
     expect(() =>
       buildUpdaterManifest({ version: "0.6.0", pubDate: "2026-08-01T00:00:00Z", notes: "", platforms: {} }),

@@ -6,10 +6,32 @@ set -e
 # 적대적으로 시험된 적이 없었다는 게 2026-07-14 세션의 지적이었다 — 이 플래그로
 # 실제 태그/릴리스를 만들지 않고도 분기(멱등성 판정, run 포착 로직)를 반복
 # 검증할 수 있게 한다.
+#
+# --with-windows: 윈도우는 옵트인이다(2026-07-14, v0.6.0 배포 후 사용자 요청 —
+# 릴리스마다 윈도우 CI를 10분씩 기다리는 게 답답함). 기본값은 맥만 배포하고
+# updater.json에도 darwin-aarch64만 쓴다. 윈도우도 같이 내보내려면 이 플래그를
+# 명시해야 한다 — 디스패치·대기·서명키 검증·두 플랫폼 기록까지 기존 전체 경로.
+#
+# 두 플래그는 순서 무관, 동시 사용 가능(--dry-run --with-windows 또는 반대 순서).
 DRY_RUN=0
-if [ "${1:-}" == "--dry-run" ]; then
-  DRY_RUN=1
+WITH_WINDOWS=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --with-windows) WITH_WINDOWS=1 ;;
+    *)
+      echo "오류: 알 수 없는 인자입니다: $arg (지원: --dry-run, --with-windows)"
+      exit 1
+      ;;
+  esac
+done
+if [ "$DRY_RUN" -eq 1 ]; then
   echo "[dry-run] 게이트·분기만 실행합니다. release/upload/dispatch/commit/push는 실행되지 않습니다."
+fi
+if [ "$WITH_WINDOWS" -eq 1 ]; then
+  echo "[--with-windows] 윈도우 CI 디스패치·대기·서명키 검증까지 포함합니다."
+else
+  echo "[기본] 맥만 배포합니다. 윈도우도 내보내려면: $0 --with-windows"
 fi
 
 # 상태를 바꾸는 명령을 감싼다: dry-run이면 실행할 명령을 그대로 echo만 하고
@@ -120,6 +142,53 @@ if "$GH" release view "$TAG" >/dev/null 2>&1; then
 else
   echo "=== 1. GitHub Release ($TAG) 생성 및 파일 업로드 (macOS) ==="
   run_mutating "$GH" release create "$TAG" "$DMG_PATH" "$TAR_PATH" "$SIG_PATH" --title "$TAG" --notes "$NOTES"
+fi
+
+if [ "$WITH_WINDOWS" -eq 0 ]; then
+  # --- 뒤처짐 경고: 윈도우를 건너뛰면 매번 눈에 띄게 알린다 --------------------
+  # 옵트인의 실패 모드는 "윈도우를 영원히 안 내보내는 것"이다 — 사람이 매번
+  # 잊고 윈도우 사용자만 조용히 뒤처진다. 우리 장부가 아니라 GitHub 릴리스의
+  # 실제 자산(setup.exe 존재 여부)을 SSOT로 삼아, 최근 릴리스들을 훑어 몇
+  # 버전째 윈도우가 안 나갔는지 매번 계산해서 보여준다. 읽기 전용이라 dry-run
+  # 여부와 무관하게 항상 실행한다.
+  echo "=== 윈도우 뒤처짐 확인 ==="
+  HISTORY_LINES=""
+  HISTORY_TAGS=$("$GH" release list --limit 15 --json tagName --jq '.[].tagName' 2>/dev/null | grep -v -x "$TAG" || true)
+  while IFS= read -r t; do
+    [ -z "$t" ] && continue
+    HAS_WIN=$("$GH" release view "$t" --json assets --jq '[.assets[].name] | any(test("setup\\.exe$"; "i"))' 2>/dev/null || echo "false")
+    HISTORY_LINES="${HISTORY_LINES}${t} ${HAS_WIN}
+"
+  done <<< "$HISTORY_TAGS"
+  LAG_OUTPUT=$(printf '%s' "$HISTORY_LINES" | node scripts/describe-windows-lag-cli.mjs)
+  read -r STALE_COUNT LAST_WIN_TAG <<< "$LAG_OUTPUT"
+  TOTAL_LAG=$((STALE_COUNT + 1))
+  echo "⚠️  윈도우 미포함 배포입니다."
+  if [ "$LAST_WIN_TAG" == "-" ]; then
+    echo "    지금까지 윈도우 자산이 붙은 릴리스가 하나도 없습니다 (이번 $TAG 포함 ${TOTAL_LAG}개 버전째)."
+  else
+    echo "    윈도우 사용자는 ${LAST_WIN_TAG}에 머뭅니다 (이번 $TAG 포함 ${TOTAL_LAG}개 버전째 미포함)."
+  fi
+  echo "    윈도우도 내보내려면: $0 --with-windows"
+
+  echo "=== 2. updater.json 갱신 및 GitHub 배포 (darwin-aarch64만 — 윈도우 미포함) ==="
+  run_mutating env \
+    VERSION="$VERSION" \
+    TAG="$TAG" \
+    NOTES="$NOTES" \
+    PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    MAC_SIG_CONTENT="$(cat "$SIG_PATH")" \
+    node scripts/write-updater-json.mjs
+
+  echo "updater.json 파일이 갱신되었습니다. GitHub main 브랜치로 푸시합니다..."
+  run_mutating git add updater.json
+  run_mutating git commit -m "deploy: update release metadata for $TAG"
+  run_mutating git push origin main
+
+  echo "=================================================="
+  echo "🎉 v$VERSION 배포가 완료됐습니다 (맥만 — 윈도우 미포함)."
+  echo "=================================================="
+  exit 0
 fi
 
 # --- 배포 게이트: 윈도우 CI를 직접 디스패치하고 대기 --------------------------
