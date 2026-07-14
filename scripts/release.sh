@@ -157,6 +157,15 @@ if [ -z "$RUN_ID" ]; then
   echo "      $GH run list --workflow=$WORKFLOW_FILE"
   exit 1
 fi
+# run id는 순수 10진수여야 한다. 이 검사가 없으면 오염된 값(ANSI 색상 코드가
+# 섞인 적이 있다 — find-dispatched-run-cli.mjs 주석 참고)이 그대로 gh에 넘어가
+# "invalid control character in URL" 같은 엉뚱한 에러로 나타나고, 진짜 원인이
+# 윈도우 빌드 실패인지 우리 스크립트 버그인지 구분할 수 없게 된다.
+if ! [[ "$RUN_ID" =~ ^[0-9]+$ ]]; then
+  echo "오류: 워크플로 run id가 숫자가 아닙니다: $(printf '%q' "$RUN_ID")"
+  echo "      scripts/find-dispatched-run-cli.mjs의 출력이 오염됐습니다(제어문자·색상코드 등)."
+  exit 1
+fi
 echo "  워크플로 실행 발견 (run $RUN_ID). 완료 대기 중…"
 if ! "$GH" run watch "$RUN_ID" --exit-status; then
   echo "오류: 윈도우 빌드 워크플로가 실패했습니다 (run $RUN_ID)."

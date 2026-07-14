@@ -34,4 +34,11 @@ const match = findDispatchedRun(runs, since);
 if (!match) {
   process.exit(1);
 }
-console.log(match.databaseId);
+// String(), NOT the raw number: console.log routes a non-string through
+// util.inspect, which COLORIZES numbers when stdout is a TTY — and release.sh
+// captures this in `$(...)`, which is a pipe under a plain shell but a pty
+// under some runners. The run id then carried \x1b[33m…\x1b[39m into
+// `gh run watch`, which died on "invalid control character in URL" (2026-07-14,
+// the first real v0.6.0 release attempt). A pipe-vs-pty difference is exactly
+// the kind of bug a unit test run through a pipe can never see.
+console.log(String(match.databaseId));
