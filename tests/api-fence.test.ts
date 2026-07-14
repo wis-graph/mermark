@@ -49,6 +49,9 @@ const WHITELIST_ABS = [
   join(SRC, "chrome", "viewer", "registry"),
   join(SRC, "chrome", "viewer", "shell"),
   join(SRC, "chrome", "viewer", "file-bytes"),
+  // R11 2단계 (_workspace/01_html_viewer.md §6): fontScaleSetting re-export
+  // for the HTML viewer's zoom sink.
+  join(SRC, "settings", "app"),
 ];
 
 function walkTsFiles(dir: string): string[] {
@@ -183,5 +186,58 @@ describe("api fence (design §2.3 / plan Stage C-1)", () => {
     expect(api.openViewerShell).toBe(viewerShell.openViewerShell);
     const fileBytes = await import("../src/chrome/viewer/file-bytes");
     expect(api.readLocalFileBytes).toBe(fileBytes.readLocalFileBytes);
+  });
+});
+
+// R11 2단계 (_workspace/01_html_viewer.md §6 + team-lead review): the ONE
+// setting the facade exposes to extensions is exposed READ-ONLY. The rest of
+// the facade re-exports raw references (identity checks above); `fontScale`
+// is the deliberate EXCEPTION — a hand-built projection of `fontScaleSetting`
+// — because `Setting<T>` carries `set(v)`, and handing that to every
+// extension would let one silently overwrite the USER's zoom level. The
+// facade is a boundary; a boundary that leaks a write capability it promised
+// (in a comment) not to leak is not a boundary.
+//
+// These assertions are the enforcement. They were verified ADVERSARIALLY (the
+// team-lead's standing rule after a session where 10 straight guards turned
+// out to be no-ops): re-adding `set: (v) => fontScaleSetting.set(v)` to the
+// facade's `fontScale` object makes the first test below FAIL — confirmed by
+// running it that way, not by assuming it would.
+describe("api facade: the zoom handle is READ-ONLY (no `set` reaches an extension)", () => {
+  it("`set` does not exist on the exposed handle — removed from the OBJECT, not just narrowed in the TYPE", async () => {
+    const api = await import("../src/api");
+    // `in` (not `typeof api.fontScale.set`) is the assertion that actually
+    // bites: it fails on a property that exists with ANY value, including one
+    // reachable only through an `as any` cast — which is precisely how a
+    // type-only `Pick<>` narrowing would be defeated.
+    expect("set" in api.fontScale).toBe(false);
+    expect(Object.keys(api.fontScale).sort()).toEqual(["bind", "get", "subscribe"]);
+    // Frozen, so an extension can't just bolt `set` back on at runtime.
+    expect(Object.isFrozen(api.fontScale)).toBe(true);
+  });
+
+  it("get/subscribe/bind exist AND are really wired to the fontScale SSOT (not a dead stub)", async () => {
+    const api = await import("../src/api");
+    const { fontScaleSetting } = await import("../src/settings/app");
+
+    // A read-only view that returned a frozen constant would satisfy the
+    // "no set" test above while being useless — this is the positive half of
+    // the guard: the value must actually TRACK the SSOT.
+    fontScaleSetting.set(1.0);
+    expect(api.fontScale.get()).toBe(1.0);
+
+    const seen: number[] = [];
+    const unbind = api.fontScale.bind((v) => seen.push(v));
+    expect(seen).toEqual([1.0]); // bind applies the CURRENT value immediately
+
+    fontScaleSetting.set(1.4); // the app (zoomIn/zoomOut) writes; the view observes
+    expect(api.fontScale.get()).toBe(1.4);
+    expect(seen).toEqual([1.0, 1.4]);
+
+    unbind();
+    fontScaleSetting.set(1.6);
+    expect(seen).toEqual([1.0, 1.4]); // unsubscribed — no further notifications
+
+    fontScaleSetting.set(1.0); // restore the SSOT for any later test in this run
   });
 });

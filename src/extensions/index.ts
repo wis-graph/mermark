@@ -9,6 +9,7 @@
 // extensions; that path exists for extensions that register LATE, e.g. after
 // an async init).
 import { registerExcelViewer } from "./excel-viewer";
+import { registerHtmlViewer } from "./html-viewer";
 
 export function activateExtensions(): void {
   // registerExcelViewer() only registers the {id, extensions, open} catalog
@@ -16,4 +17,9 @@ export function activateExtensions(): void {
   // library. That import is deferred to the viewer's own open() call (R11
   // design §7), so this boot-time call stays cold-load-cheap.
   registerExcelViewer();
+  // registerHtmlViewer() (R11 2단계, _workspace/01_html_viewer.md §0/§7): zero
+  // new dependencies to defer — DOMParser/TextDecoder are browser-native, so
+  // this call is cold-load-cheap by construction, not by a dynamic-import
+  // trick like Excel's.
+  registerHtmlViewer();
 }

@@ -227,6 +227,13 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
           // — this TREE entry only makes the row visible/openable; it never
           // reads the file itself (list_dir doesn't touch content).
           { name: "report.xlsx", path: "/mock/vault/report.xlsx", is_dir: false },
+          // R11 2단계 (_workspace/01_html_viewer.md §8): the HTML-viewer
+          // golden's positive fixture (G7~G9). Same shape as report.xlsx
+          // above — bytes served by Vite's browser-mode publicDir at
+          // mock-assets/mock/vault/{sample.html,sample-asset.png}; this TREE
+          // entry only makes the rows visible/openable in the explorer.
+          { name: "sample.html", path: "/mock/vault/sample.html", is_dir: false },
+          { name: "sample-asset.png", path: "/mock/vault/sample-asset.png", is_dir: false },
         ],
         "/mock/vault/notes": [
           { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },

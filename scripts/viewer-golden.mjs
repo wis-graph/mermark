@@ -34,6 +34,25 @@
 //     small 3-row sheet, as G3 loads, never exposes an overflow bug — only
 //     a genuinely large sheet does, which is this fixture's whole reason
 //     to exist).
+// G7~G9 (R11 2단계, _workspace/01_html_viewer.md §8 — HTML viewer):
+// G7 (render positive + VISUAL): sample.html → .html-viewer iframe exists,
+//     sandboxed frame's OWN document (reached via Playwright's
+//     elementHandle.contentFrame(), CDP-backed — "CDP는 sandbox 무관하게
+//     프레임에 닿는다", design §8) contains the fixture's marker text.
+// G8 (script NEVER runs — adversarial pair, team-lead's "test a guard both
+//     ways" mandate): positive — sample.html's inline PWNED script (design
+//     §0 header) leaves document.title UNCHANGED under the real sandbox="".
+//     Negative (proves the positive assertion actually bites): the SAME
+//     iframe forced to reload with sandbox="allow-scripts" (still no
+//     allow-same-origin) DOES run the script (title flips to "PWNED") —
+//     dev:browser has no CSP (index.html carries no CSP meta; Tauri injects
+//     it only in the real runtime), so this negative isolates sandbox
+//     defense layer ① specifically, independent of CSP layer ③.
+// G9 (relative asset rewrite): the fixture's sibling `sample-asset.png`
+//     resolves — frame-internal `img.currentSrc` is the rewritten asset URL
+//     and `naturalWidth > 0` (dev:browser: mock convertFileSrc=identity +
+//     Vite publicDir serving the literal mock-assets file — same mechanism
+//     G3's report.xlsx already relies on).
 //
 // VISUAL CONTRACT (checkPanelChrome below) applies to EVERY viewer's panel —
 // this is what the audit's screenshot + real-device findings actually
@@ -47,16 +66,31 @@ import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/viewer-golden.json";
 const url = process.argv[3] ?? "http://localhost:1430/?file=/mock/vault/index.md";
-const result = { g1: {}, g2: {}, g3: {}, g4: {}, g5: {}, g6: {}, errors: [] };
+const result = { g1: {}, g2: {}, g3: {}, g4: {}, g5: {}, g6: {}, g7: {}, g8: {}, g9: {}, errors: [] };
 
 const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();
 const browser = await chromium.connectOverCDP(ver.webSocketDebuggerUrl);
 const ctx = browser.contexts()[0] ?? (await browser.newContext());
 const page = ctx.pages()[0] ?? (await ctx.newPage());
 
+// G8's own POSITIVE assertion (sample.html's inline PWNED script must not
+// run under sandbox="") makes Chrome itself log a console.error the instant
+// that block succeeds — "Blocked script execution in 'about:srcdoc' because
+// the document's frame is sandboxed...". That message IS the security
+// contract working exactly as designed, not a regression; treating it as a
+// golden-breaking error would make this file punish the very behavior G8
+// exists to prove. Named so the one deliberate exception to "any console
+// error fails the golden" stays a single, greppable rule instead of a bare
+// string test inline at the listener. Pure query.
+function isExpectedSandboxBlockMessage(text) {
+  return /Blocked script execution.*sandboxed/i.test(text);
+}
+
 page.on("pageerror", (e) => result.errors.push(e.message));
 page.on("console", (m) => {
-  if (m.type() === "error") result.errors.push("console: " + m.text());
+  if (m.type() === "error" && !isExpectedSandboxBlockMessage(m.text())) {
+    result.errors.push("console: " + m.text());
+  }
 });
 
 await page.setViewportSize({ width: 1280, height: 900 });
@@ -272,6 +306,61 @@ await page.screenshot({ path: out.replace(/\.json$/, ".g6-big-sheet-scrolled.png
 await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
 
+// ── G7~G9 — HTML viewer (R11 2단계) ──────────────────────────────────────
+await rowFor("/mock/vault/sample.html").click();
+await page.waitForTimeout(400);
+result.g7.hasHtmlViewer = (await page.locator(".html-viewer").count()) > 0;
+
+const htmlIframeEl = await page.locator(".html-viewer-frame").elementHandle();
+const htmlFrame = await htmlIframeEl?.contentFrame();
+result.g7.frameReachable = !!htmlFrame;
+result.g7.markerText = htmlFrame
+  ? await htmlFrame.locator("body").innerText().catch(() => "")
+  : "";
+result.g7.hasMarker = result.g7.markerText.includes("HTML-VIEWER-GOLDEN-MARKER");
+Object.assign(result.g7, await checkPanelChrome(page, ".html-viewer", ".html-viewer-caption"));
+await page.screenshot({ path: out.replace(/\.json$/, ".g7-html-viewer.png") });
+
+// G9 first (reads the UNMUTATED sandbox="" frame) — G8's negative probe
+// below intentionally mutates this same iframe afterward.
+if (htmlFrame) {
+  const imgState = await htmlFrame.evaluate(() => {
+    const img = document.querySelector("img");
+    return img ? { currentSrc: img.currentSrc, naturalWidth: img.naturalWidth } : null;
+  });
+  result.g9.currentSrc = imgState?.currentSrc ?? null;
+  result.g9.naturalWidth = imgState?.naturalWidth ?? 0;
+  result.g9.rewrittenToAssetUrl =
+    !!result.g9.currentSrc && result.g9.currentSrc.includes("/mock/vault/sample-asset.png");
+}
+
+// G8 positive: the fixture's inline `document.title = "PWNED"` never ran
+// under the real sandbox="".
+result.g8.titleBefore = htmlFrame ? await htmlFrame.evaluate(() => document.title) : null;
+result.g8.scriptDidNotRun = result.g8.titleBefore !== "PWNED";
+
+// G8 negative (the guard-both-ways proof): force the SAME iframe to reload
+// with sandbox="allow-scripts" (still no allow-same-origin) and confirm the
+// probe DOES fire this time — otherwise the positive assertion above could
+// never turn red and would be a silent no-op forever.
+await page.evaluate(() => {
+  return new Promise((resolve) => {
+    const iframe = document.querySelector(".html-viewer-frame");
+    const html = iframe.srcdoc;
+    iframe.addEventListener("load", () => resolve(true), { once: true });
+    iframe.setAttribute("sandbox", "allow-scripts");
+    iframe.srcdoc = html; // reassign to force a reload under the new sandbox flags
+  });
+});
+await page.waitForTimeout(200);
+const htmlIframeEl2 = await page.locator(".html-viewer-frame").elementHandle();
+const htmlFrame2 = await htmlIframeEl2?.contentFrame();
+result.g8.titleAfterAllowScripts = htmlFrame2 ? await htmlFrame2.evaluate(() => document.title) : null;
+result.g8.scriptRanWhenAllowed = result.g8.titleAfterAllowScripts === "PWNED";
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
 // ── G4 — don't-stack: image then Excel, no close between ───────────────────
 // The second row sits visually under the first viewer's backdrop
 // (position:fixed, inset:0, z-index:50), which real-hit-tests any actual
@@ -342,6 +431,25 @@ const pass =
   // (min-height:0 + overflow:auto both alive) rather than just not-spilling.
   result.g6.sheetScrollState.scrolls &&
   result.g6.captionVisibleAfterScroll &&
+  // G7 — HTML viewer render positive.
+  result.g7.hasHtmlViewer &&
+  result.g7.frameReachable &&
+  result.g7.hasMarker &&
+  result.g7.backdropAlpha > 0 &&
+  result.g7.panelAlpha > 0 &&
+  result.g7.panelDisplay === "flex" &&
+  result.g7.panelInViewport &&
+  result.g7.captionInsidePanel &&
+  result.g7.bodyContainedInPanel &&
+  result.g7.contentContainedInBody &&
+  // G8 — script never runs under sandbox="" (positive) AND DOES run once
+  // sandbox is (adversarially) relaxed to allow-scripts (negative) — the
+  // guard-both-ways pair that proves the positive isn't a no-op probe.
+  result.g8.scriptDidNotRun &&
+  result.g8.scriptRanWhenAllowed &&
+  // G9 — relative sibling image rewritten to a real, loadable asset URL.
+  result.g9.rewrittenToAssetUrl &&
+  result.g9.naturalWidth > 0 &&
   result.errors.length === 0;
 
 console.log("\nwrote", out);

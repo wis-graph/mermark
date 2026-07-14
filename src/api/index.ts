@@ -84,3 +84,41 @@ export { renderSidebarButton } from "../sidebar/toggle";
 export { registerViewer, type Viewer, type ViewerHandle } from "../chrome/viewer/registry";
 export { openViewerShell, type ViewerShell } from "../chrome/viewer/shell";
 export { readLocalFileBytes } from "../chrome/viewer/file-bytes";
+
+// R11 2단계 (_workspace/01_html_viewer.md §6): the HTML viewer's ⌘± zoom sink
+// (a parent-side transform scale, since an iframe document can't inherit
+// `--font-scale`) needs to READ/SUBSCRIBE the fontScale SSOT.
+//
+// WHY THIS IS A HAND-BUILT READ-ONLY VIEW and not `export { fontScaleSetting }`:
+// `Setting<T>` (settings/store.ts) carries `set(v)` alongside get/subscribe/bind.
+// Re-exporting the setting whole would hand every extension the power to
+// silently overwrite the USER's zoom level (`fontScaleSetting.set(3.0)`) — a
+// capability no extension has any legitimate reason to hold, and one that a
+// doc comment saying "read/subscribe only, never write" cannot actually
+// prevent. A promise the type system doesn't enforce is not a contract, and
+// this is a PLUGIN-FACING API: its whole reason to exist is being a boundary,
+// and a surface once shipped is hard to take back.
+//
+// `set` is removed from the OBJECT, not merely narrowed away in the TYPE — a
+// type-only `Pick<>` is defeated by one `as any`, so the property simply does
+// not exist at runtime. `Object.freeze` keeps an extension from bolting one
+// back on. The single writer stays the app's own zoomIn/zoomOut/resetZoom
+// commands (settings/app.ts). tests/api-fence.test.ts pins all of this.
+import { fontScaleSetting } from "../settings/app";
+import type { Setting } from "../settings/store";
+
+/** A setting an extension may READ and OBSERVE but never WRITE — the
+ *  read-only projection of `Setting<T>`. Reusable on purpose: the next
+ *  setting an extension legitimately needs to observe (theme, mode, ...)
+ *  gets exposed through this same shape rather than inventing a second
+ *  read-only convention. */
+export type ReadonlySetting<T> = Pick<Setting<T>, "get" | "subscribe" | "bind">;
+
+/** Body-text zoom scale (⌘±) as an extension sees it: get/subscribe/bind, no
+ *  `set`. An extension that wants to track zoom calls `.bind(fn)` — it is
+ *  applied with the current value immediately, then on every change. */
+export const fontScale: ReadonlySetting<number> = Object.freeze({
+  get: () => fontScaleSetting.get(),
+  subscribe: (fn: (v: number) => void) => fontScaleSetting.subscribe(fn),
+  bind: (fn: (v: number) => void) => fontScaleSetting.bind(fn),
+});
