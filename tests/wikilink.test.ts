@@ -3,6 +3,7 @@ import { wikilinkPath, isImageTarget, sameFileHeadingAnchor, WikilinkWidget } fr
 
 const mockInvoke = vi.fn();
 const mockOpenAsset = vi.fn();
+const mockOpenUrl = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
@@ -11,6 +12,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: (...args: any[]) => mockOpenAsset(...args),
+  openUrl: (...args: any[]) => mockOpenUrl(...args),
 }));
 
 describe("wikilinkPath", () => {
@@ -69,6 +71,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
     mockOpenAsset.mockReset();
+    mockOpenUrl.mockReset();
   });
 
   it("resolves bare same-file link immediately with no path_exists call", () => {
@@ -190,6 +193,48 @@ describe("WikilinkWidget toDOM click behaviors", () => {
 });
 
 // ---------------------------------------------------------------------------
+// E — [[https://…]] external URL wikilinks. Zero IPC of any kind: never
+// touches path_exists/create_markdown_file/open_path (the bug this branch
+// exists to prevent — a pasted URL becoming a junk on-disk file).
+// ---------------------------------------------------------------------------
+describe("WikilinkWidget external URL branch (E)", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    mockOpenAsset.mockReset();
+    mockOpenUrl.mockReset();
+  });
+
+  it("renders cm-wikilink-active + cm-wikilink-external, no cm-wikilink-pending, zero IPC", () => {
+    const widget = new WikilinkWidget("구글", "", null, "https://example.com");
+    const dom = widget.toDOM({} as any);
+    expect(dom.className).toContain("cm-wikilink-active");
+    expect(dom.className).toContain("cm-wikilink-external");
+    expect(dom.className).not.toContain("cm-wikilink-pending");
+    expect(dom.textContent).toBe("구글");
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("click opens via openUrl (plugin-opener) and never touches path_exists/create_markdown_file/open_path", async () => {
+    mockOpenUrl.mockResolvedValue(undefined);
+    const widget = new WikilinkWidget("구글", "", null, "https://example.com");
+    const dom = widget.toDOM({} as any);
+    dom.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockOpenUrl).toHaveBeenCalledWith("https://example.com");
+    expect(mockInvoke).not.toHaveBeenCalledWith("path_exists", expect.any(Object));
+    expect(mockInvoke).not.toHaveBeenCalledWith("create_markdown_file", expect.any(Object));
+    expect(mockInvoke).not.toHaveBeenCalledWith("open_path", expect.any(Object));
+  });
+
+  it("eq() is false when externalUrl differs", () => {
+    const a = new WikilinkWidget("x", "", null, "https://a.com");
+    const b = new WikilinkWidget("x", "", null, "https://b.com");
+    expect(a.eq(b)).toBe(false);
+    expect(a.eq(new WikilinkWidget("x", "", null, "https://a.com"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // [[#heading]] click navigation — mounted integration. The anchor is resolved
 // against the LIVE document at click time (findHeadingByText), so this needs a
 // real EditorView with the markdown parser, not a bare toDOM({} as any) stub.
@@ -265,6 +310,49 @@ describe("[[#heading]] click navigation (mounted integration)", () => {
       // untouched caret either — it's wherever the widget sits in the doc.
       expect(view.state.selection.main.head).not.toBe(doc.indexOf("# Target"));
       expect(view.state.selection.main.head).not.toBe(before);
+    } finally {
+      view.destroy();
+      host.remove();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [[https://…]] external URL wikilinks (mounted integration) — Alt+click needs
+// a real EditorView (attachAltClickEdit calls view.dispatch/posAtDOM), unlike
+// the bare-toDOM tests above.
+// ---------------------------------------------------------------------------
+describe("[[https://…]] external URL (mounted integration, E)", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === "read_file"
+        ? Promise.resolve({ text: "", mtime: 1 })
+        : cmd === "write_file"
+          ? Promise.resolve(1)
+          : Promise.resolve(false),
+    );
+  });
+
+  function mount(doc: string) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const { view } = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "edit" });
+    return { host, view };
+  }
+
+  it("Alt+click edits the raw source instead of opening (attachAltClickEdit contract preserved)", () => {
+    const doc = "top\n\nSee [[https://example.com|구글]] here.";
+    const { host, view } = mount(doc);
+    try {
+      view.dispatch({ selection: { anchor: 0 } }); // caret off the wikilink's own line
+      (view as unknown as { measure(): void }).measure();
+      const link = view.contentDOM.querySelector<HTMLAnchorElement>(".cm-wikilink-external");
+      expect(link).not.toBeNull();
+      const before = view.state.selection.main.head;
+      link!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, altKey: true }));
+      expect(view.state.selection.main.head).not.toBe(before); // caret moved into raw source
+      expect(mockInvoke).not.toHaveBeenCalledWith("path_exists", expect.any(Object));
     } finally {
       view.destroy();
       host.remove();

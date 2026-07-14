@@ -54,6 +54,16 @@ export function revealed(state: EditorState, from: number, to: number): boolean 
   return state.facet(modeFacet) === "edit" && selectionTouches(state, from, to);
 }
 
+/** True when a click target lands on a rendered external link (marked by
+ *  `data-href` — the shared contract from markdown/open-external.ts),
+ *  including one drawn inside a block widget's DOM (a table cell). Domain
+ *  rule this names: "activating a link is not entering a block", so
+ *  `clickEntry` must yield to the link's own listener instead of claiming the
+ *  event for block-entry. Pure query. */
+export function clickLandsOnLink(target: EventTarget | null): boolean {
+  return (target as HTMLElement)?.closest?.("[data-href]") != null;
+}
+
 function treeChanged(a: EditorState, b: EditorState): boolean {
   return syntaxTree(a) !== syntaxTree(b);
 }
@@ -411,6 +421,14 @@ export function blockPreview(features: BlockFeature[]): Extension {
       readonly onDown: (e: MouseEvent) => void;
       constructor(readonly view: EditorView) {
         this.onDown = (e) => {
+          // Activating a rendered link is a different gesture from entering a
+          // block to edit its source — even when the link sits inside a
+          // block widget's DOM (a table cell). This must be checked before
+          // any block-entry logic below claims the event, in both edit AND
+          // read mode (G8: external links open in read mode too), so the
+          // anchor's own click-to-open listener (inline-render.ts /
+          // WikilinkWidget) gets to run undisturbed.
+          if (clickLandsOnLink(e.target)) return;
           if (view.state.facet(modeFacet) !== "edit") return;
           const host = (e.target as HTMLElement).closest?.(BLOCK_SEL) as HTMLElement | null;
           if (!host) return;

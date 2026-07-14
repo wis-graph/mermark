@@ -16,7 +16,7 @@ Served by the **browser mock**, not the Rust backend. Edit it, hit save (⌘S) �
 
 ## Inline styles
 
-**bold**, *italic*, ***bold italic***, ~~strikethrough~~, \`inline code\`, and a [labeled link](https://tauri.app). Autolink: https://github.com . Wikilink: [[some-note]] and an image wikilink: [[diagram.png]].
+**bold**, *italic*, ***bold italic***, ~~strikethrough~~, \`inline code\`, and a [labeled link](https://tauri.app). Autolink: https://github.com . Wikilink: [[some-note]] and an image wikilink: [[diagram.png]]. 외부 위키링크: [[https://example.com|외부]].
 
 ## Blockquote
 
@@ -52,7 +52,7 @@ Task list:
 
 | Feature   | Status | Note            |
 | --------- | :----: | --------------- |
-| Mermaid   |   ✅   | renders in box  |
+| Mermaid   |   ✅   | [문서](https://mermaid.js.org) |
 | Math      |   ✅   | KaTeX           |
 | Wikilinks |   ✅   | \`[[target]]\`    |
 

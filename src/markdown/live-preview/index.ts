@@ -9,6 +9,7 @@ import { cjkBold } from "./features/cjk-bold";
 import { heading } from "./features/heading";
 import { blockquote } from "./features/blockquote";
 import { link } from "./features/link";
+import { autolink } from "./features/autolink";
 import { image } from "./features/image";
 import { wikilink } from "./features/wikilink";
 import { footnote } from "./features/footnote";
@@ -33,6 +34,7 @@ const INLINE_FEATURES: InlineFeature[] = [
   heading,
   blockquote,
   link,
+  autolink,
   image,
   wikilink,
   footnote,

@@ -14,6 +14,16 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }));
 
+// openExternal (D/E/F/G's shared exit) goes through plugin-opener's openUrl,
+// not invoke directly — mocked the same way as wikilink.test.ts /
+// inline-render.test.ts / settings-version-pane.test.ts so link-click
+// assertions below can watch it directly.
+const mockOpenUrl = vi.fn();
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: (...args: any[]) => mockOpenUrl(...args),
+  openPath: vi.fn(),
+}));
+
 import { mountEditor } from "../src/editor";
 
 const DOC = `# Title
@@ -172,6 +182,112 @@ describe("full-editor render smoke", () => {
     expect(link!.textContent).toBe("home");
     // the (url) part is concealed
     expect(view.contentDOM.textContent).not.toContain("(https://example.com)");
+    view.destroy();
+  });
+
+  it("a relative-path link gets no data-href and its click falls through to caret placement, not openExternal (D)", () => {
+    mockOpenUrl.mockClear();
+    const doc = "go [rel](./rel.md) now\n\nfar away";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    (view as unknown as { measure(): void }).measure();
+    const link = view.contentDOM.querySelector(".cm-link") as HTMLElement | null;
+    expect(link).not.toBeNull();
+    // no external marker on an internal-looking href
+    expect(link!.hasAttribute("data-href")).toBe(false);
+    link!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    expect(mockOpenUrl).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("clicking an external [text](url) link routes through openExternal (open_url), no window.open fallback (D)", async () => {
+    mockOpenUrl.mockClear();
+    mockOpenUrl.mockResolvedValue(undefined);
+    const doc = "go [home](https://example.com) now\n\nfar away";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    (view as unknown as { measure(): void }).measure();
+    const link = view.contentDOM.querySelector(".cm-link") as HTMLElement | null;
+    expect(link).not.toBeNull();
+    link!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockOpenUrl).toHaveBeenCalledWith("https://example.com");
+    view.destroy();
+  });
+
+  it("renders [[https://…|alias]] as an external wikilink widget, reveals raw source on cursor entry (E)", () => {
+    const doc = "first line\n\nsee [[https://example.com|구글]] here";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const link = view.contentDOM.querySelector(".cm-wikilink-external") as HTMLElement | null;
+    expect(link).not.toBeNull();
+    expect(link!.textContent).toBe("구글");
+    expect(view.contentDOM.textContent).not.toContain("[[https://example.com");
+    // cursor onto the wikilink line → raw source reveals
+    view.dispatch({ selection: { anchor: doc.indexOf("[[") + 2 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("[[https://example.com|구글]]");
+    view.destroy();
+  });
+
+  // ── F: automatic URL detection (autolink) ───────────────────────────────
+  it("renders a bare https:// URL in prose as a clickable link span (F)", () => {
+    const doc = "본문 https://example.com 끝";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const link = view.contentDOM.querySelector(".cm-link") as HTMLElement | null;
+    expect(link).not.toBeNull();
+    expect(link!.dataset.href).toBe("https://example.com");
+    view.destroy();
+  });
+
+  it("renders a bare www. host with an https:// href (autolinkHref rule, F)", () => {
+    const doc = "본문 www.example.com 끝";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const link = view.contentDOM.querySelector(".cm-link") as HTMLElement | null;
+    expect(link).not.toBeNull();
+    expect(link!.dataset.href).toBe("https://www.example.com");
+    view.destroy();
+  });
+
+  it("does not autolink a URL inside inline code or a code fence (F oversampling guard)", () => {
+    const doc = "`https://example.com` and\n\n```\nhttps://fenced.example.com\n```";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-link")).toBeNull();
+    expect(view.contentDOM.textContent).toContain("https://example.com");
+    expect(view.contentDOM.textContent).toContain("https://fenced.example.com");
+    view.destroy();
+  });
+
+  it("does not double-decorate the URL inside [text](url) — Link's return-false contract holds (F)", () => {
+    const doc = "[text](https://x.com) here";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelectorAll(".cm-link").length).toBe(1);
+    view.destroy();
+  });
+
+  it("conceals <https://…> angle brackets off the cursor line, reveals on entry (F)", () => {
+    const doc = "first line\n\nsee <https://angle.example.com> here";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toContain("<https://angle.example.com>");
+    const link = view.contentDOM.querySelector(".cm-link") as HTMLElement | null;
+    expect(link?.dataset.href).toBe("https://angle.example.com");
+    view.dispatch({ selection: { anchor: doc.indexOf("<https") + 1 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("<https://angle.example.com>");
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toContain("<https://angle.example.com>");
     view.destroy();
   });
 
@@ -611,6 +727,58 @@ describe("full-editor render smoke", () => {
     expect(view.contentDOM.querySelector(".cm-table td em.cm-em")?.textContent).toBe("i");
     expect(view.contentDOM.querySelector(".cm-table td code.cm-inline-code")?.textContent).toBe("c");
     view.destroy();
+  });
+
+  // ── G: table-cell links — click gate (clickLandsOnLink vs block entry) ──
+  it("clicking a table-cell link (edit mode) opens externally and does NOT enter the block (G6)", async () => {
+    mockOpenUrl.mockClear();
+    mockOpenUrl.mockResolvedValue(undefined);
+    const doc = "intro\n\n| A | B |\n|---|---|\n| [구글](https://google.com) | plain |\n\noutro";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } }); // caret away → table rendered
+    (view as unknown as { measure(): void }).measure();
+    const a = view.contentDOM.querySelector("td a.cm-link[data-href]") as HTMLElement | null;
+    expect(a).not.toBeNull();
+    a!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // table stays rendered (widget, not raw source) — click did NOT enter the block
+    expect(view.contentDOM.querySelector(".cm-table")).not.toBeNull();
+    expect(mockOpenUrl).toHaveBeenCalledWith("https://google.com");
+    view.destroy();
+  });
+
+  it("clicking a non-link table cell (edit mode) still enters the block as before (G7 regression)", () => {
+    const doc = "intro\n\n| A | B |\n|---|---|\n| [구글](https://google.com) | plain |\n\noutro";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const cell = Array.from(view.contentDOM.querySelectorAll(".cm-table td")).find(
+      (td) => td.textContent === "plain",
+    ) as HTMLElement;
+    expect(cell).toBeTruthy();
+    cell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    (view as unknown as { measure(): void }).measure();
+    // block entry fired — table widget gone, raw pipe/separator syntax revealed.
+    // (The link cell on a DIFFERENT line than the caret still shows through its
+    // own inline `link` feature, which is unaffected by block entry — only the
+    // caret's own line un-conceals.)
+    expect(view.contentDOM.querySelector(".cm-table")).toBeNull();
+    expect(view.contentDOM.textContent).toContain("|---|---|");
+    view.destroy();
+  });
+
+  it("a table-cell link opens even in read mode (G8)", async () => {
+    mockOpenUrl.mockClear();
+    mockOpenUrl.mockResolvedValue(undefined);
+    const doc = "intro\n\n| A | B |\n|---|---|\n| [구글](https://google.com) | plain |\n\noutro";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    (ed.view as unknown as { measure(): void }).measure();
+    const a = ed.view.contentDOM.querySelector("td a.cm-link[data-href]") as HTMLElement | null;
+    expect(a).not.toBeNull();
+    a!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockOpenUrl).toHaveBeenCalledWith("https://google.com");
+    ed.view.destroy();
   });
 
   it("keeps table alignment + header after inline-mark cells (regression)", () => {

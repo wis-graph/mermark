@@ -75,6 +75,26 @@ describe("block math parsing", () => {
   });
 });
 
+describe("autolink parsing (F — GFM Autolink is already enabled, no parser change needed)", () => {
+  it("parses a bare https:// URL as a top-level URL node", () => {
+    expect(nodesOf("see https://example.com here", "URL")).toEqual([
+      ["URL", "https://example.com"],
+    ]);
+  });
+  it("parses <https://…> as an Autolink node wrapping a URL child", () => {
+    expect(nodesOf("<https://example.com>", "Autolink", "URL")).toEqual([
+      ["Autolink", "<https://example.com>"],
+      ["URL", "https://example.com"],
+    ]);
+  });
+  it("does NOT parse a bare URL inside a code fence", () => {
+    expect(nodesOf("```\nhttps://example.com\n```", "URL")).toEqual([]);
+  });
+  it("does NOT parse a bare URL inside inline code", () => {
+    expect(nodesOf("`https://example.com`", "URL")).toEqual([]);
+  });
+});
+
 describe("footnote parsing", () => {
   it("parses [^1] refs", () => {
     expect(nodesOf("Ref[^1] done", "FootnoteRef")).toEqual([["FootnoteRef", "[^1]"]]);

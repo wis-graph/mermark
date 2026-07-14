@@ -12,6 +12,10 @@ vi.mock("@tauri-apps/plugin-process", () => ({
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: vi.fn(() => Promise.resolve("0.5.4")),
 }));
+const mockOpenUrl = vi.fn();
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: (...args: any[]) => mockOpenUrl(...args),
+}));
 
 import { check } from "@tauri-apps/plugin-updater";
 import { createSettingsButton } from "../src/settings/panel/modal";
@@ -210,6 +214,54 @@ describe("settings modal — 버전 category", () => {
     // the bold run went through renderInlineMarkdown, not textContent —
     // confirms the XSS-safe path (no innerHTML) rather than a raw string dump.
     expect(li?.querySelector("strong")?.textContent).toBe("새 기능");
+  });
+
+  it("renders a link inside update.body release notes and opens it via openExternal on click (G, panel link regression)", async () => {
+    mockOpenUrl.mockReset();
+    mockOpenUrl.mockResolvedValue(undefined);
+    vi.mocked(check).mockResolvedValue({
+      version: "9.9.9",
+      date: "2026-07-01",
+      body: "### Added\n\n- 문서: [mermaid.js.org](https://mermaid.js.org) 참고.\n",
+      downloadAndInstall: vi.fn(() => Promise.resolve()),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const backdrop = openModal();
+    const versionBtn = [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-cat")].find(
+      (b) => b.textContent === "버전",
+    )!;
+    versionBtn.click();
+    const checkBtn = backdrop.querySelector<HTMLButtonElement>(".version-check-btn")!;
+    checkBtn.click();
+    await flush();
+    await flush();
+
+    const notes = backdrop.querySelector(".version-update-notes");
+    const a = notes?.querySelector("a.cm-link") as HTMLAnchorElement | null;
+    expect(a).not.toBeNull();
+    expect(a!.dataset.href).toBe("https://mermaid.js.org");
+    a!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await flush();
+    expect(mockOpenUrl).toHaveBeenCalledWith("https://mermaid.js.org");
+  });
+
+  it("a changelog item with no link renders unchanged (regression — plain bullets keep their prior shape)", () => {
+    const backdrop = openModal();
+    const versionBtn = [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-cat")].find(
+      (b) => b.textContent === "버전",
+    )!;
+    versionBtn.click();
+    // Scoped to the CHANGELOG.md-driven "변경 내역" section specifically (NOT
+    // `.version-update-notes`, the update-card release notes — both share the
+    // `.version-changelog-list` class, and update-flow's found-update state
+    // can persist across tests in this file per the header note above).
+    const items = backdrop.querySelectorAll<HTMLLIElement>(
+      ".version-changelog-section .version-changelog-list li",
+    );
+    expect(items.length).toBeGreaterThan(0);
+    // no stray anchors introduced into changelog entries that never had links
+    const plainItems = [...items].filter((li) => !li.textContent?.includes("http"));
+    for (const li of plainItems) expect(li.querySelector("a.cm-link")).toBeNull();
   });
 
   it("switching back to a registry category tears down the version pane cleanly", () => {

@@ -3,6 +3,7 @@ import { type InlineFeature } from "../core";
 import { ImageWidget, resolveImageUrl } from "../../image";
 import { embedWidgetFor } from "../../embed";
 import { WikilinkWidget, wikilinkPath, isImageTarget, sameFileHeadingAnchor } from "../../wikilink";
+import { isExternalUrl } from "../../open-external";
 
 export const wikilink: InlineFeature = {
   nodes: ["Wikilink", "WikilinkEmbed"],
@@ -24,17 +25,25 @@ export const wikilink: InlineFeature = {
     // wikilinks) skips file resolution entirely: it's a same-document jump, not
     // a path to check with path_exists.
     const anchor = !embed ? sameFileHeadingAnchor(target) : null;
+    // An external URL (`[[https://…]]`, never an embed — `![[https://…]]` has
+    // no "embed a URL" meaning either) also skips file resolution entirely:
+    // it must never reach wikilinkPath/path_exists/create_markdown_file, or a
+    // pasted URL becomes a junk file on disk (the Obsidian-habit bug this
+    // branch exists to prevent).
+    const external = !embed && isExternalUrl(target) ? target : null;
     const deco = embedWidget
       ? Decoration.replace({ widget: embedWidget })
       : embed && isImageTarget(target)
         ? Decoration.replace({
             widget: new ImageWidget(resolveImageUrl(target, ctx.baseDir), alias, target, ctx.baseDir),
           })
-        : anchor !== null
-          ? Decoration.replace({ widget: new WikilinkWidget(alias, "", anchor) })
-          : Decoration.replace({
-              widget: new WikilinkWidget(alias, wikilinkPath(target, ctx.baseDir, ctx.currentFile)),
-            });
+        : external !== null
+          ? Decoration.replace({ widget: new WikilinkWidget(alias, "", null, external) })
+          : anchor !== null
+            ? Decoration.replace({ widget: new WikilinkWidget(alias, "", anchor) })
+            : Decoration.replace({
+                widget: new WikilinkWidget(alias, wikilinkPath(target, ctx.baseDir, ctx.currentFile)),
+              });
     ctx.push({ from: node.from, to: node.to, deco, conceal: true });
     return false;
   },

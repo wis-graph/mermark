@@ -60,7 +60,7 @@
 - **강조** — bold(`**`), italic(`*`), code(`` ` ``), strikethrough(`~~`) — **테이블 셀 안에서도 렌더**(inline-render.ts).
 - **CJK 인접 플랭킹 완화** — 한국어 조사 등 CJK 글자가 볼드 마커에 바로 붙을 때(`**"New Policy"**를`, `**…(\`user_id\`)**와`) CommonMark 표준 플랭킹 판정으로는 실패하던 `**` 볼드를 성립시킨다. CJK 인접에서만 적용하는 의도적 CommonMark 표준 이탈(`**` 볼드 한정, `*`/`***`/`_` 비대상). 라이브프리뷰 데코 레이어(`live-preview/features/cjk-bold.ts`)에서만 동작 — outline/read-mode 렌더러(`inline-render.ts`)는 미반영(별도 정규식 렌더러라 M7 스코프 밖).
 - **하이라이트** — `==mark==`(GFM 확장).
-- **링크 / 위키링크** — `[text](url)`, `[[target]]`(피커·자동완성·active/missing/asset).
+- **링크 / 위키링크** — `[text](url)`, `[[target]]`(피커·자동완성·active/missing/asset). **자동 URL 감지(autolink)** — 맨손 `https://…`/`www.…`/이메일과 `<https://…>` 모두 클릭 가능한 링크로 렌더(GFM Autolink는 기존에 이미 파싱되고 있었고, 이번에 `features/autolink.ts`가 렌더·클릭을 얹었다). **`[[https://…]]`/`[[https://…|별칭]]`(위키링크 외부 URL)** — 파일 해석(`wikilinkPath`)·`path_exists`·`create_markdown_file`을 전혀 타지 않고 바로 외부로 연다(옵시디언 습관으로 URL을 위키링크에 붙였을 때 쓰레기 파일이 생기던 결함 제거). **외부 열기 단일 출구** — 마크다운 링크/위키링크/autolink/표 셀·설정판 링크 넷이 `open-external.ts`의 `isExternalUrl`(화이트리스트: `http(s)/mailto/tel`)+`openExternal` 하나를 공유(실패 시 조용한 무반응 대신 에러 표식+title). **표 셀 링크** — 표 안 `[text](url)`/맨손 URL도 이제 렌더·클릭된다(`inline-render.ts`의 `matchLinkToken`); 표 안 `[[wikilink]]`/상대경로는 링크 스타일로 보이되 클릭은 기존처럼 블록 진입(원문 노출)으로 폴스루(스코프 밖, 후속 과제).
 - **풋노트 참조** — `[^name]` 위첨자 칩.
 - **인라인 수식** — `$…$`(KaTeX).
 

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openPath as openAsset } from "@tauri-apps/plugin-opener";
 import { findHeadingByText } from "./outline";
 import { jumpTo } from "./footnote-nav";
+import { openExternal } from "./open-external";
 
 function isMarkdownPath(path: string): boolean {
   return path.toLowerCase().endsWith(".md");
@@ -66,16 +67,39 @@ export class WikilinkWidget extends WidgetType {
     readonly alias: string,
     readonly path: string,
     readonly headingAnchor: string | null = null,
+    readonly externalUrl: string | null = null,
   ) {
     super();
   }
   eq(o: WikilinkWidget) {
-    return o.path === this.path && o.alias === this.alias && o.headingAnchor === this.headingAnchor;
+    return (
+      o.path === this.path &&
+      o.alias === this.alias &&
+      o.headingAnchor === this.headingAnchor &&
+      o.externalUrl === this.externalUrl
+    );
   }
   toDOM(view: EditorView) {
     const a = document.createElement("a");
     a.className = "cm-wikilink cm-wikilink-pending";
     a.textContent = this.alias;
+
+    if (this.externalUrl !== null) {
+      // [[https://…]] / [[https://…|alias]] — external URL, no IPC of any
+      // kind: never touches path_exists/create_markdown_file/open_path, so a
+      // stray URL pasted Obsidian-style into a wikilink can never create a
+      // junk file on disk. Same priority tier as the heading-anchor branch
+      // (both resolve without a file lookup).
+      a.classList.remove("cm-wikilink-pending");
+      a.classList.add("cm-wikilink-active", "cm-wikilink-external");
+      a.addEventListener("click", (e) => {
+        if (e.altKey) return; // Alt+click = edit raw source (attachAltClickEdit), not open
+        e.preventDefault();
+        void openExternal(this.externalUrl!, a);
+      });
+      attachAltClickEdit(a, view);
+      return a;
+    }
 
     if (this.headingAnchor !== null) {
       // [[#heading]] — same-file heading jump. No IPC: the target is resolved

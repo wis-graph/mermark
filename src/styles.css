@@ -514,9 +514,20 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-wikilink-missing { color: var(--muted); text-decoration: line-through dotted; cursor: default; }
 .cm-wikilink-pending { color: var(--muted); }
 .cm-wikilink-error { color: #dc2626; text-decoration: underline wavy; }
+.cm-wikilink-external::after { content: "↗"; font-size: .8em; margin-left: .1em; opacity: .7; }
 
 .cm-link { color: var(--link); cursor: pointer; }
 .cm-link:hover { text-decoration: underline; }
+/* Shared external-open failure feedback (openExternal, open-external.ts) —
+   same tone as .cm-wikilink-error, applied to any anchor that failed to open
+   (main-body link, wikilink, autolink, or a table-cell/changelog anchor). */
+.cm-external-link-error { color: #dc2626; text-decoration: underline wavy; }
+
+/* Links rendered inside a table cell or the settings version pane's
+   changelog list (both via renderInlineMarkdown/inline-render.ts) share the
+   same .cm-link look as the main document body. */
+.cm-table a.cm-link, .version-changelog-list a.cm-link { color: var(--link); cursor: pointer; }
+.cm-table a.cm-link:hover, .version-changelog-list a.cm-link:hover { text-decoration: underline; }
 
 /* Heading typescale, ratio ~1.25 (major third). The heading class sits ON the
    .cm-line element, so `.cm-editor .cm-line` (0,2,0) out-specifies a bare .cm-hN

@@ -1,6 +1,6 @@
 import { Decoration, EditorView } from "@codemirror/view";
-import { invoke } from "@tauri-apps/api/core";
 import { hide, type InlineFeature } from "../core";
+import { isExternalUrl, openExternal } from "../../open-external";
 
 export const link: InlineFeature = {
   nodes: ["Link"],
@@ -19,7 +19,12 @@ export const link: InlineFeature = {
         to: textTo,
         deco: Decoration.mark({
           class: "cm-link",
-          attributes: href ? { "data-href": href, title: href } : {},
+          // data-href is the shared "this opens externally" marker (see
+          // open-external.ts) — only attached when the href actually
+          // qualifies, so a relative/internal-looking href never masquerades
+          // as clickable and the mousedown handler below can gate on its
+          // mere presence.
+          attributes: href && isExternalUrl(href) ? { "data-href": href, title: href } : {},
         }),
         conceal: false,
       });
@@ -28,11 +33,15 @@ export const link: InlineFeature = {
   view: EditorView.domEventHandlers({
     mousedown(e) {
       const el = (e.target as HTMLElement).closest?.("[data-href]") as HTMLElement | null;
-      if (!el?.dataset.href) return false;
+      const href = el?.dataset.href;
+      // Gate belongs here even though data-href is only ever rendered for
+      // external hrefs above: this handler is the single mousedown listener
+      // for ALL of live-preview's inline `.cm-link` decorations (including
+      // autolink's — see features/autolink.ts), so it re-affirms the same
+      // predicate rather than trusting the marker alone.
+      if (!href || !isExternalUrl(href)) return false; // not ours — let CM place the caret
       e.preventDefault();
-      invoke("plugin:opener|open_url", { url: el.dataset.href }).catch(() => {
-        window.open(el.dataset.href ?? undefined, "_blank");
-      });
+      void openExternal(href, el);
       return true;
     },
   }),
