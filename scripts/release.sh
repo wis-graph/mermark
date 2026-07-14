@@ -1,6 +1,29 @@
 #!/bin/bash
 set -e
 
+# --dry-run: 게이트·분기 로직만 실행하고, 실제로 상태를 바꾸는 gh/git 명령은
+# 실행 대신 무엇을 실행했을지 출력만 한다. 이 스크립트가 지금까지 한 번도
+# 적대적으로 시험된 적이 없었다는 게 2026-07-14 세션의 지적이었다 — 이 플래그로
+# 실제 태그/릴리스를 만들지 않고도 분기(멱등성 판정, run 포착 로직)를 반복
+# 검증할 수 있게 한다.
+DRY_RUN=0
+if [ "${1:-}" == "--dry-run" ]; then
+  DRY_RUN=1
+  echo "[dry-run] 게이트·분기만 실행합니다. release/upload/dispatch/commit/push는 실행되지 않습니다."
+fi
+
+# 상태를 바꾸는 명령을 감싼다: dry-run이면 실행할 명령을 그대로 echo만 하고
+# 반환값 0으로 진행, 아니면 실제로 실행한다.
+run_mutating() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '[dry-run] would run:'
+    printf ' %q' "$@"
+    printf '\n'
+  else
+    "$@"
+  fi
+}
+
 # package.json에서 현재 버전 정보 동적 추출
 VERSION=$(node -e "console.log(require('./package.json').version)")
 TAG="v$VERSION"
@@ -57,25 +80,9 @@ echo "✓ 변경 내역 정합성 OK — CHANGELOG·번들 모두 [$VERSION] 포
 # 그러면 기존 사용자 전원의 자동 업데이트가 서명 검증 실패로 깨진다 — 배포 후에야
 # 드러나는 최악의 실패다. 빌드는 `npm run release:build`가 키를 강제하고, 여기서는
 # 실제로 나갈 .sig의 키ID를 pubkey의 키ID와 대조해 2중으로 막는다.
-# pubkey(tauri.conf.json)도 .sig 파일도 "minisign 파일 전체를 base64로 한 번 더 감싼"
-# 형태다. 한 겹 벗기면 [주석 줄 + base64 줄]이 나오고, 그 base64가
-# [알고 2B][키ID 8B][본문…] — 이 키ID가 서로 일치해야 한다.
-KEY_CHECK=$(SIG_PATH="$SIG_PATH" python3 - <<'PY'
-import base64, json, os
-
-def key_id(blob: str) -> bytes:
-    for line in blob.splitlines():
-        line = line.strip()
-        if line and not line.lower().startswith(("untrusted comment:", "trusted comment:")):
-            return base64.b64decode(line)[2:10]
-    raise ValueError("base64 라인을 찾지 못함")
-
-pub_b64 = json.load(open("src-tauri/tauri.conf.json"))["plugins"]["updater"]["pubkey"]
-pub_id = key_id(base64.b64decode(pub_b64).decode())
-sig_id = key_id(base64.b64decode(open(os.environ["SIG_PATH"], encoding="utf-8").read()).decode())
-print("OK" if pub_id == sig_id else f"MISMATCH pub={pub_id.hex()} sig={sig_id.hex()}")
-PY
-)
+# 로직은 scripts/lib/check-signing-key.py 하나뿐 — 아래 윈도우 .sig 검증도 같은
+# 스크립트를 쓴다(복붙 아님. 하나가 고장나면 둘 다 고장나야 정직하다).
+KEY_CHECK=$(python3 scripts/lib/check-signing-key.py "$SIG_PATH")
 if [ "$KEY_CHECK" != "OK" ]; then
   echo "오류: 업데이터 서명키가 앱이 신뢰하는 pubkey와 다릅니다 ($KEY_CHECK)"
   echo "      이대로 배포하면 기존 사용자 전원의 자동 업데이트가 서명 검증 실패로 깨집니다."
@@ -98,39 +105,110 @@ PY
 )
 [ -z "$NOTES" ] && NOTES="mermark $TAG 버전 자동 릴리즈 업데이트"
 
-echo "=== 1. GitHub Release ($TAG) 생성 및 파일 업로드 ==="
-/opt/homebrew/bin/gh release create "$TAG" "$DMG_PATH" "$TAR_PATH" "$SIG_PATH" --title "$TAG" --notes "$NOTES"
+GH="/opt/homebrew/bin/gh"
+WORKFLOW_FILE="release-windows.yml"
 
-echo "=== 2. updater.json 갱신 및 GitHub 배포 ==="
-# 서명 파일 내용 읽기
-SIG_CONTENT=$(cat "$SIG_PATH")
+# --- 멱등성: 릴리스가 이미 있으면 create 대신 upload --clobber -----------------
+# 재시도(윈도우 CI가 한 번 실패해 사람이 이 스크립트를 다시 돌리는 흔한 경우)에서
+# `gh release create`는 "태그/릴리스가 이미 존재"로 막혀 스크립트가 죽는다. 그러면
+# 사람이 반쯤 나간 릴리스를 손으로 수술하게 되고, updater.json 사고는 정확히 그
+# 순간에 난다. 존재 확인은 읽기 전용이라 dry-run에서도 항상 실제로 실행한다 —
+# 이게 검증해야 할 분기 자체이기 때문이다.
+if "$GH" release view "$TAG" >/dev/null 2>&1; then
+  echo "=== 1. GitHub Release ($TAG) 이미 존재 — macOS 자산 재업로드(clobber) ==="
+  run_mutating "$GH" release upload "$TAG" "$DMG_PATH" "$TAR_PATH" "$SIG_PATH" --clobber
+else
+  echo "=== 1. GitHub Release ($TAG) 생성 및 파일 업로드 (macOS) ==="
+  run_mutating "$GH" release create "$TAG" "$DMG_PATH" "$TAR_PATH" "$SIG_PATH" --title "$TAG" --notes "$NOTES"
+fi
 
-# updater.json 생성 — notes에 멀티라인 마크다운이 들어가므로 heredoc 문자열
-# 치환 대신 python json.dump로 이스케이프를 보장한다.
-NOTES="$NOTES" SIG_CONTENT="$SIG_CONTENT" VERSION="$VERSION" TAG="$TAG" python3 - <<'PY'
-import json, os, datetime
-json.dump(
-    {
-        "version": os.environ["VERSION"],
-        "notes": os.environ["NOTES"],
-        "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "platforms": {
-            "darwin-aarch64": {
-                "signature": os.environ["SIG_CONTENT"],
-                "url": f"https://github.com/wis-graph/mermark/releases/download/{os.environ['TAG']}/mermark.app.tar.gz",
-            }
-        },
-    },
-    open("updater.json", "w", encoding="utf-8"),
-    ensure_ascii=False,
-    indent=2,
-)
-PY
+# --- 배포 게이트: 윈도우 CI를 직접 디스패치하고 대기 --------------------------
+# updater.json의 writer는 이 스크립트 하나뿐이어야 한다(SSOT). release-windows.yml은
+# push:tags 트리거가 없다(workflow_dispatch 전용) — 이 스크립트가 유일한
+# 오케스트레이터다. "최신 run 1개"를 추측하지 않고, 디스패치 직전 타임스탬프
+# 이후에 생긴 workflow_dispatch run만 내 것으로 인정한다
+# (scripts/lib/find-dispatched-run.mjs, 재시도 시 어제의 실패한 run을 오판하지
+# 않기 위한 장치). 윈도우 빌드가 실패하면 이 스크립트도 실패해야 한다 — macOS
+# 자산은 이미 나갔으니 macOS 사용자는 정상 업데이트를 받지만(의도된 부분 성공),
+# updater.json이 아직 안 갱신됐으니 어느 플랫폼에도 알림은 안 나간다.
+echo "=== 2. 윈도우 빌드(CI) 디스패치 및 대기 ==="
+SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+run_mutating "$GH" workflow run "$WORKFLOW_FILE" --ref "$TAG" -f "tag=$TAG"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "[dry-run] 실제 디스패치가 없으므로 이후(CI 대기·서명키 검증·updater.json 기록) 단계는 건너뜁니다."
+  echo "[dry-run] 게이트·멱등성 분기 검증 완료."
+  exit 0
+fi
+
+RUN_ID=""
+for i in $(seq 1 30); do
+  RUNS_JSON=$("$GH" run list --workflow="$WORKFLOW_FILE" --limit 20 --json databaseId,createdAt,event 2>/dev/null || echo '[]')
+  RUN_ID=$(echo "$RUNS_JSON" | node scripts/find-dispatched-run-cli.mjs "$SINCE" || true)
+  if [ -n "$RUN_ID" ]; then
+    break
+  fi
+  echo "  … 디스패치한 윈도우 워크플로 실행이 나타나길 기다리는 중 ($i/30)"
+  sleep 10
+done
+if [ -z "$RUN_ID" ]; then
+  echo "오류: 디스패치한 윈도우 워크플로 실행을 5분 내에 찾지 못했습니다."
+  echo "      .github/workflows/release-windows.yml이 main에 있는지, workflow_dispatch가 맞는지 확인하세요:"
+  echo "      $GH run list --workflow=$WORKFLOW_FILE"
+  exit 1
+fi
+echo "  워크플로 실행 발견 (run $RUN_ID). 완료 대기 중…"
+if ! "$GH" run watch "$RUN_ID" --exit-status; then
+  echo "오류: 윈도우 빌드 워크플로가 실패했습니다 (run $RUN_ID)."
+  echo "      https://github.com/wis-graph/mermark/actions/runs/$RUN_ID 에서 로그를 확인하세요."
+  echo "      macOS 자산은 이미 릴리스에 올라갔지만 updater.json은 갱신되지 않았으므로"
+  echo "      어느 플랫폼에도 자동 업데이트 알림은 나가지 않습니다(안전 상태)."
+  echo "      해결: 원인을 고친 뒤 이 스크립트를 그대로 다시 실행하세요 — 릴리스가 이미"
+  echo "      있으므로 자동으로 재업로드+재디스패치 경로를 탑니다(손 수술 불필요)."
+  exit 1
+fi
+echo "✓ 윈도우 빌드 완료 (run $RUN_ID)"
+
+# --- 배포 게이트: 윈도우 업데이터 서명키 정합성 ------------------------------
+# macOS와 정확히 같은 게이트를 윈도우 .sig에도 적용한다. CI가 서명을 시작하는
+# 순간부터 이게 없으면 검증되지 않은 서명이 사용자에게 나갈 수 있다.
+echo "=== 3. 윈도우 서명키 정합성 검증 ==="
+WIN_ASSETS=$("$GH" release view "$TAG" --json assets --jq '.assets[].name')
+WIN_EXE=$(echo "$WIN_ASSETS" | grep -i 'setup\.exe$' | head -n1 || true)
+WIN_SIG=$(echo "$WIN_ASSETS" | grep -i 'setup\.exe\.sig$' | head -n1 || true)
+if [ -z "$WIN_EXE" ] || [ -z "$WIN_SIG" ]; then
+  echo "오류: '$TAG' 릴리스 자산에서 윈도우 setup.exe/.sig를 찾지 못했습니다."
+  echo "      실제 자산 목록:"
+  echo "$WIN_ASSETS" | sed 's/^/        /'
+  exit 1
+fi
+WIN_TMPDIR=$(mktemp -d)
+trap 'rm -rf "$WIN_TMPDIR"' EXIT
+"$GH" release download "$TAG" --pattern "$WIN_SIG" --dir "$WIN_TMPDIR" --clobber
+WIN_KEY_CHECK=$(python3 scripts/lib/check-signing-key.py "$WIN_TMPDIR/$WIN_SIG")
+if [ "$WIN_KEY_CHECK" != "OK" ]; then
+  echo "오류: 윈도우 업데이터 서명키가 앱이 신뢰하는 pubkey와 다릅니다 ($WIN_KEY_CHECK)"
+  echo "      updater.json에 윈도우 플랫폼을 추가하지 않고 중단합니다."
+  echo "      (macOS는 이미 배포됐지만 updater.json 미갱신이라 알림은 안 나갑니다.)"
+  exit 1
+fi
+echo "✓ 윈도우 서명키 정합성 OK — $WIN_SIG가 tauri.conf.json의 pubkey와 같은 키"
+
+echo "=== 4. updater.json 갱신 및 GitHub 배포 (darwin-aarch64 + windows-x86_64) ==="
+run_mutating env \
+  VERSION="$VERSION" \
+  TAG="$TAG" \
+  NOTES="$NOTES" \
+  PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  MAC_SIG_CONTENT="$(cat "$SIG_PATH")" \
+  WIN_EXE_NAME="$WIN_EXE" \
+  WIN_SIG_CONTENT="$(cat "$WIN_TMPDIR/$WIN_SIG")" \
+  node scripts/write-updater-json.mjs
 
 echo "updater.json 파일이 갱신되었습니다. GitHub main 브랜치로 푸시합니다..."
-git add updater.json
-git commit -m "deploy: update release metadata for $TAG"
-git push origin main
+run_mutating git add updater.json
+run_mutating git commit -m "deploy: update release metadata for $TAG"
+run_mutating git push origin main
 
 echo "=================================================="
 echo "🎉 v$VERSION 배포가 완벽하게 완료되었습니다!"

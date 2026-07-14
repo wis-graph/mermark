@@ -1,0 +1,146 @@
+name: Release (Windows)
+
+# workflow_dispatch 전용 — push:tags 트리거는 의도적으로 없다.
+# scripts/release.sh가 `gh workflow run`으로 이 워크플로를 직접 호출하는
+# 유일한 오케스트레이터다. 이유(2026-07-14 team-lead 지적, 실제 사고 시나리오):
+#   - 태그 push로 트리거하면 release.sh는 "어느 run이 이 태그 때문에 생겼는지"를
+#     `gh run list --limit 1`로 추측해야 한다. 재시도 상황(윈도우 CI가 러너
+#     플레이크 등으로 한 번 실패해 사람이 release.sh를 다시 돌리는 경우)에서는
+#     이 "최신 1개" 추측이 어제의 실패한 run을 다시 집어 즉시 실패로 오판한다.
+#   - workflow_dispatch는 release.sh가 호출 직전 타임스탬프를 기록해두고
+#     "그 이후에 생성된 workflow_dispatch 이벤트 run"만 자기 것으로 인정할 수
+#     있게 해준다(scripts/lib/find-dispatched-run.mjs) — 결정적 매칭.
+#   - 재시도가 "그냥 release.sh를 다시 돌린다"로 자연스러워진다. 태그/릴리스는
+#     이미 있어도 release.sh가 멱등하게 처리한다(release view로 존재 확인 후
+#     create 대신 upload --clobber).
+#   - 푸시 트리거와 디스패치가 동시에 발화해 중복 run이 생기는 경로도 없다.
+#
+# pull_request 트리거는 절대 추가하지 않는다 — 이 워크플로는
+# TAURI_SIGNING_PRIVATE_KEY로 사용자 전원이 자동 설치하는 업데이트에 서명할
+# 권한을 갖고 있고, 포크 PR에서 트리거되면 그 시크릿이 새어나갈 수 있다.
+#
+# 산출물은 이 워크플로가 릴리스에 업로드만 한다. updater.json은 여기서 절대
+# 건드리지 않는다 — release.sh가 이 워크플로의 완료를 기다렸다가(gh run watch)
+# 윈도우 .sig의 서명키를 검증한 뒤 유일한 writer로서 커밋한다(SSOT, 경쟁 방지).
+#
+# workflow_dispatch는 이 파일이 default 브랜치(main)에 있어야 동작한다 —
+# release.sh를 처음 이 버전으로 돌리기 전에 이 워크플로 파일이 이미 main에
+# 머지돼 있어야 한다.
+#
+# 윈도우 코드서명(Authenticode)은 범위 밖이다 — 설치 시 SmartScreen 경고가
+# 뜨는 게 정상이며 의도된 상태다(2026-07-14 합의). 자동 업데이트 자체는
+# minisign 서명으로 보호된다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "빌드할 태그 (예: v0.5.13). scripts/release.sh가 항상 채워서 호출한다."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Determine release tag
+        id: tag
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ] || [[ "$TAG" != v* ]]; then
+            echo "오류: 유효한 태그(v*)가 아닙니다 (input='${{ inputs.tag }}')."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1 (stable)
+        with:
+          toolchain: stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      # --- 배포 게이트: 변경 내역 정합성 (CI 자체 빌드에서도 재검증) --------------
+      # macOS의 scripts/release.sh와 같은 게이트. 이 워크플로가 자기 dist/를
+      # 새로 빌드하므로, 여기서도 값싸게 다시 검사해 둔다.
+      - name: Verify CHANGELOG/bundle parity
+        shell: bash
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+          if ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "오류: CHANGELOG.md에 '## [$VERSION]' 섹션이 없습니다."
+            exit 1
+          fi
+          if ! grep -rq "\[$VERSION\]" dist/ 2>/dev/null; then
+            echo "오류: 빌드된 번들(dist/)에 [$VERSION]의 변경 내역이 없습니다."
+            exit 1
+          fi
+          echo "변경 내역 정합성 OK"
+
+      - name: Build Tauri app (Windows, signed)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build
+
+      - name: Locate build artifacts
+        id: artifacts
+        shell: bash
+        run: |
+          NSIS_DIR="src-tauri/target/release/bundle/nsis"
+          EXE=$(find "$NSIS_DIR" -name "*-setup.exe" | head -n1)
+          SIG=$(find "$NSIS_DIR" -name "*-setup.exe.sig" | head -n1)
+          if [ -z "$EXE" ] || [ -z "$SIG" ]; then
+            echo "오류: NSIS 빌드 산출물(.exe/.sig)을 찾지 못했습니다. $NSIS_DIR 내용:"
+            find "$NSIS_DIR" || true
+            exit 1
+          fi
+          echo "exe=$EXE" >> "$GITHUB_OUTPUT"
+          echo "sig=$SIG" >> "$GITHUB_OUTPUT"
+
+          # MSI(WiX)는 bundle.targets가 "all"이라 함께 나올 수 있다 — updater.json의
+          # url은 항상 NSIS setup.exe를 가리키지만(release.sh 계약), MSI도 참고용으로
+          # 같이 올린다. 없으면 조용히 건너뛴다(필수 아님).
+          MSI_DIR="src-tauri/target/release/bundle/msi"
+          MSI=$(find "$MSI_DIR" -name "*.msi" 2>/dev/null | head -n1 || true)
+          MSI_SIG=$(find "$MSI_DIR" -name "*.msi.sig" 2>/dev/null | head -n1 || true)
+          echo "msi=$MSI" >> "$GITHUB_OUTPUT"
+          echo "msi_sig=$MSI_SIG" >> "$GITHUB_OUTPUT"
+
+      - name: Upload assets to existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          # 릴리스는 scripts/release.sh가 macOS 자산과 함께 이미 만들어 뒀다.
+          # 여기서는 같은 릴리스에 윈도우 자산만 붙인다.
+          ASSETS=("${{ steps.artifacts.outputs.exe }}" "${{ steps.artifacts.outputs.sig }}")
+          MSI="${{ steps.artifacts.outputs.msi }}"
+          MSI_SIG="${{ steps.artifacts.outputs.msi_sig }}"
+          [ -n "$MSI" ] && ASSETS+=("$MSI")
+          [ -n "$MSI_SIG" ] && ASSETS+=("$MSI_SIG")
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber
