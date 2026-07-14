@@ -54,6 +54,30 @@
 //     Vite publicDir serving the literal mock-assets file — same mechanism
 //     G3's report.xlsx already relies on).
 //
+// G10~G12 (_workspace/01_hwp_viewer.md §9 — HWP/HWPX viewer, built-in):
+// G10 (render positive + VISUAL): sample.hwp → .hwp-viewer exists, 3
+//     placeholders (browser mock's HWP_MOCK_PAGE_COUNT), page 0's <img>
+//     naturalWidth > 0 and its src starts with data:image/svg+xml — the
+//     ONLY way a rendered page may enter the DOM (design §4.1).
+// G11 (script NEVER runs — adversarial pair, "test a guard both ways", same
+//     shape as G8): the mock's page-1 SVG (src/mocks/tauri-core.ts's
+//     mockHwpPageSvg) carries a <script> AND an onload probe. Positive:
+//     after page 1 renders, window.__HWP_PWNED is still undefined — proving
+//     the <img src="data:image/svg+xml;...">` mode never executes it, a
+//     spec-level guarantee independent of CSP (dev:browser has none).
+//     Negative (proves the positive isn't a no-op): a same-shaped
+//     window.__HWP_PWNED write, executed via createElement("script") +
+//     appendChild (a REAL script-execution DOM path — unlike innerHTML,
+//     whose parser-inserted <script> elements the HTML spec makes inert
+//     regardless of sandbox/CSP; an earlier version of this probe used
+//     innerHTML and was a silent always-false no-op for exactly that
+//     reason, caught on this golden's own first run) — confirming the
+//     observation channel (window.__HWP_PWNED) is live, so the positive's
+//     "still undefined" means "blocked", not "never checked".
+// G12 (negative — corrupted file): corrupt.hwp → hwp_open rejects (mock),
+//     .hwp-viewer-status shows an error message, no .hwp-viewer-pages ever
+//     appears, and the app survives (editor still responds afterward).
+//
 // VISUAL CONTRACT (checkPanelChrome below) applies to EVERY viewer's panel —
 // this is what the audit's screenshot + real-device findings actually
 // demand: "all viewers share the same shell chrome AND never spill past
@@ -66,7 +90,11 @@ import { assertPageRendered } from "./lib/preflight.mjs";
 
 const out = process.argv[2] ?? "/tmp/viewer-golden.json";
 const url = process.argv[3] ?? "http://localhost:1430/?file=/mock/vault/index.md";
-const result = { g1: {}, g2: {}, g3: {}, g4: {}, g5: {}, g6: {}, g7: {}, g8: {}, g9: {}, errors: [], failedRequests: [] };
+const result = {
+  g1: {}, g2: {}, g3: {}, g4: {}, g5: {}, g6: {}, g7: {}, g8: {}, g9: {}, g10: {}, g11: {}, g12: {},
+  errors: [],
+  failedRequests: [],
+};
 
 const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();
 const browser = await chromium.connectOverCDP(ver.webSocketDebuggerUrl);
@@ -410,6 +438,66 @@ result.g4.backdropCount = await page.locator(".viewer-backdrop").count();
 result.g4.hasExcelViewer = (await page.locator(".excel-viewer").count()) > 0;
 result.g4.hasImageViewer = (await page.locator(".image-viewer").count()) > 0;
 await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
+// ── G10~G12 — HWP/HWPX viewer (built-in) ────────────────────────────────────
+await rowFor("/mock/vault/sample.hwp").click();
+await page.waitForTimeout(500); // hwp_open + lazy-render of near-viewport pages
+result.g10.hasHwpViewer = (await page.locator(".hwp-viewer").count()) > 0;
+result.g10.placeholderCount = await page.locator(".hwp-viewer-page").count();
+const firstPageImg = page.locator('.hwp-viewer-page[data-page="0"] img.hwp-viewer-page-img');
+result.g10.page0Src = await firstPageImg.getAttribute("src").catch(() => null);
+result.g10.page0IsDataSvg = !!result.g10.page0Src && result.g10.page0Src.startsWith("data:image/svg+xml;base64,");
+result.g10.page0NaturalWidth = await firstPageImg.evaluate((img) => img.naturalWidth).catch(() => 0);
+Object.assign(result.g10, await checkPanelChrome(page, ".hwp-viewer", ".hwp-viewer-caption"));
+await page.screenshot({ path: out.replace(/\.json$/, ".g10-hwp-viewer.png") });
+
+// G11 positive: page 1's SVG (mockHwpPageSvg, tauri-core.ts) carries a
+// <script> + onload probe. Once its <img> has rendered, the probe must
+// never have fired.
+const page1Img = page.locator('.hwp-viewer-page[data-page="1"] img.hwp-viewer-page-img');
+await page1Img.waitFor({ state: "attached", timeout: 5000 }).catch(() => {});
+result.g11.pwnedAfterRender = await page.evaluate(() => window.__HWP_PWNED);
+result.g11.pwnedOnloadAfterRender = await page.evaluate(() => window.__HWP_PWNED_ONLOAD);
+result.g11.scriptDidNotRun = result.g11.pwnedAfterRender === undefined && result.g11.pwnedOnloadAfterRender === undefined;
+
+// G11 negative (guard-both-ways): proves window.__HWP_PWNED is a live,
+// working observation channel — NOT that `<script>`-via-innerHTML executes,
+// which it structurally never does (the HTML parsing spec makes a
+// parser-inserted <script> inert, independent of any sandbox/CSP; an
+// earlier version of this probe used innerHTML and was a silent no-op for
+// that reason, caught by this exact rerun). A `<script>` element built with
+// createElement + appendChild DOES run its content the moment it's inserted
+// — that's the real "same code, executed directly in the document instead
+// of behind an <img> boundary" comparison this negative needs: same
+// window.__HWP_PWNED write, reached through DOM script execution rather
+// than data:image/svg+xml decoding.
+result.g11.scriptRanWhenInjectedDirectly = await page.evaluate(() => {
+  const scratch = document.createElement("div");
+  document.body.appendChild(scratch);
+  const script = document.createElement("script");
+  script.textContent = "window.__HWP_PWNED = 1;";
+  scratch.appendChild(script);
+  const ran = window.__HWP_PWNED === 1;
+  scratch.remove();
+  delete window.__HWP_PWNED;
+  delete window.__HWP_PWNED_ONLOAD;
+  return ran;
+});
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
+// ── G12 — corrupted HWP file: error status, app survives ───────────────────
+await rowFor("/mock/vault/corrupt.hwp").click();
+await page.waitForTimeout(400);
+result.g12.statusText = await page.locator(".hwp-viewer-status").innerText().catch(() => "");
+result.g12.showsError = result.g12.statusText.includes("문서를 열 수 없습니다");
+result.g12.hasPagesContainer = (await page.locator(".hwp-viewer-pages").count()) > 0;
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+// App survives: the editor is still responsive after a failed HWP open.
+result.g12.editorStillResponsive = await page.evaluate(() => !!document.querySelector(".cm-content"));
 
 writeFileSync(out, JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));
@@ -478,6 +566,26 @@ const pass =
   // G9 — relative sibling image rewritten to a real, loadable asset URL.
   result.g9.rewrittenToAssetUrl &&
   result.g9.naturalWidth > 0 &&
+  // G10 — HWP viewer render positive.
+  result.g10.hasHwpViewer &&
+  result.g10.placeholderCount === 3 &&
+  result.g10.page0IsDataSvg &&
+  result.g10.page0NaturalWidth > 0 &&
+  result.g10.backdropAlpha > 0 &&
+  result.g10.panelAlpha > 0 &&
+  result.g10.panelDisplay === "flex" &&
+  result.g10.panelInViewport &&
+  result.g10.captionInsidePanel &&
+  result.g10.bodyContainedInPanel &&
+  result.g10.contentContainedInBody &&
+  // G11 — script never runs via <img> (positive) AND DOES run once the same
+  // markup is injected directly (negative) — the guard-both-ways pair.
+  result.g11.scriptDidNotRun &&
+  result.g11.scriptRanWhenInjectedDirectly &&
+  // G12 — corrupted file surfaces an error and never breaks the app.
+  result.g12.showsError &&
+  !result.g12.hasPagesContainer &&
+  result.g12.editorStillResponsive &&
   result.errors.length === 0;
 
 console.log("\nwrote", out);

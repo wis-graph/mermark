@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod bundle;
 pub mod cli;
 mod commands;
+mod hwp;
 mod watcher;
 
 #[cfg(target_os = "macos")]
@@ -207,6 +208,7 @@ pub fn run() {
         // state so `write_file` can record its own mtime and `watch_file` /
         // `unwatch_file` can swap the one live watcher.
         .manage(watcher::WatchState::default())
+        .manage(hwp::HwpState::default())
         .invoke_handler(tauri::generate_handler![
             commands::read_file,
             commands::write_file,
@@ -218,7 +220,10 @@ pub fn run() {
             commands::list_dir,
             commands::resolve_image,
             commands::watch_file,
-            commands::unwatch_file
+            commands::unwatch_file,
+            hwp::hwp_open,
+            hwp::hwp_render_page,
+            hwp::hwp_close
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

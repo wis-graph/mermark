@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>mermark</title>
+    <!-- Empty data: icon, not a real favicon. Without ANY icon link a browser
+         requests /favicon.ico on its own; nothing serves it, so it 404s and
+         Chrome logs "Failed to load resource: 404" — a console error that fails
+         every CDP golden. It read as an unreproducible flake for a day because
+         Chrome fetches the favicon once per PROFILE: a warm profile stays quiet,
+         a fresh one 404s. (And Playwright's response listener never sees it —
+         the request is browser-initiated, not page-initiated — so the golden's
+         failedRequests came back EMPTY while the console error was right there.
+         That emptiness is what finally named it.) A Tauri webview shows no
+         favicon anyway, so declaring an empty one costs nothing and stops the
+         request at the source instead of teaching a gate to ignore 404s. -->
+    <link rel="icon" href="data:," />
     <script>
       // Set the theme before first paint so the page never flashes the wrong one.
       try {

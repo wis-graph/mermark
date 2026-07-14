@@ -72,6 +72,7 @@ import {
 import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./document/file-watch";
 import { openConflictModal } from "./document/conflict/conflict-modal";
 import { openImageViewer } from "./chrome/viewer/image-viewer";
+import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
 import { registerViewer, viewerFor, type Viewer } from "./chrome/viewer/registry";
 import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
 import { icon, type IconName } from "./icons";
@@ -367,6 +368,10 @@ async function boot() {
   // createExplorerPanel below, so the explorer's first render already sees it
   // (design §4's registration-order guarantee).
   registerViewer({ id: "image", extensions: [...IMAGE_EXTENSIONS], open: openImageViewer });
+  // The built-in HWP/HWPX viewer (_workspace/01_hwp_viewer.md §5) — built-in
+  // rather than an extension because it needs 3 new Tauri commands, and R11's
+  // extension contract is "frontend only, zero new IPC" (design §5).
+  registerHwpViewer();
 
   /** "Which registered viewer, if any, opens this filename?" — the single
    *  rule canOpenWithViewer/openWithViewer both derive from, so they can

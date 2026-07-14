@@ -159,6 +159,30 @@ function normalizeMockPath(path: string): string {
   return "/" + out.join("/");
 }
 
+// --- HWP/HWPX viewer (native rhwp backend, _workspace/01_hwp_viewer.md) ---
+
+// Page count for the mock's "normal" HWP fixture (sample.hwp). Fixed so
+// hwp_render_page can bounds-check page numbers the same way the real
+// backend does (page >= pages -> Err), and so the golden's placeholder-count
+// assertion (G10) is deterministic.
+const HWP_MOCK_PAGE_COUNT = 3;
+
+/** One deterministic SVG per page: a fixed A4-ish rect plus a `HWP-PAGE-{n}`
+ *  marker <text>, so a golden script can prove page 1 was actually the page
+ *  lazily rendered — not just "some SVG rendered". Page 1 additionally
+ *  carries G11's adversarial payload (a `<script>` tag *and* an `onload`
+ *  probe) so the golden can assert neither ever fires once this string is
+ *  only ever placed as an `<img src="data:image/svg+xml;base64,…">` — a
+ *  spec-level sandbox stronger than sanitizing markup (§4.1). */
+function mockHwpPageSvg(page: number): string {
+  const marker = `HWP-PAGE-${page}`;
+  const probe =
+    page === 1
+      ? `<script>window.__HWP_PWNED=1<\/script><rect width="1" height="1" onload="window.__HWP_PWNED_ONLOAD=1"/>`
+      : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="595" height="842">${probe}<text x="20" y="40">${marker}</text></svg>`;
+}
+
 export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> {
   const a = (args ?? {}) as Record<string, unknown>;
   // strip plugin prefix e.g. "plugin:opener|open_url" -> "open_url"
@@ -234,6 +258,13 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
           // entry only makes the rows visible/openable in the explorer.
           { name: "sample.html", path: "/mock/vault/sample.html", is_dir: false },
           { name: "sample-asset.png", path: "/mock/vault/sample-asset.png", is_dir: false },
+          // HWP viewer golden (_workspace/01_hwp_viewer.md §9 G10~G12): three
+          // rows dispatched by *name* in the hwp_open/hwp_render_page cases
+          // below (there's no real HWP parser here, so no real bytes are
+          // needed for these to be openable) — normal / corrupted / oversized.
+          { name: "sample.hwp", path: "/mock/vault/sample.hwp", is_dir: false },
+          { name: "corrupt.hwp", path: "/mock/vault/corrupt.hwp", is_dir: false },
+          { name: "huge.hwp", path: "/mock/vault/huge.hwp", is_dir: false },
         ],
         "/mock/vault/notes": [
           { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },
@@ -279,6 +310,39 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       console.info("[mock] resolve_image", baseDir, name, "->", hit);
       return hit as T;
     }
+    case "hwp_open": {
+      // Mirrors the real `hwp_open(path) -> Result<HwpOpenInfo, String>`. The
+      // browser mock has no real parser/filesystem, so it dispatches purely
+      // on fixture *name*, reproducing the design's 3-case contract
+      // (§3.4): normal (page count) / corrupted (Err) / oversized (Err, the
+      // same cap-message shape `assert_hwp_file_within_cap` produces).
+      const path = String(a.path ?? "");
+      const basename = path.split(/[/\\]/).pop() ?? path;
+      console.info("[mock] hwp_open", path);
+      if (basename === "corrupt.hwp") {
+        throw "HWP 파일 파싱 오류: 유효하지 않은 파일: mock corrupt fixture";
+      }
+      if (basename === "huge.hwp") {
+        throw "파일이 너무 큽니다: 104857601 bytes (상한 104857600 bytes)";
+      }
+      return { pages: HWP_MOCK_PAGE_COUNT } as T;
+    }
+    case "hwp_render_page": {
+      // Mirrors the real `hwp_render_page(page) -> Result<String, String>`
+      // (an SVG string). Bounds-checked the same way the backend does —
+      // out-of-range page -> Err — using HWP_MOCK_PAGE_COUNT as the stand-in
+      // for "the session hwp_open reported" (the mock keeps no session state).
+      const page = Number(a.page ?? 0);
+      if (!Number.isInteger(page) || page < 0 || page >= HWP_MOCK_PAGE_COUNT) {
+        throw `페이지 범위 초과: ${page} (전체 ${HWP_MOCK_PAGE_COUNT}페이지)`;
+      }
+      console.info("[mock] hwp_render_page", page);
+      return mockHwpPageSvg(page) as T;
+    }
+    case "hwp_close":
+      // Mirrors the real `hwp_close(state)`: idempotent, no return value.
+      console.info("[mock] hwp_close");
+      return undefined as T;
     case "path_exists":
       return true as T;
     case "open_path": {

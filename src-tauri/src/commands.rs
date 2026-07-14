@@ -25,7 +25,7 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 /// Returns an absolute, normalized `PathBuf` (the home dir is itself absolute),
 /// so this opens no new write surface and can't be used to escape via `..`:
 /// `normalize_path` collapses `..`/`.` exactly as it does for every other path.
-fn expand_home(path: &str) -> PathBuf {
+pub(crate) fn expand_home(path: &str) -> PathBuf {
     let expanded = if path == "~" {
         home_dir().map(|h| h.to_string_lossy().into_owned())
     } else if let Some(rest) = path.strip_prefix("~/") {

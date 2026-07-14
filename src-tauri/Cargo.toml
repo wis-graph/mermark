@@ -29,4 +29,15 @@ urlencoding = "2"
 # tauri-plugin-fs) so the watch surface stays exactly one open file with no
 # extra `fs:` capability scope — see watcher.rs and 01_architect_design.md.
 notify = "6"
+# HWP/HWPX viewer backend (native, read-only parse+render). Pinned to a
+# specific commit deliberately — upstream `main` is very active and untagged,
+# so a branch reference would silently pull in unreviewed code on every build.
+# Bump this rev consciously (diff-reviewed) once per release cycle, never as a
+# side effect of an unrelated change. See _workspace/01_hwp_viewer.md §1/§6.
+rhwp = { git = "https://github.com/edwardkim/rhwp", rev = "93862a4e16df59834ebce46d91e948cd739208e9", default-features = false }
+# Tauri already runs a tokio runtime under the hood but doesn't re-export the
+# crate, so `hwp.rs`'s parse/render timeouts (`tokio::time::timeout`) need it
+# declared explicitly. Kept to the one feature we use — this adds no new
+# transitive dependency, since tauri already pulls in full tokio.
+tokio = { version = "1", default-features = false, features = ["time"] }
 

@@ -922,6 +922,46 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    inherits the same reposition for free. */
 .viewer-panel .cm-mermaid-reset { top: .6em; right: .6em; }
 
+/* HWP/HWPX viewer (built-in, _workspace/01_hwp_viewer.md §4.2): a scrollable
+   column of page placeholders, each swapped for an <img src="data:...">
+   once hwp_render_page resolves (hwp-viewer.ts's security contract — never
+   an inline <svg>, see that file's header comment). Sized against the
+   panel's own width/height caps (design keeps CSP/capabilities untouched —
+   img-src data: is already allowed). */
+.hwp-viewer { width: min(92vw, 900px); max-height: min(88vh, 780px); }
+.hwp-viewer-status { padding: 12px; color: var(--muted); font-size: 1em; }
+/* The pages column is this viewer's OWN scroll boundary inside the shell's
+   .viewer-panel-body (which is flex:1/min-height:0/overflow:hidden,
+   styles.css above) — same two-layer contract excel-viewer-sheet and
+   html-viewer-frame-wrap use. */
+.hwp-viewer-pages {
+  flex: 1; min-height: 0; overflow: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 8px 0;
+}
+/* Zoom (design §4.2 — "페이지 폭 = 기본폭 × s, transform이 아니라 width
+   스케일"): --hwp-page-width is set in JS by applyHwpZoom (hwp-viewer.ts),
+   NOT a font-size, so this rule is intentionally OUTSIDE the VIEWER ZOOM
+   RULE's em-fraction contract above (that rule governs TEXT font-size only —
+   a page's width scaling is a distinct, JS-computed multiply of a px
+   baseline, matching the design's explicit "not a CSS transform" choice so
+   the rasterized <img> stays crisp at any zoom level rather than blurring
+   under a CSS scale()). aspect-ratio starts at the A4 default
+   (hwp-pages.ts's pagePlaceholder) and is corrected once page 0's real
+   width/height is known (pageAspectFrom). */
+.hwp-viewer-page {
+  position: relative; flex: none;
+  width: var(--hwp-page-width, 600px);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
+}
+.hwp-viewer-page-img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.hwp-viewer-page-error {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  padding: 8px; color: var(--muted); font-size: 1em;
+}
+
 /* Open-by-path input row: a thin bar pinned just above the status bar (lives
    outside #app's scroll host, so no .cm-content/.cm-line involved → ZOOM GUARD
    holds). Hidden until the footer "경로 열기" button toggles it. The input
