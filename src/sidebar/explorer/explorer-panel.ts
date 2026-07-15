@@ -67,6 +67,19 @@ export interface ExplorerPanel {
    *  this alongside the favorites section's own refresh(), so both views of
    *  the SAME setting update from one observation point. Command (void). */
   refreshFavoriteStars(): void;
+  /** Re-evaluate every rendered FILE row's `.is-nonmd` gate from the live
+   *  `isOpenableEntry` rule (canOpenWithViewer's current answer), without a
+   *  renderTree (expansion/scroll/selection all survive). The viewer-toggle
+   *  bug this exists to close: `.is-nonmd` is baked in at row-creation time
+   *  (makeEntry) and activateItem short-circuits on it BEFORE ever calling
+   *  canOpenWithViewer again — so toggling a viewer on/off mid-session left
+   *  an already-rendered row either permanently inert (re-enable case) or,
+   *  worse, still "openable" after being disabled, which fell through
+   *  activateItem's viewer branch (now false) into `onOpenFile` and opened a
+   *  non-markdown file AS markdown. Same shape as `refreshFavoriteStars` —
+   *  a pure DOM refresh sink for a setting the explorer doesn't own, called
+   *  from main.ts's disabledViewersSetting.subscribe. Command (void). */
+  refreshOpenability(): void;
   /** ⌘⇧B's handler (M5 재배선, design 분기3): open the explorer if it's
    *  closed, then scroll the hosted favorites section into view and DELEGATE
    *  keyboard landing to the injected `focusFavorites` (the section's own
@@ -586,6 +599,23 @@ export function createExplorerPanel({
     }
   };
 
+  /** Re-toggle `.is-nonmd` on every rendered `.explorer-file` row from the
+   *  CURRENT `isOpenableEntry` answer — see the interface doc comment for
+   *  why this exists. Scoped to `.explorer-file` only (never `.explorer-dir`/
+   *  `.explorer-up`, which have no `.is-nonmd` concept). A row's
+   *  `dataset.path` is stable for the lifetime of its DOM (renderTree/
+   *  expandFolder never mutate it in place — same guarantee
+   *  refreshFavoriteStars already relies on for `.explorer-dir` rows), so
+   *  `basename` recovers the filename `isOpenableEntry` needs without
+   *  re-reading the tree. Command (void). */
+  const refreshOpenability = (): void => {
+    for (const row of tree.querySelectorAll<HTMLElement>(".explorer-file")) {
+      const path = row.dataset.path;
+      if (!path) continue;
+      row.classList.toggle("is-nonmd", !isOpenableEntry(basename(path)));
+    }
+  };
+
   /** ⌘⇧B's handler: reveal the explorer (open it if closed — reusing the
    *  SAME shell-reveal command jumpToRoot uses, so "open" logic lives in one
    *  place), then land the user in the hosted favorites section: scroll it
@@ -695,5 +725,14 @@ export function createExplorerPanel({
     }
   });
 
-  return { button, aside, resetToBaseDir, jumpToRoot, close, refreshFavoriteStars, revealFavorites };
+  return {
+    button,
+    aside,
+    resetToBaseDir,
+    jumpToRoot,
+    close,
+    refreshFavoriteStars,
+    refreshOpenability,
+    revealFavorites,
+  };
 }

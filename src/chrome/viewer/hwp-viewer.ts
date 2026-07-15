@@ -225,6 +225,7 @@ function openHwpViewer(absPath: string): ViewerHandle {
 const HWP_VIEWER: Viewer = {
   id: "hwp",
   extensions: ["hwp", "hwpx"],
+  label: "HWP 문서",
   open: openHwpViewer,
 };
 

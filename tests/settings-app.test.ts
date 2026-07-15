@@ -266,11 +266,11 @@ describe("app settings", () => {
     expect(defaultModeSetting.get()).toBe("read"); // boot source untouched by the toggle
   });
 
-  it("renders all six categories in the registry (Theme/Typography/Editor/Mermaid/Shortcuts/Plugins)", async () => {
+  it("renders all seven categories in the registry (Theme/Typography/Editor/Mermaid/Shortcuts/Viewers/Plugins)", async () => {
     await import("../src/settings/app");
     const { groups } = await import("../src/settings/registry");
     const names = groups().map((g) => g.name);
-    expect(names).toEqual(["테마", "타이포그래피", "에디터", "Mermaid", "단축키", "플러그인"]);
+    expect(names).toEqual(["테마", "타이포그래피", "에디터", "Mermaid", "단축키", "뷰어", "플러그인"]);
   });
 
   // ── P0: Pretendard bundle — default-value regression guard ──────────────────

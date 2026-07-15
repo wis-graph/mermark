@@ -1015,4 +1015,74 @@ describe("explorer: folder-row favorite star (M5)", () => {
     expect(star.getAttribute("aria-pressed")).toBe("true");
     expect(star.classList.contains("is-favorite")).toBe(true);
   });
+
+  // refreshOpenability() — the viewer-toggle mid-session bug guard. `.is-nonmd`
+  // is baked in at row-creation time (K's tests above), so a live toggle of the
+  // injected canOpenWithViewer answer needs an explicit refresh to reach
+  // already-rendered rows. Two directions matter: re-enabling (row currently
+  // .is-nonmd, should become openable) AND — the actual regression this closes
+  // — disabling (row currently openable, must become .is-nonmd and STOP
+  // falling through to onOpenFile as a markdown open).
+  it("refreshOpenability() re-syncs .is-nonmd from a fresh canOpenWithViewer() read (re-enable direction)", async () => {
+    let enabled = false;
+    const onOpenWithViewer = vi.fn();
+    const isPngName = (name: string) => enabled && name === "pic.png";
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      canOpenWithViewer: isPngName,
+      onOpenWithViewer,
+    });
+    const png = panel.aside.querySelector(".explorer-file.is-nonmd") as HTMLElement;
+    expect(png.classList.contains("is-nonmd")).toBe(true); // baked in disabled
+
+    enabled = true; // e.g. the user re-enabled the viewer in settings
+    panel.refreshOpenability();
+    expect(png.classList.contains("is-nonmd")).toBe(false);
+
+    clickItem(png);
+    expect(onOpenWithViewer).toHaveBeenCalledWith("/root/pic.png");
+  });
+
+  it("refreshOpenability() re-syncs .is-nonmd on DISABLE, so a click stops opening the file as markdown (the mid-session regression)", async () => {
+    let enabled = true;
+    const onOpenFile = vi.fn();
+    const onOpenWithViewer = vi.fn();
+    const isPngName = (name: string) => enabled && name === "pic.png";
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile,
+      canOpenWithViewer: isPngName,
+      onOpenWithViewer,
+    });
+    const png = panel.aside.querySelector('.explorer-file[data-path="/root/pic.png"]') as HTMLElement;
+    expect(png.classList.contains("is-nonmd")).toBe(false); // baked in enabled
+
+    enabled = false; // the user disabled the viewer in settings, mid-session
+    panel.refreshOpenability();
+    expect(png.classList.contains("is-nonmd")).toBe(true);
+
+    // Without the refresh above, this click would fall through activateItem's
+    // now-false viewer branch straight into onOpenFile — a non-markdown file
+    // opened as markdown. With the refresh, the row is inert: neither opener
+    // fires at all.
+    clickItem(png);
+    expect(onOpenWithViewer).not.toHaveBeenCalled();
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
+  it("refreshOpenability() never touches folder/`..` rows (no .is-nonmd concept there)", async () => {
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+    });
+    panel.refreshOpenability();
+    const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
+    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
+    expect(up.classList.contains("is-nonmd")).toBe(false);
+    expect(sub.classList.contains("is-nonmd")).toBe(false);
+  });
 });

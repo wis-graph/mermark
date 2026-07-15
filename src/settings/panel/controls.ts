@@ -8,6 +8,8 @@ import type { Theme } from "../theme-schema";
 import { parseTheme, serializeTheme } from "../theme-schema";
 import { allActions, effectiveBinding, findConflict, suppressDispatcher } from "../../shortcuts/registry";
 import { eventToChord, displayChord } from "../../shortcuts/keys";
+import { listViewers, type Viewer } from "../../chrome/viewer/registry";
+import { isViewerEnabled, toggleViewerDisabled } from "../app";
 
 // Subscription cleanup: a control that calls setting.subscribe must hand back its
 // unsubscribe fns so the modal can tear them down on category swap / close,
@@ -503,6 +505,87 @@ function renderKeybind(setting: Setting<Record<string, string>>): HTMLElement {
   return r;
 }
 
+/** A viewer's display name for the toggle row: its `label` if set, else a
+ *  derived `id (ext, ext, …)` fallback — so a viewer that forgot to set
+ *  `label` still renders a row (design §3: "missing → ugly, never missing →
+ *  absent"). Pure query. */
+export function viewerDisplayName(v: Viewer): string {
+  return v.label ?? `${v.id} (${v.extensions.join(", ")})`;
+}
+
+/** The viewer-toggles control: ONE setting (disabledViewersSetting, an array
+ *  of disabled viewer ids) rendered as MANY rows — one per `listViewers()`
+ *  entry — the same "1 setting → N rows" shape renderKeybind uses for
+ *  SHORTCUT_ACTION (controls.ts:361-374). Enumerating the live catalog at
+ *  render time is what makes "a new viewer missing from this list"
+ *  structurally impossible (design §회귀 게이트) — there is no hand-maintained
+ *  list to fall out of sync.
+ *
+ *  Round-trip contract (same as every other control here): (a) mount reflects
+ *  setting.get() via isViewerEnabled, (b) a click writes
+ *  setting.set(toggleViewerDisabled(cur, id)), (c) setting.subscribe(reflect)
+ *  tracks external changes. attachTeardown releases the subscription on
+ *  modal swap/close. */
+function renderViewerToggles(setting: Setting<string[]>): HTMLElement {
+  const { row: r, cell } = row("");
+  r.classList.add("settings-row-viewer-toggles");
+
+  const list = document.createElement("div");
+  list.className = "settings-vtoggle-list";
+  cell.appendChild(list);
+
+  const reflectors: Array<() => void> = [];
+
+  for (const v of listViewers()) {
+    const item = document.createElement("div");
+    item.className = "settings-vtoggle-item";
+    item.dataset.id = v.id;
+
+    const label = document.createElement("span");
+    label.className = "settings-vtoggle-label";
+    label.textContent = viewerDisplayName(v);
+
+    const group = document.createElement("div");
+    group.className = "settings-segmented settings-vtoggle-segmented";
+    const onBtn = document.createElement("button");
+    onBtn.type = "button";
+    onBtn.className = "settings-seg-btn";
+    onBtn.textContent = "켜기";
+    const offBtn = document.createElement("button");
+    offBtn.type = "button";
+    offBtn.className = "settings-seg-btn";
+    offBtn.textContent = "끄기";
+    group.append(onBtn, offBtn);
+
+    const write = (enabled: boolean) => {
+      const cur = setting.get();
+      const curEnabled = isViewerEnabled(cur, v.id);
+      if (curEnabled === enabled) return; // SSOT no-op, mirrors defineSetting's own Object.is guard
+      setting.set(toggleViewerDisabled(cur, v.id));
+    };
+    onBtn.addEventListener("click", () => write(true));
+    offBtn.addEventListener("click", () => write(false));
+
+    const reflect = () => {
+      const enabled = isViewerEnabled(setting.get(), v.id);
+      onBtn.setAttribute("aria-pressed", String(enabled));
+      offBtn.setAttribute("aria-pressed", String(!enabled));
+    };
+    reflectors.push(reflect);
+    reflect();
+
+    item.append(label, group);
+    list.appendChild(item);
+  }
+
+  const reflectAll = () => {
+    for (const reflect of reflectors) reflect();
+  };
+  attachTeardown(r, [setting.subscribe(reflectAll)]);
+
+  return r;
+}
+
 /** A read-only placeholder row (the empty Plugins category in round 1). Any
  *  future feature that calls registerSetting with its own ui.group renders
  *  through the real controls; this is the "nothing here yet" filler. */
@@ -528,6 +611,7 @@ export const RENDER: {
   text: (s, c) => renderText(s as unknown as Setting<string>, c),
   json: (s) => renderJson(s as unknown as Setting<Theme>),
   keybind: (s) => renderKeybind(s as unknown as Setting<Record<string, string>>),
+  "viewer-toggles": (s) => renderViewerToggles(s as unknown as Setting<string[]>),
   info: () => renderInfo(),
 };
 

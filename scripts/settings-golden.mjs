@@ -150,10 +150,68 @@ await chooseHeadingFont("Georgia (Serif)");
 await page.waitForTimeout(150);
 headingStates.push(await headingFontSnap("after-select-georgia"));
 
+// ── viewer on/off toggle (_workspace/03_viewer_toggle_design.md) ───────────
+// The settings modal is already open (헤딩폰트 블록 above). Switch to the 뷰어
+// category and assert the 5 built-in/extension viewers each render a row,
+// and that a toggle click actually writes the disabled-set to localStorage.
+const viewerCatButtons = await page.$$(".settings-cat");
+for (const b of viewerCatButtons) {
+  const text = await b.textContent();
+  if (text?.trim() === "뷰어") {
+    await b.click();
+    break;
+  }
+}
+await page.waitForTimeout(200);
+
+const viewerToggleRows = await page.evaluate(() =>
+  Array.from(document.querySelectorAll(".settings-vtoggle-item")).map((el) => ({
+    id: el.getAttribute("data-id"),
+    label: el.querySelector(".settings-vtoggle-label")?.textContent ?? null,
+  })),
+);
+
+async function clickViewerToggle(id, segLabel) {
+  await page.evaluate(
+    ({ id, segLabel }) => {
+      const row = document.querySelector(`.settings-vtoggle-item[data-id="${id}"]`);
+      const btn = Array.from(row.querySelectorAll(".settings-seg-btn")).find(
+        (b) => b.textContent === segLabel,
+      );
+      btn.click();
+    },
+    { id, segLabel },
+  );
+  await page.waitForTimeout(100);
+}
+
+await clickViewerToggle("ext.pdf", "끄기");
+const disabledAfterOff = await page.evaluate(() => localStorage.getItem("mermark.disabledViewers"));
+await clickViewerToggle("ext.pdf", "켜기");
+const disabledAfterOn = await page.evaluate(() => localStorage.getItem("mermark.disabledViewers"));
+
+const viewerToggleState = {
+  rows: viewerToggleRows,
+  rowCount: viewerToggleRows.length,
+  hasAllFive: ["image", "hwp", "ext.excel", "ext.html", "ext.pdf"].every((id) =>
+    viewerToggleRows.some((r) => r.id === id),
+  ),
+  disabledAfterOff,
+  disabledAfterOn,
+  toggleWritesAndRoundTrips:
+    !!disabledAfterOff &&
+    JSON.parse(disabledAfterOff).includes("ext.pdf") &&
+    !!disabledAfterOn &&
+    !JSON.parse(disabledAfterOn).includes("ext.pdf"),
+};
+
 await page.click(".settings-close");
 await page.waitForTimeout(200);
 
-writeFileSync(out, JSON.stringify({ states, headingStates, errors }, null, 2));
-console.log(JSON.stringify({ states, headingStates, errors }, null, 2));
+writeFileSync(
+  out,
+  JSON.stringify({ states, headingStates, viewerToggleState, errors }, null, 2),
+);
+console.log(JSON.stringify({ states, headingStates, viewerToggleState, errors }, null, 2));
 console.log("\nwrote", out);
 await browser.close();

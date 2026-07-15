@@ -52,6 +52,7 @@
 - **단축키 레지스트리** — 전역 앱 단축키의 단일 SSOT(`src/shortcuts/`). `actions.ts`(rebindable action 선언, 순수 데이터·핸들러 미포함) + `keys.ts`(`e.code` 물리키 기반 chord 직렬화 `Mod+B`, mac ⌘⇧ / other Ctrl+Shift 표시, 한글 레이아웃 대응) + `registry.ts`(단일 전역 capture 디스패처, `effectiveBinding`=사용자 override ?? 기본값, `findConflict` 충돌 감지). 흩어진 하드코딩 키맵(구 ⌘E/⌘±/⌘⇧C·CM `Mod-e`)을 전부 수렴 — 앱-chord 하드코딩 keydown 0. `keybindingsSetting`(override분만 localStorage 저장)이 SSOT, 사용자 재정의는 설정 "단축키" 카테고리에서.
 - **최근 문서 SSOT** — `recentDocsSetting`(`string[]` localStorage, 재시작 유지). `openInWindow` 단일 지점에서 `pushRecent`(dedup→최근순→상한 15), 없는 경로는 `pruneMissing`으로 정리.
 - **줌 가드(ZOOM GUARD)** — `.cm-content`/`.cm-line`에 font-size 직접 금지(async 위젯 0-height 붕괴 방지), `.cm-line` em만.
+- **뷰어 on/off 토글** — 설정 "뷰어" 카테고리에 등록된 모든 비마크다운 뷰어(image/hwp/ext.excel/ext.html/ext.pdf)가 행으로 열거되어 각각 켜고 끌 수 있다. `disabledViewersSetting`(`string[]`, key `mermark.disabledViewers`, 기본값 `[]` = 전부 켜짐) 단일 설정 + `chrome/viewer/registry.ts`의 `listViewers()`(카탈로그 열거 순수 쿼리) 조합으로 새 뷰어가 등록되기만 하면 목록에서 절대 누락되지 않는다(별도 동기화 불필요). 끈 뷰어의 파일 형식은 `main.ts`의 `viewerForEntry`가 `viewerFor` 결과를 `isViewerEnabled`로 필터링해 기존 `open_path`(OS 기본 앱) 폴백으로 넘어간다 — 새 폴백 경로 없음, 신규 IPC 0. 저장 즉시 다음 열기 판정부터 유효(`.get()` 판정 시점 읽기, sink 불필요); 단, 탐색기 행의 openable 게이트(`.is-nonmd`)는 트리 렌더 시점에 굳어지므로 이미 렌더된 행은 토글 후에도 탐색기 트리가 재렌더(폴더 이동/breadcrumb 클릭 등)되기 전까지는 클릭이 막혀 있다 — 실제 open 판정 자체는 항상 최신이지만 이 시각적/클릭 지연은 알려진 한계.
 
 ---
 

@@ -41,6 +41,8 @@ import {
   recentDocsSetting,
   favoriteFoldersSetting,
   sidebarWidthSetting,
+  disabledViewersSetting,
+  isViewerEnabled,
 } from "./settings/app";
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink, headingFontSink } from "./settings/sinks";
 import { createSidebarSash } from "./sidebar/sash";
@@ -367,7 +369,7 @@ async function boot() {
   // ONLY other consumer (open-gating moved to the registry). Must run before
   // createExplorerPanel below, so the explorer's first render already sees it
   // (design §4's registration-order guarantee).
-  registerViewer({ id: "image", extensions: [...IMAGE_EXTENSIONS], open: openImageViewer });
+  registerViewer({ id: "image", extensions: [...IMAGE_EXTENSIONS], label: "이미지", open: openImageViewer });
   // The built-in HWP/HWPX viewer (_workspace/01_hwp_viewer.md §5) — built-in
   // rather than an extension because it needs 3 new Tauri commands, and R11's
   // extension contract is "frontend only, zero new IPC" (design §5).
@@ -375,9 +377,16 @@ async function boot() {
 
   /** "Which registered viewer, if any, opens this filename?" — the single
    *  rule canOpenWithViewer/openWithViewer both derive from, so they can
-   *  never disagree about what's openable. Pure query. */
+   *  never disagree about what's openable. Includes the enabled filter: a
+   *  viewer the user disabled in the settings panel (disabledViewersSetting)
+   *  is treated exactly like an unclaimed extension here, so it falls
+   *  through to the existing open_path/OS-default path with no new fallback
+   *  branch (viewer-toggle design §2). `.get()` at decision time — no sink,
+   *  same pattern recursiveImageSearchSetting uses — so a toggle flipped in
+   *  the panel takes effect on the very next open. Pure query. */
   function viewerForEntry(name: string): Viewer | null {
-    return viewerFor(extensionOf(name));
+    const v = viewerFor(extensionOf(name));
+    return v !== null && isViewerEnabled(disabledViewersSetting.get(), v.id) ? v : null;
   }
 
   /** Open `absPath` in its registered viewer, closing whatever the don't-stack
@@ -532,6 +541,17 @@ async function boot() {
     favoritesSection.refresh();
     explorer.refreshFavoriteStars();
   });
+  // A viewer toggle (settings panel) changes what `canOpenWithViewer` answers
+  // for already-rendered rows, but explorer bakes `.is-nonmd` in at render
+  // time and never re-asks on click (explorer-panel.ts's activateItem short-
+  // circuits on the cached class) — so without this, disabling a viewer
+  // mid-session left its already-rendered rows still "openable" and a click
+  // fell through to onOpenFile, opening a non-markdown file AS markdown.
+  // subscribe (not bind): the initial renderTree already saw the setting's
+  // boot value, so a bind here would just re-run the same refresh redundantly
+  // on every mount. Explorer owns no state here — this is a pure DOM sink,
+  // same shape as the favoriteFoldersSetting subscription just above.
+  disabledViewersSetting.subscribe(() => explorer.refreshOpenability());
 
   // ── Per-file session persistence. The key is recomputed per open; the timer
   //    is scoped to the live editor and cancelled on teardown. ────────────────

@@ -27,6 +27,13 @@ export interface Viewer {
   /** Extensions this viewer opens, already in the format `extensionOf`
    *  returns: lowercase, no leading dot (e.g. "xlsx", not "XLSX"/".xlsx"). */
   extensions: readonly string[];
+  /** Human-readable name for panel UI (e.g. the viewer-toggles settings row).
+   *  Unlike `id`, this is NOT persisted anywhere and may be freely renamed —
+   *  no stored state ever keys off it. Optional so this stays a non-breaking
+   *  addition for any existing Viewer literal; UI that needs a display name
+   *  derives a fallback when it's absent (settings/panel/controls.ts's
+   *  viewerDisplayName). */
+  label?: string;
   /** Open `absPath` in this viewer and return a handle. Lifecycle (don't-stack
    *  single overlay slot) is the CALLER's job (main.ts), not this registry's —
    *  see design §5 (a registry that owned the slot would become the God
@@ -77,4 +84,13 @@ export function registerViewer(v: Viewer): void {
  *  (design §2). Pure query. */
 export function viewerFor(ext: string): Viewer | null {
   return viewers.find((v) => v.extensions.includes(ext)) ?? null;
+}
+
+/** Every registered viewer, in registration order. Pure query — a read of
+ *  the catalog, the same kind of operation `viewerFor` already does, not a
+ *  policy decision (design §5(a)): the settings panel uses this to enumerate
+ *  one toggle row per viewer. Returns a live array reference is avoided —
+ *  callers get a readonly view so they can't push onto the real catalog. */
+export function listViewers(): readonly Viewer[] {
+  return viewers;
 }

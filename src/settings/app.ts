@@ -451,6 +451,50 @@ export const keybindingsSetting = registerSetting<Record<string, string>>({
   ui: { label: "단축키", group: "단축키", control: { kind: "keybind" } },
 });
 
+// ── 뷰어 (Viewers) — per-viewer on/off toggle (file-type ownership) ───────────
+
+/** "disabled unless present" rule in one named place — the single definition
+ *  of what a disabled-set MEANS, so the panel control and the open-time
+ *  filter (main.ts's viewerForEntry) can never disagree about it. Pure query. */
+export function isViewerEnabled(disabled: readonly string[], id: string): boolean {
+  return !disabled.includes(id);
+}
+
+/** Toggle one viewer id's membership in the disabled-set. Pure query — returns
+ *  a NEW array, never mutates `disabled` (same shape as main.ts's
+ *  toggleFavorite); the panel control is the one place that feeds the result
+ *  into disabledViewersSetting.set(...). */
+export function toggleViewerDisabled(disabled: readonly string[], id: string): string[] {
+  return disabled.includes(id) ? disabled.filter((x) => x !== id) : [...disabled, id];
+}
+
+/** Which registered viewers the user has opted OUT of (main.ts's
+ *  viewerForEntry filters `viewerFor`'s result through `isViewerEnabled`
+ *  against this). Default `[]` = every viewer enabled, so an unset value
+ *  reproduces today's behavior exactly (design §1's "regression 0"
+ *  guarantee). A disabled viewer's file type falls back to the existing
+ *  open_path/OS-default path — no new fallback is introduced (design §2).
+ *  Persisted as a JSON array of viewer ids, same corrupt/non-array → []
+ *  guard as recentDocsSetting/favoriteFoldersSetting. Rendered by the
+ *  viewer-toggles control (settings/panel/controls.ts), which enumerates
+ *  `listViewers()` — so a newly registered viewer can never go missing from
+ *  this row (design §회귀 게이트). */
+export const disabledViewersSetting = registerSetting<string[]>({
+  key: "mermark.disabledViewers",
+  default: [],
+  parse: (raw) => {
+    if (raw == null) return null;
+    try {
+      const a = JSON.parse(raw);
+      return Array.isArray(a) ? a.filter((x) => typeof x === "string") : null;
+    } catch {
+      return null;
+    }
+  },
+  serialize: (v) => JSON.stringify(v),
+  ui: { label: "뷰어", group: "뷰어", control: { kind: "viewer-toggles" } },
+});
+
 // ── 플러그인 (Plugins) — placeholder; empty in round 1 ────────────────────────
 
 /** Placeholder so the Plugins category appears. Any future feature that calls

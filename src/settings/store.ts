@@ -28,6 +28,7 @@ export type Control<T> =
   | { kind: "text"; placeholder?: string; help?: string }
   | { kind: "json" }
   | { kind: "keybind" }
+  | { kind: "viewer-toggles" }
   | { kind: "info" };
 
 export interface SettingDef<T> {

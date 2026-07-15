@@ -2113,6 +2113,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .keybind-warning { grid-column: 1 / -1; color: #dc2626; font-size: 12px; }
 .keybind-warning[hidden] { display: none; }
 
+.settings-vtoggle-list { display: flex; flex-direction: column; width: 100%; }
+.settings-vtoggle-item {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .5em; padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.settings-vtoggle-label { color: var(--fg); font-size: 13px; }
+.settings-vtoggle-segmented .settings-seg-btn { font-size: 12px; }
+
 .settings-sidebar-divider {
   height: 1px;
   background: var(--border);

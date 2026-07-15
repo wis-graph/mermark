@@ -255,6 +255,7 @@ function openExcelViewer(absPath: string): ViewerHandle {
 const EXCEL_VIEWER: Viewer = {
   id: "ext.excel",
   extensions: ["xlsx", "xls"],
+  label: "Excel 스프레드시트",
   open: openExcelViewer,
 };
 

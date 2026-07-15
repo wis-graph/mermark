@@ -193,6 +193,7 @@ function openHtmlViewer(absPath: string): ViewerHandle {
 const HTML_VIEWER: Viewer = {
   id: "ext.html",
   extensions: ["html", "htm"],
+  label: "HTML",
   open: openHtmlViewer,
 };
 

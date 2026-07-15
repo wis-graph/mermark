@@ -448,6 +448,7 @@ function openPdfViewer(absPath: string): ViewerHandle {
 const PDF_VIEWER: Viewer = {
   id: "ext.pdf",
   extensions: ["pdf"],
+  label: "PDF",
   open: openPdfViewer,
 };
 

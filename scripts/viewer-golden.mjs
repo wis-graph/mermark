@@ -117,6 +117,34 @@
 //     canvas evicted (removed) by the time all 25 pages have been visited.
 //   - Zero console errors.
 //
+// G15 (viewer on/off toggle, _workspace/03_viewer_toggle_design.md): a
+// disabled viewer's file falls through to the OS-default open_path path
+// instead of showing an overlay — no new fallback branch, the EXISTING one
+// (design §2). Round-trip: disable HTML → open sample.html → NO overlay
+// (open_path takes it instead) → re-enable HTML → open sample.html AGAIN in
+// the SAME session (no reload) → the overlay DOES appear. Also proves the
+// default (nothing in localStorage) reproduces every earlier scenario above
+// UNCHANGED — this file's own G1/G3/G7/G10/G13 runs above it are that
+// evidence, since they all execute BEFORE G15 ever touches localStorage;
+// G15 itself only adds the toggle-specific assertions.
+//
+// G15 case A (team-lead catch, _workspace/04_toggle_changes.md 재호출): the
+// ACTUAL regression a mid-session toggle exposed, distinct from mere UI lag.
+// explorer-panel.ts bakes `.is-nonmd` in at row-render time and
+// `activateItem` never re-asks `canOpenWithViewer` on click (it short-
+// circuits on the cached class) — so disabling a viewer whose file's row was
+// ALREADY rendered openable let a click fall through into `onOpenFile`,
+// opening a non-markdown file AS markdown (not the safe OS-fallback G15
+// above proves for the reload path). Fixed by
+// `disabledViewersSetting.subscribe(() => explorer.refreshOpenability())`
+// (main.ts) — a pure DOM re-sync of every rendered row's `.is-nonmd`, same
+// shape as the pre-existing `refreshFavoriteStars` sink. Case A proves BOTH
+// directions on the SAME already-rendered row, with NO tree navigation of
+// any kind in between (stronger than G15's scenario 3, which allowed a
+// breadcrumb-triggered re-render before this fix existed — no longer
+// needed): disable -> click -> neither the viewer NOR onOpenFile fires;
+// re-enable -> click -> the viewer opens.
+//
 // VISUAL CONTRACT (checkPanelChrome below) applies to EVERY viewer's panel —
 // this is what the audit's screenshot + real-device findings actually
 // demand: "all viewers share the same shell chrome AND never spill past
@@ -131,6 +159,7 @@ const out = process.argv[2] ?? "/tmp/viewer-golden.json";
 const url = process.argv[3] ?? "http://localhost:1430/?file=/mock/vault/index.md";
 const result = {
   g1: {}, g2: {}, g3: {}, g4: {}, g5: {}, g6: {}, g7: {}, g8: {}, g9: {}, g10: {}, g11: {}, g12: {}, g13: {}, g14: {},
+  g15: {}, g15caseA: {},
   errors: [],
   failedRequests: [],
 };
@@ -681,6 +710,133 @@ await page.waitForTimeout(200);
 result.g14.backdropCountAfterEsc = await page.locator(".viewer-backdrop").count();
 result.g14.editorStillResponsive = await page.evaluate(() => !!document.querySelector(".cm-content"));
 
+// ── G15 — viewer on/off toggle (_workspace/03_viewer_toggle_design.md) ─────
+// Scenario 2 (disabled → OS fallback): inject the disabled-set and reload so
+// boot reads it, then confirm opening the disabled viewer's file shows NO
+// overlay. Every scenario above (G1..G14) ran BEFORE this reload with an
+// EMPTY localStorage — that is scenario 1 (default = 0 regression) already
+// proven by this file's own earlier PASS state, not a separate step here.
+await page.evaluate(() => localStorage.setItem("mermark.disabledViewers", JSON.stringify(["ext.html"])));
+await page.reload({ waitUntil: "networkidle" });
+await page.waitForTimeout(500);
+await assertPageRendered(page, { context: "viewer-golden(G15)" });
+await page.click(".explorer-btn");
+await page.waitForTimeout(200);
+
+result.g15.backdropCountBeforeOpen = await page.locator(".viewer-backdrop").count();
+await rowFor("/mock/vault/sample.html").click();
+await page.waitForTimeout(400);
+result.g15.hasHtmlViewerWhenDisabled = (await page.locator(".html-viewer").count()) > 0;
+result.g15.backdropCountWhenDisabled = await page.locator(".viewer-backdrop").count();
+
+// Other (still-enabled) viewers keep working while HTML is disabled —
+// disabling one viewer id must not affect another.
+await rowFor("/mock/vault/pic.png").click();
+await page.waitForTimeout(300);
+result.g15.hasImageViewerWhileHtmlDisabled = (await page.locator(".image-viewer").count()) > 0;
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
+// Scenario 3 (round-trip, no reload): re-enable HTML through the REAL
+// settings-panel control (not a raw localStorage write) — open the settings
+// modal, switch to the 뷰어 category, click HTML's "켜기" segment. The SAME
+// already-rendered row (rendered back when HTML was disabled, right after the
+// reload above) must become clickable again with NO tree navigation in
+// between: `disabledViewersSetting.subscribe(() => explorer.refreshOpenability())`
+// (main.ts) re-syncs every rendered row's `.is-nonmd` the instant the setting
+// changes, so a bare re-click of the same DOM node picks it up directly.
+await page.click(".settings-btn");
+await page.waitForTimeout(200);
+const viewerCategoryBtn = page.locator(".settings-cat", { hasText: "뷰어" }).first();
+await viewerCategoryBtn.click();
+await page.waitForTimeout(150);
+const htmlToggleRow = page.locator('.settings-vtoggle-item[data-id="ext.html"]');
+await htmlToggleRow.locator(".settings-seg-btn", { hasText: "켜기" }).click();
+await page.waitForTimeout(150);
+result.g15.disabledViewersAfterReenable = await page.evaluate(() =>
+  localStorage.getItem("mermark.disabledViewers"),
+);
+await page.keyboard.press("Escape"); // closes the settings modal
+await page.waitForTimeout(200);
+
+const htmlRow = rowFor("/mock/vault/sample.html");
+result.g15.htmlRowIsNonmdAfterReenable = await htmlRow.evaluate((el) => el.classList.contains("is-nonmd"));
+
+// Same-session round-trip, SAME rendered row, no navigation of any kind: open
+// sample.html again — the overlay must now appear.
+await htmlRow.click();
+await page.waitForTimeout(400);
+result.g15.hasHtmlViewerAfterReenable = (await page.locator(".html-viewer").count()) > 0;
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
+// ── G15 case A — the actual regression (team-lead catch, not just UX lag):
+// disabling a viewer MID-SESSION, with its file's row already rendered
+// openable, must not let a click fall through activateItem's now-false
+// viewer branch into onOpenFile (opening a non-markdown file AS markdown).
+// Uses ext.pdf (currently still enabled from every prior scenario above) so
+// this is independent of the ext.html state already exercised. Same
+// disabledViewersSetting.subscribe -> explorer.refreshOpenability() wiring
+// as scenario 3, but this time proving the DISABLE direction specifically —
+// scenario 3 above only proved re-enable.
+const pdfRow = rowFor("/mock/vault/sample.pdf");
+result.g15caseA.pdfOpenableBeforeDisable = !(await pdfRow.evaluate((el) => el.classList.contains("is-nonmd")));
+
+await page.click(".settings-btn");
+await page.waitForTimeout(200);
+await page.locator(".settings-cat", { hasText: "뷰어" }).first().click();
+await page.waitForTimeout(150);
+await page
+  .locator('.settings-vtoggle-item[data-id="ext.pdf"]')
+  .locator(".settings-seg-btn", { hasText: "끄기" })
+  .click();
+await page.waitForTimeout(150);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
+// The SAME already-rendered row (no tree refresh, no navigation) must now
+// carry .is-nonmd — this is the refreshOpenability sink firing off the
+// subscribe, not a fresh renderTree.
+result.g15caseA.pdfIsNonmdAfterDisable = await pdfRow.evaluate((el) => el.classList.contains("is-nonmd"));
+
+// Click it: must open NEITHER the viewer overlay NOR fall through to a
+// markdown open. `.is-selected` only gets set by activateItem's file branch
+// (explorer-panel.ts:510, right before the viewer/onOpenFile dispatch) — if
+// the row were still wrongly openable, this click would select it and mis-
+// open sample.pdf as a markdown document; with the fix, activateItem's
+// `.is-nonmd` early-return (line 507) fires first and neither happens.
+await pdfRow.click();
+await page.waitForTimeout(300);
+result.g15caseA.hasPdfViewerAfterDisable = (await page.locator(".pdf-viewer").count()) > 0;
+result.g15caseA.backdropCountAfterDisable = await page.locator(".viewer-backdrop").count();
+result.g15caseA.pdfRowSelectedAfterDisabledClick = await pdfRow.evaluate((el) =>
+  el.classList.contains("is-selected"),
+);
+
+// Round-trip: re-enable PDF, same row, no navigation — must become openable
+// (and actually open) again immediately.
+await page.click(".settings-btn");
+await page.waitForTimeout(200);
+await page.locator(".settings-cat", { hasText: "뷰어" }).first().click();
+await page.waitForTimeout(150);
+await page
+  .locator('.settings-vtoggle-item[data-id="ext.pdf"]')
+  .locator(".settings-seg-btn", { hasText: "켜기" })
+  .click();
+await page.waitForTimeout(150);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+result.g15caseA.pdfIsNonmdAfterReenable = await pdfRow.evaluate((el) => el.classList.contains("is-nonmd"));
+await pdfRow.click();
+await page.waitForTimeout(700); // fetch bytes + dynamic import("pdfjs-dist") + render
+result.g15caseA.hasPdfViewerAfterReenable = (await page.locator(".pdf-viewer").count()) > 0;
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
+// Leave no side effect on a rerun / on other goldens sharing this
+// dev:browser profile's localStorage.
+await page.evaluate(() => localStorage.removeItem("mermark.disabledViewers"));
+
 writeFileSync(out, JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));
 
@@ -801,6 +957,33 @@ const pass =
   result.g14.page1CanvasEvicted &&
   result.g14.backdropCountAfterEsc === 0 &&
   result.g14.editorStillResponsive &&
+  // G15 — viewer on/off toggle: disabling ext.html suppresses its overlay
+  // (falls through to the existing OS-default open_path path, no new
+  // fallback branch), leaves other viewers (image) unaffected, and
+  // re-enabling via the real settings-panel control round-trips back to a
+  // working overlay in the SAME session (no reload — proves `.get()` is
+  // read at open time, not cached at boot).
+  result.g15.backdropCountBeforeOpen === 0 &&
+  !result.g15.hasHtmlViewerWhenDisabled &&
+  result.g15.backdropCountWhenDisabled === 0 &&
+  result.g15.hasImageViewerWhileHtmlDisabled &&
+  result.g15.disabledViewersAfterReenable !== null &&
+  !JSON.parse(result.g15.disabledViewersAfterReenable ?? "[]").includes("ext.html") &&
+  !result.g15.htmlRowIsNonmdAfterReenable &&
+  result.g15.hasHtmlViewerAfterReenable &&
+  // G15 case A — the mid-session regression: disabling ext.pdf while its row
+  // was ALREADY rendered openable must flip `.is-nonmd` on that SAME row (no
+  // navigation) and stop the click from opening EITHER the viewer OR
+  // (the actual bug) onOpenFile/markdown-mis-open — `.is-selected` staying
+  // unset on the disabled click is the proof activateItem's file branch
+  // never ran at all. Re-enable round-trips the same way.
+  result.g15caseA.pdfOpenableBeforeDisable &&
+  result.g15caseA.pdfIsNonmdAfterDisable &&
+  !result.g15caseA.hasPdfViewerAfterDisable &&
+  result.g15caseA.backdropCountAfterDisable === 0 &&
+  !result.g15caseA.pdfRowSelectedAfterDisabledClick &&
+  !result.g15caseA.pdfIsNonmdAfterReenable &&
+  result.g15caseA.hasPdfViewerAfterReenable &&
   result.errors.length === 0;
 
 console.log("\nwrote", out);
