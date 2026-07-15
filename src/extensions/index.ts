@@ -10,6 +10,7 @@
 // an async init).
 import { registerExcelViewer } from "./excel-viewer";
 import { registerHtmlViewer } from "./html-viewer";
+import { registerPdfViewer } from "./pdf-viewer";
 
 export function activateExtensions(): void {
   // registerExcelViewer() only registers the {id, extensions, open} catalog
@@ -22,4 +23,9 @@ export function activateExtensions(): void {
   // this call is cold-load-cheap by construction, not by a dynamic-import
   // trick like Excel's.
   registerHtmlViewer();
+  // registerPdfViewer() (src/extensions/pdf-viewer): same shape as Excel's
+  // boot-time registration — only the {id, extensions, open} catalog entry
+  // lands at boot; `pdfjs-dist` (~1MB+) is dynamic-imported inside the
+  // viewer's own open() call, never here.
+  registerPdfViewer();
 }

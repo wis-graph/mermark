@@ -78,6 +78,45 @@
 //     .hwp-viewer-status shows an error message, no .hwp-viewer-pages ever
 //     appears, and the app survives (editor still responds afterward).
 //
+// G13 (PDF viewer — extension, src/extensions/pdf-viewer): sample.pdf →
+//     .pdf-viewer exists, page 1's <canvas> is ACTUALLY DRAWN (non-blank —
+//     reads real pixel data via toDataURL/getImageData, not just "a canvas
+//     element exists", the same "existence != rendered" trap G10's SVG-src
+//     check and G3's cell-value check both guard against), the text layer
+//     contains the fixture's marker string AND its bounding box overlaps the
+//     canvas's bounding box (proves `--scale-factor` alignment actually
+//     works, not just "some text nodes exist somewhere"), zero console
+//     errors (this is where a CSP eval-detection regression would surface —
+//     see pdf-viewer/index.ts's header comment on why pdfjs-dist 6.1.200
+//     needs no `isEvalSupported` workaround), and Esc tears the overlay down
+//     with the editor still responsive afterward.
+//
+// G14 (PDF viewer — lazy render + MAX_RENDERED_PAGES canvas-eviction cap,
+//     team-lead follow-up: G13's fixture was 1 page, so lazy-render/eviction
+//     were UNVERIFIED — "hwp-viewer pattern replicated" was an assumption,
+//     not evidence, since PDF's render path (canvas+text-layer, not an
+//     <img>) differs): guide.pdf (25 pages, "PAGE 1".."PAGE 25" — see
+//     scripts/lib/make-pdf-fixture.mjs) →
+//   - LAZY: right after open, the number of pages with an actual <canvas>
+//     child is well under 25 (most pages are still empty placeholders,
+//     outside the IntersectionObserver's rootMargin) — existence of 25
+//     `.pdf-viewer-page` DOM nodes proves nothing about which ones actually
+//     rendered, so this counts real <canvas> children specifically.
+//   - SCROLL-TRIGGERED RENDER: page 25 has NO canvas before scrolling and a
+//     REAL non-blank canvas (real pixel sample, same technique as G13) after
+//     scrolling the pages column to the bottom in steps (a single jump to
+//     scrollTop=scrollHeight can skip past pages without ever intersecting
+//     them, so this walks down in increments so the observer actually fires
+//     for each one along the way).
+//   - EVICTION CAP: after scrolling through the ENTIRE document, the number
+//     of `.pdf-viewer-page` elements that still carry a `<canvas>` never
+//     exceeds MAX_RENDERED_PAGES (20, pdf-viewer/index.ts) — proving the cap
+//     is a real, observable DOM effect, not just code that exists but never
+//     fires. The flip side: page 1 (the FIRST page rendered, so the FIRST
+//     candidate for FIFO eviction once the cap is exceeded) has had its
+//     canvas evicted (removed) by the time all 25 pages have been visited.
+//   - Zero console errors.
+//
 // VISUAL CONTRACT (checkPanelChrome below) applies to EVERY viewer's panel —
 // this is what the audit's screenshot + real-device findings actually
 // demand: "all viewers share the same shell chrome AND never spill past
@@ -91,7 +130,7 @@ import { assertPageRendered } from "./lib/preflight.mjs";
 const out = process.argv[2] ?? "/tmp/viewer-golden.json";
 const url = process.argv[3] ?? "http://localhost:1430/?file=/mock/vault/index.md";
 const result = {
-  g1: {}, g2: {}, g3: {}, g4: {}, g5: {}, g6: {}, g7: {}, g8: {}, g9: {}, g10: {}, g11: {}, g12: {},
+  g1: {}, g2: {}, g3: {}, g4: {}, g5: {}, g6: {}, g7: {}, g8: {}, g9: {}, g10: {}, g11: {}, g12: {}, g13: {}, g14: {},
   errors: [],
   failedRequests: [],
 };
@@ -525,6 +564,123 @@ await page.waitForTimeout(200);
 // App survives: the editor is still responsive after a failed HWP open.
 result.g12.editorStillResponsive = await page.evaluate(() => !!document.querySelector(".cm-content"));
 
+// ── G13 — PDF viewer (extension, src/extensions/pdf-viewer) ────────────────
+await rowFor("/mock/vault/sample.pdf").click();
+await page.waitForTimeout(900); // fetch bytes + dynamic import("pdfjs-dist") + worker init + render
+result.g13.hasPdfViewer = (await page.locator(".pdf-viewer").count()) > 0;
+result.g13.pageCount = await page.locator(".pdf-viewer-page").count();
+
+const firstPageCanvas = page.locator('.pdf-viewer-page[data-page="1"] canvas').first();
+await firstPageCanvas.waitFor({ state: "attached", timeout: 8000 }).catch(() => {});
+// Non-blank check: existence of a <canvas> element proves nothing about
+// whether pdf.js actually drew to it (the exact "existence != rendered" trap
+// G10's data:svg src check and G3's cell-value check both guard against) —
+// sample a strip of real pixel data and require at least one non-white,
+// non-transparent pixel. A blank white canvas the same size as a real render
+// would pass every DOM-shape check above and still be a total rendering
+// failure.
+result.g13.canvasNonBlank = await firstPageCanvas
+  .evaluate((canvas) => {
+    const ctx = canvas.getContext("2d");
+    if (!ctx || canvas.width === 0 || canvas.height === 0) return false;
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < data.length; i += 4) {
+      const [r, g, b, a] = [data[i], data[i + 1], data[i + 2], data[i + 3]];
+      if (a > 0 && (r < 250 || g < 250 || b < 250)) return true; // a real (non-white) pixel was drawn
+    }
+    return false;
+  })
+  .catch(() => false);
+
+const textLayerEl = page.locator('.pdf-viewer-page[data-page="1"] .textLayer').first();
+result.g13.textLayerText = await textLayerEl.innerText().catch(() => "");
+result.g13.hasMarkerText = result.g13.textLayerText.includes("PDF-VIEWER-GOLDEN-MARKER");
+
+// Alignment: the text layer's box must overlap the canvas's box — proves
+// `--scale-factor` actually positioned the text run over the rendered page,
+// not just "some text nodes exist somewhere off in a corner".
+result.g13.textLayerAlignedWithCanvas = await page.evaluate(() => {
+  const page1 = document.querySelector('.pdf-viewer-page[data-page="1"]');
+  const canvas = page1?.querySelector("canvas");
+  const textLayer = page1?.querySelector(".textLayer");
+  if (!canvas || !textLayer) return false;
+  const c = canvas.getBoundingClientRect();
+  const t = textLayer.getBoundingClientRect();
+  return c.left < t.right && c.right > t.left && c.top < t.bottom && c.bottom > t.top;
+});
+
+Object.assign(result.g13, await checkPanelChrome(page, ".pdf-viewer", ".pdf-viewer-caption"));
+await page.screenshot({ path: out.replace(/\.json$/, ".g13-pdf-viewer.png") });
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+result.g13.backdropCountAfterEsc = await page.locator(".viewer-backdrop").count();
+result.g13.editorStillResponsive = await page.evaluate(() => !!document.querySelector(".cm-content"));
+
+// ── G14 — PDF viewer: lazy render + MAX_RENDERED_PAGES canvas-eviction cap ─
+// Non-blank canvas check, shared shape with G13's — inline here (page-side
+// evaluate closures don't share code across separate .evaluate() calls in
+// Playwright without an explicit exposeFunction, and this is only used
+// twice in this file so a shared helper isn't worth the indirection).
+async function canvasIsNonBlank(locator) {
+  return locator
+    .evaluate((canvas) => {
+      const ctx = canvas.getContext("2d");
+      if (!ctx || canvas.width === 0 || canvas.height === 0) return false;
+      const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < data.length; i += 4) {
+        const [r, g, b, a] = [data[i], data[i + 1], data[i + 2], data[i + 3]];
+        if (a > 0 && (r < 250 || g < 250 || b < 250)) return true;
+      }
+      return false;
+    })
+    .catch(() => false);
+}
+
+await rowFor("/mock/vault/guide.pdf").click();
+await page.waitForTimeout(900); // fetch bytes + dynamic import("pdfjs-dist") + worker init + first-viewport render
+result.g14.hasPdfViewer = (await page.locator(".pdf-viewer").count()) > 0;
+result.g14.pageCount = await page.locator(".pdf-viewer-page").count();
+
+const pagesColumn = page.locator(".pdf-viewer-pages");
+// LAZY: right after open, real <canvas> children — NOT `.pdf-viewer-page`
+// element count, which is 25 unconditionally (placeholders exist for every
+// page from the start) — must be well under the total page count.
+result.g14.initialCanvasCount = await page.locator(".pdf-viewer-page canvas").count();
+result.g14.page25CanvasBeforeScroll = await page.locator('.pdf-viewer-page[data-page="25"] canvas').count();
+
+// Walk the pages column down in steps (not a single jump to
+// scrollTop=scrollHeight, which can skip past intermediate pages without
+// ever intersecting them) so the IntersectionObserver actually fires for
+// each page along the way, exactly the way a real user scrolling would.
+const SCROLL_STEPS = 14;
+for (let i = 1; i <= SCROLL_STEPS; i++) {
+  const frac = i / SCROLL_STEPS;
+  await pagesColumn.evaluate((el, f) => {
+    el.scrollTop = el.scrollHeight * f;
+  }, frac);
+  await page.waitForTimeout(250);
+}
+await page.waitForTimeout(500);
+
+const page25Canvas = page.locator('.pdf-viewer-page[data-page="25"] canvas').first();
+await page25Canvas.waitFor({ state: "attached", timeout: 8000 }).catch(() => {});
+result.g14.page25CanvasNonBlank = await canvasIsNonBlank(page25Canvas);
+
+// EVICTION CAP: after visiting the entire 25-page document, the number of
+// pages still carrying a live canvas must never exceed MAX_RENDERED_PAGES
+// (20, pdf-viewer/index.ts) — and page 1 (rendered FIRST, so first in the
+// FIFO eviction order once the cap is exceeded) must have been evicted.
+result.g14.canvasCountAfterFullScroll = await page.locator(".pdf-viewer-page canvas").count();
+result.g14.page1CanvasEvicted = (await page.locator('.pdf-viewer-page[data-page="1"] canvas').count()) === 0;
+
+await page.screenshot({ path: out.replace(/\.json$/, ".g14-pdf-viewer-multipage.png") });
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+result.g14.backdropCountAfterEsc = await page.locator(".viewer-backdrop").count();
+result.g14.editorStillResponsive = await page.evaluate(() => !!document.querySelector(".cm-content"));
+
 writeFileSync(out, JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));
 
@@ -617,6 +773,34 @@ const pass =
   result.g12.showsError &&
   !result.g12.hasPagesContainer &&
   result.g12.editorStillResponsive &&
+  // G13 — PDF viewer: real (non-blank) render, aligned text layer, shell
+  // chrome contract, clean teardown.
+  result.g13.hasPdfViewer &&
+  result.g13.pageCount === 1 &&
+  result.g13.canvasNonBlank &&
+  result.g13.hasMarkerText &&
+  result.g13.textLayerAlignedWithCanvas &&
+  result.g13.backdropAlpha > 0 &&
+  result.g13.panelAlpha > 0 &&
+  result.g13.panelDisplay === "flex" &&
+  result.g13.panelInViewport &&
+  result.g13.captionInsidePanel &&
+  result.g13.bodyContainedInPanel &&
+  result.g13.contentContainedInBody &&
+  !result.g13.closeButtonOverlapsInteractive &&
+  result.g13.backdropCountAfterEsc === 0 &&
+  result.g13.editorStillResponsive &&
+  // G14 — PDF viewer: lazy render + MAX_RENDERED_PAGES canvas-eviction cap,
+  // both real, observable DOM effects (not just code that exists).
+  result.g14.hasPdfViewer &&
+  result.g14.pageCount === 25 &&
+  result.g14.initialCanvasCount < 25 &&
+  result.g14.page25CanvasBeforeScroll === 0 &&
+  result.g14.page25CanvasNonBlank &&
+  result.g14.canvasCountAfterFullScroll <= 20 &&
+  result.g14.page1CanvasEvicted &&
+  result.g14.backdropCountAfterEsc === 0 &&
+  result.g14.editorStillResponsive &&
   result.errors.length === 0;
 
 console.log("\nwrote", out);

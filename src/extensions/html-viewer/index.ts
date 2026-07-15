@@ -57,8 +57,35 @@ function ensureStyleInjected(): void {
  * .html file has no "narrow" natural width the way a small Excel sheet
  * does), so unlike excel-viewer's max-width this stays a fixed vw/vh
  * fraction of the shell's .viewer-panel envelope (94vw/92vh, styles.css)
- * -- never a px literal that stops scaling past some fixed resolution. */
-.html-viewer { width: 92vw; max-height: 88vh; }
+ * -- never a px literal that stops scaling past some fixed resolution.
+ *
+ * height: 88vh (not just max-height) -- ENVELOPE-DRIVEN, not
+ * content-driven (team-lead sizing fix, 2026-07). max-height alone left
+ * this panel's height as auto: with no ancestor in the
+ * .html-viewer -> .viewer-panel-body -> .html-viewer-frame-wrap chain
+ * carrying a DEFINITE height, every flex: 1 in that chain had nothing to
+ * grow into, so .html-viewer-frame-wrap's own height collapsed to its
+ * content's intrinsic size -- which for an iframe with no content yet
+ * (and, per the HTML spec, even once srcdoc loads: an iframe's box is
+ * sized by the PARENT's layout, not by its document's content) is the UA
+ * default of exactly 150px. Measured directly (CDP, 4K viewport): the panel
+ * rendered 253px tall against an 1900px cap -- 150px of that was the
+ * .html-viewer-frame-wrap, i.e. the iframe's default intrinsic height,
+ * not a computed fraction of anything. A document viewer (unlike
+ * excel-viewer, whose height genuinely should shrink to a 3-row sheet) has
+ * no natural "small" size to shrink to -- an arbitrary .html file could be
+ * one line or ten thousand, so this panel must always claim its full
+ * envelope regardless of content (pdf-viewer, src/extensions/pdf-viewer/
+ * index.ts, has the SAME "width: 92vw; max-height: 88vh;" shape with no
+ * explicit height and gets away with it only by accident -- its
+ * multi-page canvas content happens to be tall enough on its own to fill
+ * the cap; it has the identical latent bug for a short PDF and is out of
+ * this change's scope). max-height: 88vh stays alongside height: 88vh so
+ * a caller that later swaps this to a min-content-driven behavior for some
+ * other reason still has an upper bound documented (belt & suspenders, zero
+ * behavior change since height already pins the value max-height would
+ * cap). */
+.html-viewer { width: 92vw; height: 88vh; max-height: 88vh; }
 /* The LOADED state's content wrapper — becomes the iframe's flex/scroll
  * boundary (mirrors excel-viewer-body's role: the outer .viewer-panel-body
  * (styles.css, shell-owned) gives every viewer's content a bounded flex

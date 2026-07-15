@@ -242,6 +242,17 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
           { name: "logo.svg", path: "/mock/vault/logo.svg", is_dir: false },
           { name: "data.json", path: "/mock/vault/data.json", is_dir: false },
           { name: "app.ts", path: "/mock/vault/app.ts", is_dir: false },
+          // PDF viewer golden (G14 — lazy render + MAX_RENDERED_PAGES canvas-
+          // eviction cap): "guide.pdf" predates the PDF viewer's existence
+          // (this row used to have no backing file — a dummy icon/list-only
+          // entry) and REGRESSED to an error panel the moment
+          // registerPdfViewer() started claiming "pdf" (readLocalFileBytes
+          // 404 against a nonexistent file). Fixed by backing it with a REAL
+          // 25-page fixture (scripts/lib/make-pdf-fixture.mjs →
+          // mock-assets/mock/vault/guide.pdf, pages marked "PAGE 1".."PAGE 25"
+          // so a golden can assert exactly which page rendered) instead of
+          // adding a third PDF row — this TREE entry only makes the row
+          // visible/openable; bytes are served by Vite's browser-mode publicDir.
           { name: "guide.pdf", path: "/mock/vault/guide.pdf", is_dir: false },
           { name: "LICENSE", path: "/mock/vault/LICENSE", is_dir: false },
           { name: "pic.png", path: "/mock/vault/pic.png", is_dir: false },
@@ -265,6 +276,13 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
           { name: "sample.hwp", path: "/mock/vault/sample.hwp", is_dir: false },
           { name: "corrupt.hwp", path: "/mock/vault/corrupt.hwp", is_dir: false },
           { name: "huge.hwp", path: "/mock/vault/huge.hwp", is_dir: false },
+          // PDF viewer golden (G13): the 1-page positive fixture (basic
+          // render/text-layer). Same shape as report.xlsx/sample.html above
+          // — bytes served by Vite's browser-mode publicDir at
+          // mock-assets/mock/vault/sample.pdf (scripts/lib/make-pdf-fixture.mjs);
+          // this TREE entry only makes the row visible/openable in the
+          // explorer. "guide.pdf" (above) is the 25-page fixture for G14.
+          { name: "sample.pdf", path: "/mock/vault/sample.pdf", is_dir: false },
         ],
         "/mock/vault/notes": [
           { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },
