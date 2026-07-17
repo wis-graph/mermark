@@ -22,7 +22,6 @@ import {
   registerViewer,
   openViewerShell,
   readLocalFileBytes,
-  fontScale,
   type Viewer,
   type ViewerHandle,
 } from "../../api";
@@ -246,10 +245,10 @@ function enforceRenderCap(state: PageRenderState, pageEls: ReadonlyMap<number, H
 
 /** Request + swap in one page's rendered canvas + text layer (or an error
  *  message on failure), guarded by `shouldRenderPage`. Re-entrant by design
- *  (zoom-change calls this again for an already-rendered page after
- *  `evictPage` clears its bookkeeping) — always computes the CURRENT
- *  `fontScale.get()` at call time, so a page rendered mid-zoom-change picks
- *  up the latest value rather than a stale one captured earlier. Command
+ *  (a window resize calls this again for an already-rendered page after
+ *  `evictPage` clears its bookkeeping) — always reads the CURRENT
+ *  `pageTargetWidth(pagesEl)` at call time, so a page rendered mid-resize fits
+ *  the latest panel width rather than a stale one captured earlier. Command
  *  (void) — kicks off async IO and mutates `el`/the tracking sets. */
 function renderPdfPage(
   page: number,
@@ -265,7 +264,7 @@ function renderPdfPage(
   (async () => {
     const pdfPage = await pdfDoc.getPage(page);
     const unscaled = pdfPage.getViewport({ scale: 1 });
-    const scale = fitWidthScale(unscaled.width, pageTargetWidth(pagesEl), fontScale.get());
+    const scale = fitWidthScale(unscaled.width, pageTargetWidth(pagesEl), 1);
     const viewport = pdfPage.getViewport({ scale });
 
     const outputScale = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
@@ -325,18 +324,17 @@ function renderPdfPage(
   });
 }
 
-/** Re-render every currently-rendered (not in-flight) page at the current
- *  zoom — called on a `fontScale` change and on window resize. Clears each
- *  page's render bookkeeping via `evictPage` first so `renderPdfPage`'s own
+/** Re-render every currently-rendered (not in-flight) page to fit the new
+ *  panel width — called on a window resize. Clears each page's render
+ *  bookkeeping via `evictPage` first so `renderPdfPage`'s own
  *  `shouldRenderPage` guard treats it as fresh, then re-requests it — a full
  *  re-raster rather than a CSS transform, so the canvas and its text layer
  *  are always computed from the SAME viewport and stay pixel-aligned (a CSS-
  *  only scale would need the canvas and text layer scaled by an identical
  *  transform to stay aligned, and re-deriving that from two independently
- *  updated boxes is a bigg er source of drift than re-rendering a static
+ *  updated boxes is a bigger source of drift than re-rendering a static
  *  document's pages, which — unlike HWP's raster-only page images — is cheap
- *  relative to a human's zoom-key cadence, a bigger source of drift risk this
- *  design avoids entirely). Command (void). */
+ *  relative to a human's resize cadence). Command (void). */
 function rerenderVisiblePages(
   pdfDoc: PdfDocumentProxy,
   pdfjs: PdfjsModule,
@@ -535,11 +533,11 @@ function openPdfViewer(absPath: string): ViewerHandle {
       renderPdfPage(page, el, doc, pdfjs, rawState, content, pageEls),
     );
 
-    const unsubscribeZoom = fontScale.bind(() => {
-      if (content.classList.contains("pdf-viewer-pages")) rerenderVisiblePages(doc, pdfjs, rawState, content, pageEls);
-    });
-    shell.onTeardown(unsubscribeZoom);
-
+    // A page is fit to the panel width INDEPENDENT of the editor's body-text
+    // zoom (fontScale) — a document viewer should show the whole page, not
+    // inherit "cmd +/-" and render 1.5× the column so it overflows and clips
+    // (사용자 리포트 2026-07-18: "본문보다 2배 커보여, 컨텐츠가 다 안 보임").
+    // Only a window resize changes the fit, so only that re-renders.
     const onResize = () => {
       if (content.classList.contains("pdf-viewer-pages")) rerenderVisiblePages(doc, pdfjs, rawState, content, pageEls);
     };

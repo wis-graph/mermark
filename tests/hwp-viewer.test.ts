@@ -116,20 +116,6 @@ describe("openHwpViewer: close (T4)", () => {
     expect(() => handle.close()).not.toThrow();
   });
 
-  it("close() unsubscribes the fontScale sink — a post-close zoom change no longer touches the (removed) pages container", async () => {
-    const v = viewerFor("hwp")!;
-    const handle = v.open("/vault/sample.hwp");
-    await flush();
-
-    const pagesEl = document.querySelector(".hwp-viewer-pages") as HTMLElement;
-    fontScaleSetting.set(1.3);
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("702px"); // 600 × 0.9 fraction × 1.3
-
-    handle.close();
-    const widthAtClose = pagesEl.style.getPropertyValue("--hwp-page-width");
-    fontScaleSetting.set(1.7); // would mutate a detached node if the sink were still live
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe(widthAtClose); // unchanged
-  });
 });
 
 describe("openHwpViewer: corrupted file (T5)", () => {
@@ -146,18 +132,24 @@ describe("openHwpViewer: corrupted file (T5)", () => {
   });
 });
 
-describe("openHwpViewer: zoom (T6, design §4.2)", () => {
-  it("page width reflects fontScaleSetting on open and on every change (600px container × 0.9 fraction × scale)", async () => {
-    fontScaleSetting.set(1.5);
+describe("openHwpViewer: page width is independent of editor fontScale (T6)", () => {
+  // A document viewer fits the WHOLE page to the panel; it must NOT inherit the
+  // editor's body-text zoom (fontScale) and render past the panel edge (사용자
+  // 리포트 2026-07-18: "본문보다 2배 커보여, 컨텐츠가 다 안 보임"). 600px jsdom
+  // fallback × 0.9 fraction = 540px, regardless of fontScale.
+  it("width stays fit-to-panel (540px) no matter the fontScale on open or after a change", async () => {
+    fontScaleSetting.set(1.5); // a zoomed editor must NOT inflate the page
     const v = viewerFor("hwp")!;
     const handle = v.open("/vault/sample.hwp");
     await flush();
 
     const pagesEl = document.querySelector(".hwp-viewer-pages") as HTMLElement;
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("810px"); // 600 × 0.9 × 1.5
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("540px"); // 600 × 0.9, NOT × 1.5
 
-    fontScaleSetting.set(1.0);
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("540px"); // 600 × 0.9 × 1.0
+    fontScaleSetting.set(2.0); // change zoom while open → width must not move
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("540px");
+    fontScaleSetting.set(0.8);
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("540px");
 
     handle.close();
   });

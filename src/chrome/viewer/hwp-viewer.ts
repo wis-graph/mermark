@@ -30,12 +30,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { registerViewer, type Viewer, type ViewerHandle } from "./registry";
 import { openViewerShell } from "./shell";
-import { fontScaleSetting } from "../../settings/app";
 import { pagePlaceholder, svgToDataUrl, pageAspectFrom, isNearViewport } from "./hwp-pages";
 
 /** jsdom-only fallback baseline (px) for `pageBaseWidth` below — jsdom never
  *  runs real layout, so `clientWidth` is always 0 there and this constant is
- *  the only width `applyHwpZoom` can use in a vitest environment. In a real
+ *  the only width `applyHwpPageWidth` can use in a vitest environment. In a real
  *  browser this number is never read (04_audit_report.md 재호출: a fixed
  *  600px baseline was the reason a 4K panel — now `92vw` wide, styles.css —
  *  still rasterized pages at a 595px-equivalent original size; the panel
@@ -53,25 +52,29 @@ const HWP_PAGE_FALLBACK_WIDTH = 600;
  *  and `PDF_PAGE_WIDTH_FRACTION` together — they are one design decision. */
 const HWP_PAGE_WIDTH_FRACTION = 0.9;
 
-/** The page's baseline width (px) at `fontScale === 1.0` —
- *  `HWP_PAGE_WIDTH_FRACTION` of the page column's ACTUAL rendered width, so
- *  pages fill a reading column proportional to however big `.hwp-viewer`'s
- *  `92vw` envelope (styles.css) currently is on this screen (PDF-parity),
- *  rather than the FULL panel width (which overflowed the viewport) or a
- *  constant blind to viewport size. Reading `clientWidth` forces a
- *  synchronous layout, which is fine here — it's called only on zoom change
- *  and on open, never per-frame. Pure query. */
+/** The page's fit-to-panel width (px) — `HWP_PAGE_WIDTH_FRACTION` of the page
+ *  column's ACTUAL rendered width, so pages fill a reading column proportional
+ *  to however big `.hwp-viewer`'s `92vw` envelope (styles.css) currently is on
+ *  this screen (PDF-parity), rather than the FULL panel width (which overflowed
+ *  the viewport) or a constant blind to viewport size. NOT multiplied by the
+ *  editor's fontScale — the fit is independent of body-text zoom. Reading
+ *  `clientWidth` forces a synchronous layout, which is fine here — it's called
+ *  only on open and on window resize, never per-frame. Pure query. */
 function pageBaseWidth(pagesEl: HTMLElement): number {
   return (pagesEl.clientWidth || HWP_PAGE_FALLBACK_WIDTH) * HWP_PAGE_WIDTH_FRACTION;
 }
 
-/** Apply the current zoom scale to every page's width via one CSS custom
- *  property on the scroll container (`.hwp-viewer-page`'s `width` reads
- *  `var(--hwp-page-width)`, styles.css) — so a page added AFTER a zoom
- *  change (a placeholder that hasn't rendered yet) still inherits the right
- *  width with no extra bookkeeping. Command (void) — a DOM mutation. */
-function applyHwpZoom(pagesEl: HTMLElement, scale: number): void {
-  pagesEl.style.setProperty("--hwp-page-width", `${pageBaseWidth(pagesEl) * scale}px`);
+/** Set every page's fit-to-panel width via one CSS custom property on the
+ *  scroll container (`.hwp-viewer-page`'s `width` reads `var(--hwp-page-width)`,
+ *  styles.css) — so a page added AFTER this call (a placeholder that hasn't
+ *  rendered yet) still inherits the right width with no extra bookkeeping. The
+ *  width is `pageBaseWidth` alone: it fits the panel INDEPENDENT of the
+ *  editor's body-text zoom (fontScale), because a document viewer should show
+ *  the whole page, not inherit "cmd +/-" and render past the panel edge
+ *  (사용자 리포트 2026-07-18: "본문보다 2배 커보여, 컨텐츠가 다 안 보임").
+ *  Command (void) — a DOM mutation. */
+function applyHwpPageWidth(pagesEl: HTMLElement): void {
+  pagesEl.style.setProperty("--hwp-page-width", `${pageBaseWidth(pagesEl)}px`);
 }
 
 /** The page index a placeholder (or its rendered replacement) belongs to —
@@ -184,19 +187,15 @@ function openHwpViewer(absPath: string): ViewerHandle {
   const shell = openViewerShell({ absPath, modalClass: "hwp-viewer", content });
 
   let observerHandle: { disconnect(): void } | null = null;
-  const unsubscribeZoom = fontScaleSetting.bind((scale) => {
-    if (content.classList.contains("hwp-viewer-pages")) applyHwpZoom(content, scale);
-  });
-  shell.onTeardown(unsubscribeZoom);
-  // The panel is now viewport-relative (`92vw`, styles.css) rather than a
-  // px cap, so the page column's own width — and therefore pageBaseWidth()
-  // — changes on window resize, not just on zoom. Re-apply on resize so a
-  // page already open when the OS window/display changes doesn't stay
-  // stuck at whatever size it first rendered at. `typeof window` guard
-  // mirrors observePages' IntersectionObserver feature-check for the same
-  // jsdom-has-no-real-layout reason.
+  // The panel is viewport-relative (`92vw`, styles.css), so the page column's
+  // own width — and therefore pageBaseWidth() — changes on window resize.
+  // Re-apply on resize so a page already open when the OS window/display
+  // changes refits instead of staying stuck at its first-rendered width.
+  // `typeof window` guard mirrors observePages' IntersectionObserver
+  // feature-check for the same jsdom-has-no-real-layout reason. (There is no
+  // zoom subscription: the fit is independent of the editor's fontScale.)
   const onResize = () => {
-    if (content.classList.contains("hwp-viewer-pages")) applyHwpZoom(content, fontScaleSetting.get());
+    if (content.classList.contains("hwp-viewer-pages")) applyHwpPageWidth(content);
   };
   if (typeof window !== "undefined") {
     window.addEventListener("resize", onResize);
@@ -220,7 +219,7 @@ function openHwpViewer(absPath: string): ViewerHandle {
 
     content.className = "hwp-viewer-pages";
     content.replaceChildren(...placeholders);
-    applyHwpZoom(content, fontScaleSetting.get());
+    applyHwpPageWidth(content);
 
     // Serialize hwp_render_page to one-in-flight. hwp.rs keeps the single
     // parsed document in a one-slot mutex that hwp_render_page TAKES OUT for
