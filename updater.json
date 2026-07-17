@@ -1,11 +1,11 @@
 {
-  "version": "0.8.2",
-  "notes": "### Fixed\n\n- **그림·음영이 들어간 PDF가 페이지마다 오류로 뜨던 문제**: 표·도형·음영이 포함된 PDF를 열면 각 페이지가 \"페이지를 불러올 수 없습니다\" 오류로 표시됐다. 앱 보안 정책과 충돌하던 PDF 렌더링 경로를 우회해, 이제 정상적으로 그려진다. (0.8.1의 PDF 뷰어 동작 수정에 이은 후속 수정)",
-  "pub_date": "2026-07-17T16:54:20Z",
+  "version": "0.8.3",
+  "notes": "### Fixed\n\n- **한글(HWP) 문서에서 일부 페이지가 \"HWP 세션이 없습니다\"로 안 뜨던 문제**: 여러 페이지를 동시에 그리려다 내부에서 충돌해 일부만 렌더되고 나머지는 오류가 났다. 페이지를 한 장씩 순서대로 그리도록 고쳐, 모든 페이지가 정상적으로 뜬다.\n\n### Changed\n\n- PDF 페이지 렌더가 실패할 경우, 오류 메시지가 잘리지 않고 종류까지 온전히 표시된다(문제 진단용).",
+  "pub_date": "2026-07-17T17:21:39Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzBXNW5NV0UrSHJsRm1UVnJRemRsMHJpRHY1YjJJYjdwY0xVNENNQWg1anpmZERUMklzeC9pNWdET3dMUWdFRXQwdU85S2VNYTVZSG9JQ1pobTZEV0FRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MzA3MjA0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClRWcndyeUpzV1llVUxDaUVlL0R2VDNhSnVKejM3V1RLelFxZnBwc1U2U1BnbkZ0SHNpRVBYaGY1a011cm9BaUU1RGsvbG5UbHJCZVlVYUVvSlF0SkNRPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.8.2/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzJFYTU1OUMvSlJGaW1RNUFFN3AxVzVmWXZIcVN6bmdNY3F4N0VNOUV0SGNKODRRLytPTjF0WEYvK1Q1WHBHanpRbWVwemUxRVIyRDZKQ0xLNkFWYmc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MzA4ODQ1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnJBdndnVS90Sk51SmVRWUhOVFVMcU5oQ0ZOUW5sVmhRb0F1U1VKTzVvbmZBdEp0YWpINzhGVUlUV1RES2hxdW1nQSt3T1V1V1YrZFpTUG1oUjMxM0JRPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.8.3/mermark.app.tar.gz"
     }
   }
 }
