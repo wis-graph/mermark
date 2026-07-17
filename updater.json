@@ -1,11 +1,11 @@
 {
-  "version": "0.8.5",
-  "notes": "### Changed\n\n- **PDF·HWP 페이지가 화면에 과도하게 크게 열리던 문제**: PDF는 패널 폭을 꽉 채워(100%) 지나치게 컸고, HWP는 70%라 둘이 서로 크기가 달랐다. 이제 두 뷰어 모두 패널 폭의 **90%**로 통일해, 양옆에 읽기 여백이 생기고 한 화면에 페이지가 편하게 들어온다. (⌘±로 확대·축소는 그대로)",
-  "pub_date": "2026-07-17T21:30:20Z",
+  "version": "0.8.6",
+  "notes": "### Fixed\n\n- **PDF·HWP 페이지가 본문보다 2배 크게 열려 내용이 잘려 보이던 문제(실제 원인 수정)**: 두 뷰어가 페이지 크기를 계산할 때 **에디터 본문 글자 배율(⌘+/−로 키운 값)까지 곱하고** 있었다. 그래서 에디터를 1.5배로 키워 두면 PDF·HWP도 1.5배로 열려 패널 밖으로 넘치고 좌우가 잘렸다. 이제 두 뷰어는 **에디터 확대와 무관하게** 항상 페이지 전체가 패널 폭의 90%로 들어오게 맞춘다(양옆 여백 유지). 0.8.5의 \"90%\"가 실제로는 에디터 배율에 곱해져 커지던 것을 바로잡았다. (참고: 뷰어 안에서 ⌘+/−로 확대하는 기능은 이번에 분리됐다 — ⌘+/−는 에디터 본문에만 적용된다.)",
+  "pub_date": "2026-07-17T21:56:40Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzlHdEQ2VkIzT0xHa1FnS3R4d05iOEdzK0JydUhxVUNDdWFTY09IV3dFSHpmRjhYc09xcXEzNXZDVlpiVVd3TWk2enErZ1ZESUs1dHFlWGY1VmcrbVE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MzIzNzY4CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkVhV0I3a01wN2I5cE9kcmljZGg3MXcxWWN1S1ZTR0NweEdSMnprTTFYTk92VnlDVGtYeThwQTRDckZqUmdWRllSSFk1bEFIZ05kc3o4V1RYSEo4OUJBPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.8.5/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3lSU3dIdXVmUWE1RVdNSUNES2k4TU5LeVRwTmVnYTVJcCtXKzNMREk1Z2R0RE5uWkFMTjFYSTI3dlhHTzhVajdyREhndGZ4OWtrMjg4c0ljeXlUSWd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MzI1MzQ0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Cmw1aSs3SjBPcnNzTjNKUEtRa1ZQOEdGZjllRTdONkh4STliZGZ3TFpaUFlCOHhxQ2FvRHRScDBiMFpmWVEzOG02dlZNSDZzL2E0czdtc09wcFNnK0N3PT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.8.6/mermark.app.tar.gz"
     }
   }
 }
