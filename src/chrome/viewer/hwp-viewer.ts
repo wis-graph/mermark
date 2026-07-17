@@ -42,14 +42,27 @@ import { pagePlaceholder, svgToDataUrl, pageAspectFrom, isNearViewport } from ".
  *  grew but the pages inside it didn't). */
 const HWP_PAGE_FALLBACK_WIDTH = 600;
 
-/** The page's baseline width (px) at `fontScale === 1.0` — the ACTUAL
- *  rendered width of the page column's container, so pages fill however
- *  big `.hwp-viewer`'s `92vw` envelope (styles.css) currently is on this
- *  screen, rather than a constant that was blind to viewport size. Reading
- *  `clientWidth` forces a synchronous layout, which is fine here — it's
- *  called only on zoom change and on open, never per-frame. Pure query. */
+/** The fraction of the pages column ONE page occupies — a reading column
+ *  narrower than the full panel, matching the PDF viewer's 70% page width
+ *  (pdf-viewer/index.ts's `pagePlaceholder` sets `width: 70%`) so the two
+ *  document viewers size pages consistently. At 100% a portrait A4 page
+ *  (aspect ~0.69) rendered ~1.45× the panel width TALL — far past the `88vh`
+ *  envelope — so you had to zoom OUT to see a single page (사용자 리포트
+ *  2026-07-18: "축소를 해야 전체가 보인다"). 0.7 is the same fit-to-width
+ *  fraction the PDF viewer already uses, so text stays readable and a page's
+ *  height lands where the sibling viewer's does. */
+const HWP_PAGE_WIDTH_FRACTION = 0.7;
+
+/** The page's baseline width (px) at `fontScale === 1.0` —
+ *  `HWP_PAGE_WIDTH_FRACTION` of the page column's ACTUAL rendered width, so
+ *  pages fill a reading column proportional to however big `.hwp-viewer`'s
+ *  `92vw` envelope (styles.css) currently is on this screen (PDF-parity),
+ *  rather than the FULL panel width (which overflowed the viewport) or a
+ *  constant blind to viewport size. Reading `clientWidth` forces a
+ *  synchronous layout, which is fine here — it's called only on zoom change
+ *  and on open, never per-frame. Pure query. */
 function pageBaseWidth(pagesEl: HTMLElement): number {
-  return pagesEl.clientWidth || HWP_PAGE_FALLBACK_WIDTH;
+  return (pagesEl.clientWidth || HWP_PAGE_FALLBACK_WIDTH) * HWP_PAGE_WIDTH_FRACTION;
 }
 
 /** Apply the current zoom scale to every page's width via one CSS custom

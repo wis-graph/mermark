@@ -348,6 +348,32 @@ function rerenderVisiblePages(
  *  background and swap in the page column (or an error status) when ready.
  *  Mirrors hwp-viewer.ts's `openHwpViewer` shape (design: "hwp-viewer가 페이지
  *  렌더 뷰어의 표준 선례"). Command. */
+/** Construct the pdf.js worker from a same-origin `blob:` URL instead of the
+ *  raw `/pdfjs/build/pdf.worker.mjs` path. In the production Tauri build the
+ *  page origin is the custom `tauri://localhost` scheme, and WKWebView
+ *  silently fails a module `Worker` loaded DIRECTLY from a custom-scheme URL —
+ *  the `Worker` object constructs without throwing but never runs its script,
+ *  so `getDocument` never gets a reply and hangs forever ("모달은 뜨는데
+ *  렌더링이 안 됨", 사용자 리포트 2026-07-18). This is why neither the golden
+ *  (`localhost:1430`) nor `tauri dev` (`localhost:1420`) ever caught it: both
+ *  are real http origins where a custom-scheme Worker isn't involved.
+ *
+ *  Fetching the script (same-origin, allowed by CSP `connect-src 'self'`) and
+ *  handing `new Worker` a `blob:` URL sidesteps it — WKWebView runs blob-URL
+ *  workers normally (needs CSP `worker-src blob:`, tauri.conf.json). The
+ *  worker bundle is self-contained (zero top-level imports) so the opaque blob
+ *  base breaks no import resolution, and every asset URL it fetches at runtime
+ *  (cMapUrl/standardFontDataUrl/wasmUrl/…) is an absolute `/pdfjs/…` string
+ *  getDocument is handed, resolved against the document origin, not the blob
+ *  base. Returns the worker plus a `revoke` the caller fires on teardown (the
+ *  ~2MB script blob stays referenced by the object URL until then). */
+async function makeBlobWorker(scriptUrl: string): Promise<{ worker: Worker; revoke: () => void }> {
+  const res = await fetch(scriptUrl);
+  if (!res.ok) throw new Error(`pdf worker fetch: ${res.status} ${res.statusText} for ${scriptUrl}`);
+  const blobUrl = URL.createObjectURL(await res.blob());
+  return { worker: new Worker(blobUrl, { type: "module" }), revoke: () => URL.revokeObjectURL(blobUrl) };
+}
+
 function openPdfViewer(absPath: string): ViewerHandle {
   ensureStyleInjected();
   const content = document.createElement("div");
@@ -359,6 +385,7 @@ function openPdfViewer(absPath: string): ViewerHandle {
   let observerHandle: { disconnect(): void } | null = null;
   let loadingTask: PdfLoadingTask | null = null;
   let pdfWorker: { destroy(): void } | null = null;
+  let revokeWorkerUrl: (() => void) | null = null;
   const rawState: PageRenderState = {
     pending: new Set(),
     rendered: new Set(),
@@ -375,6 +402,7 @@ function openPdfViewer(absPath: string): ViewerHandle {
   shell.onTeardown(() => {
     loadingTask?.destroy().catch(() => {});
     pdfWorker?.destroy();
+    revokeWorkerUrl?.();
   });
 
   (async () => {
@@ -385,7 +413,18 @@ function openPdfViewer(absPath: string): ViewerHandle {
     ]);
     const pdfjs = pdfjsMod;
 
-    const rawWorker = new Worker("/pdfjs/build/pdf.worker.mjs", { type: "module" });
+    const { worker: rawWorker, revoke } = await makeBlobWorker("/pdfjs/build/pdf.worker.mjs");
+    revokeWorkerUrl = revoke;
+    // Surface a worker script load/parse failure that pdf.js's PDFWorker
+    // otherwise swallows — without this a worker that fails to boot just hangs
+    // getDocument with no message (the exact "renders nothing, no error"
+    // failure mode). addEventListener (not onerror) so pdf.js's own port
+    // wiring below doesn't overwrite it.
+    rawWorker.addEventListener("error", (e: ErrorEvent) => {
+      if (!content.classList.contains("pdf-viewer-status")) return; // pages already rendering — ignore
+      content.replaceChildren();
+      content.textContent = `PDF 워커 오류: ${e.message || "worker failed to load"}`;
+    });
     const worker = new pdfjs.PDFWorker({ port: rawWorker });
     pdfWorker = worker;
 
