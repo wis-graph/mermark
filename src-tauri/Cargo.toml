@@ -1,6 +1,6 @@
 [package]
 name = "mermark"
-version = "0.8.4"
+version = "0.8.5"
 description = "Mermaid + Markdown viewer"
 authors = ["you"]
 edition = "2021"

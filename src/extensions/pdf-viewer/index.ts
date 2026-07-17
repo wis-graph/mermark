@@ -105,13 +105,22 @@ interface PdfLoadingTask {
   destroy(): Promise<void>;
 }
 
-/** The page column's actual rendered width (px) — reading `clientWidth`
- *  forces a synchronous layout, fine here since it's only read on open,
- *  resize, and zoom change, never per-frame. `HWP_PAGE_FALLBACK_WIDTH`-style
- *  jsdom fallback (hwp-viewer.ts precedent): jsdom never runs real layout, so
- *  `clientWidth` is always 0 there. Pure query. */
-function pagesColumnWidth(pagesEl: HTMLElement): number {
-  return pagesEl.clientWidth || 600;
+/** The fraction of the pages column ONE page occupies — a reading column
+ *  narrower than the full panel, leaving a modest margin on both sides. Kept in
+ *  lockstep with hwp-viewer.ts's `HWP_PAGE_WIDTH_FRACTION` so the two document
+ *  viewers render pages at the SAME width (사용자 지정 2026-07-18: "hwp 는 90%",
+ *  and PDF was rendering at the FULL column width — "과도하게 크게"). Change this
+ *  and `HWP_PAGE_WIDTH_FRACTION` together — they are one design decision. */
+const PDF_PAGE_WIDTH_FRACTION = 0.9;
+
+/** The width (px) one page is fit to — `PDF_PAGE_WIDTH_FRACTION` of the page
+ *  column's actual rendered width. Reading `clientWidth` forces a synchronous
+ *  layout, fine here since it's only read on open, resize, and zoom change,
+ *  never per-frame. `HWP_PAGE_FALLBACK_WIDTH`-style jsdom fallback
+ *  (hwp-viewer.ts precedent): jsdom never runs real layout, so `clientWidth` is
+ *  always 0 there. Pure query. */
+function pageTargetWidth(pagesEl: HTMLElement): number {
+  return (pagesEl.clientWidth || 600) * PDF_PAGE_WIDTH_FRACTION;
 }
 
 /** The page index a placeholder/rendered element belongs to — mirrors
@@ -148,7 +157,7 @@ function pagePlaceholder(n: number): HTMLElement {
   const el = document.createElement("div");
   el.className = "pdf-viewer-page";
   el.dataset.page = String(n);
-  el.style.width = "70%";
+  el.style.width = "90%";
   el.style.aspectRatio = "210 / 297";
   return el;
 }
@@ -256,7 +265,7 @@ function renderPdfPage(
   (async () => {
     const pdfPage = await pdfDoc.getPage(page);
     const unscaled = pdfPage.getViewport({ scale: 1 });
-    const scale = fitWidthScale(unscaled.width, pagesColumnWidth(pagesEl), fontScale.get());
+    const scale = fitWidthScale(unscaled.width, pageTargetWidth(pagesEl), fontScale.get());
     const viewport = pdfPage.getViewport({ scale });
 
     const outputScale = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;

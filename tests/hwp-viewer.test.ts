@@ -123,7 +123,7 @@ describe("openHwpViewer: close (T4)", () => {
 
     const pagesEl = document.querySelector(".hwp-viewer-pages") as HTMLElement;
     fontScaleSetting.set(1.3);
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("546px"); // 600 × 0.7 fraction × 1.3
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("702px"); // 600 × 0.9 fraction × 1.3
 
     handle.close();
     const widthAtClose = pagesEl.style.getPropertyValue("--hwp-page-width");
@@ -147,17 +147,17 @@ describe("openHwpViewer: corrupted file (T5)", () => {
 });
 
 describe("openHwpViewer: zoom (T6, design §4.2)", () => {
-  it("page width reflects fontScaleSetting on open and on every change (600px container × 0.7 fraction × scale)", async () => {
+  it("page width reflects fontScaleSetting on open and on every change (600px container × 0.9 fraction × scale)", async () => {
     fontScaleSetting.set(1.5);
     const v = viewerFor("hwp")!;
     const handle = v.open("/vault/sample.hwp");
     await flush();
 
     const pagesEl = document.querySelector(".hwp-viewer-pages") as HTMLElement;
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("630px"); // 600 × 0.7 × 1.5
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("810px"); // 600 × 0.9 × 1.5
 
     fontScaleSetting.set(1.0);
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("420px"); // 600 × 0.7 × 1.0
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("540px"); // 600 × 0.9 × 1.0
 
     handle.close();
   });

@@ -43,15 +43,15 @@ import { pagePlaceholder, svgToDataUrl, pageAspectFrom, isNearViewport } from ".
 const HWP_PAGE_FALLBACK_WIDTH = 600;
 
 /** The fraction of the pages column ONE page occupies — a reading column
- *  narrower than the full panel, matching the PDF viewer's 70% page width
- *  (pdf-viewer/index.ts's `pagePlaceholder` sets `width: 70%`) so the two
- *  document viewers size pages consistently. At 100% a portrait A4 page
- *  (aspect ~0.69) rendered ~1.45× the panel width TALL — far past the `88vh`
- *  envelope — so you had to zoom OUT to see a single page (사용자 리포트
- *  2026-07-18: "축소를 해야 전체가 보인다"). 0.7 is the same fit-to-width
- *  fraction the PDF viewer already uses, so text stays readable and a page's
- *  height lands where the sibling viewer's does. */
-const HWP_PAGE_WIDTH_FRACTION = 0.7;
+ *  narrower than the full panel, kept in lockstep with the PDF viewer's
+ *  `PDF_PAGE_WIDTH_FRACTION` (pdf-viewer/index.ts) so the two document viewers
+ *  render pages at the SAME width. At 100% a portrait A4 page (aspect ~0.69)
+ *  rendered ~1.45× the panel width TALL — far past the `88vh` envelope — so you
+ *  had to zoom OUT to see a single page (사용자 리포트 2026-07-18: "축소를 해야
+ *  전체가 보인다"). 0.9 leaves a modest reading margin on both sides while still
+ *  filling most of the panel (사용자 지정 2026-07-18: "hwp 는 90%"). Change this
+ *  and `PDF_PAGE_WIDTH_FRACTION` together — they are one design decision. */
+const HWP_PAGE_WIDTH_FRACTION = 0.9;
 
 /** The page's baseline width (px) at `fontScale === 1.0` —
  *  `HWP_PAGE_WIDTH_FRACTION` of the page column's ACTUAL rendered width, so
