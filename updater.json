@@ -1,11 +1,11 @@
 {
-  "version": "0.8.0",
-  "notes": "### Added\n\n- **PDF 파일 뷰어**: 탐색기에서 `.pdf` 파일을 클릭하면 앱 안에서 바로 열린다. 페이지는 스크롤해 내려갈 때 필요한 만큼만 그려서 문서가 길어도 여는 즉시 뜨고, 글자는 드래그해 선택·복사할 수 있다. ⌘±로 확대·축소된다.\n- **뷰어 켜기/끄기 설정**: 설정 › 뷰어에서 파일 형식별(이미지·한글·엑셀·HTML·PDF)로 앱 내부 뷰어를 켜고 끌 수 있다. 끈 형식은 탐색기에서 클릭하면 앱 대신 운영체제의 기본 프로그램으로 열린다. 기본값은 전부 켜짐이라 평소에는 신경 쓸 필요가 없다.",
-  "pub_date": "2026-07-15T21:57:03Z",
+  "version": "0.8.1",
+  "notes": "### Fixed\n\n- **PDF 뷰어가 열리지 않던 문제**: 릴리스된 앱에서 `.pdf` 파일을 클릭하면 창은 떠도 내용이 표시되지 않았다. PDF를 그리는 내부 처리 방식을 바로잡아 이제 정상적으로 렌더된다.\n- **한글(HWP) 뷰어 페이지가 지나치게 크게 열리던 문제**: 페이지가 화면 폭을 꽉 채워, 한 페이지 전체를 보려면 축소해야 했다. 이제 PDF 뷰어와 같은 폭으로 열려 읽기 편하다(⌘±로 확대·축소 가능).",
+  "pub_date": "2026-07-17T16:37:37Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzR4TkQ3eW1YSk9iZGxuZUJ4YXptQ1F6aEFYYndQQk5RV0dkKzBjcmhZS3ZKeHFHU2loZWtCaklrbnozb3VsRDdrUEFJYWxkdFlKRmlOUlpmUWZEbkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MTUyNTI0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CklFOTA1UDl0VGkzZGFvdjRuaFVINWJTb2VHVFJuTGt1WUh1TkRKbU9TbEQzczlGMWUzSjd6M2JFdXJjazk1bkQ5Zm1JOTRwbUZXTjY3SXNLankrSERRPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.8.0/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3pCcHZ6cFFUWUtyNDR5bHhWWTRRRy8vTW5BaThCaVgrVTJXcEhqVjNpMUhZSzNpMHNHTEIwMG5TUk9uYmJ0MUs2U0hjK2o0S2tDbTNXZWVXRHd1bEE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MzA2MTU1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmQ1YndSc2s3TnZSbCtsUk9obTY2T2FSa2g4dUo1Q3NwQ1d4bUxhT1YvdmJlNlVRVGlXb2JsejE0b2ptejZSOVNEYXJKZXVnaTN6OVlacDNhRXJPb0NBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.8.1/mermark.app.tar.gz"
     }
   }
 }
