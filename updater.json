@@ -1,11 +1,11 @@
 {
-  "version": "0.8.3",
-  "notes": "### Fixed\n\n- **한글(HWP) 문서에서 일부 페이지가 \"HWP 세션이 없습니다\"로 안 뜨던 문제**: 여러 페이지를 동시에 그리려다 내부에서 충돌해 일부만 렌더되고 나머지는 오류가 났다. 페이지를 한 장씩 순서대로 그리도록 고쳐, 모든 페이지가 정상적으로 뜬다.\n\n### Changed\n\n- PDF 페이지 렌더가 실패할 경우, 오류 메시지가 잘리지 않고 종류까지 온전히 표시된다(문제 진단용).",
-  "pub_date": "2026-07-17T17:21:39Z",
+  "version": "0.8.4",
+  "notes": "### Fixed\n\n- **PDF가 페이지마다 오류만 뜨고 렌더되지 않던 문제(실제 원인 수정)**: 앱 내부 웹뷰(WKWebView)가 `ReadableStream`의 비동기 반복(`for await…of`)을 지원하지 않아, PDF의 글자 레이어를 만드는 단계에서 매번 오류가 났다. 그림은 이미 그려졌는데도 이 오류가 페이지를 지워버려 빈 페이지에 오류 메시지만 보였다. 누락된 기능을 보완(폴리필)해, 이제 모든 페이지가 그림·선택 가능한 글자와 함께 정상적으로 뜬다. (0.8.1~0.8.3의 PDF 수정이 겨냥하던 진짜 원인이 이번에 잡혔다 — 개발/골든 환경은 물론 Playwright WebKit에서도 재현되지 않고 오직 실제 앱 웹뷰에서만 나타나던 버그라, 실제 빌드 번들로 원인을 확정해 고쳤다.)",
+  "pub_date": "2026-07-17T18:11:39Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzJFYTU1OUMvSlJGaW1RNUFFN3AxVzVmWXZIcVN6bmdNY3F4N0VNOUV0SGNKODRRLytPTjF0WEYvK1Q1WHBHanpRbWVwemUxRVIyRDZKQ0xLNkFWYmc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MzA4ODQ1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnJBdndnVS90Sk51SmVRWUhOVFVMcU5oQ0ZOUW5sVmhRb0F1U1VKTzVvbmZBdEp0YWpINzhGVUlUV1RES2hxdW1nQSt3T1V1V1YrZFpTUG1oUjMxM0JRPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.8.3/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzEvZTVGaUVUOHMvYnMzSnRnTjNvNmptRGJsWmdxV3hvZHNBMUFjQjFBc21lVURRT1lHb3FOQzhVS1pZSDJVZXM3TTNsZHF1b09LSlRwbkF3bkdzdXdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MzExODQwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClY5TXdiOTJwdmhxTzBqOE1zcThVQWVBSGFrdm9iRjU3ZGJIeWpLYVZOU0JGOG5ScXU3TGc0eFJpeFFPVmZMeVJTZ0VUdHI5V3M0aG15YUhRWjRwSkFRPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.8.4/mermark.app.tar.gz"
     }
   }
 }
