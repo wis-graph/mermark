@@ -375,8 +375,60 @@ async function makeBlobWorker(scriptUrl: string): Promise<{ worker: Worker; revo
   return { worker: new Worker(blobUrl, { type: "module" }), revoke: () => URL.revokeObjectURL(blobUrl) };
 }
 
+/** Install `ReadableStream.prototype[Symbol.asyncIterator]` when the runtime
+ *  lacks it. The production WKWebView (Tauri's webview) does NOT implement
+ *  async iteration of a ReadableStream, but pdf.js's `getTextContent` does
+ *  `for await (const value of readableStream)` (pdf.mjs `streamTextContent`).
+ *  Under the real app every text-layer build therefore threw
+ *  `TypeError: undefined is not a function (near '...value of readableStream...')`,
+ *  and because `renderPdfPage`'s catch clears the page element it also blanked
+ *  the canvas that had ALREADY rendered a line earlier — the "모달은 뜨는데
+ *  페이지가 비어있고 에러만" report (2026-07-18). Canvas render itself survives
+ *  because its sibling path uses `readableStream.getReader()` (supported), not
+ *  `for await`.
+ *
+ *  Neither the CDP golden (Chromium) nor Playwright WebKit reproduces this:
+ *  both ship the async iterator, so only a real `tauri build` WKWebView bundle
+ *  exposes it (see [[wkwebview-custom-scheme-test-gap]] — same "green
+ *  everywhere but the real webview" class).
+ *
+ *  Feature-detected (`in` guard) → a no-op on engines that already have it, so
+ *  the polyfill can only ever ADD the missing method, never shadow a native
+ *  one. The body is the Streams-spec definition: a reader's `read()` already
+ *  yields `{ value, done }`, exactly an async-iterator result; `return()`
+ *  cancels the stream unless `preventCancel`. Idempotent. Command (void).
+ *  Exported for the regression test that guards this polyfill (tests/pdf-viewer). */
+export function ensureReadableStreamAsyncIterator(): void {
+  if (typeof ReadableStream === "undefined") return;
+  const proto = ReadableStream.prototype as unknown as Record<symbol, unknown>;
+  if (Symbol.asyncIterator in proto) return;
+  proto[Symbol.asyncIterator] = function (
+    this: ReadableStream,
+    { preventCancel = false }: { preventCancel?: boolean } = {},
+  ) {
+    const reader = this.getReader();
+    return {
+      next: () => reader.read(),
+      return: (value?: unknown) => {
+        if (preventCancel) {
+          reader.releaseLock();
+          return Promise.resolve({ done: true, value });
+        }
+        return reader.cancel(value).then(() => {
+          reader.releaseLock();
+          return { done: true, value };
+        });
+      },
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    };
+  };
+}
+
 function openPdfViewer(absPath: string): ViewerHandle {
   ensureStyleInjected();
+  ensureReadableStreamAsyncIterator();
   const content = document.createElement("div");
   content.className = "pdf-viewer-status";
   content.textContent = "문서 불러오는 중…";
@@ -437,17 +489,15 @@ function openPdfViewer(absPath: string): ViewerHandle {
       standardFontDataUrl: "/pdfjs/standard_fonts/",
       iccUrl: "/pdfjs/iccs/",
       wasmUrl: "/pdfjs/wasm/",
-      // pdf.js JIT-compiles PostScript type-4 functions / CFF font programs
-      // with `new Function` when this is left at its default (true). Our
-      // production CSP is `script-src 'self' 'wasm-unsafe-eval'` — it allows
-      // WebAssembly but NOT `new Function`/eval, so any PDF that uses those
-      // functions (shadings, some fonts) threw per-page at render time
-      // ("페이지를 불러올 수 없습니다: … (near …)", 사용자 리포트 2026-07-18).
-      // `false` routes that path through pdf.js's pure-JS interpreter instead,
-      // keeping the CSP strict (the alternative — adding 'unsafe-eval' — would
-      // weaken script-src app-wide). Dev/golden run with no CSP, so this bug
-      // was invisible there (see [[wkwebview-custom-scheme-test-gap]] — the
-      // same "green in http origin, broken under production CSP" class).
+      // Defensive under our strict CSP: pdf.js JIT-compiles PostScript type-4
+      // functions / CFF font programs with `new Function` when this is left at
+      // its default (true), and our `script-src 'self' 'wasm-unsafe-eval'`
+      // allows WebAssembly but NOT `new Function`/eval. pdf.js already
+      // auto-disables eval via its own FeatureTest (a `new Function` in
+      // try/catch throws EvalError under this CSP), so this is belt-and-braces,
+      // not the fix for any specific bug — the "페이지가 비어있고 에러만" report
+      // (2026-07-18) was ReadableStream async iteration, not eval; see
+      // ensureReadableStreamAsyncIterator above.
       isEvalSupported: false,
     });
     loadingTask = task;

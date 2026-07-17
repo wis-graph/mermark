@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { fitWidthScale } from "../src/extensions/pdf-viewer/fit-width-scale";
 import { viewerFor } from "../src/chrome/viewer/registry";
-import { registerPdfViewer } from "../src/extensions/pdf-viewer";
+import { registerPdfViewer, ensureReadableStreamAsyncIterator } from "../src/extensions/pdf-viewer";
 
 describe("fitWidthScale (pure — PDF fit-to-width render scale)", () => {
   // Table test (mermark-frontend §8): a table of (pageWidthPt, containerWidthPx,
@@ -47,5 +47,58 @@ describe("PDF viewer registration", () => {
     // registry state persists across tests in the same file, same pattern
     // hwp-viewer/excel-viewer registration tests already rely on).
     expect(() => registerPdfViewer()).toThrow(/already registered/);
+  });
+});
+
+describe("ensureReadableStreamAsyncIterator (WKWebView ReadableStream async-iter polyfill)", () => {
+  // The production Tauri WKWebView lacks `ReadableStream.prototype[Symbol.asyncIterator]`,
+  // which pdf.js's getTextContent needs (`for await (const value of readableStream)`).
+  // Node/jsdom DO ship it, so we delete it to simulate the WKWebView gap, then
+  // assert the polyfill restores working `for await` iteration. This is the
+  // regression guard for the 0.8.4 blank-PDF fix — removing the polyfill turns
+  // this red. Save/restore so no other test sees a mutated global prototype.
+  const proto = ReadableStream.prototype as unknown as Record<symbol, unknown>;
+  const original = proto[Symbol.asyncIterator];
+
+  function streamOf(values: number[]): ReadableStream<number> {
+    return new ReadableStream<number>({
+      start(controller) {
+        for (const v of values) controller.enqueue(v);
+        controller.close();
+      },
+    });
+  }
+
+  it("no-op when the engine already implements async iteration (native path preserved)", () => {
+    // original is defined here (Node), so the function must NOT overwrite it.
+    ensureReadableStreamAsyncIterator();
+    expect(proto[Symbol.asyncIterator]).toBe(original);
+  });
+
+  it("installs a working async iterator when the engine lacks one (the WKWebView case)", async () => {
+    delete proto[Symbol.asyncIterator]; // simulate WKWebView
+    expect(Symbol.asyncIterator in proto).toBe(false);
+    try {
+      ensureReadableStreamAsyncIterator();
+      expect(Symbol.asyncIterator in proto).toBe(true);
+
+      const collected: number[] = [];
+      for await (const value of streamOf([1, 2, 3])) collected.push(value);
+      expect(collected).toEqual([1, 2, 3]);
+    } finally {
+      proto[Symbol.asyncIterator] = original; // restore native
+    }
+  });
+
+  it("idempotent: a second call after installing does not replace the shim", () => {
+    delete proto[Symbol.asyncIterator];
+    try {
+      ensureReadableStreamAsyncIterator();
+      const shim = proto[Symbol.asyncIterator];
+      ensureReadableStreamAsyncIterator();
+      expect(proto[Symbol.asyncIterator]).toBe(shim);
+    } finally {
+      proto[Symbol.asyncIterator] = original;
+    }
   });
 });
