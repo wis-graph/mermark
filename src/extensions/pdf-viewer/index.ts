@@ -55,6 +55,7 @@ function ensureStyleInjected(): void {
 .pdf-viewer-page-error {
   padding: 12px; color: var(--muted); font-size: calc(12.5em / 13);
   background: var(--surface); width: 100%; box-sizing: border-box;
+  white-space: normal; overflow-wrap: anywhere;
 }
 .pdf-viewer-status { padding: 12px; color: var(--muted); font-size: 1em; }
 `;
@@ -436,6 +437,18 @@ function openPdfViewer(absPath: string): ViewerHandle {
       standardFontDataUrl: "/pdfjs/standard_fonts/",
       iccUrl: "/pdfjs/iccs/",
       wasmUrl: "/pdfjs/wasm/",
+      // pdf.js JIT-compiles PostScript type-4 functions / CFF font programs
+      // with `new Function` when this is left at its default (true). Our
+      // production CSP is `script-src 'self' 'wasm-unsafe-eval'` — it allows
+      // WebAssembly but NOT `new Function`/eval, so any PDF that uses those
+      // functions (shadings, some fonts) threw per-page at render time
+      // ("페이지를 불러올 수 없습니다: … (near …)", 사용자 리포트 2026-07-18).
+      // `false` routes that path through pdf.js's pure-JS interpreter instead,
+      // keeping the CSP strict (the alternative — adding 'unsafe-eval' — would
+      // weaken script-src app-wide). Dev/golden run with no CSP, so this bug
+      // was invisible there (see [[wkwebview-custom-scheme-test-gap]] — the
+      // same "green in http origin, broken under production CSP" class).
+      isEvalSupported: false,
     });
     loadingTask = task;
     const doc = await task.promise;
