@@ -8,7 +8,7 @@
 // extension (main.ts's viewerForEntry/openWithViewer — unchanged).
 //
 // THE SECURITY CONTRACT THIS VIEWER MAKES (design §4.1 — read before touching
-// renderPage below): a rendered page enters the DOM ONLY as
+// renderOnePage below): a rendered page enters the DOM ONLY as
 // `<img src="data:image/svg+xml;base64,...">`, NEVER as an inline `<svg>`
 // node. This is a STRONGER guarantee than sandboxing or sanitizing — SVG-as-
 // image is a browser-engine-level mode that never executes script, never
@@ -120,39 +120,38 @@ function observePages(
   return { disconnect() {} };
 }
 
-/** Request + swap in one page's rendered `<img>` (or an error message on
- *  failure), guarded by `shouldRenderPage` and tracked in `pending`/
- *  `rendered` so it never double-fires. On page 0's success, applies its
- *  real aspect ratio to every placeholder that hasn't rendered yet
- *  (`applyAspectOnce` below) — design §4.2's "첫 페이지 SVG의 width/height
- *  속성을 읽어 전 placeholder 비율을 갱신". Command (void) — kicks off async
- *  IO and mutates `el`/the tracking sets. */
-function renderPage(
+/** Render ONE HWP page: request its SVG and swap in the `<img>` (or an error
+ *  box on failure). The `shouldRenderPage` guard + `pending` reservation are
+ *  done by the caller (`enqueueRender` in openHwpViewer) BEFORE this runs, so
+ *  this is just the async work the serial render chain awaits. On page 0's
+ *  success, applies its real aspect ratio to every not-yet-rendered
+ *  placeholder (`applyAspectOnce`) — design §4.2's "첫 페이지 SVG의
+ *  width/height 속성을 읽어 전 placeholder 비율을 갱신". Never rejects (a
+ *  failure becomes an in-page message), so the render chain always advances to
+ *  the next page. */
+async function renderOnePage(
   page: number,
   el: HTMLElement,
   pending: Set<number>,
   rendered: Set<number>,
   applyAspectOnce: (svg: string) => void,
-): void {
-  if (!shouldRenderPage(page, pending, rendered)) return;
-  pending.add(page);
-  invoke<string>("hwp_render_page", { page })
-    .then((svg) => {
-      pending.delete(page);
-      rendered.add(page);
-      const img = document.createElement("img");
-      img.className = "hwp-viewer-page-img";
-      img.alt = `페이지 ${page + 1}`;
-      img.src = svgToDataUrl(svg);
-      el.replaceChildren(img);
-      if (page === 0) applyAspectOnce(svg);
-    })
-    .catch((err: unknown) => {
-      pending.delete(page);
-      rendered.add(page); // a failed page is terminal — never retried
-      el.classList.add("hwp-viewer-page-error");
-      el.textContent = `페이지를 불러올 수 없습니다: ${err instanceof Error ? err.message : String(err)}`;
-    });
+): Promise<void> {
+  try {
+    const svg = await invoke<string>("hwp_render_page", { page });
+    pending.delete(page);
+    rendered.add(page);
+    const img = document.createElement("img");
+    img.className = "hwp-viewer-page-img";
+    img.alt = `페이지 ${page + 1}`;
+    img.src = svgToDataUrl(svg);
+    el.replaceChildren(img);
+    if (page === 0) applyAspectOnce(svg);
+  } catch (err: unknown) {
+    pending.delete(page);
+    rendered.add(page); // a failed page is terminal — never retried
+    el.classList.add("hwp-viewer-page-error");
+    el.textContent = `페이지를 불러올 수 없습니다: ${err instanceof Error ? err.message : String(err)}`;
+  }
 }
 
 /** Apply `pageAspectFrom(svg)` to every placeholder that hasn't rendered an
@@ -223,9 +222,22 @@ function openHwpViewer(absPath: string): ViewerHandle {
     content.replaceChildren(...placeholders);
     applyHwpZoom(content, fontScaleSetting.get());
 
-    observerHandle = observePages(content, placeholders, (page, el) =>
-      renderPage(page, el, pending, rendered, applyAspectOnce),
-    );
+    // Serialize hwp_render_page to one-in-flight. hwp.rs keeps the single
+    // parsed document in a one-slot mutex that hwp_render_page TAKES OUT for
+    // the whole render, so two concurrent renders race — the second finds an
+    // empty slot and fails "HWP 세션이 없습니다" (사용자 리포트 2026-07-18:
+    // 여러 페이지 중 일부만 렌더되고 나머지는 세션 없음 에러). The lazy
+    // observer fires for several near-viewport pages at once, so we chain them
+    // through one promise. `shouldRenderPage` + `pending.add` run SYNCHRONOUSLY
+    // here (not inside renderOnePage) so a repeat observer fire for a page
+    // already queued is dropped before it can enqueue a duplicate.
+    let renderChain: Promise<unknown> = Promise.resolve();
+    const enqueueRender = (page: number, el: HTMLElement): void => {
+      if (!shouldRenderPage(page, pending, rendered)) return;
+      pending.add(page);
+      renderChain = renderChain.then(() => renderOnePage(page, el, pending, rendered, applyAspectOnce));
+    };
+    observerHandle = observePages(content, placeholders, enqueueRender);
   })().catch((err: unknown) => {
     content.replaceChildren();
     content.className = "hwp-viewer-status";

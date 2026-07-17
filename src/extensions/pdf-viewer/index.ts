@@ -312,7 +312,7 @@ function renderPdfPage(
     el.replaceChildren();
     el.style.aspectRatio = "";
     el.classList.add("pdf-viewer-page-error");
-    el.textContent = `페이지를 불러올 수 없습니다: ${err instanceof Error ? err.message : String(err)}`;
+    el.textContent = `페이지를 불러올 수 없습니다: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`;
   });
 }
 
@@ -491,7 +491,7 @@ function openPdfViewer(absPath: string): ViewerHandle {
   })().catch((err: unknown) => {
     content.replaceChildren();
     content.className = "pdf-viewer-status";
-    content.textContent = `문서를 열 수 없습니다: ${err instanceof Error ? err.message : String(err)}`;
+    content.textContent = `문서를 열 수 없습니다: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`;
   });
 
   return { close: () => shell.close() };

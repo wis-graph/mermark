@@ -162,3 +162,46 @@ describe("openHwpViewer: zoom (T6, design §4.2)", () => {
     handle.close();
   });
 });
+
+describe("openHwpViewer: render serialization (T7 — single-slot backend session race)", () => {
+  // hwp.rs keeps the parsed document in a ONE-slot mutex that hwp_render_page
+  // TAKES OUT for the whole render; two concurrent renders race and the second
+  // fails "HWP 세션이 없습니다". The lazy observer fires for several pages at
+  // once (in jsdom, the eager fallback fires ALL of them synchronously), so
+  // the viewer must chain renders to one-in-flight. This guard goes RED on the
+  // pre-fix code (which fired all three hwp_render_page calls immediately).
+  it("requests page N+1 only after page N's render resolves (never concurrent)", async () => {
+    const original = invokeMock.getMockImplementation()!;
+    const resolvers: Array<(svg: string) => void> = [];
+    const renderCalls: number[] = [];
+    const svgFor = (p: number) =>
+      `<svg xmlns="http://www.w3.org/2000/svg" width="595" height="842"><text x="20" y="40">P${p}</text></svg>`;
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "hwp_render_page") {
+        renderCalls.push(Number(args?.page ?? -1));
+        return new Promise<string>((resolve) => resolvers.push(resolve));
+      }
+      return original(cmd, args);
+    });
+
+    const v = viewerFor("hwp")!;
+    const handle = v.open("/vault/sample.hwp"); // mock reports 3 pages
+    await flush();
+    // Only page 0 requested; pages 1 & 2 wait behind it in the serial chain.
+    expect(renderCalls).toEqual([0]);
+
+    resolvers.shift()!(svgFor(0));
+    await flush();
+    expect(renderCalls).toEqual([0, 1]);
+
+    resolvers.shift()!(svgFor(1));
+    await flush();
+    expect(renderCalls).toEqual([0, 1, 2]);
+
+    resolvers.shift()!(svgFor(2));
+    await flush();
+
+    invokeMock.mockImplementation(original); // restore for other tests
+    handle.close();
+  });
+});
