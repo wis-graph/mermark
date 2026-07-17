@@ -1,11 +1,11 @@
 {
-  "version": "0.8.4",
-  "notes": "### Fixed\n\n- **PDF가 페이지마다 오류만 뜨고 렌더되지 않던 문제(실제 원인 수정)**: 앱 내부 웹뷰(WKWebView)가 `ReadableStream`의 비동기 반복(`for await…of`)을 지원하지 않아, PDF의 글자 레이어를 만드는 단계에서 매번 오류가 났다. 그림은 이미 그려졌는데도 이 오류가 페이지를 지워버려 빈 페이지에 오류 메시지만 보였다. 누락된 기능을 보완(폴리필)해, 이제 모든 페이지가 그림·선택 가능한 글자와 함께 정상적으로 뜬다. (0.8.1~0.8.3의 PDF 수정이 겨냥하던 진짜 원인이 이번에 잡혔다 — 개발/골든 환경은 물론 Playwright WebKit에서도 재현되지 않고 오직 실제 앱 웹뷰에서만 나타나던 버그라, 실제 빌드 번들로 원인을 확정해 고쳤다.)",
-  "pub_date": "2026-07-17T18:11:39Z",
+  "version": "0.8.5",
+  "notes": "### Changed\n\n- **PDF·HWP 페이지가 화면에 과도하게 크게 열리던 문제**: PDF는 패널 폭을 꽉 채워(100%) 지나치게 컸고, HWP는 70%라 둘이 서로 크기가 달랐다. 이제 두 뷰어 모두 패널 폭의 **90%**로 통일해, 양옆에 읽기 여백이 생기고 한 화면에 페이지가 편하게 들어온다. (⌘±로 확대·축소는 그대로)",
+  "pub_date": "2026-07-17T21:30:20Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzEvZTVGaUVUOHMvYnMzSnRnTjNvNmptRGJsWmdxV3hvZHNBMUFjQjFBc21lVURRT1lHb3FOQzhVS1pZSDJVZXM3TTNsZHF1b09LSlRwbkF3bkdzdXdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MzExODQwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClY5TXdiOTJwdmhxTzBqOE1zcThVQWVBSGFrdm9iRjU3ZGJIeWpLYVZOU0JGOG5ScXU3TGc0eFJpeFFPVmZMeVJTZ0VUdHI5V3M0aG15YUhRWjRwSkFRPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.8.4/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzlHdEQ2VkIzT0xHa1FnS3R4d05iOEdzK0JydUhxVUNDdWFTY09IV3dFSHpmRjhYc09xcXEzNXZDVlpiVVd3TWk2enErZ1ZESUs1dHFlWGY1VmcrbVE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MzIzNzY4CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkVhV0I3a01wN2I5cE9kcmljZGg3MXcxWWN1S1ZTR0NweEdSMnprTTFYTk92VnlDVGtYeThwQTRDckZqUmdWRllSSFk1bEFIZ05kc3o4V1RYSEo4OUJBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.8.5/mermark.app.tar.gz"
     }
   }
 }
