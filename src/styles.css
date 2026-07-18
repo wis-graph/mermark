@@ -890,45 +890,34 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
      is the separate `--viewer-zoom` var (see VIEWER-LOCAL ZOOM above). */
   font-size: calc(13px * var(--font-scale, 1));
 }
-.viewer-panel-header {
-  display: flex; align-items: center; gap: 10px; flex: none;
+/* A viewer has NO header row of its own — its title and controls live in the
+   app title-bar (chrome/title-bar.ts's createTitleSlot/createViewerSlot;
+   shell.ts fills and empties them). DELETED with that row: the bordered,
+   surface-filled zoom/close button rules, which made the viewer read as a
+   foreign second toolbar next to the app's flat icon chrome (사용자 리포트
+   2026-07-19: "버튼디자인 이거 뭐야, 왜이렇게 끔찍해" + "공간 낭비가 심하자나").
+   The controls ARE `.chrome-btn`/`.chrome-btn.icon-only` now, so their look
+   comes from that single component and can never drift from 모드/테마/설정
+   again — which is also why the two VIEWER-ZOOM-RULE button exceptions above
+   no longer apply to them (they are title-bar chrome, not viewer body text). */
+.title-bar-doc-title {
+  display: flex; align-items: center; min-width: 0; flex: 0 1 auto; margin-inline-start: 4px;
 }
+.title-bar-viewer-slot { display: flex; align-items: center; flex: none; }
 .viewer-panel-caption {
-  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: calc(12.5em / 13); color: var(--muted);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: inherit; font-weight: 500; color: var(--fg);
 }
 .viewer-panel-zoom { display: flex; align-items: center; gap: 2px; flex: none; }
-/* VIEWER ZOOM RULE exception 1 — plain <button>s, must re-inherit. No
-   font-size override needed here (1em == the inherited chrome size already
-   satisfies the em-fraction contract, and declaring none can never regress
-   to a px literal). */
-.viewer-panel-zoom-out, .viewer-panel-zoom-in {
-  font: inherit; padding: 0 .4em; line-height: 1.8; cursor: pointer;
-  background: var(--surface); color: var(--muted);
-  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
-  border-radius: var(--radius-sm, 6px);
+/* Tabular figures + a floor width so stepping 100% → 125% → 150% never nudges
+   the buttons beside it. */
+.viewer-panel-zoom-label { min-width: 3.6em; justify-content: center; font-variant-numeric: tabular-nums; }
+/* The `|` the user asked for — separates the viewer's controls from the app's
+   own without making them look like two different toolbars. */
+.title-bar-divider {
+  flex: none; width: 1px; height: 16px; margin: 0 6px;
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
 }
-.viewer-panel-zoom-out:hover, .viewer-panel-zoom-in:hover { color: var(--fg); }
-.viewer-panel-zoom-label {
-  font: inherit; font-size: calc(12.5em / 13); min-width: 3.4em; text-align: center;
-  padding: 0 .2em; cursor: pointer; background: none; border: none; color: var(--muted);
-}
-.viewer-panel-zoom-label:hover { color: var(--fg); }
-/* VIEWER ZOOM RULE exception 2 (see anchor comment) — window chrome, fixed
-   size, exempt from the em-fraction rule. `font: inherit` still applies
-   (exception 1) since the ✕ glyph itself is text-sized. No longer
-   `position: absolute` — the full-pane rewrite moved it into the header's
-   normal flex flow, which structurally removes the old close-button/content
-   overlap class of bug (G6) rather than reserving a gutter against it. */
-.viewer-panel-close {
-  flex: none;
-  width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
-  padding: 0; line-height: 1; font: inherit; font-size: 15px; cursor: pointer;
-  background: var(--surface); color: var(--muted);
-  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
-  border-radius: var(--radius-sm, 6px);
-}
-.viewer-panel-close:hover { color: var(--fg); }
 /* Shell-owned scroll boundary (shell.ts's `body` wrapper) — a real device
    regression found this missing: a 10,000+-row Excel sheet rendered PAST
    the panel's fixed height because the viewer's content was a plain block

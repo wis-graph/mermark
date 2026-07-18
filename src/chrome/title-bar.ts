@@ -68,9 +68,39 @@ export interface TitleBar {
  *  registration order — see createLeftCommandGroup's doc. */
 export interface TitleBarParts {
   leftGroup: HTMLElement;
+  /** Empty until a viewer opens, then the open file's name — the title-bar IS
+   *  the viewer's title bar (사용자 지정 2026-07-19: "앱 헤더영역을 이용해서
+   *  제목을 사용할 수 있고"). The viewer shell fills and clears it; nothing
+   *  else writes here, so an empty slot means "no viewer open". */
+  titleSlot: HTMLElement;
+  /** Empty until a viewer opens, then the viewer's OWN controls (zoom −/%/+,
+   *  close) — rendered as ordinary `.chrome-btn` siblings of mode/theme/
+   *  settings so they read as one cluster, not a second, alien toolbar
+   *  (사용자 지정 2026-07-19: "그 공간에 다른 버튼들 같은 포멧으로 들어오면
+   *  전혀 이질적이지 않자나"). A `|` rule separates the two groups. */
+  viewerSlot: HTMLElement;
   mode: HTMLElement;
   theme: HTMLElement;
   settings: HTMLElement;
+}
+
+/** The document-title slot (see TitleBarParts.titleSlot). Carries
+ *  `data-tauri-drag-region` so the strip it occupies stays draggable while it
+ *  is empty — the same rule createDragSpacer documents. Pure query. */
+export function createTitleSlot(): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "title-bar-doc-title";
+  el.setAttribute("data-tauri-drag-region", "");
+  return el;
+}
+
+/** The viewer-controls slot (see TitleBarParts.viewerSlot). No drag region —
+ *  it holds buttons, and a drag region on their container would swallow their
+ *  clicks. Pure query. */
+export function createViewerSlot(): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "title-bar-viewer-slot";
+  return el;
 }
 
 /** R9: the group's only title-bar-owned member — the sidebar toggle buttons
@@ -255,7 +285,14 @@ export function rehomeLeftCommandGroup(group: HTMLElement, bar: HTMLElement, str
       focused?.focus();
     }
   } else {
-    const anchor = bar.querySelector(":scope > .title-spacer");
+    // The group belongs at the START of the bar's flow. Its anchor is the
+    // doc-title slot when one exists (arrangeTitleBar puts titleSlot between
+    // the group and the spacer), else the spacer itself. Anchoring on the
+    // spacer unconditionally would re-insert the group AFTER the title on
+    // every rehome, so opening a viewer visibly shoved the command icons
+    // rightward past the filename (observed 2026-07-19).
+    const anchor =
+      bar.querySelector(":scope > .title-bar-doc-title") ?? bar.querySelector(":scope > .title-spacer");
     if (group.parentElement !== bar || group.nextElementSibling !== anchor) {
       bar.insertBefore(group, anchor); // anchor null → append
       focused?.focus();
@@ -265,10 +302,22 @@ export function rehomeLeftCommandGroup(group: HTMLElement, bar: HTMLElement, str
 
 /** Arrange the title-bar chrome to the canonical order (design M2 §1, M5
  *  removed 즐겨찾기, M6 folded the left four buttons into `leftGroup` — see
- *  TitleBarParts): leftGroup · [drag spacer] · 모드 · 테마 · ⚙ — followed by
+ *  TitleBarParts): leftGroup · titleSlot · [drag spacer] · viewerSlot · 모드 ·
+ *  테마 · ⚙ — the two slots are empty until a viewer opens (2026-07-19: a
+ *  viewer has no header row of its own; the title-bar is its title bar) —
+ *  followed by
  *  the win/linux window-controls cluster (always last, already appended by
  *  createTitleBar). Every part is inserted via insertBeforeWindowControls, so
  *  the window-controls-last rule holds regardless of call order. Command (void). */
 export function arrangeTitleBar(bar: HTMLElement, p: TitleBarParts): void {
-  insertBeforeWindowControls(bar, p.leftGroup, createDragSpacer(), p.mode, p.theme, p.settings);
+  insertBeforeWindowControls(
+    bar,
+    p.leftGroup,
+    p.titleSlot,
+    createDragSpacer(),
+    p.viewerSlot,
+    p.mode,
+    p.theme,
+    p.settings,
+  );
 }

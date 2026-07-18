@@ -10,6 +10,7 @@
 // `.cm-content` — so it makes zero decorations: the render-smoke invariant
 // ("block decorations come from a StateField") has no intersection here.
 import { basename } from "../../document/path";
+import { icon, type IconName } from "../../icons";
 
 export interface ViewerZoom {
   /** Current zoom factor. 1.0 = fit (the default every open() starts at).
@@ -45,6 +46,21 @@ export interface ViewerShell {
  *  viewer pane's insertion anchor AND hide/show target. Pure query. */
 function viewerMountPoint(): HTMLElement | null {
   return document.querySelector<HTMLElement>(".editor-host");
+}
+
+/** The title-bar's document-title slot (chrome/title-bar.ts's
+ *  `createTitleSlot`) — the viewer writes the open file's name here instead of
+ *  rendering a header row of its own. Null in a minimal test fixture that
+ *  never built a title-bar; every write below is optional-chained so the shell
+ *  still works headless. Pure query. */
+function titleBarTitleSlot(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".title-bar-doc-title");
+}
+
+/** The title-bar's viewer-controls slot (`createViewerSlot`) — the viewer's
+ *  zoom/close buttons live here, as siblings of 모드/테마/설정. Pure query. */
+function titleBarViewerSlot(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".title-bar-viewer-slot");
 }
 
 /** Insert `pane` right after `.editor-host` and hide the host via the
@@ -185,44 +201,57 @@ export function openViewerShell(opts: {
   pane.setAttribute("role", "region");
   pane.setAttribute("aria-label", name);
 
-  const header = document.createElement("div");
-  header.className = "viewer-panel-header";
-
-  const caption = document.createElement("div");
+  // The viewer has NO header row of its own: the app's title-bar IS its title
+  // bar (사용자 지정 2026-07-19). A dedicated header row both wasted a whole
+  // strip of vertical space and rendered its own bordered buttons, which read
+  // as an alien second toolbar next to the app's flat icon chrome ("버튼디자인
+  // 이거 뭐야, 왜이렇게 끔찍해"). Filename → titleSlot, controls → viewerSlot,
+  // and the controls are ordinary `.chrome-btn.icon-only` buttons so they are
+  // literally the same component as 모드/테마/설정 beside them.
+  const caption = document.createElement("span");
   caption.className = `${opts.paneClass}-caption viewer-panel-caption`;
   caption.textContent = name;
 
-  const zoomGroup = document.createElement("div");
-  zoomGroup.className = "viewer-panel-zoom";
+  /** One title-bar control, built as the SAME `.chrome-btn` every other
+   *  title-bar button uses — the point of this whole change is that a viewer
+   *  button is not a special kind of button. Pure query. */
+  const chromeButton = (cls: string, label: string, glyph: IconName): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `chrome-btn icon-only ${cls}`;
+    b.setAttribute("aria-label", label);
+    b.title = label;
+    b.append(icon(glyph));
+    return b;
+  };
 
-  const zoomOutBtn = document.createElement("button");
-  zoomOutBtn.type = "button";
-  zoomOutBtn.className = "viewer-panel-zoom-out";
-  zoomOutBtn.setAttribute("aria-label", "축소");
-  zoomOutBtn.textContent = "−";
+  const controls = document.createElement("div");
+  controls.className = "viewer-panel-zoom";
 
+  const zoomOutBtn = chromeButton("viewer-panel-zoom-out", "축소", "minus");
   // The label is itself a button — clicking it resets to fit (100%), the
-  // standard "click the percentage to reset zoom" affordance.
+  // standard "click the percentage to reset zoom" affordance. Not icon-only:
+  // it carries text, so it keeps `.chrome-btn`'s padded (non-square) shape.
   const zoomLabel = document.createElement("button");
   zoomLabel.type = "button";
-  zoomLabel.className = "viewer-panel-zoom-label";
+  zoomLabel.className = "chrome-btn viewer-panel-zoom-label";
   zoomLabel.setAttribute("aria-label", "100%로 재설정");
+  zoomLabel.title = "100%로 재설정";
+  const zoomInBtn = chromeButton("viewer-panel-zoom-in", "확대", "plus");
+  const closeBtn = chromeButton(`${opts.paneClass}-close viewer-panel-close`, "닫기", "x");
 
-  const zoomInBtn = document.createElement("button");
-  zoomInBtn.type = "button";
-  zoomInBtn.className = "viewer-panel-zoom-in";
-  zoomInBtn.setAttribute("aria-label", "확대");
-  zoomInBtn.textContent = "+";
+  // The `|` rule the user asked for: separates the viewer's controls from the
+  // app's own (모드·테마·설정) without turning them into two toolbars.
+  const divider = document.createElement("span");
+  divider.className = "title-bar-divider";
+  divider.setAttribute("aria-hidden", "true");
 
-  zoomGroup.append(zoomOutBtn, zoomLabel, zoomInBtn);
+  controls.append(zoomOutBtn, zoomLabel, zoomInBtn, closeBtn, divider);
 
-  const closeBtn = document.createElement("button");
-  closeBtn.type = "button";
-  closeBtn.className = `${opts.paneClass}-close viewer-panel-close`;
-  closeBtn.setAttribute("aria-label", "닫기");
-  closeBtn.textContent = "✕";
-
-  header.append(caption, zoomGroup, closeBtn);
+  const titleSlot = titleBarTitleSlot();
+  const viewerSlot = titleBarViewerSlot();
+  titleSlot?.replaceChildren(caption);
+  viewerSlot?.replaceChildren(controls);
 
   // Shell-owned scroll boundary (unchanged from the pre-rewrite shell) —
   // every viewer's content lands inside this, never directly as a flex item
@@ -231,7 +260,7 @@ export function openViewerShell(opts: {
   body.className = "viewer-panel-body";
   body.appendChild(opts.content);
 
-  pane.append(header, body);
+  pane.append(body);
 
   const mount = mountViewerPane(pane);
 
@@ -251,6 +280,10 @@ export function openViewerShell(opts: {
       document.removeEventListener("keydown", onKeydown, true);
       for (const cb of teardowns) cb();
       pane.remove();
+      // The title-bar slots are shell-owned while a viewer is open; emptying
+      // them is what returns the title-bar to its no-viewer state.
+      titleSlot?.replaceChildren();
+      viewerSlot?.replaceChildren();
       mount.restore();
       (lastFocused as HTMLElement | null)?.focus?.();
     },

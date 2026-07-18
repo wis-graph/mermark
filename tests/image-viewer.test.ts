@@ -22,10 +22,19 @@ beforeEach(() => {
   editorHost = document.createElement("div");
   editorHost.className = "editor-host";
   document.body.append(editorHost);
+  // The title-bar slots the viewer shell renders its filename + controls into
+  // (chrome/title-bar.ts createTitleSlot/createViewerSlot) — the viewer has no
+  // header row of its own since the 2026-07-19 title-bar integration.
+  const docTitleSlot = document.createElement("div");
+  docTitleSlot.className = "title-bar-doc-title";
+  const viewerSlotFixture = document.createElement("div");
+  viewerSlotFixture.className = "title-bar-viewer-slot";
+  document.body.append(docTitleSlot, viewerSlotFixture);
 });
 afterEach(() => {
   document.querySelector(".viewer-panel")?.remove();
   editorHost.remove();
+  document.querySelectorAll(".title-bar-doc-title, .title-bar-viewer-slot").forEach((n) => n.remove());
 });
 
 /** Fire onload after stamping natural* dimensions — jsdom never actually loads

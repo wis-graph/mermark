@@ -83,9 +83,32 @@ describe("viewer font-size zoom integration (style contract)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("T2 (exception 1): .viewer-panel-close declares font: inherit (it's a <button>)", () => {
-    const block = ruleBlock(CLOSE_SELECTOR);
-    expect(block).toMatch(/font:\s*inherit\s*;/);
+  // T2 (was: ".viewer-panel-close declares font: inherit"). The viewer's
+  // close/zoom controls no longer carry their own button rules at all — since
+  // the 2026-07-19 title-bar integration they ARE `.chrome-btn`, rendered into
+  // the title-bar beside 모드/테마/설정 (사용자 지정: "그 공간에 다른 버튼들
+  // 같은 포멧으로 들어오면 전혀 이질적이지 않자나"). So the font-inherit
+  // guarantee they need is `.chrome-btn`'s, and the guard that matters now is
+  // that the viewer did NOT grow a private lookalike button rule again.
+  it("T2: viewer controls inherit the chrome button's font; no private button rules re-appear", () => {
+    expect(ruleBlock(".chrome-btn")).toMatch(/font:\s*inherit\s*;/);
+    // A re-introduced bordered/filled button rule for the viewer's own
+    // controls is the exact regression this turns red on. `ruleBlock` THROWS
+    // when a selector has no rule at all — which is the DESIRED state here, so
+    // absence counts as a pass.
+    const privateRule = (sel: string): string | null => {
+      try {
+        return ruleBlock(sel);
+      } catch {
+        return null;
+      }
+    };
+    for (const sel of [CLOSE_SELECTOR, ".viewer-panel-zoom-out", ".viewer-panel-zoom-in"]) {
+      const block = privateRule(sel);
+      if (block === null) continue; // no private rule — ideal
+      expect(block).not.toMatch(/border:\s*1px/);
+      expect(block).not.toMatch(/background:\s*var\(--surface\)/);
+    }
   });
 
   // T3: sweep src/extensions/**/*.ts's INJECTED <style> STRINGS — the reason

@@ -23,6 +23,14 @@ function buildScaffold(): { mainColumn: HTMLElement; editorHost: HTMLElement } {
   mainColumn.className = "main-column";
   const titleBar = document.createElement("div");
   titleBar.className = "title-bar";
+  // The two title-bar slots arrangeTitleBar places (chrome/title-bar.ts's
+  // createTitleSlot/createViewerSlot). The viewer has no header row of its
+  // own any more — it renders its filename and controls into these.
+  const docTitleSlot = document.createElement("div");
+  docTitleSlot.className = "title-bar-doc-title";
+  const viewerSlot = document.createElement("div");
+  viewerSlot.className = "title-bar-viewer-slot";
+  titleBar.append(docTitleSlot, viewerSlot);
   const editorHost = document.createElement("div");
   editorHost.className = "editor-host";
   const statusBar = document.createElement("div");
@@ -91,25 +99,45 @@ describe("openViewerShell: a11y — role=region, NOT role=dialog/aria-modal (des
 });
 
 describe("openViewerShell: header DOM (design §B/§C)", () => {
-  it("header contains caption, zoom-out/label/zoom-in, and close, in the right shape", () => {
+  // The viewer renders NO header row: its filename goes to the title-bar's
+  // doc-title slot and its controls to the title-bar's viewer slot, as
+  // ordinary `.chrome-btn`s (사용자 지정 2026-07-19 — the bordered in-pane
+  // header both wasted a row and looked alien beside the app's flat chrome).
+  it("renders filename + controls into the TITLE BAR slots, with no header row in the pane", () => {
     const shell = openViewerShell({ absPath: "/vault/report.pdf", paneClass: "pdf-viewer", content: document.createElement("div") });
-    const header = document.querySelector(".viewer-panel-header") as HTMLElement;
-    expect(header).toBeTruthy();
 
-    const caption = header.querySelector(".viewer-panel-caption") as HTMLElement;
+    // The old in-pane header must be gone — this is the regression guard for
+    // "don't grow a second toolbar again".
+    expect(document.querySelector(".viewer-panel-header")).toBeNull();
+
+    const titleSlot = document.querySelector(".title-bar-doc-title") as HTMLElement;
+    const caption = titleSlot.querySelector(".viewer-panel-caption") as HTMLElement;
     expect(caption.textContent).toBe("report.pdf");
 
-    const zoomOut = header.querySelector(".viewer-panel-zoom-out") as HTMLElement;
-    const zoomLabel = header.querySelector(".viewer-panel-zoom-label") as HTMLElement;
-    const zoomIn = header.querySelector(".viewer-panel-zoom-in") as HTMLElement;
+    const viewerSlot = document.querySelector(".title-bar-viewer-slot") as HTMLElement;
+    const zoomOut = viewerSlot.querySelector(".viewer-panel-zoom-out") as HTMLElement;
+    const zoomLabel = viewerSlot.querySelector(".viewer-panel-zoom-label") as HTMLElement;
+    const zoomIn = viewerSlot.querySelector(".viewer-panel-zoom-in") as HTMLElement;
+    const closeBtn = viewerSlot.querySelector(".viewer-panel-close") as HTMLElement;
     expect(zoomOut).toBeTruthy();
     expect(zoomIn).toBeTruthy();
+    expect(closeBtn).toBeTruthy();
     expect(zoomLabel.textContent).toBe("100%");
 
-    const closeBtn = header.querySelector(".viewer-panel-close") as HTMLElement;
-    expect(closeBtn).toBeTruthy();
+    // They must BE the app's chrome button, not a lookalike — this is the
+    // assertion that keeps the two from drifting apart again.
+    for (const b of [zoomOut, zoomIn, closeBtn]) {
+      expect(b.classList.contains("chrome-btn")).toBe(true);
+      expect(b.classList.contains("icon-only")).toBe(true);
+      expect(b.querySelector("svg.icon")).toBeTruthy(); // Lucide glyph, not a text "✕"/"+"
+    }
+    expect(zoomLabel.classList.contains("chrome-btn")).toBe(true);
+    expect(viewerSlot.querySelector(".title-bar-divider")).toBeTruthy(); // the `|`
 
+    // Closing returns the title-bar to its no-viewer state (both slots empty).
     shell.close();
+    expect(titleSlot.childElementCount).toBe(0);
+    expect(viewerSlot.childElementCount).toBe(0);
   });
 });
 

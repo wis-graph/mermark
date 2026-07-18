@@ -54,7 +54,13 @@ import { arrangeStatusBar } from "./chrome/status-bar";
 import { makeWidthSlider } from "./chrome/status-bar/width";
 import { makeUpdateButton } from "./chrome/status-bar/update";
 import { ensureCheckedOnce } from "./update/update-flow";
-import { createTitleBar, arrangeTitleBar, createLeftCommandGroup } from "./chrome/title-bar";
+import {
+  createTitleBar,
+  arrangeTitleBar,
+  createLeftCommandGroup,
+  createTitleSlot,
+  createViewerSlot,
+} from "./chrome/title-bar";
 import { registerSidebarPanel, closeOtherSidebarPanels, installSidebarPanels } from "./sidebar/registry";
 import { createBreadcrumb } from "./chrome/breadcrumb";
 import { createRecentPanel } from "./sidebar/recent/recent-panel";
@@ -504,6 +510,8 @@ async function boot() {
   const leftGroup = createLeftCommandGroup({ openPath: prompt.button });
   arrangeTitleBar(titleBar.el, {
     leftGroup,
+    titleSlot: createTitleSlot(),
+    viewerSlot: createViewerSlot(),
     mode: mode.btn,
     theme: themeBtn.btn,
     settings: createSettingsButton(),

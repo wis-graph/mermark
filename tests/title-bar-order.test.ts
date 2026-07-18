@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTitleBar, arrangeTitleBar, createLeftCommandGroup } from "../src/chrome/title-bar";
+import { createTitleBar, arrangeTitleBar, createLeftCommandGroup, createTitleSlot, createViewerSlot } from "../src/chrome/title-bar";
 
 // The title-bar layout contract (M6 rehome, _workspace/01_architect_design.md;
 // R9, _workspace/01_architecture.md): TitleBarParts is {leftGroup, mode,
@@ -47,13 +47,17 @@ describe("arrangeTitleBar", () => {
     const { el: bar } = createTitleBar({ platform: "mac" });
     const leftGroup = createLeftCommandGroup(leftGroupParts());
     const { mode, theme, settings } = rightParts();
-    arrangeTitleBar(bar, { leftGroup, mode, theme, settings });
+    const titleSlot = createTitleSlot();
+    const viewerSlot = createViewerSlot();
+    arrangeTitleBar(bar, { leftGroup, titleSlot, viewerSlot, mode, theme, settings });
     const children = [...bar.children] as HTMLElement[];
     expect(children[0]).toBe(leftGroup);
-    expect(children[1].classList.contains("title-spacer")).toBe(true);
-    expect(children[2]).toBe(mode);
-    expect(children[3]).toBe(theme);
-    expect(children[4]).toBe(settings);
+    expect(children[1]).toBe(titleSlot); // doc-title slot (empty until a viewer opens)
+    expect(children[2].classList.contains("title-spacer")).toBe(true);
+    expect(children[3]).toBe(viewerSlot); // viewer controls, left of the app cluster
+    expect(children[4]).toBe(mode);
+    expect(children[5]).toBe(theme);
+    expect(children[6]).toBe(settings);
     // no "favorites" entry anywhere (M5 removal) — leftGroup's own children
     // are the only place button identities live now.
     const leftIds = [...leftGroup.children].map((c) => (c as HTMLElement).dataset.id);
@@ -64,7 +68,9 @@ describe("arrangeTitleBar", () => {
     const { el: bar } = createTitleBar({ platform: "mac" });
     const leftGroup = createLeftCommandGroup(leftGroupParts());
     const { mode, theme, settings } = rightParts();
-    arrangeTitleBar(bar, { leftGroup, mode, theme, settings });
+    const titleSlot = createTitleSlot();
+    const viewerSlot = createViewerSlot();
+    arrangeTitleBar(bar, { leftGroup, titleSlot, viewerSlot, mode, theme, settings });
     const children = [...bar.children] as HTMLElement[];
     const spacerIndex = children.findIndex((c) => c.classList.contains("title-spacer"));
     expect(spacerIndex).toBeGreaterThan(children.indexOf(leftGroup));
@@ -78,7 +84,9 @@ describe("arrangeTitleBar", () => {
     expect(bar.lastElementChild?.classList.contains("window-controls")).toBe(true);
     const leftGroup = createLeftCommandGroup(leftGroupParts());
     const { mode, theme, settings } = rightParts();
-    arrangeTitleBar(bar, { leftGroup, mode, theme, settings });
+    const titleSlot = createTitleSlot();
+    const viewerSlot = createViewerSlot();
+    arrangeTitleBar(bar, { leftGroup, titleSlot, viewerSlot, mode, theme, settings });
     expect(bar.lastElementChild?.classList.contains("window-controls")).toBe(true);
     const children = [...bar.children] as HTMLElement[];
     const settingsIndex = children.indexOf(settings);

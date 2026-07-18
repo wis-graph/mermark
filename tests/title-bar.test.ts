@@ -12,6 +12,7 @@ import {
   createSidebarTopStrip,
   createLeftCommandGroup,
   rehomeLeftCommandGroup,
+  createTitleSlot,
 } from "../src/chrome/title-bar";
 
 describe("title-bar", () => {
@@ -152,6 +153,27 @@ describe("left-command-group rehoming", () => {
       const spacer = bar.querySelector(".title-spacer");
       expect(group.parentElement).toBe(bar);
       expect(group.nextElementSibling).toBe(spacer);
+    });
+
+    // REGRESSION (2026-07-19): when a viewer is open the bar also holds a
+    // doc-title slot between the group and the spacer. Anchoring the rehome on
+    // `.title-spacer` unconditionally re-inserted the group AFTER that title,
+    // so opening a viewer visibly shoved the command icons rightward past the
+    // filename. The group must stay at the START of the bar's flow.
+    it("doc-title slot present: the group lands BEFORE it, not after (viewer-open case)", () => {
+      const bar = barWithSpacerAnchor();
+      const spacer = bar.querySelector(".title-spacer")!;
+      const titleSlot = createTitleSlot();
+      bar.insertBefore(titleSlot, spacer); // arrangeTitleBar's order: group · title · spacer
+      const group = createLeftCommandGroup(leftGroupParts());
+      const strip = createSidebarTopStrip();
+      strip.append(group); // starts homed in a strip, as after closing a sidebar
+      rehomeLeftCommandGroup(group, bar, null);
+      expect(group.parentElement).toBe(bar);
+      expect(group.nextElementSibling).toBe(titleSlot);
+      // and idempotent in that arrangement too
+      rehomeLeftCommandGroup(group, bar, null);
+      expect(group.nextElementSibling).toBe(titleSlot);
     });
 
     it("re-focuses a button that had focus before the move", () => {
