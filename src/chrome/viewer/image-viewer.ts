@@ -82,5 +82,7 @@ export function openImageViewer(absPath: string): ImageViewerHandle {
   const unsubscribeZoom = shell.zoom.bind((factor) => applyImageZoom(img, factor));
   shell.onTeardown(unsubscribeZoom);
 
-  return { close: () => shell.close() };
+  // onClose forwards the shell teardown so the OPENER learns about closes
+  // it did not initiate (Esc / header ✕) — see ViewerHandle.onClose.
+  return { close: () => shell.close(), onClose: (cb) => shell.onTeardown(cb) };
 }

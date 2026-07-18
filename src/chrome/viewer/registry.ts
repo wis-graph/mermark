@@ -15,6 +15,15 @@ export interface ViewerHandle {
   /** Idempotent teardown — image-viewer.ts's existing ImageViewerHandle
    *  contract, generalized. Safe to call more than once. */
   close(): void;
+  /** Run `cb` exactly once when this viewer closes — INCLUDING the closes the
+   *  opener never initiates (Esc, the header's ✕). Without this the opener
+   *  can only know about closes it called itself, so any chrome it changed on
+   *  open (the footer breadcrumb, main.ts) would stay stuck at the viewer's
+   *  state after the user Esc'd back to their document — the exact staleness
+   *  reported 2026-07-19. Every viewer forwards this to its shell's
+   *  `onTeardown`; it is REQUIRED (not optional) so a new viewer cannot
+   *  silently reintroduce that gap. */
+  onClose(cb: () => void): void;
 }
 
 export interface Viewer {

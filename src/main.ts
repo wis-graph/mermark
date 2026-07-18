@@ -81,7 +81,7 @@ import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./d
 import { openConflictModal } from "./document/conflict/conflict-modal";
 import { openImageViewer } from "./chrome/viewer/image-viewer";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
-import { registerViewer, viewerFor, type Viewer } from "./chrome/viewer/registry";
+import { registerViewer, viewerFor, type Viewer, type ViewerHandle } from "./chrome/viewer/registry";
 import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
 import { icon, type IconName } from "./icons";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
@@ -366,7 +366,7 @@ async function boot() {
   // the first rather than stacking. Stays here, not in the registry — the
   // registry is a pure catalog (design §5: a stateful slot inside it would
   // repeat the God-object shape R9 explicitly avoided).
-  let openViewer: { close(): void } | null = null;
+  let openViewer: ViewerHandle | null = null;
 
   // The built-in image viewer registers through the SAME `registerViewer`
   // path an extension uses (R11 design §3 — dogfooding, like R9's built-in
@@ -405,6 +405,17 @@ async function boot() {
     if (!v) return;
     openViewer?.close();
     openViewer = v.open(absPath);
+    // The footer breadcrumb points at the folder of whatever the CONTENT AREA
+    // is showing. While the viewer was a floating modal OVER the document,
+    // "current folder" unambiguously meant the document's; a full-pane viewer
+    // IS the content now, so leaving it on the document's folder pointed
+    // somewhere the user isn't (사용자 리포트 2026-07-19: "브레드크럼프가
+    // 업데이트가 안되고있네"). `onClose` (not just our own close() calls)
+    // restores it, so an Esc/✕ close the slot never initiated still returns
+    // the breadcrumb to the live document's folder. `currentBaseDir` is read
+    // at close time, so a document switch that happened meanwhile still wins.
+    breadcrumb.render(dirOf(absPath));
+    openViewer.onClose(() => breadcrumb.render(currentBaseDir));
   }
 
   /** "Opening a document closes any open viewer" (full-pane rewrite,

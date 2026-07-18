@@ -110,6 +110,32 @@ describe("openImageViewer: close paths (Esc / button / idempotent / focus)", () 
     trigger.remove();
   });
 
+  // ViewerHandle.onClose (2026-07-19): the OPENER must learn about closes it
+  // never initiated, or chrome it changed on open stays stuck. main.ts relies
+  // on exactly this to put the footer breadcrumb back on the live document's
+  // folder after an Esc/✕ close ("브레드크럼프가 업데이트가 안되고있네").
+  it("onClose fires for closes the opener never initiated (Esc, ✕) and for close(), exactly once", () => {
+    // Esc — the case a caller-initiated-only signal would miss entirely.
+    let escClosed = 0;
+    openImageViewer("/pics/cat.png").onClose(() => (escClosed += 1));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(escClosed).toBe(1);
+
+    // ✕ button.
+    let xClosed = 0;
+    openImageViewer("/pics/cat.png").onClose(() => (xClosed += 1));
+    (document.querySelector(".image-viewer-close") as HTMLButtonElement).click();
+    expect(xClosed).toBe(1);
+
+    // Programmatic close(), and idempotent — a second close() must not re-fire.
+    let apiClosed = 0;
+    const handle = openImageViewer("/pics/cat.png");
+    handle.onClose(() => (apiClosed += 1));
+    handle.close();
+    handle.close();
+    expect(apiClosed).toBe(1);
+  });
+
   it("the close button closes the pane", () => {
     const handle = openImageViewer("/pics/cat.png");
     const closeBtn = document.querySelector(".image-viewer-close") as HTMLButtonElement;

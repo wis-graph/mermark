@@ -254,7 +254,9 @@ function openExcelViewer(absPath: string): ViewerHandle {
     content.textContent = `문서를 열 수 없습니다: ${err instanceof Error ? err.message : String(err)}`;
   });
 
-  return { close: () => shell.close() };
+  // onClose forwards the shell teardown so the OPENER learns about closes
+  // it did not initiate (Esc / header ✕) — see ViewerHandle.onClose.
+  return { close: () => shell.close(), onClose: (cb) => shell.onTeardown(cb) };
 }
 
 const EXCEL_VIEWER: Viewer = {
