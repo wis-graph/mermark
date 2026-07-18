@@ -161,40 +161,26 @@ describe("viewer size envelope (style contract — no viewer reinvents its own p
 });
 
 // Second style-contract, sitting next to the px-cap one above but guarding a
-// DIFFERENT failure mode of the same "viewer size envelope" bug class
-// (team-lead sizing fix, 2026-07). The px-cap gate above catches a viewer
-// that reinvents a SMALLER-than-envelope box; this one catches a viewer that
-// silently COLLAPSES inside a correctly-sized one.
-//
-// THE BUG THIS GUARDS: .html-viewer shipped with `width: 92vw; max-height:
-// 88vh;` and NO `height`. `max-height` alone leaves a box's height as `auto`
-// — CSS auto-height means "shrink to fit content", not "claim the cap as a
-// target". A DOCUMENT viewer's content (an <iframe srcdoc>, in html-viewer's
-// case) has no reliable intrinsic height of its own to shrink-to-fit against
-// — an <iframe>'s box is sized by ITS OWN CSS box model, not by the document
-// inside it, so with nothing else forcing a height the box fell back to the
-// UA default of exactly 150px, regardless of the 88vh cap sitting unused
-// above it. Measured directly via CDP at a 3840×2160 viewport: the panel
-// rendered 253px tall (150px of which was this exact iframe-default
-// collapse) against an available 1900px cap — roughly 12% of the intended
-// envelope. Fixed by adding `height: 88vh` alongside the existing
-// `max-height: 88vh` (src/extensions/html-viewer/index.ts) so the box has a
-// DEFINITE height for the whole `flex: 1` chain beneath it
-// (.viewer-panel-body → .html-viewer-frame-wrap → the iframe's `height:
-// 100%`) to actually resolve against.
-//
-// NOT every viewer should be forced onto this rule — excel-viewer (a small
-// sheet's panel SHOULD shrink to fit 3 rows, not claim a fixed 88vh box full
-// of dead whitespace) and image-viewer (a small image SHOULD render small,
-// not stretch to fill the envelope) are content-driven BY DESIGN, not bugs;
-// see excel-viewer/index.ts's `.excel-viewer` comment for the design
-// rationale this test deliberately does not re-litigate. So this gate is
-// scoped to an explicit allowlist of viewers that are envelope-driven BY
-// CONTRACT (arbitrary document content, no natural "small" size), the same
-// "declared exception, not pattern-matched" shape CHROME_EXEMPT_SELECTORS
-// above uses — a new viewer opts into this gate by being added here, it is
-// never silently swept in or out by a selector regex.
-describe("viewer size envelope (height, not just max-height, for envelope-driven document viewers)", () => {
+// DIFFERENT failure mode of the same "viewer size envelope" bug class.
+// SUPERSEDES the pre-full-pane-rewrite "height alongside max-height" contract
+// (git history: that gate existed because .html-viewer/.pdf-viewer used to
+// carry their OWN vw/vh envelope, and a max-height-without-height shape on
+// that envelope collapsed to the iframe/canvas's tiny intrinsic size — see
+// html-viewer/index.ts's `.html-viewer` comment for the original bug
+// writeup). The full-pane rewrite (_workspace/01_architect_design.md §C)
+// removed the viewer's OWN envelope entirely: `.viewer-panel`'s
+// `flex:1; min-width:0; min-height:0; display:flex; flex-direction:column`
+// (styles.css) is now the SOLE size owner for every viewer's content root —
+// `.pdf-viewer`/`.html-viewer`/`.excel-viewer`/`.hwp-viewer` land on the SAME
+// element as `.viewer-panel` (openViewerShell's `paneClass`, shell.ts), so a
+// viewer that declares its OWN width/height/max-* here isn't just
+// redundant, it FIGHTS the shell's flex sizing (design §C: "콘텐츠 루트는
+// 이제 아무 width/height도 선언하지 않는다 — 셸 flex가 소유"). This gate
+// therefore inverts the old contract's shape entirely: instead of requiring
+// `height` alongside `max-height` on an allowlist of envelope-driven
+// viewers, it now forbids ANY width/height/max-width/max-height on an
+// explicit list of content-root selectors, full stop.
+describe("viewer content roots declare no size envelope (shell .viewer-panel is the sole owner)", () => {
   const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
   function sweepRuleBlocks(source: string): Array<{ selector: string; block: string }> {
@@ -209,40 +195,35 @@ describe("viewer size envelope (height, not just max-height, for envelope-driven
     return new RegExp(`(?:^|[;\\s])${prop}\\s*:`, "").test(block);
   }
 
-  /** Selectors that MUST claim their envelope regardless of content — a
-   *  viewer earns a place here only when its content has no natural "small"
-   *  size (an arbitrary document, not a small sheet/image). Currently only
-   *  `.html-viewer` — it is the one this gate's fix actually landed for.
-   *  `.hwp-viewer` (styles.css) and `.pdf-viewer`
-   *  (src/extensions/pdf-viewer/index.ts) share the exact same
-   *  `width: 92vw; max-height: 88vh;` shape with no `height` today and have
-   *  the SAME latent bug (pdf-viewer only avoids showing it because a
-   *  multi-page PDF's own canvas content happens to be tall enough to fill
-   *  the cap on its own) — each is a separate in-flight fix outside this
-   *  change's scope; add it here the moment its own `height: 88vh` (or
-   *  equivalent) lands, so this gate keeps it from regressing back to
-   *  max-height-only later. Deliberately NOT auto-derived from the px-cap
-   *  gate's `VIEWER_SIZE_PREFIX_RE` above — opting a viewer into "must claim
-   *  full envelope" is a content-shape judgment call (document vs.
-   *  small-and-shrinkable), not a mechanical sweep. */
-  const ENVELOPE_DRIVEN_SELECTORS = [".html-viewer", ".pdf-viewer"];
+  const CONTENT_ROOT_SIZE_PROPS = ["width", "height", "max-width", "max-height"] as const;
 
-  function findMaxHeightWithoutHeight(source: string): string[] {
+  /** The viewer content-root selectors that must NEVER declare a size
+   *  envelope of their own — each is `openViewerShell`'s `paneClass` for one
+   *  of the five viewers (design §C's diff-minimizing "DOM 클래스는 최대
+   *  보존" — `.image-viewer` is deliberately excluded: it's content-driven by
+   *  a DIFFERENT mechanism, `applyImageZoom`'s inline `img.style.width`, not
+   *  a stylesheet size rule on the pane, so it has no size envelope of THIS
+   *  kind to forbid in the first place). Named explicitly, not derived from
+   *  the px-cap gate's `VIEWER_SIZE_PREFIX_RE` above — opting a selector into
+   *  "the shell owns my size, period" is the content-root judgment call this
+   *  list makes, mirroring `CHROME_EXEMPT_SELECTORS`'s "declared exception,
+   *  not pattern-matched" shape. */
+  const CONTENT_ROOT_SELECTORS = [".pdf-viewer", ".html-viewer", ".excel-viewer", ".hwp-viewer"];
+
+  function findEnvelopeOffenders(source: string): string[] {
     // Comments MUST be stripped before sweeping (mirrors the px-cap gate's
     // cssNoComments above) — without this, a selector immediately preceded
     // by a `/* ... */` block captures the comment's own trailing text as
     // part of "the selector" (the sweep's `[^{}]+` runs from the last `}` to
-    // the next `{`, and a comment has neither), so `.html-viewer` would
+    // the next `{`, and a comment has neither), so e.g. `.html-viewer` would
     // never `.trim()` down to exactly `.html-viewer` and this gate would
-    // silently never match anything — caught by this file's own negative
-    // control below going green when it should have been red on a first
-    // draft of this test.
+    // silently never match anything.
     const noComments = source.replace(/\/\*[\s\S]*?\*\//g, "");
     const offenders: string[] = [];
     for (const { selector, block } of sweepRuleBlocks(noComments)) {
-      if (!ENVELOPE_DRIVEN_SELECTORS.includes(selector)) continue;
-      if (declaresProp(block, "max-height") && !declaresProp(block, "height")) {
-        offenders.push(selector);
+      if (!CONTENT_ROOT_SELECTORS.includes(selector)) continue;
+      for (const prop of CONTENT_ROOT_SIZE_PROPS) {
+        if (declaresProp(block, prop)) offenders.push(`${selector} :: ${prop}`);
       }
     }
     return offenders;
@@ -257,38 +238,47 @@ describe("viewer size envelope (height, not just max-height, for envelope-driven
     return strings;
   }
 
-  it(".html-viewer declares height alongside max-height (envelope-driven, not content-collapsed)", () => {
-    const htmlViewerFile = join(ROOT, "src", "extensions", "html-viewer", "index.ts");
-    const css = extractInjectedStyleStrings(htmlViewerFile).join("\n");
-    expect(findMaxHeightWithoutHeight(css)).toEqual([]);
+  it("styles.css: .hwp-viewer declares no width/height/max-width/max-height", () => {
+    const css = readFileSync(join(ROOT, "src", "styles.css"), "utf8");
+    expect(findEnvelopeOffenders(css)).toEqual([]);
   });
 
-  it(".pdf-viewer declares height alongside max-height (envelope-driven, not content-collapsed)", () => {
-    const pdfViewerFile = join(ROOT, "src", "extensions", "pdf-viewer", "index.ts");
-    const css = extractInjectedStyleStrings(pdfViewerFile).join("\n");
-    expect(findMaxHeightWithoutHeight(css)).toEqual([]);
+  it("extension-injected CSS: .pdf-viewer/.html-viewer/.excel-viewer declare no width/height/max-width/max-height", () => {
+    const files = [
+      join(ROOT, "src", "extensions", "pdf-viewer", "index.ts"),
+      join(ROOT, "src", "extensions", "html-viewer", "index.ts"),
+      join(ROOT, "src", "extensions", "excel-viewer", "index.ts"),
+    ];
+    const css = files.flatMap((f) => extractInjectedStyleStrings(f)).join("\n");
+    expect(findEnvelopeOffenders(css)).toEqual([]);
   });
 
   // Negative control (양성·음성 실증, 기존 px-cap 게이트와 같은 원칙): feed the
-  // sweep the EXACT regressed shape this gate exists to catch and confirm it
-  // actually turns red — proving the assertion above isn't vacuously true.
-  it("negative control: max-height alone (no height) on an envelope-driven selector IS flagged", () => {
-    const regressed = ".html-viewer { width: 92vw; max-height: 88vh; }";
-    expect(findMaxHeightWithoutHeight(regressed)).toEqual([".html-viewer"]);
+  // sweep the EXACT pre-rewrite shape (a viewer reinventing its own vw/vh
+  // envelope) this gate exists to catch, and confirm it actually turns red —
+  // proving the assertions above aren't vacuously true because the sweep
+  // never matches anything.
+  it("negative control: re-introducing a vw/vh envelope on a content root IS flagged", () => {
+    const regressed = ".pdf-viewer { width: 92vw; height: 88vh; max-height: 88vh; }";
+    const offenders = findEnvelopeOffenders(regressed);
+    expect(offenders).toContain(".pdf-viewer :: width");
+    expect(offenders).toContain(".pdf-viewer :: height");
+    expect(offenders).toContain(".pdf-viewer :: max-height");
   });
 
-  // Positive control: max-height WITH height is not flagged.
-  it("max-height alongside an explicit height is NOT flagged", () => {
-    const fixed = ".html-viewer { width: 92vw; height: 88vh; max-height: 88vh; }";
-    expect(findMaxHeightWithoutHeight(fixed)).toEqual([]);
+  // Positive control: a content-root selector with genuinely no size props
+  // (only non-size styling) is not flagged.
+  it("a content-root rule with no size props is NOT flagged", () => {
+    const clean = ".excel-viewer { display: block; }";
+    expect(findEnvelopeOffenders(clean)).toEqual([]);
   });
 
-  // Scope control: a selector NOT on the allowlist (e.g. the deliberately
-  // content-driven .excel-viewer) is never flagged even with the exact same
-  // max-height-only shape — proves this gate only judges viewers that opted
-  // in, matching excel-viewer's documented "shrink to content" design.
-  it("a non-allowlisted selector with the same max-height-only shape is NOT flagged (scope control)", () => {
-    const excel = ".excel-viewer { width: 85vw; max-height: 88vh; }";
-    expect(findMaxHeightWithoutHeight(excel)).toEqual([]);
+  // Scope control: a selector NOT on the content-root list (e.g. the
+  // shell-owned `.viewer-panel` itself, which legitimately declares flex
+  // sizing) is never flagged — proves this gate only judges the five content
+  // roots, not the shell chrome that's SUPPOSED to own sizing now.
+  it("a non-content-root selector with the same shape is NOT flagged (scope control)", () => {
+    const chrome = ".viewer-panel { width: 92vw; height: 88vh; }";
+    expect(findEnvelopeOffenders(chrome)).toEqual([]);
   });
 });

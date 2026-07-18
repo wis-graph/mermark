@@ -9,6 +9,30 @@
 // NOT poke `--font-scale` directly via JS — that would only prove the CSS calc
 // works, not that the setting's persistence/parse/sink path actually drives it.
 //
+// STAGE 6 REVIEW (full-pane rewrite, _workspace/01_architect_design.md/
+// 01_architect_plan.md §Stage 6, 2026-07-18) — qa-verifier read this file
+// against the new source (styles.css's "VIEWER ZOOM RULE" / "VIEWER-LOCAL
+// ZOOM" anchor comment above `.viewer-panel`, and excel-viewer/index.ts's
+// injected CSS) before touching it, per the plan's explicit instruction to
+// check whether this golden's contract had inverted. CONCLUSION: this
+// file's assertions are NOT inverted and needed NO changes. The VIEWER ZOOM
+// RULE (⌘± scales CHROME TEXT, INCLUDING `.excel-viewer-table`'s em-fraction
+// font-size, via the SAME 13px-base cascade `.viewer-panel-caption` and
+// `.excel-viewer-tab` use) is explicitly "kept unchanged by the full-pane
+// rewrite" per that comment — it is a DIFFERENT, ADDITIONAL axis from the
+// new `--viewer-zoom` (design §B "VIEWER-LOCAL ZOOM", the header [-]/[+]
+// buttons), not a replacement of it. What DID invert this round is
+// html-viewer's iframe content (its OWN sink moved from `fontScale.bind` to
+// `shell.zoom.bind` — see html-viewer/index.ts's diff) — but this file never
+// exercised html-viewer, so that inversion has no referent here either; it
+// is covered instead by tests/html-viewer.test.ts's adversarial pair and by
+// scripts/viewer-golden.mjs's new G18 (zoom independence). The one addition
+// below (`viewerZoomVar...Unchanged1_0`) is a small supplementary check,
+// added here rather than invented as a new assertion elsewhere, confirming
+// empirically — in the SAME two fontScale states this file already visits —
+// that `--viewer-zoom` (the shell's OWN axis) stays untouched by fontScale,
+// i.e. the two axes are orthogonal, not that one replaced the other.
+//
 //   node scripts/viewer-zoom-golden.mjs /tmp/viewer-zoom.json
 //
 // Requires: `npm run dev:browser` + Chrome --remote-debugging-port=9222,
@@ -70,6 +94,13 @@ async function readZoomState(label) {
     const caption = document.querySelector(".excel-viewer-caption");
     return {
       fontScaleVar: getComputedStyle(document.documentElement).getPropertyValue("--font-scale").trim(),
+      // Stage 6 addition — the shell's OWN axis (design §B "VIEWER-LOCAL
+      // ZOOM"), read straight off the pane root's inline style the same way
+      // shell.ts's makeZoomController writes it. A fresh open() always
+      // starts at 1 (ZOOM_DEFAULT, shell.ts) regardless of fontScale — this
+      // is the orthogonality check, not a zoom-ladder exercise (that's
+      // scripts/viewer-golden.mjs's G17/G18).
+      viewerZoomVar: panel ? panel.style.getPropertyValue("--viewer-zoom") : null,
       panelFontSize: panel ? getComputedStyle(panel).fontSize : null,
       tabFontSize: tab ? getComputedStyle(tab).fontSize : null,
       tableFontSize: table ? getComputedStyle(table).fontSize : null,
@@ -160,6 +191,12 @@ const result = {
   tabRespondsToZoom: beforeTab != null && afterTab != null && beforeTab !== afterTab,
   tableRespondsToZoom: beforeTable != null && afterTable != null && beforeTable !== afterTable,
   elementsFound: !!before.panelFound && !!before.tabFound && !!after.panelFound && !!after.tabFound,
+  // Stage 6 orthogonality check (see header comment): the shell's OWN zoom
+  // axis must stay at its fresh-open default across BOTH fontScale states —
+  // fontScale must never write --viewer-zoom.
+  viewerZoomVarBefore: before.viewerZoomVar,
+  viewerZoomVarAfter: after.viewerZoomVar,
+  viewerZoomVarUnaffectedByFontScale: before.viewerZoomVar === after.viewerZoomVar,
   errors,
 };
 result.allPass =
@@ -176,6 +213,7 @@ result.allPass =
   result.tabRespondsToZoom &&
   result.tableRespondsToZoom &&
   result.elementsFound &&
+  result.viewerZoomVarUnaffectedByFontScale &&
   errors.length === 0;
 
 writeFileSync(out, JSON.stringify(result, null, 2));

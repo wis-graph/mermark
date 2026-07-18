@@ -1,7 +1,11 @@
-// Golden-master capture for the R11 viewer registry (_workspace/01_r11.md
-// §7/§9 Step 5). Exercises the SAME dispatch path built-in (image) and
-// extension (Excel) viewers now share, so a regression in either shows up
-// here regardless of which one it hits.
+// Golden-master capture for the mermark viewer registry. Started as R11's
+// (_workspace/01_r11.md §7/§9 Step 5) body-level backdrop/modal golden;
+// rewritten (_workspace/01_architect_design.md / 01_architect_plan.md
+// §Stage 6, 2026-07-18 full-pane rewrite) for the in-content PANE shell —
+// `.viewer-backdrop` no longer exists ANYWHERE in the DOM (shell.ts, design
+// §A). Exercises the SAME dispatch path built-in (image) and extension
+// (Excel/HTML/PDF) viewers share, so a regression in any shows up here
+// regardless of which one it hits.
 //
 //   node scripts/viewer-golden.mjs /tmp/viewer-golden.json
 //
@@ -9,23 +13,39 @@
 //   - `npm run dev:browser` + Chrome --remote-debugging-port=9222 running
 //   - mock-assets/mock/vault/report.xlsx present (scripts/lib/make-excel-fixture.mjs)
 //
-// G1 (behavior-unchanged + VISUAL): pic.png → .viewer-backdrop/.image-viewer,
-//     img src, dimmed backdrop, opaque panel with real chrome, Esc → full
-//     teardown + .editor-host inert removed.
+// FULL-PANE REWRITE PROBE CHANGE (Stage 6): every `.viewer-backdrop` probe
+// this file used to run (~36 refs, R11-era) is now a PANE probe instead:
+// `.main-column > .viewer-panel` (exists = open, gone = closed) and
+// `.editor-host[hidden]` (the mount/hide half of the same contract,
+// shell.ts's `mountViewerPane`). checkPanelChrome() below folds both into
+// every scenario's Object.assign for free. DELETED (no referent anymore):
+// backdrop-dim-opacity and backdrop-click-closes assertions — there is no
+// backdrop to dim or click. G4 (don't-stack) is reinterpreted as "exactly
+// one pane" instead of "exactly one backdrop". `inert` is ALSO gone
+// end-to-end (design §D: `hidden` alone removes the editor from the
+// focus/AT tree; only G5's "unclaimed extension is un-openable" retains the
+// word colloquially, unrelated to the `inert` DOM attribute).
+//
+// G1 (behavior-unchanged + VISUAL): pic.png → pane mounted as
+//     `.editor-host`'s sibling with `.editor-host` hidden, `.image-viewer`
+//     present, img src, panel with real chrome, Esc → full teardown +
+//     `.editor-host` hidden cleared (restored).
 // G2 (cold-load NEGATIVE): boot alone never fetches an xlsx-named resource.
 //     Written FIRST — a golden whose only signal is "0 resources" is
 //     trivially green if the selector/probe itself is broken (this
 //     session's "sidebar-contrast could never fail" lesson), so G3's
 //     positive count is what actually proves this probe is alive.
 // G3 (cold-load POSITIVE + render + VISUAL): report.xlsx → .excel-viewer,
-//     known fixture cell text, 3 sheet tabs, resource entries ≥1, dimmed
-//     backdrop, opaque panel, sheet data in exactly ONE <table> (not
+//     known fixture cell text, 3 sheet tabs, resource entries ≥1, pane
+//     mounted/chrome intact, sheet data in exactly ONE <table> (not
 //     scattered across disconnected boxes — the audit's screenshot finding,
 //     04_audit_report.md).
-// G4 (don't-stack): image open, then Excel open (no close between) →
-//     exactly one .viewer-backdrop.
-// G5 (inert preserved): an unclaimed extension (data.json) stays .is-nonmd
-//     and inert.
+// G4 (don't-stack, REINTERPRETED for the pane shell): image open, then
+//     Excel open (no close between) → exactly one `.viewer-panel` under
+//     `.main-column` (never two panes stacked).
+// G5 (unclaimed extension stays un-openable): an unclaimed extension
+//     (data.json) stays .is-nonmd, its click opens no pane, and
+//     `.editor-host` stays visible throughout.
 // G6 (truncation caption is TRUTHFUL + CONTAINED): the fixture's "Big" sheet
 //     has MAX_RENDERED_ROWS + 5 real rows — the caption must state the TRUE
 //     total (not a count derived from the already-capped row array, the
@@ -117,6 +137,58 @@
 //     canvas evicted (removed) by the time all 25 pages have been visited.
 //   - Zero console errors.
 //
+// ─────────────────────────────────────────────────────────────────────────
+// STAGE 6 NEW SCENARIOS (_workspace/01_architect_plan.md §Stage 6). Keyed
+// g16~g19 in `result` — NOT g15~g18 as the plan's prose numbers them —
+// because `g15`/`g15caseA` were ALREADY a live, battle-tested scenario pair
+// below (the viewer on/off TOGGLE feature, an unrelated earlier round,
+// _workspace/03_viewer_toggle_design.md) by the time this Stage landed.
+// Renumbering an already-proven scenario to make room felt riskier than
+// documenting the shift once, here, and moving on. Mapping: plan's "G15
+// (레이아웃)" -> g16, "G16 (줌 동작)" -> g17, "G17 (줌 독립)" -> g18, "G18
+// (문서 열기)" -> g19.
+//
+// G16 (layout/restore — plan's "G15"): open pic.png -> the pane fills
+//     `.editor-host`'s old slot and `.title-bar`/`.sidebar-aside`/
+//     `.status-bar` boundingBoxes are BYTE-IDENTICAL to their pre-open
+//     values (the whole point of a non-modal pane — chrome never moves).
+//     Esc -> `.editor-host` restored (hidden cleared) AND the editor's
+//     scroll position (`.cm-scroller.scrollTop`) survives the hide/show
+//     round-trip untouched (CM6 re-measures itself on the visibility
+//     transition — this is the one live-DOM proof jsdom cannot give,
+//     design §A). Also opens+closes a viewer from the WELCOME screen (boot
+//     with NO file) and confirms the welcome pane re-renders with a real
+//     (non-zero) box afterward — the exact `.editor-host[hidden]` vs.
+//     `.welcome-host{display:flex}` specificity trap the architect flagged
+//     (design §A "함정 1개"; the CSS-text guard lives in
+//     tests/viewer-shell.test.ts, this is the LIVE cascade proof).
+// G17 (zoom behavior — plan's "G16"): report.xlsx -> click [+] twice ->
+//     `.excel-viewer-table`'s computed font-size increases and the zoom
+//     label reads a higher percent (1 -> 1.1 -> 1.25, "125%"); [-] twice
+//     returns both to their starting values. sample.pdf -> click [+] ->
+//     page 1's canvas CSS width grows by the SAME ladder step (a real
+//     re-rasterize, fitWidthScale's `zoomFactor` argument — not a CSS
+//     transform), label updates.
+// G18 (zoom independence — plan's "G17", ADVERSARIAL PAIR): with a PDF
+//     viewer open, fire the REAL "본문 확대" shortcut (Mod+=, zoom.in ->
+//     fontScaleSetting, shortcuts/actions.ts) WITHOUT touching the viewer's
+//     own [+]/[-] -> the pane's `--viewer-zoom` var, its zoom LABEL text,
+//     and the PDF page's canvas pixel width must all stay EXACTLY
+//     unchanged (shell.zoom never reads fontScale, design §B decision ③) —
+//     only header CHROME TEXT (`.viewer-panel`'s own font-size, the VIEWER
+//     ZOOM RULE root, styles.css) is allowed to scale. This is the positive
+//     half; G17 above is the negative half of the same pair (the viewer's
+//     OWN [+]/[-] DOES move content) — together they prove the two axes are
+//     genuinely orthogonal, not that content just never moves for any
+//     reason.
+// G19 (doc-open closes viewer — plan's "G18"): a viewer is open -> click a
+//     .md row in the explorer -> the pane is gone AND the document's own
+//     editor (`.editor-host`, hidden cleared) is visible again —
+//     `closeOpenViewer()`'s single call site in `openInWindow` (main.ts,
+//     design §A rule 1), proven end-to-end rather than by reading the
+//     source.
+// ─────────────────────────────────────────────────────────────────────────
+
 // G15 (viewer on/off toggle, _workspace/03_viewer_toggle_design.md): a
 // disabled viewer's file falls through to the OS-default open_path path
 // instead of showing an overlay — no new fallback branch, the EXISTING one
@@ -160,6 +232,9 @@ const url = process.argv[3] ?? "http://localhost:1430/?file=/mock/vault/index.md
 const result = {
   g1: {}, g2: {}, g3: {}, g4: {}, g5: {}, g6: {}, g7: {}, g8: {}, g9: {}, g10: {}, g11: {}, g12: {}, g13: {}, g14: {},
   g15: {}, g15caseA: {},
+  // Stage 6 additions — see the "STAGE 6 NEW SCENARIOS" header comment above
+  // for why these are g16~g19, not g15~g18.
+  g16: {}, g17: {}, g18: {}, g19: {},
   errors: [],
   failedRequests: [],
 };
@@ -168,6 +243,15 @@ const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();
 const browser = await chromium.connectOverCDP(ver.webSocketDebuggerUrl);
 const ctx = browser.contexts()[0] ?? (await browser.newContext());
 const page = ctx.pages()[0] ?? (await ctx.newPage());
+// Stage 6 QA infra fix (2026-07-18, qa-verifier): an occluded/backgrounded
+// CDP tab throttles Chrome's own rendering/compositing, which can make
+// page.screenshot()'s internal "wait for fonts to load" step (and layout
+// generally) stall well past its 30s timeout on a heavy DOM (G6's 10,000+
+// row sheet was the first to hit this in this sandboxed multi-agent
+// environment — CPU/GPU contention from other concurrent CDP sessions makes
+// it worse). Bringing the tab to the front once, up top, costs nothing on a
+// healthy run and fixes the stall on a busy one.
+await page.bringToFront();
 
 // G8's own POSITIVE assertion (sample.html's inline PWNED script must not
 // run under sandbox="") makes Chrome itself log a console.error the instant
@@ -227,38 +311,25 @@ const xlsxResourceCount = () =>
     () => performance.getEntriesByType("resource").filter((r) => /xlsx/i.test(r.name)).length,
   );
 
-/** The shared shell-chrome visual contract EVERY viewer panel must satisfy
- *  (audit finding 04_audit_report.md 🟠/🟡/screenshot: DOM presence alone
- *  passed a panel with no background, a transparent backdrop, and a caption
- *  spilling outside the panel — none of that shows up in an `.excel-viewer`
- *  existence check). Reads computed styles + geometry directly, the same way
- *  a human looking at the screenshot would judge it. Pure query (page-side
- *  evaluate, no mutation). */
+/** The shared shell-chrome contract EVERY viewer panel must satisfy — full-
+ *  pane rewrite version (_workspace/01_architect_design.md). DOM presence
+ *  alone (`.excel-viewer` exists) proved nothing about whether the pane
+ *  actually mounted where it should, whether `.editor-host` was correctly
+ *  hidden, or whether a caption/content box spilled its bounds (audit
+ *  finding 04_audit_report.md 🟠/🟡/screenshot — the ORIGINAL reason this
+ *  helper exists, R11-era). The backdrop-opacity half of that original
+ *  contract is GONE (no backdrop exists to be opaque/dimmed, design §A) —
+ *  replaced by the pane-mount half every full-pane scenario actually needs:
+ *  is the pane `.editor-host`'s sibling, and is `.editor-host` hidden.
+ *  Reads computed styles + geometry directly, the same way a human looking
+ *  at a screenshot would judge it. Pure query (page-side evaluate, no
+ *  mutation). */
 async function checkPanelChrome(page, panelSelector, captionSelector) {
   return page.evaluate(
     ({ panelSelector, captionSelector }) => {
-      const parseAlpha = (color) => {
-        // Two computed-style shapes turn up here depending on the source
-        // declaration: `rgba(r, g, b, a)` / `rgb(r, g, b)` (a plain color,
-        // e.g. `background: transparent` or `var(--bg)`) and
-        // `color(srgb r g b / a)` (this app's `color-mix()` output). A
-        // MISSING alpha component in EITHER shape means fully opaque (1) —
-        // conflating "no match" with "opaque" was the original bug here:
-        // `background: transparent` computes to `rgba(0, 0, 0, 0)` (comma
-        // form), which the old slash-only regex never matched, so it fell
-        // through to the "1 = opaque" default and silently reported a
-        // transparent backdrop as opaque (caught by this file's own
-        // mutation-proof step — see _workspace/02_r11_changes.md).
-        if (!color) return 1;
-        let m = /^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(color);
-        if (m) return m[1] !== undefined ? parseFloat(m[1]) : 1;
-        m = /^color\([^)]*?(?:\/\s*([\d.]+)\s*)?\)$/.exec(color);
-        if (m) return m[1] !== undefined ? parseFloat(m[1]) : 1;
-        return 1;
-      };
-      const backdrop = document.querySelector(".viewer-backdrop");
       const panel = document.querySelector(panelSelector);
       const caption = captionSelector ? document.querySelector(captionSelector) : null;
+      const editorHost = document.querySelector(".editor-host");
       // `.viewer-panel-body` (shell.ts's wrapper, styles.css) is the ONE
       // shell-owned containment box every viewer's content sits inside —
       // checking THIS, not a viewer-specific inner element, is what makes
@@ -274,15 +345,19 @@ async function checkPanelChrome(page, panelSelector, captionSelector) {
       // excel-viewer-status / excel-viewer-body / a future HTML/HWP root) —
       // `.viewer-panel-body`'s single child, generic across every viewer.
       const bodyContent = body?.firstElementChild ?? null;
-      const bcs = backdrop ? getComputedStyle(backdrop) : null;
       const pcs = panel ? getComputedStyle(panel) : null;
       const panelRect = panel?.getBoundingClientRect() ?? null;
       const bodyRect = body?.getBoundingClientRect() ?? null;
       const bodyContentRect = bodyContent?.getBoundingClientRect() ?? null;
       const captionRect = caption?.getBoundingClientRect() ?? null;
       return {
-        backdropAlpha: bcs ? parseAlpha(bcs.backgroundColor) : 0,
-        panelAlpha: pcs ? parseAlpha(pcs.backgroundColor) : 0,
+        // Replaces the R11-era "exactly one .viewer-backdrop" signal: does
+        // the pane actually sit where shell.ts's mountViewerPane put it
+        // (`.editor-host`'s nextElementSibling), and is `.editor-host`
+        // correctly hidden as its paired effect (design §A, both halves of
+        // one mount()/restore() command).
+        paneMountedAsEditorHostSibling: !!panel && editorHost?.nextElementSibling === panel,
+        editorHostHidden: !!editorHost?.hidden,
         panelDisplay: pcs?.display ?? null,
         panelInViewport:
           !!panelRect &&
@@ -359,6 +434,29 @@ async function checkPanelChrome(page, panelSelector, captionSelector) {
   );
 }
 
+// ── Small pure helpers for G16~G19 (Stage 6) ────────────────────────────────
+function px(str) {
+  if (str == null) return null;
+  const n = Number.parseFloat(str);
+  return Number.isFinite(n) ? n : null;
+}
+function within(actual, expected, tolerance = 0.1) {
+  return actual != null && Math.abs(actual - expected) <= tolerance;
+}
+/** Two DOMRect-shaped objects are "the same chrome position" within a small
+ *  subpixel tolerance — used to prove the top-bar/sidebar/footer never moved
+ *  when a viewer pane opened (G16), not that they're pixel-perfect to the
+ *  last float. Pure. */
+function rectsClose(a, b, eps = 1) {
+  if (!a || !b) return false;
+  return (
+    Math.abs(a.x - b.x) <= eps &&
+    Math.abs(a.y - b.y) <= eps &&
+    Math.abs(a.width - b.width) <= eps &&
+    Math.abs(a.height - b.height) <= eps
+  );
+}
+
 // ── G2 (negative) — measured BEFORE anything opens a viewer ────────────────
 result.g2.xlsxResourcesAtBoot = await xlsxResourceCount();
 
@@ -371,24 +469,28 @@ const rowFor = (path) => page.locator(`.explorer-item[data-path="${path}"]`);
 // ── G1 — image viewer behavior-unchanged (shell extraction regression guard) ─
 await rowFor("/mock/vault/pic.png").click();
 await page.waitForTimeout(300);
-result.g1.backdropCount = await page.locator(".viewer-backdrop").count();
+result.g1.paneCount = await page.locator(".main-column > .viewer-panel").count();
 result.g1.hasImageViewer = (await page.locator(".image-viewer").count()) > 0;
 result.g1.imgSrc = await page.locator(".image-viewer-img").getAttribute("src").catch(() => null);
 Object.assign(result.g1, await checkPanelChrome(page, ".image-viewer", ".image-viewer-caption"));
 await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
-result.g1.backdropCountAfterEsc = await page.locator(".viewer-backdrop").count();
-result.g1.editorHostInertAfterEsc = await page
+result.g1.paneCountAfterEsc = await page.locator(".main-column > .viewer-panel").count();
+result.g1.editorHostHiddenAfterEsc = await page
   .locator(".editor-host")
   .first()
-  .getAttribute("inert");
+  .evaluate((el) => el.hidden);
 
-// ── G5 — an unclaimed extension stays inert ────────────────────────────────
+// ── G5 — an unclaimed extension never opens a pane (stays un-openable) ─────
 const dataRow = rowFor("/mock/vault/data.json");
 result.g5.isNonmdBefore = (await dataRow.evaluate((el) => el.classList.contains("is-nonmd")).catch(() => null));
 await dataRow.click().catch(() => {});
 await page.waitForTimeout(150);
-result.g5.backdropCountAfterClick = await page.locator(".viewer-backdrop").count();
+result.g5.paneCountAfterClick = await page.locator(".main-column > .viewer-panel").count();
+result.g5.editorHostHiddenAfterClick = await page
+  .locator(".editor-host")
+  .first()
+  .evaluate((el) => el.hidden);
 
 // ── G3 — Excel viewer cold-load positive + render + VISUAL ─────────────────
 await rowFor("/mock/vault/report.xlsx").click();
@@ -452,7 +554,33 @@ result.g6.captionVisibleAfterScroll = await page.locator(".excel-viewer-sheet").
   return !!rect && rect.width > 0 && rect.height > 0 && rect.bottom <= window.innerHeight;
 });
 await page.waitForTimeout(100);
-await page.screenshot({ path: out.replace(/\.json$/, ".g6-big-sheet-scrolled.png") });
+// A longer timeout than the default 30s (qa-verifier, Stage 6): this shot
+// follows a scrollTop jump across a REAL 10,000-row table — legitimately
+// heavier layout/paint work than any other screenshot in this file, and
+// this sandboxed multi-agent environment can have real CPU/GPU contention
+// from other concurrent CDP sessions. Isolated reproduction (same G1→G5→G3
+// sequence, same scroll, same screenshot, run standalone) completed in
+// ~4.4s — so this is slow-under-load headroom, not evidence of a hang.
+// NON-FATAL by design (orchestrator, 2026-07-18). This is the single most
+// expensive capture in the file — a full-page raster with a 220,001px-tall
+// table scrolled to its bottom — and late in a long single-page session the
+// headless renderer can run out of raster headroom and never produce a
+// stable frame. Measured evidence that this is a HARNESS limit, not a
+// product regression: (a) isolated repeats of this exact sequence pass 5/5
+// in 2.2-4.9s, (b) it still passes after 5 viewer open/close cycles with a
+// flat DOM-node count (no leak — panes tear down to 0, editor-host restored),
+// (c) the real tauri build renders all 5 viewers correctly. Letting this
+// THROW aborted the run and destroyed the signal from G7~G19, which are real
+// assertions. So: capture best-effort, record whether we got it, and let the
+// behavioural assertions decide pass/fail. The assertion set is unchanged —
+// nothing is weakened here, only this artifact is made optional.
+result.g6.scrolledShotCaptured = await page
+  .screenshot({ path: out.replace(/\.json$/, ".g6-big-sheet-scrolled.png"), timeout: 60000 })
+  .then(() => true)
+  .catch(() => {
+    console.warn("  ⚠ g6 scrolled screenshot skipped (renderer raster timeout — artifact only, assertions unaffected)");
+    return false;
+  });
 await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
 
@@ -511,24 +639,24 @@ result.g8.scriptRanWhenAllowed = result.g8.titleAfterAllowScripts === "PWNED";
 await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
 
-// ── G4 — don't-stack: image then Excel, no close between ───────────────────
-// The second row sits visually under the first viewer's backdrop
-// (position:fixed, inset:0, z-index:50), which real-hit-tests any actual
-// mouse click to the backdrop itself (closing the viewer, per the
-// backdrop-self-click-only-closes rule) — even Playwright's `{force:true}`
-// dispatches a real OS-level click at that screen point, so it lands on the
-// backdrop too, not the row underneath. The REACHABLE real path is keyboard:
-// the sidebar tree is not marked `inert` (only `.editor-host` is —
-// shell.ts), so a user who Tabs back to the still-focusable tree and presses
-// Enter on the second row CAN trigger a second viewer.open() while the first
-// handle is still live. `element.click()` called in-page (not a simulated
-// mouse coordinate) reproduces that same DOM click-event dispatch without
-// needing to script the exact Tab order.
+// ── G4 — don't-stack (REINTERPRETED, full-pane): image then Excel, no close
+// between → exactly ONE `.viewer-panel`, never two stacked ─────────────────
+// R11-era comment (now historical): the second row used to sit visually
+// under the first viewer's `.viewer-backdrop` (position:fixed, inset:0),
+// which real-hit-tested any mouse click back onto the backdrop itself —
+// `element.click()` in-page was required to reach the row at all. The
+// full-pane shell has NO backdrop (design §A): the explorer sidebar is a
+// permanent sibling of `.main-column`, never covered by the pane (the whole
+// point of a non-modal layout — top-bar/sidebar/footer stay live and
+// clickable). A real Playwright `.click()` would now land correctly too;
+// `element.click()` is kept anyway for parity with the rest of this file and
+// because it is still the more direct signal (no dependency on screen
+// coordinates/z-index at all).
 await rowFor("/mock/vault/pic.png").click();
 await page.waitForTimeout(300);
 await rowFor("/mock/vault/report.xlsx").evaluate((el) => el.click());
 await page.waitForTimeout(600);
-result.g4.backdropCount = await page.locator(".viewer-backdrop").count();
+result.g4.paneCount = await page.locator(".main-column > .viewer-panel").count();
 result.g4.hasExcelViewer = (await page.locator(".excel-viewer").count()) > 0;
 result.g4.hasImageViewer = (await page.locator(".image-viewer").count()) > 0;
 await page.keyboard.press("Escape");
@@ -643,7 +771,7 @@ await page.screenshot({ path: out.replace(/\.json$/, ".g13-pdf-viewer.png") });
 
 await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
-result.g13.backdropCountAfterEsc = await page.locator(".viewer-backdrop").count();
+result.g13.paneCountAfterEsc = await page.locator(".main-column > .viewer-panel").count();
 result.g13.editorStillResponsive = await page.evaluate(() => !!document.querySelector(".cm-content"));
 
 // ── G14 — PDF viewer: lazy render + MAX_RENDERED_PAGES canvas-eviction cap ─
@@ -707,8 +835,239 @@ await page.screenshot({ path: out.replace(/\.json$/, ".g14-pdf-viewer-multipage.
 
 await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
-result.g14.backdropCountAfterEsc = await page.locator(".viewer-backdrop").count();
+result.g14.paneCountAfterEsc = await page.locator(".main-column > .viewer-panel").count();
 result.g14.editorStillResponsive = await page.evaluate(() => !!document.querySelector(".cm-content"));
+
+// ── G16 — layout/restore (plan's "G15") ─────────────────────────────────────
+// Give the editor a real, non-zero scroll position first — a "scroll
+// preserved" claim at scrollTop=0 would be vacuously true.
+await page.evaluate(() => {
+  const scroller = document.querySelector(".cm-scroller");
+  if (scroller) scroller.scrollTop = 60;
+});
+await page.waitForTimeout(150);
+
+const readChrome = () =>
+  page.evaluate(() => ({
+    titleBar: document.querySelector(".title-bar")?.getBoundingClientRect() ?? null,
+    statusBar: document.querySelector(".status-bar")?.getBoundingClientRect() ?? null,
+    sidebarAside: document.querySelector(".sidebar-aside:not([hidden])")?.getBoundingClientRect() ?? null,
+  }));
+const g16Before = {
+  ...(await readChrome()),
+  editorHostRect: await page.evaluate(() => document.querySelector(".editor-host")?.getBoundingClientRect() ?? null),
+  scrollTop: await page.evaluate(() => document.querySelector(".cm-scroller")?.scrollTop ?? null),
+};
+
+await rowFor("/mock/vault/pic.png").click();
+await page.waitForTimeout(300);
+
+const g16After = {
+  ...(await readChrome()),
+  paneRect: await page.evaluate(() => document.querySelector(".viewer-panel")?.getBoundingClientRect() ?? null),
+};
+await page.screenshot({ path: out.replace(/\.json$/, ".g16-layout.png") });
+
+result.g16.chromeUnchanged =
+  rectsClose(g16Before.titleBar, g16After.titleBar) &&
+  rectsClose(g16Before.statusBar, g16After.statusBar) &&
+  rectsClose(g16Before.sidebarAside, g16After.sidebarAside);
+// 2px slack: the pane is a `flex:1` sibling occupying the exact slot
+// `.editor-host` vacated, but a border/scrollbar rounding difference between
+// the two elements is not the regression this guards against.
+result.g16.paneFillsEditorSlot = rectsClose(g16After.paneRect, g16Before.editorHostRect, 2);
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(250);
+
+const g16AfterEsc = await page.evaluate(() => ({
+  editorHostHidden: document.querySelector(".editor-host")?.hidden ?? null,
+  paneGone: !document.querySelector(".viewer-panel"),
+  scrollTop: document.querySelector(".cm-scroller")?.scrollTop ?? null,
+}));
+result.g16.editorRestored = g16AfterEsc.editorHostHidden === false && g16AfterEsc.paneGone;
+result.g16.scrollPreserved = g16AfterEsc.scrollTop === g16Before.scrollTop;
+
+// Welcome-screen round trip (design §A "함정 1개": `.editor-host[hidden]` vs
+// `.welcome-host{display:flex}` — `.welcome-host` IS `.editor-host` itself,
+// main.ts's boot() does `host.classList.add("welcome-host")` on the SAME
+// element, never a child — so this is a genuine live-cascade proof, not a
+// second element). Boot with NO file; the explorer's default root at boot is
+// NOT `/mock/vault` (home/documents dir, main.ts), so a favorite-folder seed
+// + the welcome pane's OWN "즐겨찾기" row click (welcome-pane.ts's
+// onJumpFolder → explorer.jumpToRoot, a real product code path, not a test
+// hack) is how a real user would reach it from a bare welcome screen too.
+await page.evaluate(() => localStorage.setItem("mermark.favoriteFolders", JSON.stringify(["/mock/vault"])));
+const welcomeUrl = new URL(url);
+welcomeUrl.searchParams.delete("file");
+await page.goto(welcomeUrl.toString(), { waitUntil: "networkidle", timeout: 15000 });
+await page.waitForSelector(".welcome-host", { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(400);
+
+const welcomeHostBox = () =>
+  page.evaluate(() => {
+    const elx = document.querySelector(".welcome-host");
+    if (!elx) return null;
+    const r = elx.getBoundingClientRect();
+    return { width: r.width, height: r.height };
+  });
+result.g16.welcomeHostVisibleBeforeOpen = (await welcomeHostBox())?.width > 0;
+
+await page.locator(".welcome-folder-row", { hasText: "vault" }).click();
+await page.waitForTimeout(250);
+await rowFor("/mock/vault/pic.png").click();
+await page.waitForTimeout(300);
+result.g16.paneOpensFromWelcome = (await page.locator(".main-column > .viewer-panel").count()) === 1;
+result.g16.editorHostHiddenFromWelcome = await page.locator(".editor-host").first().evaluate((elx) => elx.hidden);
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+result.g16.editorHostHiddenAfterWelcomeClose = await page
+  .locator(".editor-host")
+  .first()
+  .evaluate((elx) => elx.hidden);
+result.g16.welcomeHostVisibleAfterClose = (await welcomeHostBox())?.width > 0;
+
+// Clean up the favorite seed + return to the normal fixture doc for the
+// remaining scenarios.
+await page.evaluate(() => localStorage.removeItem("mermark.favoriteFolders"));
+await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
+await page.waitForTimeout(500);
+await assertPageRendered(page, { context: "viewer-golden(G16 restore)" });
+await page.click(".explorer-btn");
+await page.waitForTimeout(200);
+
+// ── G17 — zoom behavior (plan's "G16"): excel table text + PDF page raster ──
+await rowFor("/mock/vault/report.xlsx").click();
+await page.waitForTimeout(600);
+
+const readExcelZoom = () =>
+  page.evaluate(() => {
+    const table = document.querySelector(".excel-viewer-table");
+    const label = document.querySelector(".viewer-panel-zoom-label");
+    return {
+      tableFontSize: table ? getComputedStyle(table).fontSize : null,
+      label: label ? label.textContent : null,
+    };
+  });
+const excelAt1 = await readExcelZoom();
+await page.click(".viewer-panel-zoom-in");
+await page.waitForTimeout(120);
+await page.click(".viewer-panel-zoom-in");
+await page.waitForTimeout(150);
+const excelAtPlus2 = await readExcelZoom();
+await page.click(".viewer-panel-zoom-out");
+await page.waitForTimeout(120);
+await page.click(".viewer-panel-zoom-out");
+await page.waitForTimeout(150);
+const excelAfterReturn = await readExcelZoom();
+
+result.g17.excelLabelAt1 = excelAt1.label;
+result.g17.excelLabelAtPlus2 = excelAtPlus2.label;
+result.g17.excelLabelAfterReturn = excelAfterReturn.label;
+result.g17.excelLabelSteppedTo125 = excelAtPlus2.label === "125%";
+result.g17.excelTableFontGrew = within(px(excelAtPlus2.tableFontSize) - px(excelAt1.tableFontSize), 0, 0.02) === false &&
+  px(excelAtPlus2.tableFontSize) > px(excelAt1.tableFontSize);
+result.g17.excelReturnedToStart =
+  excelAfterReturn.label === "100%" && within(px(excelAfterReturn.tableFontSize), px(excelAt1.tableFontSize), 0.05);
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
+await rowFor("/mock/vault/sample.pdf").click();
+await page.waitForTimeout(900);
+const pdfPage1Canvas = page.locator('.pdf-viewer-page[data-page="1"] canvas').first();
+await pdfPage1Canvas.waitFor({ state: "attached", timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(300);
+const readPdfWidth = () => pdfPage1Canvas.evaluate((c) => c.getBoundingClientRect().width).catch(() => null);
+
+const pdfWidthAt1 = await readPdfWidth();
+const pdfLabelAt1 = await page.locator(".viewer-panel-zoom-label").innerText();
+await page.click(".viewer-panel-zoom-in");
+await page.waitForTimeout(600); // re-raster is async (pdfPage.render)
+const pdfWidthAfterPlus = await readPdfWidth();
+const pdfLabelAfterPlus = await page.locator(".viewer-panel-zoom-label").innerText();
+
+result.g17.pdfLabelAt1 = pdfLabelAt1;
+result.g17.pdfLabelAfterPlus = pdfLabelAfterPlus;
+result.g17.pdfLabelSteppedTo110 = pdfLabelAfterPlus === "110%";
+result.g17.pdfWidthAt1 = pdfWidthAt1;
+result.g17.pdfWidthAfterPlus = pdfWidthAfterPlus;
+result.g17.pdfWidthGrewByLadderStep =
+  pdfWidthAt1 != null && pdfWidthAfterPlus != null && within(pdfWidthAfterPlus / pdfWidthAt1, 1.1, 0.03);
+
+// Return to 100% before moving on (cleanliness, not a further assertion).
+await page.click(".viewer-panel-zoom-out");
+await page.waitForTimeout(400);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
+// ── G18 — zoom independence, ADVERSARIAL PAIR (plan's "G17") ───────────────
+// G17 above is the negative half (the viewer's OWN [+]/[-] DOES move
+// content); this is the positive half — fire the REAL "본문 확대" shortcut
+// (Mod+=, zoom.in -> fontScaleSetting, shortcuts/actions.ts's "Mod+="; the
+// dispatcher accepts EITHER physical modifier, keys.ts: `e.metaKey ||
+// e.ctrlKey`, so Control+= reaches the same handler cross-platform under
+// CDP) WITHOUT ever touching the viewer's own zoom buttons — the pane's
+// `--viewer-zoom`, its zoom LABEL, and a PDF page's rendered pixel width
+// must all stay EXACTLY unchanged; only header CHROME TEXT (the VIEWER ZOOM
+// RULE root, `.viewer-panel`'s own font-size, styles.css) may scale.
+await rowFor("/mock/vault/sample.pdf").click();
+await page.waitForTimeout(900);
+const g18Canvas = page.locator('.pdf-viewer-page[data-page="1"] canvas').first();
+await g18Canvas.waitFor({ state: "attached", timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(300);
+
+const readG18State = async () => ({
+  pdfWidth: await g18Canvas.evaluate((c) => c.getBoundingClientRect().width).catch(() => null),
+  viewerZoomVar: await page.locator(".viewer-panel").first().evaluate((elx) => elx.style.getPropertyValue("--viewer-zoom")),
+  zoomLabel: await page.locator(".viewer-panel-zoom-label").innerText(),
+  chromeFontSize: await page.locator(".viewer-panel").first().evaluate((elx) => getComputedStyle(elx).fontSize),
+  fontScaleVar: await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--font-scale").trim()),
+});
+
+const g18Before = await readG18State();
+// Twice, not once — a single sub-pixel nudge could hide inside rounding;
+// two real steps make any coupling unmistakable.
+await page.keyboard.press("Control+=");
+await page.waitForTimeout(150);
+await page.keyboard.press("Control+=");
+await page.waitForTimeout(500); // give a regressed re-raster time to actually happen
+const g18After = await readG18State();
+
+result.g18.fontScaleVarBefore = g18Before.fontScaleVar;
+result.g18.fontScaleVarAfter = g18After.fontScaleVar;
+result.g18.fontScaleShortcutFired = g18Before.fontScaleVar !== g18After.fontScaleVar; // sanity: the keypress must have DONE something
+result.g18.pdfWidthBefore = g18Before.pdfWidth;
+result.g18.pdfWidthAfter = g18After.pdfWidth;
+result.g18.pdfContentWidthUnchanged =
+  g18Before.pdfWidth != null && g18After.pdfWidth != null && Math.abs(g18After.pdfWidth - g18Before.pdfWidth) < 0.5;
+result.g18.viewerZoomVarBefore = g18Before.viewerZoomVar;
+result.g18.viewerZoomVarAfter = g18After.viewerZoomVar;
+result.g18.viewerZoomVarUnchanged = g18Before.viewerZoomVar === g18After.viewerZoomVar;
+result.g18.zoomLabelBefore = g18Before.zoomLabel;
+result.g18.zoomLabelAfter = g18After.zoomLabel;
+result.g18.zoomLabelUnchanged = g18Before.zoomLabel === g18After.zoomLabel;
+result.g18.chromeFontSizeBefore = g18Before.chromeFontSize;
+result.g18.chromeFontSizeAfter = g18After.chromeFontSize;
+result.g18.chromeTextDidScale = g18Before.chromeFontSize !== g18After.chromeFontSize;
+
+// Teardown: reset fontScale before it leaks into the toggle scenarios below.
+await page.keyboard.press("Control+0");
+await page.waitForTimeout(150);
+await page.evaluate(() => localStorage.removeItem("mermark.fontScale"));
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
+// ── G19 — doc-open closes viewer (plan's "G18") ─────────────────────────────
+await rowFor("/mock/vault/pic.png").click();
+await page.waitForTimeout(300);
+result.g19.paneCountBeforeDocOpen = await page.locator(".main-column > .viewer-panel").count();
+await rowFor("/mock/vault/index.md").evaluate((elx) => elx.click());
+await page.waitForTimeout(300);
+result.g19.paneCountAfterDocOpen = await page.locator(".main-column > .viewer-panel").count();
+result.g19.editorHostHiddenAfterDocOpen = await page.locator(".editor-host").first().evaluate((elx) => elx.hidden);
+result.g19.editorVisibleAfterDocOpen = await page.evaluate(() => !!document.querySelector(".cm-content"));
 
 // ── G15 — viewer on/off toggle (_workspace/03_viewer_toggle_design.md) ─────
 // Scenario 2 (disabled → OS fallback): inject the disabled-set and reload so
@@ -723,11 +1082,11 @@ await assertPageRendered(page, { context: "viewer-golden(G15)" });
 await page.click(".explorer-btn");
 await page.waitForTimeout(200);
 
-result.g15.backdropCountBeforeOpen = await page.locator(".viewer-backdrop").count();
+result.g15.paneCountBeforeOpen = await page.locator(".main-column > .viewer-panel").count();
 await rowFor("/mock/vault/sample.html").click();
 await page.waitForTimeout(400);
 result.g15.hasHtmlViewerWhenDisabled = (await page.locator(".html-viewer").count()) > 0;
-result.g15.backdropCountWhenDisabled = await page.locator(".viewer-backdrop").count();
+result.g15.paneCountWhenDisabled = await page.locator(".main-column > .viewer-panel").count();
 
 // Other (still-enabled) viewers keep working while HTML is disabled —
 // disabling one viewer id must not affect another.
@@ -808,7 +1167,7 @@ result.g15caseA.pdfIsNonmdAfterDisable = await pdfRow.evaluate((el) => el.classL
 await pdfRow.click();
 await page.waitForTimeout(300);
 result.g15caseA.hasPdfViewerAfterDisable = (await page.locator(".pdf-viewer").count()) > 0;
-result.g15caseA.backdropCountAfterDisable = await page.locator(".viewer-backdrop").count();
+result.g15caseA.paneCountAfterDisable = await page.locator(".main-column > .viewer-panel").count();
 result.g15caseA.pdfRowSelectedAfterDisabledClick = await pdfRow.evaluate((el) =>
   el.classList.contains("is-selected"),
 );
@@ -841,12 +1200,12 @@ writeFileSync(out, JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));
 
 const pass =
-  result.g1.backdropCount === 1 &&
+  result.g1.paneCount === 1 &&
   result.g1.hasImageViewer &&
-  result.g1.backdropCountAfterEsc === 0 &&
-  result.g1.editorHostInertAfterEsc === null &&
-  result.g1.backdropAlpha > 0 &&
-  result.g1.panelAlpha > 0 &&
+  result.g1.paneCountAfterEsc === 0 &&
+  result.g1.editorHostHiddenAfterEsc === false &&
+  result.g1.paneMountedAsEditorHostSibling &&
+  result.g1.editorHostHidden &&
   result.g1.panelDisplay === "flex" &&
   result.g1.panelInViewport &&
   result.g1.captionInsidePanel &&
@@ -858,8 +1217,8 @@ const pass =
   result.g3.tabCount === 3 &&
   result.g3.hasKnownCellValue &&
   result.g3.xlsxResourcesAfterOpen >= 1 &&
-  result.g3.backdropAlpha > 0 &&
-  result.g3.panelAlpha > 0 &&
+  result.g3.paneMountedAsEditorHostSibling &&
+  result.g3.editorHostHidden &&
   result.g3.panelDisplay === "flex" &&
   result.g3.panelInViewport &&
   result.g3.captionInsidePanel &&
@@ -870,11 +1229,13 @@ const pass =
   // SIZE CONTRACT: a 3-row sheet's panel shrinks well under the 640px cap
   // (height -> max-height fix) instead of sitting in a fixed dead box.
   result.g3.panelHeight < 640 &&
-  result.g4.backdropCount === 1 &&
+  // G4 — don't-stack, REINTERPRETED for the pane shell: exactly one pane.
+  result.g4.paneCount === 1 &&
   result.g4.hasExcelViewer &&
   !result.g4.hasImageViewer &&
   result.g5.isNonmdBefore === true &&
-  result.g5.backdropCountAfterClick === 0 &&
+  result.g5.paneCountAfterClick === 0 &&
+  result.g5.editorHostHiddenAfterClick === false &&
   result.g6.statesTrueTotal &&
   result.g6.statesCap &&
   // The real containment test: a 10,005-row sheet must stay inside its
@@ -892,8 +1253,8 @@ const pass =
   result.g7.hasHtmlViewer &&
   result.g7.frameReachable &&
   result.g7.hasMarker &&
-  result.g7.backdropAlpha > 0 &&
-  result.g7.panelAlpha > 0 &&
+  result.g7.paneMountedAsEditorHostSibling &&
+  result.g7.editorHostHidden &&
   result.g7.panelDisplay === "flex" &&
   result.g7.panelInViewport &&
   result.g7.captionInsidePanel &&
@@ -913,8 +1274,8 @@ const pass =
   result.g10.placeholderCount === 3 &&
   result.g10.page0IsDataSvg &&
   result.g10.page0NaturalWidth > 0 &&
-  result.g10.backdropAlpha > 0 &&
-  result.g10.panelAlpha > 0 &&
+  result.g10.paneMountedAsEditorHostSibling &&
+  result.g10.editorHostHidden &&
   result.g10.panelDisplay === "flex" &&
   result.g10.panelInViewport &&
   result.g10.captionInsidePanel &&
@@ -936,15 +1297,15 @@ const pass =
   result.g13.canvasNonBlank &&
   result.g13.hasMarkerText &&
   result.g13.textLayerAlignedWithCanvas &&
-  result.g13.backdropAlpha > 0 &&
-  result.g13.panelAlpha > 0 &&
+  result.g13.paneMountedAsEditorHostSibling &&
+  result.g13.editorHostHidden &&
   result.g13.panelDisplay === "flex" &&
   result.g13.panelInViewport &&
   result.g13.captionInsidePanel &&
   result.g13.bodyContainedInPanel &&
   result.g13.contentContainedInBody &&
   !result.g13.closeButtonOverlapsInteractive &&
-  result.g13.backdropCountAfterEsc === 0 &&
+  result.g13.paneCountAfterEsc === 0 &&
   result.g13.editorStillResponsive &&
   // G14 — PDF viewer: lazy render + MAX_RENDERED_PAGES canvas-eviction cap,
   // both real, observable DOM effects (not just code that exists).
@@ -955,17 +1316,52 @@ const pass =
   result.g14.page25CanvasNonBlank &&
   result.g14.canvasCountAfterFullScroll <= 20 &&
   result.g14.page1CanvasEvicted &&
-  result.g14.backdropCountAfterEsc === 0 &&
+  result.g14.paneCountAfterEsc === 0 &&
   result.g14.editorStillResponsive &&
+  // G16 — layout/restore (plan's "G15"): chrome never moves, pane fills the
+  // editor slot, Esc restores the editor with scroll intact, and the
+  // welcome-screen round trip proves `.editor-host[hidden]` really beats
+  // `.welcome-host{display:flex}` both ways.
+  result.g16.chromeUnchanged &&
+  result.g16.paneFillsEditorSlot &&
+  result.g16.editorRestored &&
+  result.g16.scrollPreserved &&
+  result.g16.welcomeHostVisibleBeforeOpen &&
+  result.g16.paneOpensFromWelcome &&
+  result.g16.editorHostHiddenFromWelcome &&
+  result.g16.editorHostHiddenAfterWelcomeClose === false &&
+  result.g16.welcomeHostVisibleAfterClose &&
+  // G17 — zoom behavior (plan's "G16"): excel table text + PDF page raster
+  // both actually move with the viewer's own [+]/[-], and return exactly.
+  result.g17.excelLabelSteppedTo125 &&
+  result.g17.excelTableFontGrew &&
+  result.g17.excelReturnedToStart &&
+  result.g17.pdfLabelSteppedTo110 &&
+  result.g17.pdfWidthGrewByLadderStep &&
+  // G18 — zoom independence, ADVERSARIAL PAIR (plan's "G17"): the fontScale
+  // shortcut genuinely fired (sanity — else the "unchanged" claims below
+  // would be vacuous), yet the viewer's OWN zoom var/label/PDF pixel width
+  // never moved; only header chrome text scaled.
+  result.g18.fontScaleShortcutFired &&
+  result.g18.pdfContentWidthUnchanged &&
+  result.g18.viewerZoomVarUnchanged &&
+  result.g18.zoomLabelUnchanged &&
+  result.g18.chromeTextDidScale &&
+  // G19 — doc-open closes viewer (plan's "G18"): opening a .md row from the
+  // explorer while a viewer pane is open closes it and restores the editor.
+  result.g19.paneCountBeforeDocOpen === 1 &&
+  result.g19.paneCountAfterDocOpen === 0 &&
+  result.g19.editorHostHiddenAfterDocOpen === false &&
+  result.g19.editorVisibleAfterDocOpen &&
   // G15 — viewer on/off toggle: disabling ext.html suppresses its overlay
   // (falls through to the existing OS-default open_path path, no new
   // fallback branch), leaves other viewers (image) unaffected, and
   // re-enabling via the real settings-panel control round-trips back to a
   // working overlay in the SAME session (no reload — proves `.get()` is
   // read at open time, not cached at boot).
-  result.g15.backdropCountBeforeOpen === 0 &&
+  result.g15.paneCountBeforeOpen === 0 &&
   !result.g15.hasHtmlViewerWhenDisabled &&
-  result.g15.backdropCountWhenDisabled === 0 &&
+  result.g15.paneCountWhenDisabled === 0 &&
   result.g15.hasImageViewerWhileHtmlDisabled &&
   result.g15.disabledViewersAfterReenable !== null &&
   !JSON.parse(result.g15.disabledViewersAfterReenable ?? "[]").includes("ext.html") &&
@@ -980,7 +1376,7 @@ const pass =
   result.g15caseA.pdfOpenableBeforeDisable &&
   result.g15caseA.pdfIsNonmdAfterDisable &&
   !result.g15caseA.hasPdfViewerAfterDisable &&
-  result.g15caseA.backdropCountAfterDisable === 0 &&
+  result.g15caseA.paneCountAfterDisable === 0 &&
   !result.g15caseA.pdfRowSelectedAfterDisabledClick &&
   !result.g15caseA.pdfIsNonmdAfterReenable &&
   result.g15caseA.hasPdfViewerAfterReenable &&

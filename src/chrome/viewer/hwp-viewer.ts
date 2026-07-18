@@ -67,14 +67,18 @@ function pageBaseWidth(pagesEl: HTMLElement): number {
 /** Set every page's fit-to-panel width via one CSS custom property on the
  *  scroll container (`.hwp-viewer-page`'s `width` reads `var(--hwp-page-width)`,
  *  styles.css) — so a page added AFTER this call (a placeholder that hasn't
- *  rendered yet) still inherits the right width with no extra bookkeeping. The
- *  width is `pageBaseWidth` alone: it fits the panel INDEPENDENT of the
- *  editor's body-text zoom (fontScale), because a document viewer should show
- *  the whole page, not inherit "cmd +/-" and render past the panel edge
- *  (사용자 리포트 2026-07-18: "본문보다 2배 커보여, 컨텐츠가 다 안 보임").
- *  Command (void) — a DOM mutation. */
-function applyHwpPageWidth(pagesEl: HTMLElement): void {
-  pagesEl.style.setProperty("--hwp-page-width", `${pageBaseWidth(pagesEl)}px`);
+ *  rendered yet) still inherits the right width with no extra bookkeeping.
+ *  `factor` is the SHELL's viewer-local zoom (`shell.zoom.get()` at call
+ *  time, design §B's per-viewer BEHAVIOR table — "재래스터 불필요": a page is
+ *  an `<img src="data:image/svg+xml">` (vector), so scaling its CSS width
+ *  alone stays crisp at any factor, unlike PDF's raster canvas). Still
+ *  INDEPENDENT of the editor's body-text zoom (fontScale) — a document
+ *  viewer should show the whole page, not inherit "cmd +/-" and render past
+ *  the panel edge (사용자 리포트 2026-07-18: "본문보다 2배 커보여, 컨텐츠가 다
+ *  안 보임") — that decoupling is unchanged by adding `factor`; the two axes
+ *  stay orthogonal (v0.8.6, preserved). Command (void) — a DOM mutation. */
+function applyHwpPageWidth(pagesEl: HTMLElement, factor: number): void {
+  pagesEl.style.setProperty("--hwp-page-width", `${pageBaseWidth(pagesEl) * factor}px`);
 }
 
 /** The page index a placeholder (or its rendered replacement) belongs to —
@@ -184,18 +188,31 @@ function openHwpViewer(absPath: string): ViewerHandle {
   content.className = "hwp-viewer-status";
   content.textContent = "문서 불러오는 중…";
 
-  const shell = openViewerShell({ absPath, modalClass: "hwp-viewer", content });
+  const shell = openViewerShell({ absPath, paneClass: "hwp-viewer", content });
+
+  // Shell-owned viewer-local zoom (design §B) — a plain closed-over variable,
+  // not a second SSOT: `shell.zoom` is the single source, this just caches
+  // its CURRENT value so the resize handler (which fires independent of any
+  // zoom change) can re-apply the latest factor instead of silently
+  // resetting to 1 on every window resize.
+  let zoomFactor = shell.zoom.get();
+  const unsubscribeZoom = shell.zoom.bind((factor) => {
+    zoomFactor = factor;
+    if (content.classList.contains("hwp-viewer-pages")) applyHwpPageWidth(content, zoomFactor);
+  });
+  shell.onTeardown(unsubscribeZoom);
 
   let observerHandle: { disconnect(): void } | null = null;
-  // The panel is viewport-relative (`92vw`, styles.css), so the page column's
-  // own width — and therefore pageBaseWidth() — changes on window resize.
-  // Re-apply on resize so a page already open when the OS window/display
-  // changes refits instead of staying stuck at its first-rendered width.
-  // `typeof window` guard mirrors observePages' IntersectionObserver
-  // feature-check for the same jsdom-has-no-real-layout reason. (There is no
-  // zoom subscription: the fit is independent of the editor's fontScale.)
+  // The panel is now `.viewer-panel`'s flex:1 (full-pane rewrite), so the
+  // page column's own width — and therefore pageBaseWidth() — changes on
+  // window resize. Re-apply on resize so a page already open when the OS
+  // window/display changes refits instead of staying stuck at its
+  // first-rendered width. `typeof window` guard mirrors observePages'
+  // IntersectionObserver feature-check for the same jsdom-has-no-real-layout
+  // reason. (Still independent of the editor's fontScale — only the SHELL's
+  // own zoomFactor and the panel's rendered width feed this.)
   const onResize = () => {
-    if (content.classList.contains("hwp-viewer-pages")) applyHwpPageWidth(content);
+    if (content.classList.contains("hwp-viewer-pages")) applyHwpPageWidth(content, zoomFactor);
   };
   if (typeof window !== "undefined") {
     window.addEventListener("resize", onResize);
@@ -219,7 +236,7 @@ function openHwpViewer(absPath: string): ViewerHandle {
 
     content.className = "hwp-viewer-pages";
     content.replaceChildren(...placeholders);
-    applyHwpPageWidth(content);
+    applyHwpPageWidth(content, zoomFactor);
 
     // Serialize hwp_render_page to one-in-flight. hwp.rs keeps the single
     // parsed document in a one-slot mutex that hwp_render_page TAKES OUT for

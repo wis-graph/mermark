@@ -5,9 +5,13 @@ import { registerPdfViewer, ensureReadableStreamAsyncIterator } from "../src/ext
 
 describe("fitWidthScale (pure — PDF fit-to-width render scale)", () => {
   // Table test (mermark-frontend §8): a table of (pageWidthPt, containerWidthPx,
-  // fontScale) -> expected scale, no DOM/layout involved.
+  // zoomFactor) -> expected scale, no DOM/layout involved. Parameter renamed
+  // from `fontScale` (full-pane rewrite, _workspace/01_architect_design.md
+  // §B/§C — the 3rd argument is the viewer SHELL's local zoom
+  // (`shell.zoom.get()`), never the editor's fontScale; the old name was a
+  // lie post-v0.8.6's fontScale/viewer-zoom decoupling).
   const cases: Array<[number, number, number, number]> = [
-    // [pageWidthPt, containerWidthPx, fontScale, expected]
+    // [pageWidthPt, containerWidthPx, zoomFactor, expected]
     [612, 612, 1, 1], // US Letter width in points, container matches exactly -> scale 1
     [612, 1224, 1, 2], // container twice as wide -> scale 2
     [595.28, 892.92, 1, 1.5], // A4 width, container 1.5x -> scale 1.5
@@ -17,8 +21,8 @@ describe("fitWidthScale (pure — PDF fit-to-width render scale)", () => {
 
   it.each(cases)(
     "fitWidthScale(%p, %p, %p) === %p",
-    (pageWidthPt, containerWidthPx, fontScale, expected) => {
-      expect(fitWidthScale(pageWidthPt, containerWidthPx, fontScale)).toBeCloseTo(expected, 10);
+    (pageWidthPt, containerWidthPx, zoomFactor, expected) => {
+      expect(fitWidthScale(pageWidthPt, containerWidthPx, zoomFactor)).toBeCloseTo(expected, 10);
     },
   );
 
@@ -30,6 +34,16 @@ describe("fitWidthScale (pure — PDF fit-to-width render scale)", () => {
   it("degenerate: a zero/negative container width falls back to the bare zoom factor", () => {
     expect(fitWidthScale(612, 0, 1.2)).toBe(1.2);
     expect(fitWidthScale(612, -1, 1.2)).toBe(1.2);
+  });
+
+  // Named contract lock (plan Stage 3 RED): a shell zoomFactor of exactly
+  // 2.0 doubles the fit-to-width baseline scale — pins the "3rd argument IS
+  // the viewer's zoom multiplier" contract independent of the table above,
+  // so a future refactor that silently drops the multiply (e.g. reverting to
+  // a fixed fontScale=1) turns this red on its own.
+  it("zoomFactor 2.0 doubles the fit-to-width scale", () => {
+    expect(fitWidthScale(612, 612, 2.0)).toBeCloseTo(2.0, 10);
+    expect(fitWidthScale(595.28, 892.92, 2.0)).toBeCloseTo(3.0, 10); // 1.5 fit-width x2 zoom
   });
 });
 

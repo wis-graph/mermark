@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
 import * as XLSX from "xlsx";
 import type { WorkSheet } from "xlsx";
 import { sheetToRows, truncatedForRender, MAX_RENDERED_ROWS } from "../src/extensions/excel-viewer/sheet-to-rows";
@@ -91,5 +94,27 @@ describe("truncatedForRender (design §8 — named cap, never a silent cut, neve
     // turns red under that mutation (verified manually, see
     // _workspace/02_r11_changes.md).
     expect(result.totalRows).not.toBe(MAX_RENDERED_ROWS + 1);
+  });
+});
+
+describe(".excel-viewer-table CSS: viewer-local zoom via var(--viewer-zoom) (JS-zero, design §B)", () => {
+  // Excel's zoom behavior is CSS-only — the shell projects its zoom factor
+  // onto the pane root as --viewer-zoom (shell.ts's applyZoomFactor), and
+  // this table's font-size multiplies by it, with zero JS in this viewer
+  // (design §B's BEHAVIOR table: "CSS 변수 소비"). Style-contract sweep, same
+  // technique tests/viewer-zoom.test.ts/viewer-size-envelope.test.ts use:
+  // extract the injected <style> template literal and assert on its text —
+  // no DOM/layout needed.
+  const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const src = readFileSync(join(ROOT, "src", "extensions", "excel-viewer", "index.ts"), "utf8");
+  const match = src.match(/\.excel-viewer-table\s*\{([^}]*)\}/);
+
+  it("declares font-size: calc(12.5em / 13 * var(--viewer-zoom, 1)) — the zoom multiply exists", () => {
+    expect(match).toBeTruthy();
+    expect(match![1]).toMatch(/font-size:\s*calc\(\s*12\.5em\s*\/\s*13\s*\*\s*var\(--viewer-zoom,\s*1\)\s*\)/);
+  });
+
+  it("no bare px literal on the zoomed rule (JS-zero contract — CSS var does the multiply, not a computed px)", () => {
+    expect(match![1]).not.toMatch(/\dpx/);
   });
 });

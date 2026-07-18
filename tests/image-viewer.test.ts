@@ -11,9 +11,9 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { openImageViewer } from "../src/chrome/viewer/image-viewer";
 
 // ---------------------------------------------------------------------------
-// Image viewer — a body-level lightbox overlay for explorer image clicks,
-// structurally identical to the conflict modal (backdrop/dialog/Esc/inert/
-// focus-restore). No decorations, no CM measure tree involvement.
+// Image viewer — an in-content pane (full-pane rewrite,
+// _workspace/01_architect_design.md), sibling of `.editor-host` inside
+// `.main-column`. No decorations, no CM measure tree involvement.
 // ---------------------------------------------------------------------------
 
 let editorHost: HTMLElement;
@@ -24,8 +24,8 @@ beforeEach(() => {
   document.body.append(editorHost);
 });
 afterEach(() => {
+  document.querySelector(".viewer-panel")?.remove();
   editorHost.remove();
-  document.querySelector(".viewer-backdrop")?.remove();
 });
 
 /** Fire onload after stamping natural* dimensions — jsdom never actually loads
@@ -38,18 +38,20 @@ function fireLoad(img: HTMLImageElement, width: number, height: number): void {
 }
 const fireError = (img: HTMLImageElement) => img.onerror?.(new Event("error"));
 
-describe("openImageViewer: overlay shape + image src", () => {
-  it("mounts a backdrop + role=dialog with the asset URL and filename aria-label", () => {
+describe("openImageViewer: pane shape + image src", () => {
+  it("mounts a pane (role=region) as .editor-host's sibling, with the asset URL and filename aria-label", () => {
     const handle = openImageViewer("/pics/cat.png");
 
-    const backdrop = document.querySelector(".viewer-backdrop") as HTMLElement;
-    expect(backdrop).toBeTruthy();
-    const dialog = backdrop.querySelector('.image-viewer[role="dialog"]') as HTMLElement;
-    expect(dialog).toBeTruthy();
-    expect(dialog.getAttribute("aria-modal")).toBe("true");
-    expect(dialog.getAttribute("aria-label")).toBe("cat.png");
+    const pane = document.querySelector(".image-viewer.viewer-panel") as HTMLElement;
+    expect(pane).toBeTruthy();
+    expect(pane.getAttribute("role")).toBe("region");
+    expect(pane.getAttribute("aria-label")).toBe("cat.png");
+    expect(pane.hasAttribute("aria-modal")).toBe(false);
+    expect(editorHost.hidden).toBe(true);
+    expect(editorHost.hasAttribute("inert")).toBe(false);
+    expect(editorHost.nextElementSibling).toBe(pane);
 
-    const img = dialog.querySelector("img") as HTMLImageElement;
+    const img = pane.querySelector("img") as HTMLImageElement;
     expect(img.src).toBe("asset:///pics/cat.png");
 
     handle.close();
@@ -74,50 +76,36 @@ describe("openImageViewer: overlay shape + image src", () => {
 
     const caption = document.querySelector(".image-viewer-caption") as HTMLElement;
     expect(caption.textContent).toBe("이미지를 불러올 수 없습니다");
-    expect(document.querySelector(".viewer-backdrop")).toBeTruthy(); // still open
+    expect(document.querySelector(".viewer-panel")).toBeTruthy(); // still open
 
     handle.close();
   });
 });
 
-describe("openImageViewer: close paths (Esc / backdrop / button)", () => {
-  it("Escape removes the overlay, clears .editor-host inert, and restores prior focus", () => {
+describe("openImageViewer: close paths (Esc / button / idempotent / focus)", () => {
+  it("Escape removes the pane, restores .editor-host, and restores prior focus", () => {
     const trigger = document.createElement("button");
     document.body.append(trigger);
     trigger.focus();
     expect(document.activeElement).toBe(trigger);
 
     openImageViewer("/pics/cat.png");
-    expect(editorHost.hasAttribute("inert")).toBe(true);
+    expect(editorHost.hidden).toBe(true);
 
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 
-    expect(document.querySelector(".viewer-backdrop")).toBeNull();
-    expect(editorHost.hasAttribute("inert")).toBe(false);
+    expect(document.querySelector(".viewer-panel")).toBeNull();
+    expect(editorHost.hidden).toBe(false);
     expect(document.activeElement).toBe(trigger);
 
     trigger.remove();
   });
 
-  it("backdrop click closes; a click inside the dialog does not", () => {
-    const handle = openImageViewer("/pics/cat.png");
-    const backdrop = document.querySelector(".viewer-backdrop") as HTMLElement;
-    const dialog = backdrop.querySelector(".image-viewer") as HTMLElement;
-
-    dialog.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    expect(document.querySelector(".viewer-backdrop")).toBeTruthy(); // still open
-
-    backdrop.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    expect(document.querySelector(".viewer-backdrop")).toBeNull();
-
-    handle.close(); // idempotent no-op — already closed
-  });
-
-  it("the close button closes the overlay", () => {
+  it("the close button closes the pane", () => {
     const handle = openImageViewer("/pics/cat.png");
     const closeBtn = document.querySelector(".image-viewer-close") as HTMLButtonElement;
     closeBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(document.querySelector(".viewer-backdrop")).toBeNull();
+    expect(document.querySelector(".viewer-panel")).toBeNull();
     handle.close();
   });
 
@@ -131,6 +119,41 @@ describe("openImageViewer: close paths (Esc / backdrop / button)", () => {
     const handle = openImageViewer("/pics/cat.png");
     const closeBtn = document.querySelector(".image-viewer-close") as HTMLButtonElement;
     expect(document.activeElement).toBe(closeBtn);
+    handle.close();
+  });
+});
+
+describe("openImageViewer: zoom (design §B/C — shell is the writer, applyImageZoom the sink)", () => {
+  it("+ click scales the image's rendered width to naturalWidth × factor", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    fireLoad(img, 640, 480);
+
+    const zoomIn = document.querySelector(".viewer-panel-zoom-in") as HTMLButtonElement;
+    zoomIn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(img.style.width).toBe("704px"); // 640 * 1.1
+    expect(img.style.maxWidth).toBe("none");
+
+    handle.close();
+  });
+
+  it("resetting to 1.0 (label click) restores the fit CSS — no inline width/max-* left", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    fireLoad(img, 640, 480);
+
+    const zoomIn = document.querySelector(".viewer-panel-zoom-in") as HTMLButtonElement;
+    zoomIn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(img.style.width).not.toBe("");
+
+    const zoomLabel = document.querySelector(".viewer-panel-zoom-label") as HTMLButtonElement;
+    zoomLabel.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(img.style.width).toBe("");
+    expect(img.style.maxWidth).toBe("");
+    expect(img.style.maxHeight).toBe("");
+
     handle.close();
   });
 });

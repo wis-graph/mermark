@@ -401,6 +401,24 @@ async function boot() {
     openViewer = v.open(absPath);
   }
 
+  /** "Opening a document closes any open viewer" (full-pane rewrite,
+   *  _workspace/01_architect_design.md §A rule 1) — a body-level modal was
+   *  harmless to leave open under a newly-opened document (it floated on
+   *  top, dismissible independently), but a full-PANE viewer now occupies
+   *  `.editor-host`'s own spot: opening a document without closing the
+   *  viewer first would mount the new document behind a still-visible pane.
+   *  `openInWindow` calls this as its very first statement, so every
+   *  document-open path (explorer/recent/history/prompt — all funnel through
+   *  `openInWindow`) gets the rule for free from one call site. This is the
+   *  SECOND (and last) place `openViewer` is written — `openWithViewer`
+   *  above is the first — main.ts's own don't-stack slot stays confined to
+   *  exactly these two functions (code-auditor focus per plan's handoff).
+   *  Command (void). */
+  function closeOpenViewer(): void {
+    openViewer?.close();
+    openViewer = null;
+  }
+
   // ── File explorer LEFT SIDEBAR. A lazy tree rooted at the live document's
   //    folder: click reads children (list_dir), `..` single-clicks/Enters
   //    upward, a markdown file click/Enter reuses main's open path (read_file →
@@ -619,6 +637,7 @@ async function boot() {
     fresh: { text: string; mtime: number },
     opts: { viaHistory?: boolean } = {},
   ): void {
+    closeOpenViewer(); // opening a document closes any open viewer (design §A rule 1)
     teardownCurrent();
     currentFile = file;
     currentBaseDir = dirOf(file);

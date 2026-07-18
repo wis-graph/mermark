@@ -39,26 +39,21 @@ function ensureStyleInjected(): void {
   const style = document.createElement("style");
   style.id = STYLE_ID;
   style.textContent = `
-/* px caps REMOVED (뷰어 사이즈 봉투 재설계 — 4K에서 25%×30%로 갇히던 회귀). FIRST
- * pass here used content-driven max-width (a narrow sheet's panel shrinks
- * to fit its table) -- WRONG for this viewer and reverted (team-lead catch,
- * viewer-golden G6): a spreadsheet is a document you view WIDE, not a box
- * that should hug a single-column sheet's content. A "Big" sheet with one
- * data column shrank the whole panel down far enough that its tab strip
- * (Data/Notes/Big), which STRETCHES to the panel's full inner width as a
- * flex-column child, landed its rightmost tab directly under the close
- * button -- the click-intercept G6 caught. width: 85vw (a FIXED vw
- * fraction, not max-width / not content-driven) makes this behave like
- * html-viewer/hwp-viewer: always wide regardless of content, well under
- * .viewer-panel's 94vw envelope so no max-width is even needed on top of
- * it. This does NOT reintroduce the empty-whitespace bug -- that one was
- * about HEIGHT (a 3-row sheet in a tall fixed box), unaffected by this
- * WIDTH change; the height fix (.excel-viewer-body's flex,
- * .excel-viewer-sheet's flex: 0 1 auto below) still shrinks vertically to
- * content. The close-button-overlap bug itself is ALSO closed at the root
- * now, independent of this viewer's width -- see .viewer-panel-body's
- * chrome-gutter padding, styles.css. */
-.excel-viewer { width: 85vw; }
+/* NO width/height/max-* rule on .excel-viewer itself (full-pane rewrite,
+ * _workspace/01_architect_design.md §C: "콘텐츠 루트는 이제 아무 width/
+ * height도 선언하지 않는다 — 셸 flex가 소유"). This selector used to carry a
+ * fixed "width: 85vw" envelope of its own (a vw-fraction descendant of the
+ * pre-rewrite body-level backdrop/modal — team-lead sizing fix, 2026-07);
+ * now .viewer-panel's "flex:1; min-width:0; min-height:0" (styles.css) is
+ * the SOLE size owner, and the close-button-overlap bug that motivated the
+ * old 85vw cap (a narrow-content sheet's tab strip landing under the close
+ * button) is closed at the root instead, independent of any viewer's width
+ * — see .viewer-panel-body's chrome-gutter padding, styles.css. The height
+ * fix below (.excel-viewer-body's flex, .excel-viewer-sheet's
+ * flex: 0 1 auto) is UNRELATED to this width change and still shrinks
+ * vertically to content — a small sheet stays small, by design (see
+ * tests/viewer-size-envelope.test.ts's scope control: .excel-viewer is
+ * deliberately content-driven, not envelope-driven like html/pdf-viewer). */
 /* The LOADED state's content wrapper (renderWorkbook sets this class) — a
  * flex column so its own children (fixed-height tab strip, then the
  * flex:1/scrollable sheet) actually get flex treatment. Without this, this
@@ -94,7 +89,17 @@ function ensureStyleInjected(): void {
   flex: 0 1 auto; min-height: 0; overflow: auto;
   border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent); border-radius: var(--radius-md, 8px);
 }
-.excel-viewer-table { border-collapse: collapse; font-size: calc(12.5em / 13); width: 100%; }
+/* Table text is this viewer's ONLY zoomable content (design §B's per-viewer
+ * BEHAVIOR table: "CSS 변수 소비" — JS-zero. Tab strip/status text stay
+ * chrome-scale, matching the VIEWER ZOOM RULE's --font-scale root above,
+ * NOT --viewer-zoom, per design's 열린 질문 4). var(--viewer-zoom, 1) is the
+ * shell's OWN DOM projection of its zoom writer (shell.ts's
+ * applyZoomFactor, set on the .viewer-panel pane root this table is a
+ * descendant of) — this file never writes that variable, only multiplies by
+ * it, so there is exactly one writer. Fallback 1 keeps an unopened shell
+ * (or a unit test that renders this CSS standalone) at the pre-zoom
+ * baseline. */
+.excel-viewer-table { border-collapse: collapse; font-size: calc(12.5em / 13 * var(--viewer-zoom, 1)); width: 100%; }
 .excel-viewer-table th, .excel-viewer-table td {
   border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
   padding: 3px 8px; text-align: left; white-space: pre;
@@ -221,7 +226,7 @@ function openExcelViewer(absPath: string): ViewerHandle {
   content.className = "excel-viewer-status";
   content.textContent = "문서 불러오는 중…";
 
-  const shell = openViewerShell({ absPath, modalClass: "excel-viewer", content });
+  const shell = openViewerShell({ absPath, paneClass: "excel-viewer", content });
   // openViewerShell sets the caption to basename(absPath) initially (shell.ts
   // owns that computation, the single "compute a viewer's file identity"
   // rule) — captured here so renderWorkbook can keep it once the caption

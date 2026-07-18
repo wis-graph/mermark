@@ -34,7 +34,6 @@ import {
   registerViewer,
   openViewerShell,
   readLocalFileBytes,
-  fontScale,
   type Viewer,
   type ViewerHandle,
 } from "../../api";
@@ -52,40 +51,24 @@ function ensureStyleInjected(): void {
   const style = document.createElement("style");
   style.id = STYLE_ID;
   style.textContent = `
-/* px caps REMOVED (뷰어 사이즈 봉투 재설계 — 4K에서 1100×760으로 갇히던 회귀). A
- * document viewer wants to be WIDE regardless of content (an arbitrary
- * .html file has no "narrow" natural width the way a small Excel sheet
- * does), so unlike excel-viewer's max-width this stays a fixed vw/vh
- * fraction of the shell's .viewer-panel envelope (94vw/92vh, styles.css)
- * -- never a px literal that stops scaling past some fixed resolution.
- *
- * height: 88vh (not just max-height) -- ENVELOPE-DRIVEN, not
- * content-driven (team-lead sizing fix, 2026-07). max-height alone left
- * this panel's height as auto: with no ancestor in the
- * .html-viewer -> .viewer-panel-body -> .html-viewer-frame-wrap chain
- * carrying a DEFINITE height, every flex: 1 in that chain had nothing to
- * grow into, so .html-viewer-frame-wrap's own height collapsed to its
- * content's intrinsic size -- which for an iframe with no content yet
- * (and, per the HTML spec, even once srcdoc loads: an iframe's box is
- * sized by the PARENT's layout, not by its document's content) is the UA
- * default of exactly 150px. Measured directly (CDP, 4K viewport): the panel
- * rendered 253px tall against an 1900px cap -- 150px of that was the
- * .html-viewer-frame-wrap, i.e. the iframe's default intrinsic height,
- * not a computed fraction of anything. A document viewer (unlike
- * excel-viewer, whose height genuinely should shrink to a 3-row sheet) has
- * no natural "small" size to shrink to -- an arbitrary .html file could be
- * one line or ten thousand, so this panel must always claim its full
- * envelope regardless of content (pdf-viewer, src/extensions/pdf-viewer/
- * index.ts, has the SAME "width: 92vw; max-height: 88vh;" shape with no
- * explicit height and gets away with it only by accident -- its
- * multi-page canvas content happens to be tall enough on its own to fill
- * the cap; it has the identical latent bug for a short PDF and is out of
- * this change's scope). max-height: 88vh stays alongside height: 88vh so
- * a caller that later swaps this to a min-content-driven behavior for some
- * other reason still has an upper bound documented (belt & suspenders, zero
- * behavior change since height already pins the value max-height would
- * cap). */
-.html-viewer { width: 92vw; height: 88vh; max-height: 88vh; }
+/* NO width/height/max-* rule on .html-viewer itself (full-pane rewrite,
+ * _workspace/01_architect_design.md §C: "콘텐츠 루트는 이제 아무 width/
+ * height도 선언하지 않는다 — 셸 flex가 소유"). .html-viewer is openViewerShell's
+ * paneClass — it lands on the SAME element as .viewer-panel (shell.ts's
+ * pane.className = "<paneClass> viewer-panel"), not a separate content
+ * wrapper, so .viewer-panel's own
+ * "flex:1; min-width:0; min-height:0; display:flex; flex-direction:column"
+ * (styles.css) already supplies this element's definite box — a second
+ * width/height declaration here would just be re-stating the same rule on
+ * the same node. This selector used to carry a fixed
+ * "width: 92vw; height: 88vh; max-height: 88vh;" envelope of its own (a
+ * vw/vh-fraction descendant of the pre-rewrite body-level backdrop/modal —
+ * team-lead sizing fix, 2026-07, itself fixing an iframe-default-150px
+ * collapse: pre-rewrite, .html-viewer was NOT .viewer-panel's own node, so
+ * nothing else in that older chain carried a DEFINITE height). The
+ * .html-viewer-frame-wrap child below still needs (and keeps) its own
+ * "flex: 1; min-height: 0" to size the iframe against .viewer-panel-body's
+ * (shell-owned) scroll boundary. */
 /* The LOADED state's content wrapper — becomes the iframe's flex/scroll
  * boundary (mirrors excel-viewer-body's role: the outer .viewer-panel-body
  * (styles.css, shell-owned) gives every viewer's content a bounded flex
@@ -112,13 +95,17 @@ function parentDir(path: string): string {
   return sep >= 0 ? path.slice(0, sep) : "";
 }
 
-/** Apply the parent-side zoom transform (design §6 — iframe documents can't
- *  inherit `--font-scale`, so `.html-viewer-frame`'s own box is scaled from
- *  the OUTSIDE instead of injecting any font-size into `srcdoc`). Sizing the
- *  iframe UP by `1/scale` before scaling it DOWN by `scale` keeps its
- *  post-transform footprint exactly filling `.html-viewer-frame-wrap`, at
- *  any zoom level, without a reflow/reload of the document inside (scroll
- *  position survives). Command (void) — a DOM mutation, not a query. */
+/** Apply the parent-side zoom transform (full-pane rewrite design §B —
+ *  iframe documents can't inherit a CSS custom property across the document
+ *  boundary, so `.html-viewer-frame`'s own box is scaled from the OUTSIDE
+ *  instead of injecting any font-size into `srcdoc`). Sizing the iframe UP by
+ *  `1/scale` before scaling it DOWN by `scale` keeps its post-transform
+ *  footprint exactly filling `.html-viewer-frame-wrap`, at any zoom level,
+ *  without a reflow/reload of the document inside (scroll position
+ *  survives). `scale` is the SHELL's viewer-local zoom factor
+ *  (`shell.zoom.get()`), never fontScale — reused verbatim from before this
+ *  round (v0.8.6's transform trick), only its SOURCE changed (below).
+ *  Command (void) — a DOM mutation, not a query. */
 function applyHtmlZoom(iframe: HTMLIFrameElement, scale: number): void {
   iframe.style.width = `calc(100% / ${scale})`;
   iframe.style.height = `calc(100% / ${scale})`;
@@ -137,7 +124,7 @@ function openHtmlViewer(absPath: string): ViewerHandle {
   content.className = "html-viewer-status";
   content.textContent = "문서 불러오는 중…";
 
-  const shell = openViewerShell({ absPath, modalClass: "html-viewer", content });
+  const shell = openViewerShell({ absPath, paneClass: "html-viewer", content });
 
   const iframe = document.createElement("iframe");
   iframe.className = "html-viewer-frame";
@@ -155,16 +142,21 @@ function openHtmlViewer(absPath: string): ViewerHandle {
   // DOM PROPERTY below, after the content is ready — never built as an HTML
   // attribute string, so there is no attribute-escaping surface at all.
 
-  // Zoom sink (design §6): observe the fontScale SSOT through the facade's
-  // READ-ONLY view (`../../api`'s `fontScale` — get/subscribe/bind, no `set`,
-  // enforced at runtime not just in the types). An extension cannot overwrite
-  // the user's zoom level even if it wanted to; the single writer stays the
-  // app's own zoomIn/zoomOut/resetZoom commands. `.bind` applies the CURRENT
-  // scale immediately (so a viewer opened after the user already zoomed
-  // starts correctly scaled) and again on every future change; its
+  // Zoom sink (full-pane rewrite, _workspace/01_architect_design.md §B —
+  // supersedes the fontScale sink this used to be): observe the SHELL's own
+  // viewer-local zoom, `shell.zoom` — the shell is the SINGLE WRITER
+  // (`applyZoomFactor`, called only from the header's own −/+/label
+  // handlers), this viewer only ever reads via `.get()`/`.bind()`, matching
+  // every other viewer's sink shape (image/HWP/PDF). This is a DELIBERATE
+  // fan-out removal, not a rename-in-place: the old `fontScale.bind(...)`
+  // meant ⌘± (the editor's body-text zoom) ALSO resized every open HTML
+  // viewer's iframe — exactly the coupling design §B's decision ③ rejects
+  // ("뷰어 로컬, fontScaleSetting과 완전 분리"). `.bind` still applies the
+  // CURRENT factor immediately (so a viewer opened after the shell already
+  // zoomed starts correctly scaled) and again on every future change; its
   // unsubscribe is registered with the shell's teardown so it stops firing
   // after close().
-  const unsubscribeZoom = fontScale.bind((scale) => applyHtmlZoom(iframe, scale));
+  const unsubscribeZoom = shell.zoom.bind((factor) => applyHtmlZoom(iframe, factor));
   shell.onTeardown(unsubscribeZoom);
 
   (async () => {

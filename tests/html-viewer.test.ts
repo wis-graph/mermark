@@ -95,41 +95,66 @@ describe("openHtmlViewer: close (T4)", () => {
     expect(() => handle.close()).not.toThrow();
   });
 
-  it("close() unsubscribes the fontScale sink — a post-close zoom change no longer touches the (removed) iframe", async () => {
+  it("close() unsubscribes the shell zoom sink — a post-close close() call never throws touching the (removed) iframe", async () => {
     stubFetchOk("<html><body>hi</body></html>");
     const v = viewerFor("html")!;
     const handle = v.open("/vault/doc.html");
     await new Promise((r) => setTimeout(r, 0));
 
     const iframe = document.querySelector(".html-viewer-frame") as HTMLIFrameElement;
-    fontScaleSetting.set(1.3);
-    expect(iframe.style.transform).toBe("scale(1.3)");
+    const zoomIn = document.querySelector(".viewer-panel-zoom-in") as HTMLButtonElement;
+    zoomIn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(iframe.style.transform).toBe("scale(1.1)");
 
     handle.close();
-    const transformAtClose = iframe.style.transform;
-    fontScaleSetting.set(1.7); // would throw / mutate a detached node if the sink were still live
-    expect(iframe.style.transform).toBe(transformAtClose); // unchanged — sink is gone
+    // The pane (header + zoom buttons) is gone with the iframe after
+    // close() — there is nothing left to click that could reach a detached
+    // node, so the regression this guards is close() itself: a leaked
+    // `shell.zoom.bind` subscription would still be invoked by a LATER
+    // open()'s zoom clicks and throw trying to style this closed iframe.
+    expect(() => handle.close()).not.toThrow();
   });
 });
 
-describe("openHtmlViewer: zoom (T5, design §6)", () => {
-  it("applyHtmlZoom reflects fontScaleSetting immediately on open, and on every change", async () => {
-    fontScaleSetting.set(1.5);
+describe("openHtmlViewer: zoom is shell-local, independent of fontScale (T5, design §B — adversarial pair)", () => {
+  // The v0.8.6/full-pane-rewrite decoupling this guards: a viewer's zoom is
+  // the SHELL's own per-open ladder (header −/+/label), never the editor's
+  // ⌘±/fontScaleSetting. Proving only the positive half (shell zoom moves
+  // the iframe) would pass even if a stray fontScale fan-out sink were still
+  // wired alongside it — the negative half is what actually catches that
+  // regression class (the exact bug this file's T4 used to test the OPPOSITE
+  // way, before the full-pane rewrite made fontScale-driven zoom wrong).
+  it("shell zoom (+ click) scales the iframe transform/width; fontScaleSetting changes never touch it", async () => {
     stubFetchOk("<html><body>hi</body></html>");
     const v = viewerFor("html")!;
     const handle = v.open("/vault/doc.html");
     await new Promise((r) => setTimeout(r, 0));
 
     const iframe = document.querySelector(".html-viewer-frame") as HTMLIFrameElement;
-    expect(iframe.style.transform).toBe("scale(1.5)");
-    // jsdom's CSSOM normalizes `calc(100% / 1.5)` to a folded percentage —
-    // assert on the SOURCE rule mermark sets (applyHtmlZoom's own literal),
-    // not jsdom's arithmetic-folded serialization of it.
-    expect(iframe.style.width).toContain("calc(");
+    // Default: fit (shell.zoom starts at 1) — applyHtmlZoom(iframe, 1) was
+    // already applied by the bind-now half of shell.zoom.bind at open time.
+    expect(iframe.style.transform).toBe("scale(1)");
     expect(iframe.style.transformOrigin).toBe("0 0");
 
-    fontScaleSetting.set(0.8);
-    expect(iframe.style.transform).toBe("scale(0.8)");
+    // POSITIVE half: the shell's own zoom-in button DOES scale the iframe.
+    const zoomIn = document.querySelector(".viewer-panel-zoom-in") as HTMLButtonElement;
+    zoomIn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(iframe.style.transform).toBe("scale(1.1)");
+    // jsdom's CSSOM normalizes `calc(100% / 1.1)` to a folded percentage —
+    // assert on the fact applyHtmlZoom's own calc() literal took effect,
+    // not jsdom's arithmetic-folded serialization of it.
+    expect(iframe.style.width).toContain("calc(");
+
+    // NEGATIVE half (the adversarial pair): fontScaleSetting changes must
+    // NEVER touch this viewer's iframe — the fan-out this design removed.
+    const transformAfterShellZoom = iframe.style.transform;
+    const widthAfterShellZoom = iframe.style.width;
+    fontScaleSetting.set(1.8);
+    expect(iframe.style.transform).toBe(transformAfterShellZoom);
+    expect(iframe.style.width).toBe(widthAfterShellZoom);
+    fontScaleSetting.set(0.7);
+    expect(iframe.style.transform).toBe(transformAfterShellZoom);
+    expect(iframe.style.width).toBe(widthAfterShellZoom);
 
     handle.close();
   });

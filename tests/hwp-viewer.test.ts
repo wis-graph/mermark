@@ -155,6 +155,39 @@ describe("openHwpViewer: page width is independent of editor fontScale (T6)", ()
   });
 });
 
+describe("openHwpViewer: viewer-local zoom, independent of fontScale (T8, design §B — adversarial pair)", () => {
+  // Mirrors T6's "independent of fontScale" contract, but for the SHELL's
+  // own zoom ladder instead — the full-pane rewrite's per-viewer zoom
+  // (_workspace/01_architect_design.md §B): a page is a SVG-as-<img>
+  // (vector), so scaling --hwp-page-width alone stays crisp at any factor,
+  // no re-rasterization needed (unlike PDF's canvas). shell.zoom is the
+  // SINGLE writer (the header's own −/+/label buttons); fontScaleSetting
+  // must NEVER move this variable — the same decoupling T6 guards for the
+  // editor's body-text zoom, now guarded a second, independent way.
+  it("+ click scales --hwp-page-width to pageBaseWidth x factor; fontScaleSetting changes never touch it", async () => {
+    const v = viewerFor("hwp")!;
+    const handle = v.open("/vault/sample.hwp");
+    await flush();
+
+    const pagesEl = document.querySelector(".hwp-viewer-pages") as HTMLElement;
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("540px"); // 600 x 0.9 fallback, factor 1
+
+    // POSITIVE half: the shell's own zoom-in button DOES scale the page width.
+    const zoomIn = document.querySelector(".viewer-panel-zoom-in") as HTMLButtonElement;
+    zoomIn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("594px"); // 540 x 1.1
+
+    // NEGATIVE half (adversarial pair): fontScaleSetting changes must NEVER
+    // touch this viewer's page width.
+    fontScaleSetting.set(1.5);
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("594px");
+    fontScaleSetting.set(0.8);
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("594px");
+
+    handle.close();
+  });
+});
+
 describe("openHwpViewer: render serialization (T7 — single-slot backend session race)", () => {
   // hwp.rs keeps the parsed document in a ONE-slot mutex that hwp_render_page
   // TAKES OUT for the whole render; two concurrent renders race and the second

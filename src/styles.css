@@ -208,6 +208,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    status-bar stacked, scoped to the space right of the sidebar rail. */
 .main-column { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .editor-host { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+/* Viewer full-pane hide (chrome/viewer/shell.ts's mountViewerPane): a viewer
+   pane sets `.editor-host.hidden` instead of unmounting the editor. `.hidden`
+   alone (UA `[hidden]{display:none}`) is normally enough, but `.welcome-host`
+   below carries an AUTHOR `display: flex` — author specificity beats the UA
+   sheet regardless of source order, so the welcome screen would stay visible
+   UNDER the viewer pane without this rule. Specificity (0,2,0) intentionally
+   beats `.welcome-host`'s (0,1,0) so this wins whichever screen `.editor-host`
+   currently shows (welcome or a mounted document) — no `!important` needed. */
+.editor-host[hidden] { display: none; }
 .cm-editor { height: 100%; }
 /* Center the reading column (width = --measure, a ch count). CM makes .cm-scroller a flex row with the
    content as its only child, so center via the container with `safe`: if any
@@ -807,23 +816,33 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .conflict-use-external { color: #d97706; border-color: color-mix(in srgb, #d97706 55%, transparent); }
 .conflict-use-external:hover { background: #d97706; color: #fff; border-color: #d97706; }
 
-/* Viewer shell chrome (R11, _workspace/01_r11.md §5 / chrome/viewer/shell.ts):
-   the body-level lightbox/panel EVERY registered viewer (built-in image,
-   Excel, and future HTML/HWP) shares, structurally identical to the conflict
-   modal (sibling of .editor-host, outside the CM measure tree → ZOOM GUARD
-   holds). `.viewer-panel`/`.viewer-panel-close`/`.viewer-panel-caption` are
-   the SHARED chrome — background, border, shadow, close-button position,
-   caption typography — added by openViewerShell (shell.ts) to every viewer's
-   modal/close-button/caption alongside that viewer's own modalClass-derived
-   class. A viewer must NEVER need to reinvent this chrome (that reinvention
-   is exactly the audit finding that added this comment: the Excel viewer's
-   injected <style> only ever styled its OWN content — tabs/table — because
-   it correctly assumed the shell owned panel chrome, but until this change
-   that chrome was hardcoded to `.image-viewer` only, so every OTHER viewer
-   rendered with no background/border/padding/flex layout at all).
+/* Viewer shell chrome (full-pane rewrite, _workspace/01_architect_design.md,
+   2026-07-18 — supersedes R11's body-level backdrop/modal): the IN-CONTENT
+   pane EVERY registered viewer (image, Excel, HTML, HWP, PDF) shares. The
+   pane is `.editor-host`'s sibling inside `.main-column` (openViewerShell,
+   shell.ts, inserts it there and sets `.editor-host.hidden`) — never a
+   body-level overlay — so the top-bar/sidebar/footer stay live while a
+   viewer is open (the whole point of a non-modal pane; see shell.ts's
+   header comment and design §A/§D). `.viewer-panel`/`.viewer-panel-header`/
+   `.viewer-panel-close`/`.viewer-panel-caption`/`.viewer-panel-zoom*` are
+   the SHARED chrome — flex sizing, header layout, close-button, caption
+   typography, zoom controls — added by openViewerShell to every viewer's
+   pane alongside that viewer's own `paneClass`-derived class (the
+   pre-rewrite shell called this `modalClass`; renamed because it no longer
+   is one — a field name that still said "modal" would be exactly the kind
+   of drifted promise this codebase's naming discipline forbids). A viewer
+   must NEVER need to reinvent this chrome — it styles only its own CONTENT
+   via `paneClass`-scoped selectors (e.g. `.excel-viewer-table`).
+
+   SIZE: the pane is `flex: 1` inside `.main-column` — it claims exactly the
+   space `.editor-host` used to occupy, no viewport-unit cap of its own (the
+   old `max-width: 94vw; max-height: 92vh` died with `position: fixed`; see
+   each viewer's own injected CSS for the matching "content root declares no
+   size" contract, tests/viewer-size-envelope.test.ts).
 
    VIEWER ZOOM RULE (04_audit_report.md 재호출 4차 — "엑셀 뷰어도 ⌘±를 따라야
-   한다"): `--font-scale` multiplication happens in EXACTLY ONE place, this
+   한다"; kept unchanged by the full-pane rewrite — this governs CHROME TEXT
+   only): `--font-scale` multiplication happens in EXACTLY ONE place, this
    root's font-size calc — the SAME technique and SAME variable
    `.sidebar-aside` uses (SIDEBAR ZOOM RULE anchor comment above it). Every
    viewer-scoped descendant (built-in image viewer AND any extension's
@@ -838,60 +857,71 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    a sweep limited to this sheet would silently let every extension ignore
    zoom forever.
 
+   VIEWER-LOCAL ZOOM (design §B, NEW this round — orthogonal to the rule
+   above): `--viewer-zoom` is a SECOND custom property, the shell's zoom
+   state machine's own DOM projection (chrome/viewer/shell.ts's
+   `applyZoomFactor`) — it scales a viewer's CONTENT (a PDF page, an Excel
+   table's font-size, an image's width), never chrome text, and it is NEVER
+   read/written by `fontScaleSetting` (⌘±) — the two axes are deliberately
+   independent (v0.8.6's PDF/HWP fontScale decoupling, preserved). A viewer
+   either reads this var directly in its own injected CSS (Excel) or
+   subscribes to `shell.zoom.bind` in JS (PDF/HWP/image/HTML) — never both
+   for the same viewer.
+
    TWO EXCEPTIONS (same shape as SIDEBAR ZOOM RULE's, carried over deliberately):
-   1. `.viewer-panel-close` (✕) and any extension's own <button> that sizes
-      TEXT in em (e.g. `.excel-viewer-tab`) MUST declare `font: inherit`
-      explicitly — a <button> gets its own UA font-size (~13.33px, NOT
-      --font-scale-aware) unless the rule re-inherits. Exactly the trap
-      `.explorer-star`/`.favorites-remove` already fell into (SIDEBAR ZOOM
-      RULE exception 1) — do not re-fall into it here.
+   1. `.viewer-panel-close`/`.viewer-panel-zoom-out`/`-in`/`-label` (all
+      <button>s) and any extension's own <button> that sizes TEXT in em
+      (e.g. `.excel-viewer-tab`) MUST declare `font: inherit` explicitly — a
+      <button> gets its own UA font-size (~13.33px, NOT --font-scale-aware)
+      unless the rule re-inherits. Exactly the trap `.explorer-star`/
+      `.favorites-remove` already fell into (SIDEBAR ZOOM RULE exception 1)
+      — do not re-fall into it here.
    2. `.viewer-panel-close` is deliberately EXEMPT from the em-fraction rule
       itself (kept at a fixed 28×28px / 15px glyph) — it is WINDOW CHROME
       (same category as `.sidebar-top-strip`'s fixed 36px height, or a rail
       icon button), not zoomable body text. A fixed hit-target that doesn't
       grow with zoom is correct here; only the glyph GROWING and overflowing
       its 28×28 box would be the bug. Do not "fix" this exception away. */
-.viewer-backdrop {
-  position: fixed; inset: 0; z-index: 50;
-  display: flex; align-items: center; justify-content: center;
-  background: color-mix(in srgb, #000 55%, transparent);
-}
 .viewer-panel {
-  position: relative;
+  flex: 1; min-width: 0; min-height: 0;
   display: flex; flex-direction: column; gap: 10px;
-  max-width: 94vw; max-height: 92vh;
-  padding: 16px; border-radius: var(--radius-lg, 12px);
-  background: var(--bg); color: var(--fg);
-  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
-  box-shadow: 0 16px 48px color-mix(in srgb, #000 35%, transparent);
   /* VIEWER ZOOM RULE root — the sole --font-scale multiplication point for
-     every viewer (built-in + extensions). */
+     every viewer's CHROME TEXT (built-in + extensions). Viewer CONTENT zoom
+     is the separate `--viewer-zoom` var (see VIEWER-LOCAL ZOOM above). */
   font-size: calc(13px * var(--font-scale, 1));
-  /* CHROME GUTTER (team-lead catch, viewer-golden G6): the close button is
-     `position: absolute; top: 8px; right: 8px; width/height: 28px`
-     (exception below) — it straddles OUTSIDE this panel's own 16px padding
-     (8+28=36px > 16px), so it always overlapped the top ~20px of whatever a
-     viewer's content put in its top-right corner. That never showed up
-     visually as long as a viewer's top row happened to be short of the
-     panel's right edge — until a genuinely narrow-content viewer (Excel's
-     single-column "Big" sheet) stretched its tab strip to the panel's full
-     width and put a real, clickable tab directly under the button (G6's
-     click-intercept). FIX IS HERE, in the shell, not in excel-viewer: this
-     custom property is the ONE place the button's footprint (8px offset +
-     28px size + a little clearance) is expressed as a reusable number, and
-     `.viewer-panel-body` below reserves exactly that much space at its top
-     — so NO viewer, wide or narrow, present or future (PDF/DOCX/CSV), can
-     put content under the close button; that guarantee no longer depends on
-     any individual viewer's width. Kept in px (not em) — this is chrome
-     geometry tied 1:1 to the close button's own fixed px footprint
-     (VIEWER ZOOM RULE exception 2), not zoomable body content. */
-  --viewer-chrome-gutter: 44px;
 }
+.viewer-panel-header {
+  display: flex; align-items: center; gap: 10px; flex: none;
+}
+.viewer-panel-caption {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: calc(12.5em / 13); color: var(--muted);
+}
+.viewer-panel-zoom { display: flex; align-items: center; gap: 2px; flex: none; }
+/* VIEWER ZOOM RULE exception 1 — plain <button>s, must re-inherit. No
+   font-size override needed here (1em == the inherited chrome size already
+   satisfies the em-fraction contract, and declaring none can never regress
+   to a px literal). */
+.viewer-panel-zoom-out, .viewer-panel-zoom-in {
+  font: inherit; padding: 0 .4em; line-height: 1.8; cursor: pointer;
+  background: var(--surface); color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: var(--radius-sm, 6px);
+}
+.viewer-panel-zoom-out:hover, .viewer-panel-zoom-in:hover { color: var(--fg); }
+.viewer-panel-zoom-label {
+  font: inherit; font-size: calc(12.5em / 13); min-width: 3.4em; text-align: center;
+  padding: 0 .2em; cursor: pointer; background: none; border: none; color: var(--muted);
+}
+.viewer-panel-zoom-label:hover { color: var(--fg); }
 /* VIEWER ZOOM RULE exception 2 (see anchor comment) — window chrome, fixed
    size, exempt from the em-fraction rule. `font: inherit` still applies
-   (exception 1) since the ✕ glyph itself is text-sized. */
+   (exception 1) since the ✕ glyph itself is text-sized. No longer
+   `position: absolute` — the full-pane rewrite moved it into the header's
+   normal flex flow, which structurally removes the old close-button/content
+   overlap class of bug (G6) rather than reserving a gutter against it. */
 .viewer-panel-close {
-  position: absolute; top: 8px; right: 8px; z-index: 1;
+  flex: none;
   width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
   padding: 0; line-height: 1; font: inherit; font-size: 15px; cursor: pointer;
   background: var(--surface); color: var(--muted);
@@ -899,7 +929,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   border-radius: var(--radius-sm, 6px);
 }
 .viewer-panel-close:hover { color: var(--fg); }
-.viewer-panel-caption { text-align: center; font-size: calc(12.5em / 13); color: var(--muted); }
 /* Shell-owned scroll boundary (shell.ts's `body` wrapper) — a real device
    regression found this missing: a 10,000+-row Excel sheet rendered PAST
    the panel's fixed height because the viewer's content was a plain block
@@ -914,12 +943,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    `.excel-viewer-sheet`). display:flex + column so a viewer's content can
    itself be a flex child (fixed-height tab strip + flex:1 scrollable body)
    without reinventing that context per viewer. */
-/* padding-top: var(--viewer-chrome-gutter) (see .viewer-panel's anchor
-   comment) — reserves the close button's footprint so no viewer's top row
-   can ever land under it, regardless of that viewer's width. */
 .viewer-panel-body {
   flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;
-  padding-top: var(--viewer-chrome-gutter, 44px);
 }
 
 /* Image viewer: the checkerboard stage + fit-sized <img> are IMAGE-specific
@@ -940,7 +965,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   border-radius: var(--radius-md, 8px);
   overflow: hidden;
 }
-.image-viewer-img { display: block; max-width: 90vw; max-height: 85vh; object-fit: contain; }
+/* Fit is PANE-relative (100%), not viewport-relative — the pane itself is
+   sized by `.viewer-panel`'s flex:1 now (full-pane rewrite), so a fixed vw/vh
+   fraction here would fight that instead of filling it. `image-viewer.ts`'s
+   `applyImageZoom` overrides `width` (and drops these two max-* rules) above
+   1×; at the default fit (factor 1) this rule alone governs. */
+.image-viewer-img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
 /* attachPanZoom's reset button (shared with mermaid) — reposition only, same
    is-transformed show/hide rule as .cm-mermaid. Keyed to .viewer-panel (not
    just .image-viewer) since any future viewer that reuses attachPanZoom
@@ -950,22 +980,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* HWP/HWPX viewer (built-in, _workspace/01_hwp_viewer.md §4.2): a scrollable
    column of page placeholders, each swapped for an <img src="data:...">
    once hwp_render_page resolves (hwp-viewer.ts's security contract — never
-   an inline <svg>, see that file's header comment). Sized against the
-   panel's own width/height caps (design keeps CSP/capabilities untouched —
-   img-src data: is already allowed).
+   an inline <svg>, see that file's header comment). CSP/capabilities
+   untouched — img-src data: is already allowed.
 
-   px cap REMOVED (뷰어 사이즈 봉투 재설계 — 4K에서 900×780으로 갇히던 회귀): a
-   document reader wants to be WIDE like html-viewer, so this is a fixed
-   vw/vh fraction of the shell's `.viewer-panel` envelope, never a px
-   literal. The rendered PAGE image itself used to be capped independently
-   at a hardcoded 600px baseline (HWP_PAGE_BASE_WIDTH, hwp-viewer.ts) —
-   that's the deeper half of the same bug (a 4K panel this wide, with pages
-   still rasterizing at a 595px-equivalent original size, looked broken
-   even after this rule alone). hwp-viewer.ts's applyHwpZoom now derives
-   the page's baseline width from the actual rendered container width
-   instead of a constant, so pages fill however big this envelope actually
-   is; --hwp-page-width/aspect-ratio contracts below are unchanged. */
-.hwp-viewer { width: 92vw; max-height: 88vh; }
+   NO width/height/max-* rule here (full-pane rewrite,
+   _workspace/01_architect_design.md §C: "콘텐츠 루트는 이제 아무 width/
+   height도 선언하지 않는다 — 셸 flex가 소유"). `.hwp-viewer` used to carry a
+   fixed `92vw/88vh` envelope of its own (a vw/vh-fraction descendant of the
+   pre-rewrite body-level backdrop/modal) — now `.viewer-panel`'s
+   `flex:1; min-width:0; min-height:0` (above) is the SOLE size owner, and
+   this selector is kept only as a paneClass hook for any future
+   HWP-specific non-size styling. The rendered PAGE image's own fit-to-panel
+   width is a SEPARATE, JS-computed contract (`--hwp-page-width`,
+   hwp-viewer.ts's `applyHwpPageWidth` — derives from the panel's actual
+   rendered width × the shell's viewer-local zoom factor, never a constant);
+   --hwp-page-width/aspect-ratio contracts below are unchanged by this. */
 .hwp-viewer-status { padding: 12px; color: var(--muted); font-size: 1em; }
 /* The pages column is this viewer's OWN scroll boundary inside the shell's
    .viewer-panel-body (which is flex:1/min-height:0/overflow:hidden,
