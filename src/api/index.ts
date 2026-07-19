@@ -66,6 +66,13 @@ export type {
 } from "../markdown/live-preview/core";
 export { hide, fencedInfo } from "../markdown/live-preview/core";
 
+// "does this cell's text read as a number" — the report-style table's single
+// auto-align rule (2026-07-20). The markdown table widget imports it
+// directly (core→core, no fence to cross); the Excel viewer is an
+// extension, so it can only reach this internal module through the facade —
+// tests/api-fence.test.ts whitelists src/text/numeric-cell for that.
+export { looksNumeric } from "../text/numeric-cell";
+
 export { registerCommand } from "../shortcuts/registry";
 export type { ShortcutAction } from "../shortcuts/actions";
 

@@ -217,6 +217,36 @@
 // needed): disable -> click -> neither the viewer NOR onOpenFile fires;
 // re-enable -> click -> the viewer opens.
 //
+// G20~G21 (team-lead real-Chrome measurement, 2026-07-20 — report-style
+// Excel table follow-up): two layout defects jsdom cannot see (it never lays
+// out or measures anything), caught only by opening report.xlsx in a real
+// Chrome and reading actual scrollHeight/getBoundingClientRect numbers.
+// G20 (hoverDoesNotGrowScrollArea): the column-highlight overlay used to be
+//     a CSS-only `td:hover::after` spanning -100vh..+100vh — visually
+//     clipped by `.excel-viewer-sheet`'s `overflow: auto`, but an absolutely
+//     positioned box still CONTRIBUTES to its scroll container's SCROLLABLE
+//     overflow in the block-end direction regardless of visual clipping.
+//     Measured: scrollHeight jumped 75px -> 875px the instant a cell was
+//     hovered (800px of phantom scroll). Fixed by ONE shared overlay div
+//     (`.excel-viewer-colhl`) repositioned per hovered cell and bounded to
+//     the table's own height (index.ts's `highlightCellColumn`) — this
+//     checks that fix holds by hovering a real data cell and confirming
+//     `.excel-viewer-sheet`'s scrollHeight barely moves.
+// G21 (stickyCol0MatchesGutterWidth): the first data column's sticky `left`
+//     offset (`--sheet-gutter-w`) used to come from a ResizeObserver entry's
+//     `contentRect`, which excludes the gutter cell's own padding —
+//     measured 7.7px (content-box) vs. the gutter's real 27.7px (border-
+//     box), a 20px (10px x 2 padding) gap that let the sticky first data
+//     column overlap the row-number gutter once scrolled horizontally.
+//     Fixed by preferring `borderBoxSize` (index.ts's `gutterStickyWidth`).
+//     The fixture's real "Data" sheet is only 2 columns wide and never
+//     overflows on its own, so this widens the `<table>` element directly
+//     (not the container — narrowing the container just shrinks the
+//     `width:100%` table with it and never produces a scrollbar, a dead-end
+//     measured on the first attempt) to force real horizontal overflow,
+//     scrolls to the end, and compares the sticky first data column's left
+//     edge against the gutter's own (left + border-box width).
+//
 // VISUAL CONTRACT (checkPanelChrome below) applies to EVERY viewer's panel —
 // this is what the audit's screenshot + real-device findings actually
 // demand: "all viewers share the same shell chrome AND never spill past
@@ -235,6 +265,10 @@ const result = {
   // Stage 6 additions — see the "STAGE 6 NEW SCENARIOS" header comment above
   // for why these are g16~g19, not g15~g18.
   g16: {}, g17: {}, g18: {}, g19: {},
+  // G20/G21 (team-lead real-Chrome measurement, 2026-07-20 report-style
+  // table follow-up) — see the scenario block near the end of this file for
+  // both.
+  g20: {}, g21: {},
   errors: [],
   failedRequests: [],
 };
@@ -1237,6 +1271,93 @@ await page.waitForTimeout(200);
 // dev:browser profile's localStorage.
 await page.evaluate(() => localStorage.removeItem("mermark.disabledViewers"));
 
+// ── G20 — hover column-highlight does NOT grow the scroll area ─────────────
+// See the "G20~G21" header comment above for the real bug this measures.
+await rowFor("/mock/vault/report.xlsx").click();
+await page.waitForTimeout(600);
+
+const sheetScrollHeight = () => page.locator(".excel-viewer-sheet").evaluate((el) => el.scrollHeight);
+result.g20.scrollHeightBeforeHover = await sheetScrollHeight();
+
+// A real cell hover (Playwright's .hover() moves the actual pointer and
+// lets the browser dispatch its own mouseover/mousemove chain) — the same
+// event path a real user's mouse produces, exercising the delegated
+// listener (sheetHost's mouseover) end to end rather than a synthetic
+// page-side dispatch.
+const g20Cell = page.locator(".excel-viewer-table tbody td").first();
+await g20Cell.hover();
+await page.waitForTimeout(150);
+result.g20.scrollHeightDuringHover = await sheetScrollHeight();
+result.g20.scrollHeightGrowth = result.g20.scrollHeightDuringHover - result.g20.scrollHeightBeforeHover;
+result.g20.hoverDoesNotGrowScrollArea = result.g20.scrollHeightGrowth < 2;
+
+// Sanity: the overlay actually appeared while hovering — otherwise "no
+// growth" would be vacuously true because nothing rendered at all.
+result.g20.overlayVisibleWhileHovering = await page
+  .locator(".excel-viewer-colhl")
+  .evaluate((el) => !el.hidden && el.getBoundingClientRect().width > 0);
+
+// Move off the sheet (onto the title-bar caption, definitely outside
+// .excel-viewer-sheet) so mouseleave fires and the overlay hides again —
+// both an extra assertion and cleanup before G21 reuses this same viewer.
+await page.locator(".viewer-panel-caption").hover();
+await page.waitForTimeout(100);
+result.g20.overlayHiddenAfterMouseLeaves = await page.locator(".excel-viewer-colhl").evaluate((el) => el.hidden);
+
+// ── G21 — sticky first-data-column offset matches the gutter's REAL
+// (border-box) width ───────────────────────────────────────────────────────
+// See the "G20~G21" header comment above for the real bug this measures.
+// The fixture's "Data" sheet (currently active) is only 2 columns wide and
+// never overflows on its own — widen the TABLE directly to force real
+// horizontal scroll (narrowing the container instead just shrinks the
+// width:100% table with it, producing no scrollbar at all — measured invalid
+// on the first attempt).
+await page.evaluate(() => {
+  const table = document.querySelector(".excel-viewer-table");
+  if (table) table.style.width = "2400px";
+});
+await page.waitForTimeout(150);
+
+const g21Overflow = await page.locator(".excel-viewer-sheet").evaluate((el) => ({
+  scrollWidth: el.scrollWidth,
+  clientWidth: el.clientWidth,
+}));
+result.g21.scrollWidth = g21Overflow.scrollWidth;
+result.g21.clientWidth = g21Overflow.clientWidth;
+// Measurement-validity gate: if this is false, the assertion below would be
+// checking two elements that never actually separated via scroll — same
+// "prove the probe itself is alive" discipline as G2's negative count.
+result.g21.overflowExists = g21Overflow.scrollWidth > g21Overflow.clientWidth;
+
+await page.locator(".excel-viewer-sheet").evaluate((el) => {
+  el.scrollLeft = el.scrollWidth; // browsers clamp to the real max automatically
+});
+await page.waitForTimeout(150);
+
+const g21Rects = await page.evaluate(() => {
+  // First DOM match for each class is the header row's corner/col0-header
+  // cell (thead renders before tbody) — column width is uniform down a
+  // table, so measuring the header row's cells is exactly as valid as a
+  // body row's for this alignment check.
+  const gutter = document.querySelector(".excel-viewer-gutter");
+  const col0 = document.querySelector(".excel-viewer-col0");
+  const g = gutter?.getBoundingClientRect() ?? null;
+  const c = col0?.getBoundingClientRect() ?? null;
+  return { gutterLeft: g?.left ?? null, gutterWidth: g?.width ?? null, col0Left: c?.left ?? null };
+});
+result.g21.gutterLeft = g21Rects.gutterLeft;
+result.g21.gutterWidth = g21Rects.gutterWidth;
+result.g21.col0Left = g21Rects.col0Left;
+result.g21.expectedCol0Left =
+  g21Rects.gutterLeft != null && g21Rects.gutterWidth != null ? g21Rects.gutterLeft + g21Rects.gutterWidth : null;
+result.g21.stickyCol0MatchesGutterWidth =
+  result.g21.expectedCol0Left != null &&
+  result.g21.col0Left != null &&
+  Math.abs(result.g21.col0Left - result.g21.expectedCol0Left) <= 1.5;
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
 writeFileSync(out, JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));
 
@@ -1423,6 +1544,17 @@ const pass =
   !result.g15caseA.pdfRowSelectedAfterDisabledClick &&
   !result.g15caseA.pdfIsNonmdAfterReenable &&
   result.g15caseA.hasPdfViewerAfterReenable &&
+  // G20 — hover column-highlight must not grow .excel-viewer-sheet's
+  // scrollable area (the overlayVisibleWhileHovering/overlayHiddenAfter...
+  // pair proves the probe itself is alive — see the G20~G21 header comment).
+  result.g20.overlayVisibleWhileHovering &&
+  result.g20.hoverDoesNotGrowScrollArea &&
+  result.g20.overlayHiddenAfterMouseLeaves &&
+  // G21 — the sticky first data column's left edge must sit exactly at the
+  // gutter's own (left + border-box width), not the padding-short
+  // content-box width. overflowExists is the measurement-validity gate.
+  result.g21.overflowExists &&
+  result.g21.stickyCol0MatchesGutterWidth &&
   result.errors.length === 0;
 
 console.log("\nwrote", out);

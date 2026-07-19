@@ -35,3 +35,51 @@ describe("TableWidget — inline links in cells (G)", () => {
     expect(widget.ignoreEvent()).toBe(true);
   });
 });
+
+// Report-style table (team-lead spec, 2026-07-20): explicit markdown
+// alignment (`:---`/`---:`/`:--:`) MUST win over the auto-numeric-align
+// class — table-widget.ts sets alignment as an INLINE style (which always
+// outranks a CSS class), and only adds `is-num` for the CSS auto-align to
+// show through on columns with NO explicit spec. This pins that ordering so
+// a future change can't accidentally make the class fight the inline style.
+describe("TableWidget — is-num auto-align vs. explicit markdown alignment (report-style table)", () => {
+  it("a numeric column with NO explicit align spec gets is-num and no inline style — CSS does the align", () => {
+    const src = "| name | amount |\n|---|---|\n| a | 1,234 |";
+    const dom = new TableWidget(src).toDOM();
+    const cells = dom.querySelectorAll("td");
+    expect(cells[1].classList.contains("is-num")).toBe(true);
+    expect(cells[1].style.textAlign).toBe(""); // no inline style — .is-num's CSS rule is what right-aligns it
+  });
+
+  it("a non-numeric column with no explicit align gets neither is-num nor an inline style", () => {
+    const src = "| name |\n|---|\n| Kim |";
+    const dom = new TableWidget(src).toDOM();
+    const td = dom.querySelector("td") as HTMLElement;
+    expect(td.classList.contains("is-num")).toBe(false);
+    expect(td.style.textAlign).toBe("");
+  });
+
+  it("an explicit right-align spec (---:) on a numeric column sets the inline style AND still carries is-num", () => {
+    const src = "| amount |\n|---:|\n| 1 |";
+    const dom = new TableWidget(src).toDOM();
+    const td = dom.querySelector("td") as HTMLElement;
+    expect(td.classList.contains("is-num")).toBe(true); // detection still fires
+    expect(td.style.textAlign).toBe("right"); // explicit spec wins via inline style
+  });
+
+  it("an explicit LEFT-align spec (:---) on a numeric column keeps left via inline style, even though is-num is present", () => {
+    const src = "| amount |\n|:---|\n| 1234 |";
+    const dom = new TableWidget(src).toDOM();
+    const td = dom.querySelector("td") as HTMLElement;
+    expect(td.classList.contains("is-num")).toBe(true); // CSS class present...
+    expect(td.style.textAlign).toBe("left"); // ...but inline style wins the cascade
+  });
+
+  it("a header cell (th) gets the same is-num treatment as a data cell", () => {
+    const src = "| 1,000 | name |\n|---|---|\n| a | b |";
+    const dom = new TableWidget(src).toDOM();
+    const ths = dom.querySelectorAll("th");
+    expect(ths[0].classList.contains("is-num")).toBe(true);
+    expect(ths[1].classList.contains("is-num")).toBe(false);
+  });
+});

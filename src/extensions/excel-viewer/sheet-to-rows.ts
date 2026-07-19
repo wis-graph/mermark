@@ -6,6 +6,7 @@
 // dynamic-imported by ./index.ts only inside open() — see that file's
 // comment on why).
 import type { CellObject, WorkSheet } from "xlsx";
+import { looksNumeric } from "../../api";
 
 /** A worksheet cell address, e.g. "AQ37" — SheetJS's own key format for a
  *  non-metadata cell in a WorkSheet object (metadata keys like "!ref" start
@@ -90,4 +91,38 @@ export function truncatedForRender(
   const totalRows = rows.length;
   if (totalRows <= MAX_RENDERED_ROWS) return { rows, truncated: false, totalRows };
   return { rows: rows.slice(0, MAX_RENDERED_ROWS), truncated: true, totalRows };
+}
+
+/** A cell's display text — `""` for an empty/missing cell (a hole `sheetToRows`
+ *  fills with `""`, but `null`/`undefined` are guarded too for safety). The
+ *  single "what do I show/compare for this cell" rule, shared by
+ *  `looksLikeHeaderRow` below and the viewer's own row renderer
+ *  (`index.ts`) so that logic has exactly one home. Pure query. */
+export function cellDisplayText(cell: unknown): string {
+  return cell === "" || cell == null ? "" : String(cell);
+}
+
+/** How many data rows below a candidate header row to scan for a numeric
+ *  match (row-2000 in a huge sheet shouldn't have to be read for this). */
+const HEADER_DETECTION_SCAN_ROWS = 20;
+
+/** Row 0 reads as a "column names" row rather than a data row — a signal-based
+ *  judgment, not a guess, since CSV carries no header concept of its own
+ *  (design 2026-07-20). False when there are fewer than 2 rows (nothing to
+ *  compare against) or when row 0 itself contains a numeric cell (a header
+ *  row is never numeric). Otherwise true when at least one column has a
+ *  non-empty, non-numeric row-0 cell whose same column holds a numeric value
+ *  somewhere in the next `HEADER_DETECTION_SCAN_ROWS` data rows — the
+ *  "label above a number column" shape a real header has. Pure query. */
+export function looksLikeHeaderRow(rows: unknown[][]): boolean {
+  if (rows.length < 2) return false;
+  const header = rows[0];
+  if (header.some((cell) => looksNumeric(cellDisplayText(cell)))) return false;
+
+  const dataRows = rows.slice(1, 1 + HEADER_DETECTION_SCAN_ROWS);
+  return header.some((cell, col) => {
+    const text = cellDisplayText(cell);
+    if (text === "" || looksNumeric(text)) return false;
+    return dataRows.some((row) => looksNumeric(cellDisplayText(row[col])));
+  });
 }

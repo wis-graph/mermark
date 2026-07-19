@@ -1326,8 +1326,22 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    narrow CJK column can't be squeezed to zero width. Do NOT add
    overflow-wrap: anywhere here — it re-permits arbitrary mid-token breaks on
    overflow, which defeats keep-all (CJK collapse would return conditionally). */
-.cm-table th, .cm-table td { border: 1px solid var(--border); padding: .4em .6em; word-break: keep-all; min-width: 6ch; }
+/* Report-style table (team-lead spec, 2026-07-20): horizontal rules only, no
+   vertical gridlines — border-bottom replaces the old 4-sided grid. */
+.cm-table th, .cm-table td { border: 0; border-bottom: 1px solid var(--border); padding: .4em .6em; word-break: keep-all; min-width: 6ch; }
 .cm-table th { background: var(--surface); font-weight: 700; }
+/* Zebra striping on even DATA rows only — thead is out of scope (tbody
+   scopes the selector), so the header row never stripes. A faint
+   readability aid, not a color statement. */
+.cm-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--fg) 3%, transparent); }
+/* Numeric auto right-align (src/text/numeric-cell.ts's looksNumeric, applied
+   by table-widget.ts). An explicit markdown align spec (:---/---:/:--:) sets
+   an INLINE style on the cell, and inline always outranks a class — so a
+   numeric column can still be forced left/center by the document's own
+   alignment row; this class only shows through where no explicit spec set
+   one. Do not raise this selector's specificity to fight that — it's the
+   point (table-widget.test.ts pins the ordering). */
+.cm-table .is-num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Frontmatter (Obsidian-style properties): a 2-column key/value table from the
    document's top YAML block. Customize via these tokens (no new setting). */

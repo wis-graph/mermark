@@ -52,6 +52,10 @@ const WHITELIST_ABS = [
   // R11 2단계 (_workspace/01_html_viewer.md §6): fontScaleSetting re-export
   // for the HTML viewer's zoom sink.
   join(SRC, "settings", "app"),
+  // Report-style table auto-align (2026-07-20): looksNumeric re-export so the
+  // Excel viewer (an extension) can share the same cell-shape rule the
+  // markdown table widget uses directly.
+  join(SRC, "text", "numeric-cell"),
 ];
 
 function walkTsFiles(dir: string): string[] {
@@ -186,6 +190,9 @@ describe("api fence (design §2.3 / plan Stage C-1)", () => {
     expect(api.openViewerShell).toBe(viewerShell.openViewerShell);
     const fileBytes = await import("../src/chrome/viewer/file-bytes");
     expect(api.readLocalFileBytes).toBe(fileBytes.readLocalFileBytes);
+    // Report-style table auto-align (2026-07-20): looksNumeric re-export.
+    const numericCell = await import("../src/text/numeric-cell");
+    expect(api.looksNumeric).toBe(numericCell.looksNumeric);
   });
 });
 

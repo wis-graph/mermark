@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import * as XLSX from "xlsx";
 import type { WorkSheet } from "xlsx";
-import { sheetToRows, truncatedForRender, MAX_RENDERED_ROWS } from "../src/extensions/excel-viewer/sheet-to-rows";
+import {
+  sheetToRows,
+  truncatedForRender,
+  looksLikeHeaderRow,
+  MAX_RENDERED_ROWS,
+} from "../src/extensions/excel-viewer/sheet-to-rows";
+import { isTextSpreadsheet, decodeSpreadsheetInput } from "../src/extensions/excel-viewer/decode-input";
 
 // R11 (_workspace/01_r11.md §9 RED-4): pure functions only, no DOM. Cases
 // ported from the reference implementation's XlsxView.test.ts (sparse-sheet
@@ -149,5 +155,139 @@ describe("CSV support (shares the Excel viewer)", () => {
     const rows = sheetToRows(XLSX, wb.Sheets[wb.SheetNames[0]]).rows;
     expect(rows[1][0]).toBe("1986-01-01");
     expect(String(rows[1][0])).not.toMatch(/^\d{5}$/); // e.g. "31413"
+  });
+});
+
+// Real bug, real file (team-lead spec, 2026-07-20): 정산표.csv is BOM-less
+// UTF-8 and mojibaked ("카테고리" → "ì¹´í…Œê³ ë¦¬") because
+// `XLSX.read(new Uint8Array(bytes), {type:"array"})` reads CSV bytes as
+// latin1 when there's no BOM to hint UTF-8. decode-input.ts fixes this by
+// decoding csv bytes to a STRING (strict UTF-8 first, CP949/EUC-KR fallback)
+// before SheetJS ever sees them; xlsx/xls stay untouched (binary formats).
+describe("isTextSpreadsheet / decodeSpreadsheetInput (2026-07-20 CSV encoding fix)", () => {
+  it("isTextSpreadsheet is true only for .csv (case-insensitive), false for xlsx/xls", () => {
+    expect(isTextSpreadsheet("/tmp/정산표.csv")).toBe(true);
+    expect(isTextSpreadsheet("/tmp/report.CSV")).toBe(true);
+    expect(isTextSpreadsheet("/tmp/book.xlsx")).toBe(false);
+    expect(isTextSpreadsheet("/tmp/book.xls")).toBe(false);
+  });
+
+  it("a BOM-less UTF-8 csv decodes to a clean string (the exact bug: bytes read as latin1 without this)", () => {
+    const bytes = new TextEncoder().encode("카테고리,금액\n식비,10000\n");
+    const result = decodeSpreadsheetInput("/tmp/정산표.csv", bytes);
+    expect(typeof result).toBe("string");
+    expect(result).toContain("카테고리");
+    expect(result).not.toContain("ì¹´í…Œê³ ë¦¬"); // the mojibake this fix closes
+  });
+
+  it("a BOM-prefixed UTF-8 csv decodes with the BOM removed (TextDecoder's own ignoreBOM:false default)", () => {
+    const withBom = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode("서포터,금액\n")]);
+    const result = decodeSpreadsheetInput("/tmp/후원.csv", withBom);
+    expect(typeof result).toBe("string");
+    expect((result as string).startsWith("서포터")).toBe(true); // no leading BOM char
+  });
+
+  it("CP949/EUC-KR csv bytes (invalid UTF-8) fall back to a correct decode, not mojibake or a throw", () => {
+    // "카테고리" encoded as EUC-KR/CP949 (verified byte-for-byte against a real
+    // iconv EUC-KR encoder) — NOT valid UTF-8, so the strict utf-8 attempt
+    // must throw and this fallback must fire.
+    const cp949Bytes = new Uint8Array([0xc4, 0xab, 0xc5, 0xd7, 0xb0, 0xed, 0xb8, 0xae]);
+    const result = decodeSpreadsheetInput("/tmp/legacy.csv", cp949Bytes);
+    expect(result).toBe("카테고리");
+  });
+
+  it("xlsx/xls bytes pass through unchanged as a Uint8Array (binary format — decode is a no-op)", () => {
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]); // zip magic bytes
+    const result = decodeSpreadsheetInput("/tmp/book.xlsx", bytes);
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(result).toEqual(bytes);
+    const fromArrayBuffer = decodeSpreadsheetInput("/tmp/book.xls", bytes.buffer);
+    expect(fromArrayBuffer).toBeInstanceOf(Uint8Array);
+    expect(fromArrayBuffer).toEqual(bytes);
+  });
+
+  // The decode functions above are unit-level; THIS one walks the whole path
+  // the viewer actually walks (bytes → decodeSpreadsheetInput → XLSX.read →
+  // sheetToRows), because the shipped bug lived in the SEAM, not in either
+  // side of it: decoding was never wrong, it simply wasn't happening — bytes
+  // went straight to `XLSX.read(..., {type: "array"})`, which reads a BOM-less
+  // CSV as latin1. A test that only checks the decoder would still pass with
+  // the bug fully restored, so it would not be a regression test at all.
+  it("a BOM-less UTF-8 Korean CSV survives the FULL path to rendered rows", () => {
+    const csv = "카테고리,채널,판매수량\n클립,자사몰,25\n";
+    const bytes = new TextEncoder().encode(csv);
+    expect(bytes[0]).not.toBe(0xef); // no BOM — the exact shape that mojibaked
+
+    const input = decodeSpreadsheetInput("/tmp/정산표.csv", bytes);
+    const wb = XLSX.read(input, { type: typeof input === "string" ? "string" : "array" });
+    const { rows } = sheetToRows(XLSX, wb.Sheets[wb.SheetNames[0]]);
+
+    expect(rows[0]).toEqual(["카테고리", "채널", "판매수량"]);
+    expect(rows[1]).toEqual(["클립", "자사몰", "25"]);
+    expect(JSON.stringify(rows)).not.toContain("ì"); // the mojibake signature
+  });
+});
+
+// looksLikeHeaderRow (team-lead spec, 2026-07-20): CSV/XLSX carry no header
+// concept of their own, so "is row 0 a column-names row" is a SIGNAL-based
+// judgment, not a guess — the row must be non-numeric AND at least one
+// column must show the "label above a number" shape against the data below.
+describe("looksLikeHeaderRow", () => {
+  it("false when there are fewer than 2 rows (nothing to compare against)", () => {
+    expect(looksLikeHeaderRow([])).toBe(false);
+    expect(looksLikeHeaderRow([["a", "b"]])).toBe(false);
+  });
+
+  it("false when row 0 itself contains a numeric cell (a header row is never numeric)", () => {
+    const rows = [
+      ["1", "name"],
+      ["2", "Kim"],
+    ];
+    expect(looksLikeHeaderRow(rows)).toBe(false);
+  });
+
+  it("false when row 0 is entirely numeric (plain data, no header)", () => {
+    const rows = [
+      [1, 2, 3],
+      [4, 5, 6],
+    ];
+    expect(looksLikeHeaderRow(rows)).toBe(false);
+  });
+
+  it("true when a non-numeric row-0 label sits above a numeric data column", () => {
+    const rows = [
+      ["category", "amount"],
+      ["식비", "10000"],
+      ["교통비", "5000"],
+    ];
+    expect(looksLikeHeaderRow(rows)).toBe(true);
+  });
+
+  it("false when row 0 is non-numeric but NO column below it ever turns out numeric (looks like a data row of labels, not a header)", () => {
+    const rows = [
+      ["Kim", "Seoul"],
+      ["Lee", "Busan"],
+    ];
+    expect(looksLikeHeaderRow(rows)).toBe(false);
+  });
+
+  it("only scans the first 20 data rows for a numeric match — a numeric cell at row 25 does not count", () => {
+    const rows: unknown[][] = [["label", "value"]];
+    for (let i = 0; i < 19; i++) rows.push(["text", "text"]); // rows 1..19: still non-numeric
+    rows.push(["text", "42"]); // row 20 (21st row overall, still within the 20-row scan window)
+    expect(looksLikeHeaderRow(rows)).toBe(true);
+
+    const tooFar: unknown[][] = [["label", "value"]];
+    for (let i = 0; i < 20; i++) tooFar.push(["text", "text"]); // rows 1..20: non-numeric
+    tooFar.push(["text", "42"]); // row 21 — outside the 20-row scan window
+    expect(looksLikeHeaderRow(tooFar)).toBe(false);
+  });
+
+  it("an empty row-0 cell never counts as a header label (even with numeric data beneath it)", () => {
+    const rows = [
+      ["", ""],
+      ["10000", "20000"],
+    ];
+    expect(looksLikeHeaderRow(rows)).toBe(false);
   });
 });

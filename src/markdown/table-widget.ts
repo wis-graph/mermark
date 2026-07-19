@@ -1,5 +1,6 @@
 import { WidgetType } from "@codemirror/view";
 import { renderInlineMarkdown } from "./inline-render";
+import { looksNumeric } from "../text/numeric-cell";
 
 /** Split a GFM table row into trimmed cells (strip leading/trailing pipes). */
 function splitRow(line: string): string[] {
@@ -47,6 +48,12 @@ export class TableWidget extends WidgetType {
     headerCells.forEach((cell, i) => {
       const th = document.createElement("th");
       th.appendChild(renderInlineMarkdown(cell));
+      // is-num always reflects the cell's own shape; an explicit align spec
+      // (below) sets an INLINE style, which CSS specificity always beats a
+      // class rule with — so a numeric column can still be forced left/center
+      // by `:---`/`:--:` even though is-num is present (report-style table,
+      // 2026-07-20).
+      if (looksNumeric(cell)) th.classList.add("is-num");
       const a = aligns[i];
       if (a) th.style.textAlign = a;
       htr.appendChild(th);
@@ -61,6 +68,7 @@ export class TableWidget extends WidgetType {
       cells.forEach((cell, i) => {
         const td = document.createElement("td");
         td.appendChild(renderInlineMarkdown(cell));
+        if (looksNumeric(cell)) td.classList.add("is-num"); // see header-cell comment above
         const a = aligns[i];
         if (a) td.style.textAlign = a;
         tr.appendChild(td);
