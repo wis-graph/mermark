@@ -239,7 +239,16 @@ const result = {
   failedRequests: [],
 };
 
-const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();
+// CDP port is overridable (env `CDP_PORT`, default 9222). A long-lived shared
+// automation Chrome degrades: after a renderer crash it can start refusing
+// context management outright ("Browser.setDownloadBehavior: Browser context
+// management is not supported") and, before that, produce screenshot timeouts
+// that look exactly like a product regression — a day-old instance is what
+// made this file's G6 shot appear to hang on BOTH new and old code
+// (2026-07-20). Being able to point a run at a FRESH browser on another port
+// is what tells those two apart, and lets two runs coexist.
+const CDP_PORT = process.env.CDP_PORT ?? "9222";
+const ver = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
 const browser = await chromium.connectOverCDP(ver.webSocketDebuggerUrl);
 const ctx = browser.contexts()[0] ?? (await browser.newContext());
 const page = ctx.pages()[0] ?? (await ctx.newPage());
@@ -285,7 +294,10 @@ page.on("console", (m) => {
 // itself in the JSON report rather than costing another investigation.
 // Recorded, never gated on: `errors` alone still decides pass/fail.
 page.on("response", (r) => {
-  if (!r.ok()) {
+  // 304 = successful cache revalidation, not a failure. Recording it made
+  // the report list 123 "failed" font/asset requests on a warm cache,
+  // burying any real 4xx/5xx in noise.
+  if (!r.ok() && r.status() !== 304) {
     result.failedRequests.push({
       status: r.status(),
       url: r.url(),
@@ -350,6 +362,10 @@ async function checkPanelChrome(page, panelSelector, captionSelector) {
       const bodyRect = body?.getBoundingClientRect() ?? null;
       const bodyContentRect = bodyContent?.getBoundingClientRect() ?? null;
       const captionRect = caption?.getBoundingClientRect() ?? null;
+      // The caption moved OUT of the panel into the app title-bar
+      // (2026-07-19: the title-bar IS the viewer's title bar), so its
+      // containment is measured against that box now.
+      const titleBarRect = document.querySelector(".title-bar")?.getBoundingClientRect() ?? null;
       return {
         // Replaces the R11-era "exactly one .viewer-backdrop" signal: does
         // the pane actually sit where shell.ts's mountViewerPane put it
@@ -366,13 +382,18 @@ async function checkPanelChrome(page, panelSelector, captionSelector) {
           panelRect.bottom <= window.innerHeight &&
           panelRect.right <= window.innerWidth,
         // 4px slack for subpixel rounding — not a tolerance for a real overflow.
-        captionInsidePanel:
-          !panelRect || !captionRect
+        // Same INTENT as the old `captionInsideTitleBar`: the caption is REAL,
+        // visible chrome sitting inside its container instead of spilling.
+        // Only the container changed (panel -> title-bar), so this is
+        // re-pointed, not dropped. A zero-size rect fails too — an invisible
+        // caption must never read as "contained".
+        captionInsideTitleBar:
+          !titleBarRect || !captionRect || captionRect.width === 0 || captionRect.height === 0
             ? false
-            : captionRect.top >= panelRect.top - 4 &&
-              captionRect.bottom <= panelRect.bottom + 4 &&
-              captionRect.left >= panelRect.left - 4 &&
-              captionRect.right <= panelRect.right + 4,
+            : captionRect.top >= titleBarRect.top - 4 &&
+              captionRect.bottom <= titleBarRect.bottom + 4 &&
+              captionRect.left >= titleBarRect.left - 4 &&
+              captionRect.right <= titleBarRect.right + 4,
         // Sanity check: `.viewer-panel-body`'s OWN box (not its content)
         // must sit inside the panel — this is guaranteed by CSS flex-basis
         // math almost by construction (a red herring on its own: a first
@@ -508,15 +529,35 @@ Object.assign(result.g3, await checkPanelChrome(page, ".excel-viewer", ".excel-v
 // <table>, not three disconnected boxes (a symptom of the missing panel
 // chrome — no flex/overflow context to hold the table together).
 result.g3.tableCount = await page.locator(".excel-viewer-table").count();
-// SIZE CONTRACT (04_audit_report.md 재호출 4차): height -> max-height means
-// a 3-row sheet's panel must actually SHRINK to fit its content, not sit in
-// a fixed 640px box with a huge dead-whitespace gutter below the table
-// (the audit's screenshot finding). 640 is the design's max-height cap
-// (min(85vh, 640px)) — well under it proves shrink-to-fit is really
-// happening, not coincidentally landing at the cap.
-result.g3.panelHeight = await page
-  .locator(".excel-viewer")
-  .evaluate((el) => el.getBoundingClientRect().height);
+// SIZE CONTRACT (04_audit_report.md 재호출 4차, RE-POINTED 2026-07-20): a
+// 3-row sheet must not sit in a dead box with a huge whitespace gutter below
+// the table — the audit's screenshot finding, fixed by giving
+// `.excel-viewer-sheet` `flex: 0 1 auto` instead of `flex: 1`.
+//
+// This used to be measured as "the PANEL is well under its 640px max-height
+// cap". The full-pane rewrite DELETED that cap (the panel is now `flex: 1`
+// and fills the editor area by design, ~828px), so the old probe measured a
+// box that no longer expresses the contract and failed on a correct build.
+// The contract itself is unchanged, so it is re-pointed at the box that still
+// owns it: the SHEET must hug its table rather than stretch. A revert to
+// `flex: 1` stretches the sheet to the panel's full height, blowing the gap
+// wide open — exactly the regression this guards.
+const g3Sizes = await page.evaluate(() => {
+  const sheet = document.querySelector(".excel-viewer-sheet");
+  const table = document.querySelector(".excel-viewer-table");
+  const panel = document.querySelector(".excel-viewer");
+  return {
+    sheetHeight: sheet ? sheet.getBoundingClientRect().height : -1,
+    tableHeight: table ? table.getBoundingClientRect().height : -1,
+    panelHeight: panel ? panel.getBoundingClientRect().height : -1,
+  };
+});
+result.g3.panelHeight = g3Sizes.panelHeight; // recorded for context, no longer gated
+result.g3.sheetHeight = g3Sizes.sheetHeight;
+result.g3.tableHeight = g3Sizes.tableHeight;
+// Dead whitespace below the table, in px. Shrink-to-fit keeps this near zero;
+// a stretched sheet in a full-height pane makes it hundreds.
+result.g3.sheetDeadGap = g3Sizes.sheetHeight - g3Sizes.tableHeight;
 
 // ── G6 — truncation caption states the TRUE total, AND the 10,000-row table
 //     stays contained (the real-device regression: a small 3-row sheet never
@@ -1208,7 +1249,7 @@ const pass =
   result.g1.editorHostHidden &&
   result.g1.panelDisplay === "flex" &&
   result.g1.panelInViewport &&
-  result.g1.captionInsidePanel &&
+  result.g1.captionInsideTitleBar &&
   result.g1.bodyContainedInPanel &&
   result.g1.contentContainedInBody &&
   !result.g1.closeButtonOverlapsInteractive &&
@@ -1221,14 +1262,16 @@ const pass =
   result.g3.editorHostHidden &&
   result.g3.panelDisplay === "flex" &&
   result.g3.panelInViewport &&
-  result.g3.captionInsidePanel &&
+  result.g3.captionInsideTitleBar &&
   result.g3.bodyContainedInPanel &&
   result.g3.contentContainedInBody &&
   !result.g3.closeButtonOverlapsInteractive &&
   result.g3.tableCount === 1 &&
-  // SIZE CONTRACT: a 3-row sheet's panel shrinks well under the 640px cap
-  // (height -> max-height fix) instead of sitting in a fixed dead box.
-  result.g3.panelHeight < 640 &&
+  // SIZE CONTRACT: a 3-row sheet's SHEET box hugs its table — no dead
+  // whitespace gutter below it (re-pointed from the deleted 640px panel cap;
+  // 40px covers padding/border, not a stretched box).
+  result.g3.sheetDeadGap >= 0 &&
+  result.g3.sheetDeadGap < 40 &&
   // G4 — don't-stack, REINTERPRETED for the pane shell: exactly one pane.
   result.g4.paneCount === 1 &&
   result.g4.hasExcelViewer &&
@@ -1257,7 +1300,7 @@ const pass =
   result.g7.editorHostHidden &&
   result.g7.panelDisplay === "flex" &&
   result.g7.panelInViewport &&
-  result.g7.captionInsidePanel &&
+  result.g7.captionInsideTitleBar &&
   result.g7.bodyContainedInPanel &&
   result.g7.contentContainedInBody &&
   !result.g7.closeButtonOverlapsInteractive &&
@@ -1278,7 +1321,7 @@ const pass =
   result.g10.editorHostHidden &&
   result.g10.panelDisplay === "flex" &&
   result.g10.panelInViewport &&
-  result.g10.captionInsidePanel &&
+  result.g10.captionInsideTitleBar &&
   result.g10.bodyContainedInPanel &&
   result.g10.contentContainedInBody &&
   !result.g10.closeButtonOverlapsInteractive &&
@@ -1301,7 +1344,7 @@ const pass =
   result.g13.editorHostHidden &&
   result.g13.panelDisplay === "flex" &&
   result.g13.panelInViewport &&
-  result.g13.captionInsidePanel &&
+  result.g13.captionInsideTitleBar &&
   result.g13.bodyContainedInPanel &&
   result.g13.contentContainedInBody &&
   !result.g13.closeButtonOverlapsInteractive &&

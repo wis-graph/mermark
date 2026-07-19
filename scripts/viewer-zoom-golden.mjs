@@ -45,7 +45,12 @@ const out = process.argv[2] ?? "/tmp/viewer-zoom.json";
 const url = process.argv[3] ?? "http://localhost:1430/?file=/mock/vault/index.md";
 const shotBase = out.replace(/\.json$/, "");
 
-const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();
+// CDP port is overridable (env `CDP_PORT`, default 9222) so a run can target a
+// FRESH browser: a long-lived shared automation Chrome degrades after renderer
+// crashes and starts producing infra failures that mimic product regressions
+// (2026-07-20).
+const CDP_PORT = process.env.CDP_PORT ?? "9222";
+const ver = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
 const browser = await chromium.connectOverCDP(ver.webSocketDebuggerUrl);
 const ctx = browser.contexts()[0] ?? (await browser.newContext());
 const page = ctx.pages()[0] ?? (await ctx.newPage());
@@ -105,6 +110,14 @@ async function readZoomState(label) {
       tabFontSize: tab ? getComputedStyle(tab).fontSize : null,
       tableFontSize: table ? getComputedStyle(table).fontSize : null,
       captionFontSize: caption ? getComputedStyle(caption).fontSize : null,
+      // The caption now lives in the TITLE BAR (2026-07-19), beside
+      // 모드/테마/설정. Measuring one of those buttons gives a RELATIVE
+      // reference: the contract is "the filename looks like the chrome it
+      // sits in", which survives a future change to the shared 13px.
+      chromeBtnFontSize: (() => {
+        const b = document.querySelector(".mode-toggle") ?? document.querySelector(".chrome-btn");
+        return b ? getComputedStyle(b).fontSize : null;
+      })(),
       panelFound: !!panel,
       tabFound: !!tab,
     };
@@ -165,6 +178,8 @@ const afterPanel = px(after.panelFontSize);
 const afterTab = px(after.tabFontSize);
 const afterTable = px(after.tableFontSize);
 const afterCaption = px(after.captionFontSize);
+const beforeChromeBtn = px(before.chromeBtnFontSize);
+const afterChromeBtn = px(after.chromeBtnFontSize);
 const teardownPanel = px(teardown.panelFontSize);
 
 const result = {
@@ -176,12 +191,26 @@ const result = {
   beforePanelIs13px: within(beforePanel, 13, 0.05),
   beforeTabIs12_5px: within(beforeTab, 12.5, 0.05),
   beforeTableIs12_5px: within(beforeTable, 12.5, 0.05),
-  beforeCaptionIs12_5px: within(beforeCaption, 12.5, 0.05),
+  // CAPTION CONTRACT (re-pointed 2026-07-20). The caption used to be viewer
+  // chrome inside `.viewer-panel`, so it tracked ⌘± via the 12.5em/13
+  // cascade. It now lives in the TITLE BAR, which is window chrome at a
+  // FIXED 13px — so tracking ⌘± would make the filename the one title-bar
+  // item that grows while every button beside it stays put. The assertion is
+  // therefore relational: match the neighbouring chrome button, and do not
+  // move when ⌘± does. (This caught a real bug: `font: inherit` picked up the
+  // title-bar's 16px default, rendering the filename visibly larger than its
+  // neighbours until `.title-bar-doc-title` pinned 13px/500.)
+  beforeCaptionMatchesChrome:
+    beforeCaption != null && beforeChromeBtn != null && Math.abs(beforeCaption - beforeChromeBtn) < 0.05,
   // scale=1.5: panel 13*1.5=19.5, leaves 12.5*1.5=18.75.
   afterPanelIs19_5px: within(afterPanel, 19.5),
   afterTabIs18_75px: within(afterTab, 18.75),
   afterTableIs18_75px: within(afterTable, 18.75),
-  afterCaptionIs18_75px: within(afterCaption, 18.75),
+  afterCaptionMatchesChrome:
+    afterCaption != null && afterChromeBtn != null && Math.abs(afterCaption - afterChromeBtn) < 0.05,
+  // ...and the caption must NOT track ⌘± at all (its neighbours don't).
+  captionUnaffectedByFontScale:
+    beforeCaption != null && afterCaption != null && beforeCaption === afterCaption,
   // teardown: removing the key restores default (1.0).
   teardownRestoredTo13px: within(teardownPanel, 13, 0.05),
   // The regression this golden exists to catch: BEFORE the font:inherit fix
@@ -203,11 +232,12 @@ result.allPass =
   result.beforePanelIs13px &&
   result.beforeTabIs12_5px &&
   result.beforeTableIs12_5px &&
-  result.beforeCaptionIs12_5px &&
+  result.beforeCaptionMatchesChrome &&
   result.afterPanelIs19_5px &&
   result.afterTabIs18_75px &&
   result.afterTableIs18_75px &&
-  result.afterCaptionIs18_75px &&
+  result.afterCaptionMatchesChrome &&
+  result.captionUnaffectedByFontScale &&
   result.teardownRestoredTo13px &&
   result.panelRespondsToZoom &&
   result.tabRespondsToZoom &&

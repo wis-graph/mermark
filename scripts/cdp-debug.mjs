@@ -11,7 +11,12 @@ import { assertPageRendered } from "./lib/preflight.mjs";
 const url = process.argv[2] ?? "http://localhost:1430/?file=x.md";
 
 // 1. find the CDP socket endpoint Chrome opened
-const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();
+// CDP port is overridable (env `CDP_PORT`, default 9222) so a run can target a
+// FRESH browser: a long-lived shared automation Chrome degrades after renderer
+// crashes and starts producing infra failures that mimic product regressions
+// (2026-07-20).
+const CDP_PORT = process.env.CDP_PORT ?? "9222";
+const ver = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
 const ws = ver.webSocketDebuggerUrl;
 console.log("[cdp] socket:", ws);
 

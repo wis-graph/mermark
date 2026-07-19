@@ -9,7 +9,12 @@
 import { chromium } from "playwright";
 import { assertPageRendered } from "./lib/preflight.mjs";
 
-const ver = await (await fetch("http://127.0.0.1:9222/json/version")).json();
+// CDP port is overridable (env `CDP_PORT`, default 9222) so a run can target a
+// FRESH browser: a long-lived shared automation Chrome degrades after renderer
+// crashes and starts producing infra failures that mimic product regressions
+// (2026-07-20).
+const CDP_PORT = process.env.CDP_PORT ?? "9222";
+const ver = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
 const b = await chromium.connectOverCDP(ver.webSocketDebuggerUrl);
 const p = b.contexts().flatMap((c) => c.pages()).find((pg) => pg.url().includes("1430")) ?? b.contexts().flatMap((c) => c.pages())[0];
 await p.setViewportSize({ width: 1200, height: 1000 });

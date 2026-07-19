@@ -902,6 +902,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    no longer apply to them (they are title-bar chrome, not viewer body text). */
 .title-bar-doc-title {
   display: flex; align-items: center; min-width: 0; flex: 0 1 auto; margin-inline-start: 4px;
+  /* Match `.chrome-btn` EXACTLY (13px / 500). The filename sits among those
+     buttons, so leaving it to inherit the title-bar's 16px default rendered it
+     visibly larger than its neighbours — measured 16px vs 13px (2026-07-20),
+     the opposite of the "뷰어 버튼이 앱 버튼과 같아 보이게" goal this whole
+     title-bar integration exists for. Declared HERE (title-bar chrome), not on
+     `.viewer-panel-caption`, so the caption can keep `font: inherit` and stay
+     out of the viewer px-literal sweep (tests/viewer-zoom.test.ts T2, which
+     scopes to `.viewer-*`). Fixed size on purpose: the title-bar is window
+     chrome and does not track ⌘± body zoom, exactly like every button in it. */
+  font-size: 13px; font-weight: 500;
 }
 .title-bar-viewer-slot { display: flex; align-items: center; flex: none; }
 .viewer-panel-caption {
