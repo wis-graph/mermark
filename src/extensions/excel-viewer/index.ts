@@ -260,9 +260,20 @@ function openExcelViewer(absPath: string): ViewerHandle {
 }
 
 const EXCEL_VIEWER: Viewer = {
-  id: "ext.excel",
-  extensions: ["xlsx", "xls"],
-  label: "Excel 스프레드시트",
+  id: "ext.excel", // NEVER-RENAME (registry.ts) — disabledViewersSetting persists this id
+  // `csv` rides the SAME viewer, not a new one: SheetJS parses CSV into the
+  // identical WorkSheet shape this viewer already renders (one sheet named
+  // "Sheet1"), so a separate viewer would be a second copy of the same
+  // pipeline. Verified against this user's real corpus (59 CSVs: 34 us-ascii,
+  // 25 UTF-8 incl. BOM — zero CP949): BOM is consumed, Korean headers survive,
+  // and date columns render formatted ("1986-01-01") rather than as Excel
+  // serials, because `cellValue` (sheet-to-rows.ts) prefers a cell's `w` and
+  // SheetJS's CSV parser populates it. NOTE: a CP949/EUC-KR CSV would still
+  // mojibake — deliberately NOT handled, since none exist here and a
+  // speculative codepage guess is worse than a visible one (revisit only with
+  // a real failing file).
+  extensions: ["xlsx", "xls", "csv"],
+  label: "스프레드시트 (Excel·CSV)",
   open: openExcelViewer,
 };
 

@@ -118,3 +118,36 @@ describe(".excel-viewer-table CSS: viewer-local zoom via var(--viewer-zoom) (JS-
     expect(match![1]).not.toMatch(/\dpx/);
   });
 });
+
+// CSV rides the SAME viewer as Excel (2026-07-20): SheetJS parses it into the
+// identical WorkSheet shape, so a separate viewer would duplicate the whole
+// pipeline. These pin the registry claim AND the two properties that make
+// sharing safe for real Korean CSVs — a UTF-8 BOM must not leak into the first
+// header cell, and a date column must display formatted (the viewer's
+// `cellValue` prefers `w`), not as a raw Excel serial like 31413.
+describe("CSV support (shares the Excel viewer)", () => {
+  it("registerExcelViewer claims csv alongside xlsx/xls, all resolving to ext.excel", async () => {
+    const { registerExcelViewer } = await import("../src/extensions/excel-viewer/index");
+    const { viewerFor } = await import("../src/chrome/viewer/registry");
+    registerExcelViewer();
+    for (const ext of ["xlsx", "xls", "csv"]) {
+      expect(viewerFor(ext)?.id).toBe("ext.excel");
+    }
+  });
+
+  it("a UTF-8 BOM CSV parses with a clean first header (no BOM leaking into the cell)", () => {
+    const csv = "﻿서포터,후원금액\n달리는감자,145000\n";
+    const wb = XLSX.read(new TextEncoder().encode(csv), { type: "array" });
+    const rows = sheetToRows(XLSX, wb.Sheets[wb.SheetNames[0]]).rows;
+    expect(rows[0][0]).toBe("서포터"); // NOT "﻿서포터"
+    expect(rows[1][0]).toBe("달리는감자");
+  });
+
+  it("a date column renders formatted, not as an Excel serial number", () => {
+    const csv = "observation_date,price\n1986-01-01,22.93\n";
+    const wb = XLSX.read(new TextEncoder().encode(csv), { type: "array" });
+    const rows = sheetToRows(XLSX, wb.Sheets[wb.SheetNames[0]]).rows;
+    expect(rows[1][0]).toBe("1986-01-01");
+    expect(String(rows[1][0])).not.toMatch(/^\d{5}$/); // e.g. "31413"
+  });
+});
