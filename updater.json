@@ -1,11 +1,11 @@
 {
-  "version": "0.9.5",
-  "notes": "### Fixed\n\n- **CSV의 한글이 깨져 보이던 문제**: `카테고리`가 `ì¹´í…Œê³ ë¦¬`처럼 보였다. BOM(파일 앞머리의 인코딩 표식)이 없는 UTF-8 CSV를 표 라이브러리가 옛 서양 인코딩으로 읽어버린 탓이다. 이제 CSV는 **글자로 먼저 해석한 뒤** 표로 넘긴다 — UTF-8을 엄격하게 시도하고, 그게 아닐 때만 CP949(EUC-KR)로 되짚는다.\n  - 이로써 0.9.3에 적어둔 **\"CP949 CSV는 깨져 보인다\"는 한계도 함께 사라졌다.** 두 경우가 한 규칙으로 닫혔다. (0.9.3에서 \"UTF-8은 괜찮다\"고 적었던 건 확인한 파일이 전부 BOM 있는 것이었기 때문이다 — BOM 없는 UTF-8이 사각지대였다.)\n\n### Changed\n\n- **표가 읽기 쉬워졌다** (스프레드시트 뷰어 + 본문 마크다운 표 공통): 세로 격자선을 걷어내고 가로 구분선만 남겼고, 한 줄 걸러 아주 옅은 음영을 넣었다. **숫자 열은 오른쪽 정렬**에 자릿수 폭을 고정해 금액을 위아래로 비교할 수 있다. 파일에 없는 천단위 쉼표를 임의로 만들어 넣지는 않는다 — 엑셀은 셀에 저장된 서식이 곧 표시값이라, 뷰어가 쉼표를 그리면 파일과 다른 걸 보여주게 된다.\n\n### Added\n\n- **표에서 지금 보는 칸이 어디인지 보인다**: 셀에 마우스를 올리면 **그 행과 그 열이 함께** 옅게 강조된다.\n- **스크롤해도 기준이 남는다**: 아래로 내려도 **제목 행**이, 옆으로 밀어도 **행 번호와 첫 열**이 제자리에 고정된다. 제목 행은 \"1행이 열 이름처럼 보이는가\"를 판단해서 잡는다(CSV에는 제목 행이라는 개념 자체가 없어, 무조건 첫 줄로 단정하지 않는다).",
-  "pub_date": "2026-07-19T23:11:06Z",
+  "version": "0.9.6",
+  "notes": "### Added\n\n- **머메이드 다이어그램을 전체화면으로 크게 보기**: 다이어그램에 마우스를 올리면 우측 상단에 전체화면 버튼이 뜨고, 누르면 다이어그램이 **에디터 영역을 꽉 채우는 오버레이**로 크게 열린다(맥 메뉴바·앱 타이틀바·탐색기는 그대로). 그 안에서 드래그로 이동, `Ctrl`+휠·더블클릭으로 확대, 상단 `[−] [+]`로도 확대할 수 있다. `Esc`나 `✕`로 닫으면 원래 화면으로 돌아온다.",
+  "pub_date": "2026-07-21T18:04:56Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzV4L1NUVjRzQ0gzRU5INHFSN1g0aU1Md3NaRVR5K25NMEpPeVRtbjNGTlBYem5HamRHMnBwWTFGVmovUmdjbExKQWZLbjdxL29oTlFkbEhaVjJ6VVF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0NTAyNTU0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ck5EMWZQbUpvOEF6cytGbjdvOFpOcmVxd21haXlRamRPUmplOUkrL0c4cWc5ek9uOW1Vd1ZiUlhReUlNci9LeGw4aGZ4NnpBMWR0RjlWc29hQXNHTENBPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.5/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3dBdmNpVHlXbmgwdjNaL2c2SzJ3c1VIOFpnOWNiajhVUG5MNFZ4cUY2dGhaUllzSERKdkRmeUlXSEkyVWl6dDlUUU9RV2lkdllnN2hieW9WNUl0c3dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0NjU3MDY1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Clh1LzlXeDdFa1hUdE4wVThzUUxDcXF4bFU4eXNzZFlMTEszM0lqT1JjUytUcG1TNUJQR3VpMWcyQkVxYVQ2UmdVNWQrQUg2dmdqSm1WT21UZXREekFBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.6/mermark.app.tar.gz"
     }
   }
 }
