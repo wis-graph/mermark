@@ -3,6 +3,7 @@ import { boundedCache } from "./bounded-cache";
 import { panZoomSetting, themeForceSetting, themeJsonSetting } from "../settings/app";
 import { builtInTheme, type Theme as ThemeJson } from "../settings/theme-schema";
 import type { Theme } from "../theme";
+import { icon } from "../icons";
 
 type Mermaid = typeof import("mermaid").default;
 type MermaidTheme = "dark" | "default";
@@ -133,6 +134,19 @@ const svgCache = boundedCache<string, string>(50);
 
 let idSeq = 0;
 
+/** The single dispatch point for entering mermaid fullscreen: a bubbling
+ *  CustomEvent carrying the diagram's rendered SVG markup (`svg.outerHTML`,
+ *  already themed — self-contained, needs no extra context to redraw). The
+ *  markdown layer must not import chrome (layering rule), so this is the
+ *  widget's entire contribution — chrome/main.ts is the one listener that
+ *  turns it into the actual lightbox, mirroring how `mermaid-rendered`
+ *  already crosses that same boundary. Command (void). */
+function dispatchOpenFullscreen(host: HTMLElement, svg: SVGSVGElement): void {
+  host.dispatchEvent(
+    new CustomEvent("mermaid-open-fullscreen", { bubbles: true, detail: { svgHtml: svg.outerHTML } }),
+  );
+}
+
 // Bumped whenever the theme changes. Mermaid bakes theme colors into the SVG,
 // so a theme switch must re-render every diagram; widgets compare this version
 // in eq() so CM redraws them even though the source code is unchanged.
@@ -230,6 +244,29 @@ export class MermaidWidget extends WidgetType {
     host.innerHTML = svg;
     const el = host.querySelector<SVGSVGElement>("svg");
     if (!el) return;
+    // The fullscreen button lives HERE, not inside attachPanZoom: attachPanZoom
+    // early-returns when panZoomSetting is "off", but fullscreen is a viewer
+    // affordance independent of that setting — it must exist either way.
+    const fullscreenBtn = document.createElement("button");
+    fullscreenBtn.type = "button";
+    fullscreenBtn.className = "cm-mermaid-fullscreen";
+    fullscreenBtn.title = "전체화면";
+    fullscreenBtn.setAttribute("aria-label", "전체화면");
+    fullscreenBtn.appendChild(icon("maximize"));
+    // Swallow the button's own mousedown so a click can't also start a host
+    // pan drag (same reasoning as attachPanZoom's onResetMouseDown below).
+    fullscreenBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+    fullscreenBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      dispatchOpenFullscreen(host, el);
+    });
+    host.appendChild(fullscreenBtn);
+    // No matching cleanup in destroy(): the button and both listeners are
+    // scoped to `host` (never window/document), so when CM discards this host
+    // (re-render/unmount) the button and its listeners are garbage-collected
+    // along with it — unlike attachPanZoom's window mousemove/mouseup, which
+    // DOES need an explicit remove.
+    //
     // CSS transform doesn't change the layout box, so the SVG keeps its natural
     // (or column-capped) size and the host auto-fits it: no height pin needed.
     // Attach the pan/zoom handler synchronously (no laid-out gate required — the
@@ -350,9 +387,19 @@ function updateTransform(
  *  (viewer/image-viewer.ts) reuses this same handler for a plain `<img>`.
  *  The body only ever touches `style.transform`/`getBoundingClientRect`,
  *  which both element kinds support identically, so this is a type
- *  widening only — zero behavior change for the existing mermaid callers. */
-export function attachPanZoom(host: HTMLElement, svg: SVGElement | HTMLImageElement): { destroy(): void } {
-  if (panZoomSetting.get() === "off") return { destroy() {} };
+ *  widening only — zero behavior change for the existing mermaid callers.
+ *
+ *  `opts.force` bypasses the panZoomSetting gate below — the mermaid
+ *  fullscreen lightbox (viewer/mermaid-lightbox.ts) always wants pan/zoom
+ *  regardless of the inline diagram's setting, since precise inspection is
+ *  the entire point of opening fullscreen. Every existing caller omits
+ *  `opts`, so `force` defaults to falsy and behavior is unchanged for them. */
+export function attachPanZoom(
+  host: HTMLElement,
+  svg: SVGElement | HTMLImageElement,
+  opts?: { force?: boolean },
+): { destroy(): void } {
+  if (panZoomSetting.get() === "off" && !opts?.force) return { destroy() {} };
 
   svg.style.transformOrigin = "0 0";
   const state: PanZoomState = { scale: 1, translateX: 0, translateY: 0 };

@@ -98,6 +98,43 @@ describe("openViewerShell: a11y — role=region, NOT role=dialog/aria-modal (des
   });
 });
 
+describe("openViewerShell: caption generalization — absPath?: string + caption?: string", () => {
+  // A file-backed viewer (pdf/excel/image/html/hwp) keeps passing absPath and
+  // must be byte-identical to before this generalization — covered by every
+  // other describe block in this file (all still pass absPath only). This
+  // block covers the NEW half of the contract: a viewer with no backing file
+  // (the mermaid fullscreen lightbox) supplies `caption` instead.
+  it("uses the explicit caption as both the title-bar caption text and the pane's aria-label when absPath is omitted", () => {
+    const shell = openViewerShell({ caption: "다이어그램", paneClass: "mermaid-lightbox", content: document.createElement("div") });
+    const pane = document.querySelector(".viewer-panel") as HTMLElement;
+    const caption = document.querySelector(".viewer-panel-caption") as HTMLElement;
+    expect(pane.getAttribute("aria-label")).toBe("다이어그램");
+    expect(caption.textContent).toBe("다이어그램");
+    shell.close();
+  });
+
+  it("caption wins over a derived basename when both are given", () => {
+    const shell = openViewerShell({
+      absPath: "/vault/report.pdf",
+      caption: "커스텀 제목",
+      paneClass: "pdf-viewer",
+      content: document.createElement("div"),
+    });
+    const caption = document.querySelector(".viewer-panel-caption") as HTMLElement;
+    expect(caption.textContent).toBe("커스텀 제목");
+    shell.close();
+  });
+
+  it("falls back to an empty label when neither absPath nor caption is given (defensive)", () => {
+    const shell = openViewerShell({ paneClass: "mermaid-lightbox", content: document.createElement("div") });
+    const pane = document.querySelector(".viewer-panel") as HTMLElement;
+    const caption = document.querySelector(".viewer-panel-caption") as HTMLElement;
+    expect(pane.getAttribute("aria-label")).toBe("");
+    expect(caption.textContent).toBe("");
+    shell.close();
+  });
+});
+
 describe("openViewerShell: header DOM (design §B/§C)", () => {
   // The viewer renders NO header row: its filename goes to the title-bar's
   // doc-title slot and its controls to the title-bar's viewer slot, as

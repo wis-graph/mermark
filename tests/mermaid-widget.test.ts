@@ -292,6 +292,73 @@ describe("attachPanZoom reset button (explicit return-to-natural-size affordance
   });
 });
 
+describe("MermaidWidget fullscreen button (applySvg's dispatchOpenFullscreen)", () => {
+  beforeEach(() => installRafStub());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    panZoomSetting.set("on");
+  });
+
+  // applySvg is TS-private (compile-time only) — asserting the fullscreen
+  // affordance means exercising it directly with a stub svg string rather
+  // than waiting on the real mermaid.render() (~1.3MB, lazy-loaded), matching
+  // this file's existing "drive attachPanZoom directly" style above.
+  function renderStubSvg(code = "graph TD"): { host: HTMLElement; widget: MermaidWidget } {
+    panZoomSetting.set("on");
+    const widget = new MermaidWidget(code);
+    const host = document.createElement("div");
+    (widget as unknown as { applySvg(host: HTMLElement, svg: string): void }).applySvg(
+      host,
+      '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>',
+    );
+    return { host, widget };
+  }
+
+  it("adds a .cm-mermaid-fullscreen button alongside the rendered svg", () => {
+    const { host } = renderStubSvg();
+    const btn = host.querySelector<HTMLButtonElement>(".cm-mermaid-fullscreen");
+    expect(btn).not.toBeNull();
+    expect(btn?.type).toBe("button");
+  });
+
+  it("adds the fullscreen button even when panZoom is off (independent of that setting)", () => {
+    panZoomSetting.set("off");
+    const widget = new MermaidWidget("graph TD");
+    const host = document.createElement("div");
+    (widget as unknown as { applySvg(host: HTMLElement, svg: string): void }).applySvg(
+      host,
+      '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>',
+    );
+    expect(host.querySelector(".cm-mermaid-fullscreen")).not.toBeNull();
+  });
+
+  it("clicking the button dispatches a bubbling mermaid-open-fullscreen event carrying the svg's outerHTML", () => {
+    const { host } = renderStubSvg();
+    const svg = host.querySelector("svg")!;
+    let captured: CustomEvent<{ svgHtml: string }> | undefined;
+    document.body.appendChild(host); // event must bubble past host to document
+    document.addEventListener("mermaid-open-fullscreen", (e) => {
+      captured = e as CustomEvent<{ svgHtml: string }>;
+    });
+    host.querySelector<HTMLButtonElement>(".cm-mermaid-fullscreen")!.dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(captured).toBeDefined();
+    expect(captured?.detail.svgHtml).toBe(svg.outerHTML);
+    host.remove();
+  });
+
+  it("the button's mousedown is swallowed (does not start a host pan drag)", () => {
+    const { host } = renderStubSvg();
+    const svg = host.querySelector("svg")!;
+    const btn = host.querySelector<HTMLButtonElement>(".cm-mermaid-fullscreen")!;
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 5, clientY: 5 }));
+    const before = svg.getAttribute("style");
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 99, clientY: 99 }));
+    expect(svg.getAttribute("style")).toBe(before);
+  });
+});
+
 describe("MermaidWidget.eq with dimensions", () => {
   it("is equal when code and dims match (px declared)", () => {
     const a = new MermaidWidget("graph TD", { width: 300, height: null });

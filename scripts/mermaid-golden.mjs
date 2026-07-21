@@ -123,7 +123,103 @@ await page
   .screenshot({ path: shot.replace(/\.png$/, ".zoom.png") })
   .catch(() => {});
 
-writeFileSync(out, JSON.stringify({ fp, fpZoom, errors }, null, 2));
-console.log(JSON.stringify({ count: fp.length, fp, fpZoom, errors }, null, 2));
+// ── Fullscreen-lightbox flow (2026-07-22) — a real PASS/FAIL gate, unlike the
+//    geometric fingerprint above. jsdom does no layout and no CM mount over the
+//    editor-host, so the hover-reveal, the lightbox open, and the Esc-restore
+//    can only be proven in a real browser. Each step is a named boolean so a
+//    regression names itself. ─────────────────────────────────────────────────
+const fullscreen = {};
+{
+  // The earlier zoom pass left the first diagram dblclick-zoomed; return it to
+  // rest so the lightbox-opens-at-fit assertion measures a clean baseline.
+  await page.locator(".cm-mermaid").first().dblclick().catch(() => {});
+  await page.waitForTimeout(300);
+
+  const host = page.locator(".cm-mermaid").first();
+
+  // 1) hover reveals the fullscreen button (opacity 0 → >0). Measured on the
+  //    button; before this feature there is no such element at all.
+  await host.hover();
+  await page.waitForTimeout(200);
+  fullscreen.buttonOpacityOnHover = await page
+    .locator(".cm-mermaid-fullscreen")
+    .first()
+    .evaluate((el) => parseFloat(getComputedStyle(el).opacity))
+    .catch(() => null);
+  fullscreen.buttonRevealedOnHover = (fullscreen.buttonOpacityOnHover ?? 0) > 0;
+
+  // 2) clicking it opens the lightbox pane AND hides the editor (the shell's
+  //    hide/restore contract — the diagram takes over the editor content area).
+  await page.locator(".cm-mermaid-fullscreen").first().click({ force: true }).catch(() => {});
+  await page.waitForTimeout(400);
+  const opened = await page.evaluate(() => {
+    const pane = document.querySelector(".mermaid-lightbox");
+    const editor = document.querySelector(".editor-host");
+    const svg = pane?.querySelector(".mermaid-lightbox-stage svg");
+    return {
+      paneExists: !!pane,
+      editorHidden: !!editor && editor.hidden,
+      hasSvg: !!svg,
+      // The open-at-fit fix: the injected svg must carry no leftover inline
+      // transform from the inline diagram's pan/zoom state.
+      svgInlineTransform: svg ? svg.style.transform || "" : null,
+      caption: document.querySelector(".viewer-panel-caption")?.textContent ?? "",
+    };
+  });
+  fullscreen.paneOpened = opened.paneExists;
+  fullscreen.editorHiddenWhileOpen = opened.editorHidden;
+  fullscreen.lightboxHasSvg = opened.hasSvg;
+  fullscreen.opensAtFitNoLeftoverTransform = opened.svgInlineTransform === "";
+  fullscreen.caption = opened.caption;
+
+  // 3) title-bar +/- zoom drives the diagram width (a DIFFERENT property from
+  //    attachPanZoom's transform, so the two coexist — image-viewer pattern).
+  const widthBefore = await page
+    .locator(".mermaid-lightbox-stage svg")
+    .first()
+    .evaluate((el) => el.getBoundingClientRect().width)
+    .catch(() => null);
+  await page.locator(".viewer-panel-zoom-in").first().click().catch(() => {});
+  await page.waitForTimeout(250);
+  const widthAfter = await page
+    .locator(".mermaid-lightbox-stage svg")
+    .first()
+    .evaluate((el) => el.getBoundingClientRect().width)
+    .catch(() => null);
+  fullscreen.zoomInGrewWidth =
+    widthBefore != null && widthAfter != null && widthAfter > widthBefore + 1;
+
+  // 4) Esc closes the pane and RESTORES the editor (hidden → visible).
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  const afterEsc = await page.evaluate(() => {
+    const editor = document.querySelector(".editor-host");
+    return {
+      paneGone: !document.querySelector(".mermaid-lightbox"),
+      editorVisible: !!editor && !editor.hidden,
+    };
+  });
+  fullscreen.paneClosedOnEsc = afterEsc.paneGone;
+  fullscreen.editorRestoredOnEsc = afterEsc.editorVisible;
+}
+
+const fullscreenChecks = [
+  "buttonRevealedOnHover",
+  "paneOpened",
+  "editorHiddenWhileOpen",
+  "lightboxHasSvg",
+  "opensAtFitNoLeftoverTransform",
+  "zoomInGrewWidth",
+  "paneClosedOnEsc",
+  "editorRestoredOnEsc",
+];
+const fullscreenPass = fullscreenChecks.every((k) => fullscreen[k] === true);
+
+writeFileSync(out, JSON.stringify({ fp, fpZoom, fullscreen, errors }, null, 2));
+console.log(JSON.stringify({ count: fp.length, fp, fpZoom, fullscreen, errors }, null, 2));
+console.log("\n=== FULLSCREEN GATE ===");
+for (const k of fullscreenChecks) console.log(`${fullscreen[k] === true ? "✓" : "✗"} ${k}: ${JSON.stringify(fullscreen[k])}`);
+console.log(fullscreenPass ? "\n✓ mermaid-fullscreen PASS" : "\n✗ mermaid-fullscreen FAIL");
 console.log("\nwrote", out, "+", shot);
 await browser.close();
+if (!fullscreenPass) process.exitCode = 1;

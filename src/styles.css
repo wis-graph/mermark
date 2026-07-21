@@ -426,13 +426,22 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    diagrams don't each hold a permanent layer — memory stays bounded (cold-load
    is a first-class constraint). The class drops on reset → will-change auto-off. */
 .cm-mermaid.is-transformed svg { will-change: transform; }
-/* Floating "reset to natural size" button. Absolutely positioned (outside the
-   layout box → host.offsetHeight / CM height map unchanged, ZOOM GUARD). Hidden
-   at rest (opacity 0 + no pointer events); revealed only when the diagram is
-   zoomed/panned via the host's `is-transformed` class. */
-.cm-mermaid-reset { position: absolute; top: .4em; right: .4em; width: 1.6em; height: 1.6em; display: inline-flex; align-items: center; justify-content: center; padding: 0; line-height: 1; background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease, color .12s ease; }
+/* Floating corner buttons (reset-to-natural-size, fullscreen): same look —
+   absolutely positioned (outside the layout box → host.offsetHeight / CM
+   height map unchanged, ZOOM GUARD), hidden at rest (opacity 0 + no pointer
+   events). Shared in one selector so they literally can't drift apart; only
+   POSITION and each one's own reveal trigger differ below. Reset shows only
+   once the diagram is zoomed/panned (`.is-transformed`); fullscreen shows on
+   hover (host `:hover`) — the two hide-conditions are independent, so both
+   can be visible at once, which is why they sit at different corners-offsets
+   (right: 2.4em / .4em) rather than sharing one slot. */
+.cm-mermaid-reset, .cm-mermaid-fullscreen { position: absolute; top: .4em; width: 1.6em; height: 1.6em; display: inline-flex; align-items: center; justify-content: center; padding: 0; line-height: 1; background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease, color .12s ease; }
+.cm-mermaid-reset { right: 2.4em; }
+.cm-mermaid-fullscreen { right: .4em; }
 .cm-mermaid.is-transformed .cm-mermaid-reset { opacity: .6; pointer-events: auto; }
 .cm-mermaid.is-transformed .cm-mermaid-reset:hover { opacity: 1; color: var(--fg); }
+.cm-mermaid:hover .cm-mermaid-fullscreen { opacity: .6; pointer-events: auto; }
+.cm-mermaid:hover .cm-mermaid-fullscreen:hover { opacity: 1; color: var(--fg); }
 .cm-math-block { display: block; padding: .5em 0; text-align: center; }
 .cm-math-inline { padding: 0 .15em; }
 /* blockquote: a left rule + soft tint, kept whether focused or not. */
@@ -973,8 +982,40 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* attachPanZoom's reset button (shared with mermaid) — reposition only, same
    is-transformed show/hide rule as .cm-mermaid. Keyed to .viewer-panel (not
    just .image-viewer) since any future viewer that reuses attachPanZoom
-   inherits the same reposition for free. */
+   inherits the same reposition for free. Reset alone needs the corner here
+   (right: .6em, not the inline .cm-mermaid's 2.4em) since a viewer pane never
+   also shows a fullscreen button beside it — see the next rule. */
 .viewer-panel .cm-mermaid-reset { top: .6em; right: .6em; }
+/* The fullscreen button is an "open bigger" affordance — inside a viewer pane
+   the diagram IS already fullscreen, so the button would have nothing left to
+   do. In practice this button is never even created here (the mermaid
+   fullscreen lightbox injects raw `svg.outerHTML`, not the widget's own host
+   with its button attached) — kept as an explicit belt-and-braces rule, same
+   defensive spirit as image-viewer's onerror fallback, in case that ever
+   changes. */
+.viewer-panel .cm-mermaid-fullscreen { display: none; }
+
+/* Mermaid fullscreen lightbox stage — the same structural role as
+   `.image-viewer-stage` (flex-centered pan/zoom host filling the viewer pane)
+   minus the checkerboard: that's an image-transparency affordance a diagram
+   SVG has no use for (it paints its own opaque background). */
+.mermaid-lightbox-stage {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
+}
+/* flex-shrink: 0 is load-bearing for the −/+ zoom (mermaid-lightbox.ts's
+   applyMermaidZoom): the stage is a flex container, so without it a flex item
+   whose inline `width` exceeds the stage is SHRUNK right back to fit — the
+   zoom sets width:1320px but the svg renders at 1200 (measured, Chrome
+   2026-07-22). With it, a zoomed svg keeps its width and overflows the
+   `overflow:hidden` stage, and attachPanZoom's drag pans around it — the same
+   "enlarge past the pane, drag to see" model the image viewer uses. At fit
+   (factor 1, no inline width) the svg's own width="100%" makes it exactly the
+   stage width, so flex-shrink never has anything to trim. */
+.mermaid-lightbox-stage svg { flex-shrink: 0; max-width: 100%; max-height: 100%; cursor: grab; }
+.mermaid-lightbox-stage svg:active { cursor: grabbing; }
 
 /* HWP/HWPX viewer (built-in, _workspace/01_hwp_viewer.md §4.2): a scrollable
    column of page placeholders, each swapped for an <img src="data:...">

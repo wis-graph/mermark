@@ -182,7 +182,16 @@ function makeZoomController(
  *  modal, and a field name that still said so would be exactly the kind of
  *  drifted promise this codebase's naming discipline forbids). */
 export function openViewerShell(opts: {
-  absPath: string;
+  /** Optional: a file-backed viewer (pdf/excel/image/html/hwp) passes this and
+   *  gets its caption/aria-label derived from the basename, unchanged from
+   *  before this generalization. A non-file viewer (the mermaid fullscreen
+   *  lightbox — there is no path, only a rendered diagram) omits it and
+   *  supplies `caption` directly instead. */
+  absPath?: string;
+  /** Explicit caption text for a viewer with nothing to derive a name from.
+   *  Wins over `absPath` when both are given (neither existing caller passes
+   *  both, so this ordering is untested territory, not a real conflict). */
+  caption?: string;
   /** "pdf-viewer" | "excel-viewer" | ... — an existing or new CSS selector;
    *  paired with the shared `.viewer-panel*` classes below, so this only
    *  needs to carry a viewer's CONTENT-specific styling, not its chrome. */
@@ -190,7 +199,11 @@ export function openViewerShell(opts: {
   content: HTMLElement;
 }): ViewerShell {
   const lastFocused = document.activeElement;
-  const name = basename(opts.absPath);
+  // "The shell needs a label either way" — a file viewer derives one from its
+  // path (the original, sole rule); a viewer with no backing file (mermaid
+  // fullscreen) supplies one directly. Same "what does the caption say"
+  // contract as before, now fed by either of two sources.
+  const name = opts.caption ?? (opts.absPath ? basename(opts.absPath) : "");
   const teardowns: (() => void)[] = [];
 
   const pane = document.createElement("div");

@@ -176,6 +176,12 @@ const PATHS = {
     '<path d="M21 3v5h-5"/>' +
     '<path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>' +
     '<path d="M8 16H3v5"/>',
+  // maximize — mermaid diagram: open fullscreen (four corner brackets pointing out)
+  maximize:
+    '<path d="M8 3H5a2 2 0 0 0-2 2v3"/>' +
+    '<path d="M21 8V5a2 2 0 0 0-2-2h-3"/>' +
+    '<path d="M3 16v3a2 2 0 0 0 2 2h3"/>' +
+    '<path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;

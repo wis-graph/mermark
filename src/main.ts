@@ -80,6 +80,7 @@ import {
 import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./document/file-watch";
 import { openConflictModal } from "./document/conflict/conflict-modal";
 import { openImageViewer } from "./chrome/viewer/image-viewer";
+import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
 import { registerViewer, viewerFor, type Viewer, type ViewerHandle } from "./chrome/viewer/registry";
 import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
@@ -781,6 +782,20 @@ async function boot() {
 
   // ── Window-global wiring (installed ONCE; reads `current` so it always
   //    reaches the live editor after a re-mount). ─────────────────────────────
+
+  // The mermaid widget stays markdown-layer-only (no chrome import) and
+  // instead dispatches this bubbling CustomEvent on a fullscreen-button click
+  // (mermaid-widget.ts's dispatchOpenFullscreen); main is the one listener
+  // that turns it into the chrome-layer lightbox — the same "widget emits,
+  // chrome listens" boundary `mermaid-rendered` already crosses. One
+  // document-level listener covers every mermaid widget across every
+  // document — no per-mount (re)registration needed. Independent of
+  // openViewer/openWithViewer/breadcrumb (file-viewer state above): a
+  // diagram is only clickable while the editor itself is visible, so it can
+  // never open while a file viewer already occupies the content area.
+  document.addEventListener("mermaid-open-fullscreen", (e) => {
+    openMermaidLightbox((e as CustomEvent<{ svgHtml: string }>).detail.svgHtml);
+  });
 
   /** Resolve an external (on-disk) change against the live buffer. The branch
    *  rule lives in decideExternalChange (pure): with no unsaved work the disk
