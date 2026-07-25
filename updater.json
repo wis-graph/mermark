@@ -1,11 +1,15 @@
 {
   "version": "0.9.7",
   "notes": "### Fixed\n\n- **본문 너비 슬라이더가 넓은 모니터(4K 등)에서 이상하던 문제**: 슬라이더가 글자 수 기준이라 화면 폭과 무관하게 동작해, 줄이면 화면 대비 지나치게 좁고 최대로 해도 가로를 다 못 채웠다. 이제 슬라이더는 **창 폭의 %**를 뜻한다 — 최대(100%)에서 창을 꽉 채우고, 최소도 창에 비례해 어떤 모니터·해상도에서든 똑같이 동작한다. (기존에 저장해 둔 값은 그대로 이어진다. 참고: `⌘ +/−` 글자 확대는 이제 본문 컬럼 폭을 넓히지 않고 글자 크기만 키운다 — 컬럼은 창의 고정 비율을 유지.)",
-  "pub_date": "2026-07-25T14:35:34Z",
+  "pub_date": "2026-07-25T14:53:34Z",
   "platforms": {
     "darwin-aarch64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3dseUc0eHdJQUdXeUtib3hEZmF3UE1qcHRxZmNuZGlia0F6N1YvdTBTN1pDUVd5L0ZkVkViYkdSUUxKaldDMm53TVNGblk1aUxINWhZQ2JlUWFES1FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0OTg4NDU3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmhkbjdkZmJSNUlEUmlnai90TFMwaEFIc0lGREU5K0dUeGF1VFFyM3dvK0o3djVtcGRKV2cxR01CSFM1VGFYcWVsVlFvalhkOWxKRlMzTlNlZ3pTS0RnPT0K",
       "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.7/mermark.app.tar.gz"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3k0T0JhRzVqd0p5K2pPZ216SHBKTUxGYis2Z2IvN2RnMEFIMXFIVUM2QW9yeUdBVTY0MDgwakttQW91cVBPWmYwRWN4a3BTUFlDQVlwMlF5V2FwaVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0OTkxMDM2CWZpbGU6bWVybWFya18wLjkuN194NjQtc2V0dXAuZXhlCkV2bzB0NVVrbUFDOWVucnBmWFBXb3FJR0U5ZkhjaHp5TkpqWCtMVGdNanJxT3pWaSs2OXVuaVdFYUJZcXM1VEVuc0NNS2dXblRxSlZ6L005dXBtYkJnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.7/mermark_0.9.7_x64-setup.exe"
     }
   }
 }
