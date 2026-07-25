@@ -217,33 +217,38 @@ export const fontSizeSetting = registerSetting<number>({
   ui: { label: "본문 크기", group: "타이포그래피", control: { kind: "slider", min: 12, max: 24, step: 1, unit: "px" } },
 });
 
-export const READING_WIDTH_MIN_CH = 40; // gradable lower bound (~too narrow below this)
-export const READING_WIDTH_MAX_CH = 90; // gradable upper bound (Butterick: lines get too long past ~75–90)
-const READING_WIDTH_DEFAULT_CH = 68; // Butterick/iA Writer measure (45–75 char range)
+export const READING_WIDTH_MIN_PCT = 40; // gradable lower bound (~too narrow below this, window-relative)
+export const READING_WIDTH_MAX_PCT = 100; // ceiling = the window (editor) width, fully filled
+const READING_WIDTH_DEFAULT_PCT = 68; // Butterick/iA Writer measure translated to a window-relative default
 
-/** The "valid reading measure (ch)" rule (40–90ch) in one named place. parse and
- *  the slider bounds both honor it, so the clamp rule lives once (SSOT) — never
- *  inline Math.min/max scattered around. Same pattern as clampFontScale.
- *  Doubles as the px→ch migration: a px-era saved value (e.g. 820) clamps to the
- *  90ch ceiling, monotonically preserving the user's "wide" intent without a
- *  version flag or a px→ch conversion heuristic. CQS: query, pure. */
+/** The "valid reading measure (% of window width)" rule (40–100%) in one named
+ *  place. parse and the slider bounds both honor it, so the clamp rule lives
+ *  once (SSOT) — never inline Math.min/max scattered around. Same pattern as
+ *  clampFontScale. Doubles as migration: a ch-era saved value (40–90) is a
+ *  number inside this same 40–100 range, so it's reinterpreted as % and lands
+ *  naturally in range; a px-era saved value (e.g. 820) clamps to the 100%
+ *  ceiling, monotonically preserving the user's "wide" intent — no version
+ *  flag or unit-conversion heuristic needed, since both prior ranges overlap
+ *  this one monotonically. CQS: query, pure. */
 export function clampReadingWidth(n: number): number {
-  return Math.min(READING_WIDTH_MAX_CH, Math.max(READING_WIDTH_MIN_CH, n));
+  return Math.min(READING_WIDTH_MAX_PCT, Math.max(READING_WIDTH_MIN_PCT, n));
 }
 
-/** Reading column width in ch → --measure (default 68ch; styles.css caps it with
- *  min(var(--measure), 100%) so a wide ch never overflows a narrow viewport). */
+/** Reading column width as % of the window (editor) width → --measure (default
+ *  68%; window-relative so it reads the same on any monitor/resolution — 100%
+ *  fills the window, unlike the old ch-based measure whose fixed char count
+ *  under- or over-filled a column depending on screen size). */
 export const readingWidthSetting = registerSetting<number>({
   key: "mermark.readingWidth",
-  default: READING_WIDTH_DEFAULT_CH,
+  default: READING_WIDTH_DEFAULT_PCT,
   parse: (raw) => {
     const n = numberParse(raw);
-    return n == null ? null : clampReadingWidth(n); // corrupt → default; px-era value → clamp
+    return n == null ? null : clampReadingWidth(n); // corrupt → default; out-of-range/legacy value → clamp
   },
   ui: {
     label: "본문 너비",
     group: "타이포그래피",
-    control: { kind: "slider", min: READING_WIDTH_MIN_CH, max: READING_WIDTH_MAX_CH, step: 1, unit: "ch" },
+    control: { kind: "slider", min: READING_WIDTH_MIN_PCT, max: READING_WIDTH_MAX_PCT, step: 1, unit: "%" },
   },
 });
 

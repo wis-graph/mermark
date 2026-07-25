@@ -209,28 +209,34 @@ describe("app settings", () => {
     const app = await import("../src/settings/app");
     expect(app.fontSizeSetting.get()).toBe(16); // 1rem base
     expect(app.lineHeightSetting.get()).toBe(1.6);
-    expect(app.readingWidthSetting.get()).toBe(68); // P2: measure is ch-based now
+    expect(app.readingWidthSetting.get()).toBe(68); // P3: measure is %-of-window-based now
     app.fontSizeSetting.set(18);
     expect(localStorage.getItem("mermark.fontSize")).toBe("18");
   });
 
-  it("clampReadingWidth holds the 40–90ch measure rule", async () => {
+  it("clampReadingWidth holds the 40–100% (of window width) measure rule", async () => {
     const { clampReadingWidth } = await import("../src/settings/app");
-    expect(clampReadingWidth(820)).toBe(90); // px-era saved value → clamp-as-migration ceiling
-    expect(clampReadingWidth(30)).toBe(40); // below the floor
+    expect(clampReadingWidth(120)).toBe(100); // px-era saved value → clamp-as-migration ceiling
+    expect(clampReadingWidth(10)).toBe(40); // below the floor
     expect(clampReadingWidth(68)).toBe(68); // inside the range passes through
   });
 
-  it("readingWidthSetting clamps a px-era saved value to the ch ceiling (clamp-as-migration)", async () => {
+  it("readingWidthSetting clamps a px-era saved value to the % ceiling (clamp-as-migration)", async () => {
     localStorage.setItem("mermark.readingWidth", "820"); // a value stored in the px era
     const { readingWidthSetting } = await import("../src/settings/app");
-    expect(readingWidthSetting.get()).toBe(90); // parse routes through clampReadingWidth → 90ch
+    expect(readingWidthSetting.get()).toBe(100); // parse routes through clampReadingWidth → 100%
   });
 
-  it("readingWidthSetting reads an in-range saved ch value over the default", async () => {
-    localStorage.setItem("mermark.readingWidth", "72");
+  it("readingWidthSetting reinterprets a ch-era saved value as % (both ranges overlap monotonically)", async () => {
+    localStorage.setItem("mermark.readingWidth", "72"); // a value stored in the ch era (40–90 range)
     const { readingWidthSetting } = await import("../src/settings/app");
-    expect(readingWidthSetting.get()).toBe(72);
+    expect(readingWidthSetting.get()).toBe(72); // falls inside 40–100 unchanged, now read as 72%
+  });
+
+  it("readingWidthSetting reads an in-range saved % value over the default", async () => {
+    localStorage.setItem("mermark.readingWidth", "80");
+    const { readingWidthSetting } = await import("../src/settings/app");
+    expect(readingWidthSetting.get()).toBe(80);
   });
 
   it("readingWidthSetting falls back to the default on a corrupt saved value", async () => {

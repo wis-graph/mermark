@@ -1,7 +1,7 @@
 import {
   readingWidthSetting,
-  READING_WIDTH_MIN_CH,
-  READING_WIDTH_MAX_CH,
+  READING_WIDTH_MIN_PCT,
+  READING_WIDTH_MAX_PCT,
 } from "../../settings/app";
 
 /** Footer reading-width slider — a compact live control over `readingWidthSetting`
@@ -9,8 +9,8 @@ import {
  *  so dragging here and the settings panel stay coherent — a change from either
  *  re-reflects the other via the shared subscribe). Bounds come from the same
  *  clamp consts the settings control uses, so the range never drifts from the
- *  valid-measure rule. Drag = live set (input event); the bind reflects any
- *  writer back onto the thumb.
+ *  valid-measure rule (40–100% of the window width). Drag = live set (input
+ *  event); the bind reflects any writer back onto the thumb.
  *
  *  Not in the editor measure tree (footer chrome) → zoom-guard holds. */
 export function makeWidthSlider(): { el: HTMLElement } {
@@ -21,15 +21,15 @@ export function makeWidthSlider(): { el: HTMLElement } {
   const input = document.createElement("input");
   input.type = "range";
   input.className = "status-width-slider";
-  input.min = String(READING_WIDTH_MIN_CH);
-  input.max = String(READING_WIDTH_MAX_CH);
+  input.min = String(READING_WIDTH_MIN_PCT);
+  input.max = String(READING_WIDTH_MAX_PCT);
   input.step = "1";
   input.setAttribute("aria-label", "본문 너비");
   wrap.append(input);
 
   // setting → thumb (apply now + on every change, from any writer)
-  readingWidthSetting.bind((ch) => {
-    input.value = String(ch);
+  readingWidthSetting.bind((pct) => {
+    input.value = String(pct);
   });
   // thumb → setting (live while dragging)
   input.addEventListener("input", () => {

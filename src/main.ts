@@ -199,7 +199,8 @@ async function boot() {
   fontScaleSetting.bind(applyFontScale);
   // Typography sinks — one setting.bind(sink) line each, no hand fan-out. These
   // drive CSS vars composed in styles.css (--editor-font-size composes with
-  // --font-scale; --measure caps the reading column; --line-height the leading).
+  // --font-scale; --measure caps the reading column as a % of the window
+  // width; --line-height the leading).
   // --reading-font has a SINGLE writer: webFontSink. The web font (if any) and the
   // font-family select are composed by effectiveReadingFont into {family, stack}
   // and fed to that one sink, so the head <link> + the var never have two writers
@@ -211,7 +212,7 @@ async function boot() {
   webFontSetting.bind(composeReadingFont); // initial + on web-font change
   fontFamilySetting.subscribe(composeReadingFont); // re-compose when the select changes
   fontSizeSetting.bind(cssVarSink("--editor-font-size", (px: number) => `${px}px`));
-  readingWidthSetting.bind(cssVarSink("--measure", (ch: number) => `${ch}ch`));
+  readingWidthSetting.bind(cssVarSink("--measure", (pct: number) => `${pct}%`));
   lineHeightSetting.bind(cssVarSink("--line-height"));
   // Left sidebar width (drag sash): same setting.bind(cssVarSink) shape as the
   // typography vars above. The sash (below, once `workspace` exists) previews

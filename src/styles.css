@@ -46,10 +46,12 @@
   --caret: #ff3b30;
   /* Typography panel vars (SSOT: fontSize/readingWidth/lineHeight settings →
      cssVarSink). Defaults:
-       --editor-font-size 1rem (16px), --measure 68ch, --line-height 1.6.
-     --measure is a char-count measure (Butterick/iA Writer 45–75 char), held as a
-     pure <n>ch number by the sink; .cm-content caps it with min(--measure, 100%)
-     so a wide ch never overflows a narrow viewport.
+       --editor-font-size 1rem (16px), --measure 68%, --line-height 1.6.
+     --measure is a % of the window (editor) width, held as a pure <n>% number
+     by the sink; .cm-content consumes it directly as max-width, so it's
+     already window-relative and never overflows (100% = the full window,
+     unlike the old ch-based measure whose fixed char count under/over-filled
+     a column depending on monitor size).
      ZOOM GUARD: --editor-font-size is composed with --font-scale (⌘± zoom) via
      calc() ONLY on .cm-line / heading lines — never as a fixed font-size on
      .cm-content (that collapses async mermaid/katex widgets to 0 height). */
@@ -63,7 +65,7 @@
      HOSTS (.cm-codeblock/.cm-table), never to .cm-content/.cm-line (which would
      collapse async mermaid/katex widgets to 0 height). */
   --block-font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1));
-  --measure: 68ch;
+  --measure: 68%;
   --line-height: 1.6;
   /* Reading-column font (Typography fontFamily setting). Falls back to the body
      sans stack so the editor inherits --font-sans when no preference is set. */
@@ -218,24 +220,25 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    currently shows (welcome or a mounted document) — no `!important` needed. */
 .editor-host[hidden] { display: none; }
 .cm-editor { height: 100%; }
-/* Center the reading column (width = --measure, a ch count). CM makes .cm-scroller a flex row with the
+/* Center the reading column (width = --measure, a % of the window). CM makes .cm-scroller a flex row with the
    content as its only child, so center via the container with `safe`: if any
    line is wider than the viewport it falls back to flex-start (scrolls) instead
    of clipping the left/start edge. Item `margin: auto` collapses under overflow
    and shoves the column off-screen — don't use it. */
 .cm-scroller { justify-content: safe center; }
-/* P2: --measure is a ch count. We scale it by --font-scale so the reading column
-   widens in step with ⌘± zoom — `ch` here is measured against .cm-content's own
-   (unscaled) font, since the zoom lives on .cm-line, so without this factor the
-   column would stay a fixed width while the text grows, leaving a weird fat
-   margin. min(…,100%) still caps it to the viewport so a zoomed-up column never
-   spills past the window edge. P1: glyph-render hints — all font-size-INERT
+/* P2: --measure is a % of the window (editor) width, so it's already
+   window-relative — no --font-scale multiplication here (unlike the old ch
+   measure, which needed one to keep pace with ⌘± zoom). A % column is a fixed
+   share of the window regardless of font size, which is standard responsive
+   behavior: zooming grows the text, not the column. It never needs a
+   min(…,100%) cap either, since the value is clamped to ≤100% at the source
+   (clampReadingWidth). P1: glyph-render hints — all font-size-INERT
    (smoothing/optical-sizing change glyph rendering, kerning/legibility change
    horizontal advance only). ZOOM GUARD holds: max-width (even a calc) is not
    font-size, so async mermaid/katex widgets never collapse to 0 offsetHeight —
    font-size remains forbidden on .cm-content. */
 .cm-editor .cm-content {
-  max-width: min(calc(var(--measure, 68ch) * var(--font-scale, 1)), 100%);
+  max-width: var(--measure, 68%);
   padding: 2rem 1rem;
   font-family: var(--reading-font, var(--font-sans));
   -webkit-font-smoothing: antialiased;

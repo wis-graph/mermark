@@ -60,16 +60,16 @@ describe("headingScaleSink (one ratio fans six CSS vars)", () => {
   });
 });
 
-describe("cssVarSink (reading width as ch)", () => {
+describe("cssVarSink (reading width as % of window)", () => {
   beforeEach(() => {
     document.documentElement.style.removeProperty("--measure");
   });
 
-  it("formats the reading width as a ch value (P2 measure unit)", () => {
-    // main.ts binds readingWidthSetting → this formatter; lock the ch unit here so
-    // the px→ch unit transition can't silently regress to "68px".
-    cssVarSink<number>("--measure", (ch) => `${ch}ch`)(68);
-    expect(document.documentElement.style.getPropertyValue("--measure")).toBe("68ch");
+  it("formats the reading width as a % value (P3 measure unit)", () => {
+    // main.ts binds readingWidthSetting → this formatter; lock the % unit here so
+    // the ch→% unit transition can't silently regress to "68ch".
+    cssVarSink<number>("--measure", (pct) => `${pct}%`)(68);
+    expect(document.documentElement.style.getPropertyValue("--measure")).toBe("68%");
   });
 });
 

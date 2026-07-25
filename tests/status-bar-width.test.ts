@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { makeWidthSlider } from "../src/chrome/status-bar/width";
 import {
   readingWidthSetting,
-  READING_WIDTH_MIN_CH,
-  READING_WIDTH_MAX_CH,
+  READING_WIDTH_MIN_PCT,
+  READING_WIDTH_MAX_PCT,
 } from "../src/settings/app";
 
 // The footer reading-width slider is a second view onto readingWidthSetting (the
@@ -42,8 +42,8 @@ describe("makeWidthSlider (footer reading-width control)", () => {
   it("uses the shared SSOT bounds (no drift from the valid-measure rule)", () => {
     const { el } = makeWidthSlider();
     const input = el.querySelector("input") as HTMLInputElement;
-    expect(input.min).toBe(String(READING_WIDTH_MIN_CH));
-    expect(input.max).toBe(String(READING_WIDTH_MAX_CH));
+    expect(input.min).toBe(String(READING_WIDTH_MIN_PCT));
+    expect(input.max).toBe(String(READING_WIDTH_MAX_PCT));
   });
 
   it("carries an accessible name", () => {
