@@ -1,15 +1,11 @@
 {
-  "version": "0.9.7",
-  "notes": "### Fixed\n\n- **본문 너비 슬라이더가 넓은 모니터(4K 등)에서 이상하던 문제**: 슬라이더가 글자 수 기준이라 화면 폭과 무관하게 동작해, 줄이면 화면 대비 지나치게 좁고 최대로 해도 가로를 다 못 채웠다. 이제 슬라이더는 **창 폭의 %**를 뜻한다 — 최대(100%)에서 창을 꽉 채우고, 최소도 창에 비례해 어떤 모니터·해상도에서든 똑같이 동작한다. (기존에 저장해 둔 값은 그대로 이어진다. 참고: `⌘ +/−` 글자 확대는 이제 본문 컬럼 폭을 넓히지 않고 글자 크기만 키운다 — 컬럼은 창의 고정 비율을 유지.)",
-  "pub_date": "2026-07-25T14:53:34Z",
+  "version": "0.9.8",
+  "notes": "### Added\n\n- **SQLite 데이터베이스 뷰어**: 탐색기에서 `.sqlite`·`.db`·`.sqlite3`·`.db3` 파일을 클릭하면 **읽기 전용 테이블 브라우저**가 열린다. 데이터베이스 안의 **테이블·뷰가 상단 탭**으로 나열되고(뷰에는 옆에 옅은 \"VIEW\" 배지), 탭을 누르면 해당 테이블의 내용이 표로 뜬다. 큰 테이블도 문제없다 — 파일 전체를 메모리에 올리지 않고 **필요한 만큼만 디스크에서 읽어**, 아래로 스크롤할 때마다 다음 100행씩 이어 붙인다(수백만 행짜리 DB도 즉시 열림). 표는 다른 뷰어와 같은 리포트 스타일(가로줄만·짝수행 얼룩말·숫자 열 우측 정렬·상단 고정 헤더)이고, 빈 칸(`NULL`)은 옅은 이탤릭으로, 바이너리 데이터(BLOB)는 크기 표시로 구분해 보여준다. 헤더의 `[−] [+]`로 표 글자 크기를 조절할 수 있다. **열기만 할 뿐 어떤 경우에도 데이터베이스에 쓰지 않는다**(읽기 전용).\n- **`mermark -v` / `mermark --version`**: 터미널에서 현재 버전을 확인할 수 있다(`mermark 0.9.8`). 창을 띄우지 않고 버전만 출력하고 종료한다.",
+  "pub_date": "2026-07-25T20:06:58Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3dseUc0eHdJQUdXeUtib3hEZmF3UE1qcHRxZmNuZGlia0F6N1YvdTBTN1pDUVd5L0ZkVkViYkdSUUxKaldDMm53TVNGblk1aUxINWhZQ2JlUWFES1FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0OTg4NDU3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmhkbjdkZmJSNUlEUmlnai90TFMwaEFIc0lGREU5K0dUeGF1VFFyM3dvK0o3djVtcGRKV2cxR01CSFM1VGFYcWVsVlFvalhkOWxKRlMzTlNlZ3pTS0RnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.7/mermark.app.tar.gz"
-    },
-    "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3k0T0JhRzVqd0p5K2pPZ216SHBKTUxGYis2Z2IvN2RnMEFIMXFIVUM2QW9yeUdBVTY0MDgwakttQW91cVBPWmYwRWN4a3BTUFlDQVlwMlF5V2FwaVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0OTkxMDM2CWZpbGU6bWVybWFya18wLjkuN194NjQtc2V0dXAuZXhlCkV2bzB0NVVrbUFDOWVucnBmWFBXb3FJR0U5ZkhjaHp5TkpqWCtMVGdNanJxT3pWaSs2OXVuaVdFYUJZcXM1VEVuc0NNS2dXblRxSlZ6L005dXBtYkJnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.7/mermark_0.9.7_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVy9UNWwxQnZzdGpVcjBucUtuQldIUjh4cmhMSWloNkQ5WVR6YStwaHRlamFvUGhUcnBpRnY4NlJOeVdUTzExK01qTWVNY1E5SGJWY04zWHZZWWNjd2c4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDA5Nzc4CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnZsYjE3bHpWSTNHcm02ck1IU2xCaitXS1JmMHE2STRETTREWkhNWStSKzNvZzBOTkRhSHpDMlY0MXgvSWVFV2xlZlkvaHhGMUp3M0pGbmR5Uk5xekJnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.8/mermark.app.tar.gz"
     }
   }
 }
