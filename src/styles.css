@@ -1071,6 +1071,83 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   padding: 8px; color: var(--muted); font-size: 1em;
 }
 
+/* SQLite/.db viewer (built-in, chrome/viewer/sqlite-viewer.ts): a read-only
+   table browser reusing the Excel viewer's REPORT-STYLE table look (no
+   vertical gridlines, horizontal rules only, zebra tbody, bold sticky
+   header, --viewer-zoom-driven font-size) so a spreadsheet and a SQL table
+   read as one visual system — declared HERE rather than imported from
+   src/extensions/excel-viewer: chrome must never reach into an extension
+   (the same fence in the other direction as api-fence.test.ts guards).
+
+   NO width/height/max-* rule on `.sqlite-viewer` itself (full-pane rewrite
+   contract every viewer follows — `.viewer-panel`'s flex:1/min-width:0/
+   min-height:0, above, is the sole size owner). */
+.sqlite-viewer-status { padding: 12px; color: var(--muted); font-size: 1em; }
+.sqlite-viewer-body { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 8px; }
+.sqlite-viewer-tabs { display: flex; flex-wrap: wrap; gap: 4px; overflow-x: auto; flex: none; }
+/* VIEWER ZOOM RULE exception 1 (anchor comment above .viewer-panel): a
+   <button> gets its own UA font-size unless it re-inherits — required here,
+   same as .excel-viewer-tab, or this tab's em fraction stops tracking ⌘±. */
+.sqlite-viewer-tab {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 10px; font: inherit; font-size: calc(12.5em / 13); border-radius: var(--radius-sm, 6px);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  background: var(--surface); color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.sqlite-viewer-tab.is-active { color: var(--fg); border-color: var(--accent, currentColor); }
+/* A view's tab carries a small muted "VIEW" badge (design: "뷰는 시각적으로
+   살짝 구분... 과하지 않게") — smaller than the tab's own label, never a loud
+   color, so it reads as metadata rather than a warning. */
+.sqlite-viewer-badge {
+  font-size: 0.8em; padding: 0 4px; border-radius: var(--radius-sm, 4px);
+  color: var(--muted); background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+/* This viewer's OWN scroll boundary inside the shell's .viewer-panel-body
+   (flex:1/min-height:0/overflow:hidden, above) — same two-layer contract
+   .excel-viewer-sheet/.hwp-viewer-pages use. sqlite-viewer.ts's
+   `nearScrollEnd` reads THIS element's scrollHeight/scrollTop/clientHeight
+   to decide when to fetch the next row page. */
+.sqlite-viewer-sheet {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent); border-radius: var(--radius-md, 8px);
+}
+/* border-collapse: separate (not collapse) + border-spacing: 0, same reason
+   .excel-viewer-table documents: collapse breaks the sticky header below (a
+   collapsed border "belongs" to neither cell, so it doesn't scroll with a
+   sticky cell correctly). */
+.sqlite-viewer-table { border-collapse: separate; border-spacing: 0; font-size: calc(12.5em / 13 * var(--viewer-zoom, 1)); width: 100%; }
+/* Horizontal rules only, via inset box-shadow (not border-bottom, which
+   would double up at every row boundary under border-collapse: separate) —
+   same technique .excel-viewer-table uses. */
+.sqlite-viewer-table th, .sqlite-viewer-table td {
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 5px 10px; text-align: left; white-space: pre;
+}
+.sqlite-viewer-table th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface); color: var(--muted); font-weight: 700; text-align: left;
+}
+.sqlite-viewer-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+/* Numeric right-align — the SAME class/rule `.cm-table`/`.excel-viewer-table`
+   use, so every report-style table in this app aligns numbers identically.
+   sqlite-viewer.ts's `isNumericColumnType` prefers the column's DECLARED
+   type; `looksNumeric` (src/text/numeric-cell.ts) is only the fallback for
+   an untyped column. */
+.sqlite-viewer-table .is-num { text-align: right; font-variant-numeric: tabular-nums; }
+/* NULL vs. an empty-string cell (design: "빈 문자열과 구분되게") — muted +
+   italic marks a REAL SQL NULL; an empty string renders with neither, truly
+   blank. */
+.sqlite-viewer-table .sqlite-viewer-null { color: var(--muted); font-style: italic; }
+/* The backend's "BLOB (N bytes)" placeholder string — monospace + muted so
+   it reads as opaque binary data, not ordinary text. */
+.sqlite-viewer-table .sqlite-viewer-blob { font-family: var(--font-mono); color: var(--muted); }
+.sqlite-viewer-table .sqlite-viewer-loading-row td,
+.sqlite-viewer-table .sqlite-viewer-page-error-row td {
+  text-align: center; color: var(--muted); padding: 8px;
+}
+
 /* Open-by-path input row: a thin bar pinned just above the status bar (lives
    outside #app's scroll host, so no .cm-content/.cm-line involved → ZOOM GUARD
    holds). Hidden until the footer "경로 열기" button toggles it. The input

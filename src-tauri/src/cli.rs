@@ -46,6 +46,18 @@ fn is_stdin_token(arg: &str) -> bool {
     arg == "-"
 }
 
+/// True when argv carries a version flag (`-v` or `--version`), anywhere in
+/// the argument list. This is a *pure query*, deliberately outside
+/// `parse_args`/`is_flag`: `-v` is single-dash, so it would otherwise be
+/// treated as a positional file argument (`is_flag` only recognizes `--`),
+/// and `--version` would just join the pile of silently-ignored unknown
+/// `--xxx` flags. `lib.rs` checks this before any of that parsing runs, so a
+/// version request short-circuits straight to printing and exit — no window,
+/// no file resolution.
+pub fn is_version_flag(args: &[String]) -> bool {
+    args.iter().any(|a| a == "-v" || a == "--version")
+}
+
 /// Split argv into the recognized `--right` flag plus positional file
 /// arguments, then classify the first positional. If it is the stdin token
 /// (`-`) the target is `Target::Stdin` and `resolve_target` is *not* called (no
@@ -301,5 +313,40 @@ mod tests {
         let got = parse_args(&["a.md".into(), "-".into()], &dir).unwrap();
         assert_eq!(got.target, Target::File(dir.join("a.md")));
         fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- is_version_flag ---
+
+    #[test]
+    fn version_flag_matches_long_form() {
+        assert!(is_version_flag(&["--version".into()]));
+    }
+
+    #[test]
+    fn version_flag_matches_short_form() {
+        assert!(is_version_flag(&["-v".into()]));
+    }
+
+    #[test]
+    fn version_flag_matches_at_any_position() {
+        assert!(is_version_flag(&["a.md".into(), "--version".into()]));
+    }
+
+    #[test]
+    fn version_flag_absent_is_false() {
+        assert!(!is_version_flag(&["--right".into(), "a.md".into()]));
+    }
+
+    #[test]
+    fn version_flag_empty_args_is_false() {
+        assert!(!is_version_flag(&[]));
+    }
+
+    #[test]
+    fn version_flag_requires_exact_match() {
+        // Similar-looking tokens must not false-positive: `-vim` isn't `-v`,
+        // and `--versionx` isn't `--version`.
+        assert!(!is_version_flag(&["-vim".into()]));
+        assert!(!is_version_flag(&["--versionx".into()]));
     }
 }

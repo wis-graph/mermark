@@ -1,6 +1,6 @@
 [package]
 name = "mermark"
-version = "0.9.7"
+version = "0.9.8"
 description = "Mermaid + Markdown viewer"
 authors = ["you"]
 edition = "2021"
@@ -40,4 +40,24 @@ rhwp = { git = "https://github.com/edwardkim/rhwp", rev = "93862a4e16df59834ebce
 # declared explicitly. Kept to the one feature we use — this adds no new
 # transitive dependency, since tauri already pulls in full tokio.
 tokio = { version = "1", default-features = false, features = ["time"] }
+# SQLite DB viewer backend (read-only). Unlike sql.js (loads the whole file
+# into a WASM heap -> OOM on a large database), rusqlite lets SQLite read
+# pages straight off disk, so opening a multi-gigabyte database costs only
+# the pages actually touched. `bundled` statically links SQLite into the
+# binary instead of depending on the OS's system libsqlite3 (zero external
+# dependency, ~1-1.5MB heavier binary) — a fixed, known-good SQLite version
+# beats depending on whatever happens to be installed on the user's machine.
+# Pinned to 0.39 rather than the newest 0.40.x: 0.40's `libsqlite3-sys` build
+# script calls the standard library's still-unstable `cfg_select!` macro
+# unconditionally, so it fails to compile on this repo's stable toolchain
+# (rustc 1.92) with "use of unstable library feature `cfg_select`" — a
+# libsqlite3-sys build-script bug, not anything about our code. 0.39 depends
+# on libsqlite3-sys ^0.37, which predates that macro's introduction and
+# builds cleanly; revisit the pin once libsqlite3-sys fixes it upstream.
+# `hooks` enables `Connection::progress_handler`, the in-connection wall-clock
+# interrupt guard `sqlite.rs` installs on every open (see QUERY_TIMEOUT there)
+# — without it, an adversarial database's pathological recursive view (e.g. a
+# VIEW over an infinite `WITH RECURSIVE` CTE) can spin a command thread's CPU
+# forever with no I/O to time out on.
+rusqlite = { version = "=0.39.0", features = ["bundled", "hooks"] }
 

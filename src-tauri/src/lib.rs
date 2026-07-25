@@ -6,6 +6,7 @@ mod bundle;
 pub mod cli;
 mod commands;
 mod hwp;
+mod sqlite;
 mod watcher;
 
 #[cfg(target_os = "macos")]
@@ -191,11 +192,26 @@ fn dispatch_bundle(rest: &[String]) -> ! {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+
+    // `-v`/`--version` short-circuits ahead of every other launch path (even
+    // `bundle`): print the version and exit before any window/webview is
+    // created, same shape as the `bundle` dispatch below. The version string
+    // comes from `CARGO_PKG_VERSION` (Cargo.toml, bumped by release.sh) —
+    // the single source of truth, never duplicated as a hand-written
+    // constant. Console output only reaches a terminal on macOS/Linux; a
+    // Windows release build is `windows_subsystem = "windows"` (no attached
+    // console), the same pre-existing limitation `bundle` already has — the
+    // CLI surface itself is a macOS-first concept.
+    if cli::is_version_flag(&argv) {
+        println!("mermark {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+
     // Headless subcommand split: `mermark bundle <file.md>` prints an LLM bundle
     // and exits before any window/webview is created. The window arg parser
     // never sees the `bundle` token (separation of concerns: subcommand detection
     // here, window args in cli::parse_args).
-    let argv: Vec<String> = std::env::args().skip(1).collect();
     if is_bundle_subcommand(&argv) {
         dispatch_bundle(&argv[1..]); // never returns (always exits)
     }
@@ -223,7 +239,10 @@ pub fn run() {
             commands::unwatch_file,
             hwp::hwp_open,
             hwp::hwp_render_page,
-            hwp::hwp_close
+            hwp::hwp_close,
+            sqlite::sqlite_tables,
+            sqlite::sqlite_table_info,
+            sqlite::sqlite_rows
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

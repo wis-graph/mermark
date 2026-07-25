@@ -159,6 +159,69 @@ function normalizeMockPath(path: string): string {
   return "/" + out.join("/");
 }
 
+// --- SQLite DB viewer (native rusqlite backend, read-only) ---
+
+/** Fixed per-table schema for the mock's SQLite fixture (demo.sqlite):
+ *  columns/columnTypes/rowCount, mirroring the real `sqlite_table_info`'s
+ *  camelCase serde shape exactly (`columnTypes`/`rowCount` — the fixed IPC
+ *  contract `sqlite-viewer.ts` reads). `users` is deliberately larger than
+ *  the viewer's 100-row page size so scroll-pagination is exercised by the
+ *  golden; `orders` and `active_users` (a view) stay small so a single
+ *  no-scroll tab is also covered. There is no real SQLite file behind this
+ *  — unlike report.xlsx/sample.html, these commands never read file bytes,
+ *  they're dispatched purely by `table` name, so no fixture bytes need to
+ *  be served by Vite's browser-mode publicDir. */
+const SQLITE_SCHEMA: Record<string, { columns: string[]; columnTypes: string[]; rowCount: number }> = {
+  users: {
+    columns: ["id", "name", "email", "age", "created"],
+    columnTypes: ["INTEGER", "TEXT", "TEXT", "INTEGER", "TEXT"],
+    rowCount: 250, // > the 100-row page size, so scroll-pagination is exercised
+  },
+  orders: {
+    columns: ["id", "user_id", "total", "placed_at", "receipt"],
+    columnTypes: ["INTEGER", "INTEGER", "REAL", "TEXT", "BLOB"],
+    rowCount: 12,
+  },
+  active_users: {
+    columns: ["id", "name", "email"],
+    columnTypes: ["INTEGER", "TEXT", "TEXT"],
+    rowCount: 5,
+  },
+};
+
+/** One synthetic row for `table` at zero-based index `i`, as the
+ *  `(string | null)[]` shape the real `sqlite_rows` returns: a NULL cell
+ *  every few rows, an integer/real rendered as a display string (never a
+ *  JSON number), and — on "orders" — a BLOB cell rendered as the same
+ *  `"BLOB ({n} bytes)"` placeholder the real backend produces. Enough
+ *  variety for the viewer's per-column-type rendering (NULL styling, right-
+ *  aligned numeric columns, BLOB text) to be exercised without a real
+ *  rusqlite connection. */
+function mockSqliteRow(table: string, i: number): (string | null)[] {
+  switch (table) {
+    case "users":
+      return [
+        String(i + 1),
+        `User ${i + 1}`,
+        i % 6 === 5 ? null : `user${i + 1}@example.com`,
+        String(20 + (i % 50)),
+        `2024-${String((i % 12) + 1).padStart(2, "0")}-01`,
+      ];
+    case "orders":
+      return [
+        String(i + 1),
+        i % 4 === 3 ? null : String((i % 5) + 1),
+        (9.99 + i).toFixed(2),
+        `2024-06-${String((i % 28) + 1).padStart(2, "0")}`,
+        i % 3 === 0 ? `BLOB (${12 + i} bytes)` : null,
+      ];
+    case "active_users":
+      return [String(i + 1), `Active ${i + 1}`, `active${i + 1}@example.com`];
+    default:
+      return [];
+  }
+}
+
 // --- HWP/HWPX viewer (native rhwp backend, _workspace/01_hwp_viewer.md) ---
 
 // Page count for the mock's "normal" HWP fixture (sample.hwp). Fixed so
@@ -283,6 +346,12 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
           // this TREE entry only makes the row visible/openable in the
           // explorer. "guide.pdf" (above) is the 25-page fixture for G14.
           { name: "sample.pdf", path: "/mock/vault/sample.pdf", is_dir: false },
+          // SQLite viewer golden: the positive fixture. Unlike report.xlsx/
+          // sample.html, the sqlite_* commands never read file bytes (they're
+          // dispatched purely by the `table` arg against SQLITE_SCHEMA above),
+          // so no bytes need to be served by Vite's publicDir — this TREE
+          // entry only makes the row visible/openable in the explorer.
+          { name: "demo.sqlite", path: "/mock/vault/demo.sqlite", is_dir: false },
         ],
         "/mock/vault/notes": [
           { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },
@@ -361,6 +430,43 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // Mirrors the real `hwp_close(state)`: idempotent, no return value.
       console.info("[mock] hwp_close");
       return undefined as T;
+    case "sqlite_tables": {
+      // Mirrors the real `sqlite_tables(path) -> Result<Vec<SqliteObject>>`:
+      // tables first, then views, each group alphabetical. Deterministic and
+      // independent of `path` (the mock has no real file to scan).
+      console.info("[mock] sqlite_tables", a.path);
+      return [
+        { name: "orders", kind: "table" },
+        { name: "users", kind: "table" },
+        { name: "active_users", kind: "view" },
+      ] as T;
+    }
+    case "sqlite_table_info": {
+      // Mirrors the real `sqlite_table_info(path, table) -> Result<SqliteTableInfo>`
+      // (camelCase `columnTypes`/`rowCount`, per the fixed contract).
+      const table = String(a.table ?? "");
+      const info = SQLITE_SCHEMA[table];
+      console.info("[mock] sqlite_table_info", a.path, table);
+      if (!info) throw `table not found: ${table}`;
+      return { columns: info.columns, columnTypes: info.columnTypes, rowCount: info.rowCount } as T;
+    }
+    case "sqlite_rows": {
+      // Mirrors the real `sqlite_rows(path, table, limit, offset) ->
+      // Result<Vec<Vec<Option<String>>>>`: a real LIMIT/OFFSET slice of the
+      // table's synthetic rows, empty once `offset` reaches `rowCount` — so
+      // the frontend's "stop requesting more pages" logic has a real signal
+      // to react to, not just an ever-repeating mock.
+      const table = String(a.table ?? "");
+      const limit = Number(a.limit ?? 0);
+      const offset = Number(a.offset ?? 0);
+      const info = SQLITE_SCHEMA[table];
+      console.info("[mock] sqlite_rows", a.path, table, limit, offset);
+      if (!info || offset >= info.rowCount) return [] as T;
+      const end = Math.min(offset + limit, info.rowCount);
+      const rows: (string | null)[][] = [];
+      for (let i = offset; i < end; i++) rows.push(mockSqliteRow(table, i));
+      return rows as T;
+    }
     case "path_exists":
       return true as T;
     case "open_path": {

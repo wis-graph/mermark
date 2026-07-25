@@ -82,6 +82,7 @@ import { openConflictModal } from "./document/conflict/conflict-modal";
 import { openImageViewer } from "./chrome/viewer/image-viewer";
 import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
+import { registerSqliteViewer } from "./chrome/viewer/sqlite-viewer";
 import { registerViewer, viewerFor, type Viewer, type ViewerHandle } from "./chrome/viewer/registry";
 import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
 import { icon, type IconName } from "./icons";
@@ -382,6 +383,10 @@ async function boot() {
   // rather than an extension because it needs 3 new Tauri commands, and R11's
   // extension contract is "frontend only, zero new IPC" (design §5).
   registerHwpViewer();
+  // The built-in SQLite/.db viewer — built-in for the same reason HWP is
+  // (3 new Tauri commands: sqlite_tables/sqlite_table_info/sqlite_rows; R11's
+  // extension contract is "frontend only, zero new IPC").
+  registerSqliteViewer();
 
   /** "Which registered viewer, if any, opens this filename?" — the single
    *  rule canOpenWithViewer/openWithViewer both derive from, so they can

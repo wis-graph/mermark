@@ -269,6 +269,14 @@ const result = {
   // table follow-up) — see the scenario block near the end of this file for
   // both.
   g20: {}, g21: {},
+  // G22 (SQLite/DB viewer, team-lead follow-up — see the scenario block
+  // right after G14 below): the one thing tests/sqlite-viewer.test.ts's
+  // synthetic `sheet.dispatchEvent(new Event("scroll"))` cannot prove — that
+  // a REAL scrollTop write in a REAL layout actually fires
+  // sqlite-viewer.ts's `onScroll` -> `loadNextPage` and appends the next
+  // page of rows, the same class of jsdom-blind-spot G14 closed for the PDF
+  // viewer's lazy render.
+  g22: {},
   errors: [],
   failedRequests: [],
 };
@@ -913,6 +921,68 @@ await page.waitForTimeout(200);
 result.g14.paneCountAfterEsc = await page.locator(".main-column > .viewer-panel").count();
 result.g14.editorStillResponsive = await page.evaluate(() => !!document.querySelector(".cm-content"));
 
+// ── G22 — SQLite/DB viewer (built-in, src/chrome/viewer/sqlite-viewer.ts):
+//     tab strip + VIEW badge, first-tab render (a table that carries BOTH a
+//     BLOB placeholder cell and a NULL cell), and REAL scroll-triggered
+//     pagination. The mock (src/mocks/tauri-core.ts) is dispatched purely by
+//     table name, tables-then-views order: [orders(table), users(table),
+//     active_users(view)] — orders (rowCount 12) fits on one page and is the
+//     tab active by default; users (rowCount 250, page size 100) is the one
+//     big enough to need a second/third page, so it is the scroll target.
+await rowFor("/mock/vault/demo.sqlite").click();
+await page.waitForTimeout(500); // sqlite_tables -> renderDatabase -> first tab's sqlite_table_info + sqlite_rows
+
+result.g22.hasSqliteViewer = (await page.locator(".sqlite-viewer").count()) > 0;
+result.g22.tabCount = await page.locator(".sqlite-viewer-tab").count();
+result.g22.viewBadgeCount = await page.locator(".sqlite-viewer-badge").count();
+
+// First tab (orders) is active on open — its header + only page (rowCount
+// 12, under the 100-row page size) must be on screen, with both a BLOB
+// placeholder (`.sqlite-viewer-blob`, receipt column, every 3rd row) and a
+// NULL cell (`.sqlite-viewer-null`, user_id column, every 4th row) present —
+// orders is the one fixture table that produces both in a single page.
+result.g22.headerCols = await page.locator(".sqlite-viewer-table thead th").count();
+result.g22.ordersRowCount = await page.locator(".sqlite-viewer-table tbody tr").count();
+result.g22.hasBlobCell = (await page.locator(".sqlite-viewer-blob").count()) > 0;
+result.g22.hasNullCell = (await page.locator(".sqlite-viewer-null").count()) > 0;
+
+Object.assign(result.g22, await checkPanelChrome(page, ".sqlite-viewer", ".sqlite-viewer-caption"));
+
+// Switch to "users" (tab index 1, rowCount 250) — the only fixture table
+// large enough to exercise lazy pagination (orders/active_users both fit on
+// one page and would never need a second sqlite_rows call).
+const sqliteTabs = page.locator(".sqlite-viewer-tab");
+await sqliteTabs.nth(1).click();
+await page.waitForTimeout(400);
+result.g22.initialRowCount = await page.locator(".sqlite-viewer-table tbody tr").count();
+
+// Walk the REAL scroll container down in steps (G14's technique, applied to
+// a real <div> scrollHeight instead of an IntersectionObserver root) — a
+// single jump to scrollTop=scrollHeight can land past nearScrollEnd's
+// threshold in one paint without the scroll handler ever seeing an
+// intermediate frame, so this steps down the way a real user's scroll would.
+const sqliteSheet = page.locator(".sqlite-viewer-sheet");
+const SQLITE_SCROLL_STEPS = 6;
+for (let i = 1; i <= SQLITE_SCROLL_STEPS; i++) {
+  const frac = i / SQLITE_SCROLL_STEPS;
+  await sqliteSheet.evaluate((el, f) => {
+    el.scrollTop = el.scrollHeight * f;
+  }, frac);
+  await page.waitForTimeout(250);
+}
+await page.waitForTimeout(300);
+result.g22.afterScrollRowCount = await page.locator(".sqlite-viewer-table tbody tr").count();
+
+await page.screenshot({ path: out.replace(/\.json$/, ".g22-sqlite-viewer.png") });
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+result.g22.paneClosedOnEsc = (await page.locator(".main-column > .viewer-panel").count()) === 0;
+result.g22.editorHostRestoredAfterEsc = await page
+  .locator(".editor-host")
+  .first()
+  .evaluate((el) => el.hidden === false);
+
 // ── G16 — layout/restore (plan's "G15") ─────────────────────────────────────
 // Give the editor a real, non-zero scroll position first — a "scroll
 // preserved" claim at scrollTop=0 would be vacuously true.
@@ -1482,6 +1552,32 @@ const pass =
   result.g14.page1CanvasEvicted &&
   result.g14.paneCountAfterEsc === 0 &&
   result.g14.editorStillResponsive &&
+  // G22 — SQLite/DB viewer: 3 tabs (tables-then-views), exactly one VIEW
+  // badge (active_users), the default tab (orders) renders its full 5-column
+  // header with both a BLOB and a NULL cell, shell chrome contract holds,
+  // and — the core of this gate — a REAL scroll on the users tab (250 rows,
+  // page size 100) actually grows past the first page instead of staying
+  // stuck at it (the exact regression a real layout, not jsdom's synthetic
+  // dispatchEvent, can catch).
+  result.g22.hasSqliteViewer &&
+  result.g22.tabCount === 3 &&
+  result.g22.viewBadgeCount === 1 &&
+  result.g22.headerCols === 5 &&
+  result.g22.hasBlobCell &&
+  result.g22.hasNullCell &&
+  result.g22.paneMountedAsEditorHostSibling &&
+  result.g22.editorHostHidden &&
+  result.g22.panelDisplay === "flex" &&
+  result.g22.panelInViewport &&
+  result.g22.captionInsideTitleBar &&
+  result.g22.bodyContainedInPanel &&
+  result.g22.contentContainedInBody &&
+  !result.g22.closeButtonOverlapsInteractive &&
+  result.g22.initialRowCount <= 100 &&
+  result.g22.afterScrollRowCount > result.g22.initialRowCount &&
+  result.g22.afterScrollRowCount > 100 &&
+  result.g22.paneClosedOnEsc === true &&
+  result.g22.editorHostRestoredAfterEsc &&
   // G16 — layout/restore (plan's "G15"): chrome never moves, pane fills the
   // editor slot, Esc restores the editor with scroll intact, and the
   // welcome-screen round trip proves `.editor-host[hidden]` really beats
