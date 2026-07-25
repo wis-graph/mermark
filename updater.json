@@ -1,11 +1,11 @@
 {
-  "version": "0.9.6",
-  "notes": "### Added\n\n- **머메이드 다이어그램을 전체화면으로 크게 보기**: 다이어그램에 마우스를 올리면 우측 상단에 전체화면 버튼이 뜨고, 누르면 다이어그램이 **에디터 영역을 꽉 채우는 오버레이**로 크게 열린다(맥 메뉴바·앱 타이틀바·탐색기는 그대로). 그 안에서 드래그로 이동, `Ctrl`+휠·더블클릭으로 확대, 상단 `[−] [+]`로도 확대할 수 있다. `Esc`나 `✕`로 닫으면 원래 화면으로 돌아온다.",
-  "pub_date": "2026-07-21T18:04:56Z",
+  "version": "0.9.7",
+  "notes": "### Fixed\n\n- **본문 너비 슬라이더가 넓은 모니터(4K 등)에서 이상하던 문제**: 슬라이더가 글자 수 기준이라 화면 폭과 무관하게 동작해, 줄이면 화면 대비 지나치게 좁고 최대로 해도 가로를 다 못 채웠다. 이제 슬라이더는 **창 폭의 %**를 뜻한다 — 최대(100%)에서 창을 꽉 채우고, 최소도 창에 비례해 어떤 모니터·해상도에서든 똑같이 동작한다. (기존에 저장해 둔 값은 그대로 이어진다. 참고: `⌘ +/−` 글자 확대는 이제 본문 컬럼 폭을 넓히지 않고 글자 크기만 키운다 — 컬럼은 창의 고정 비율을 유지.)",
+  "pub_date": "2026-07-25T14:35:34Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3dBdmNpVHlXbmgwdjNaL2c2SzJ3c1VIOFpnOWNiajhVUG5MNFZ4cUY2dGhaUllzSERKdkRmeUlXSEkyVWl6dDlUUU9RV2lkdllnN2hieW9WNUl0c3dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0NjU3MDY1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Clh1LzlXeDdFa1hUdE4wVThzUUxDcXF4bFU4eXNzZFlMTEszM0lqT1JjUytUcG1TNUJQR3VpMWcyQkVxYVQ2UmdVNWQrQUg2dmdqSm1WT21UZXREekFBPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.6/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3dseUc0eHdJQUdXeUtib3hEZmF3UE1qcHRxZmNuZGlia0F6N1YvdTBTN1pDUVd5L0ZkVkViYkdSUUxKaldDMm53TVNGblk1aUxINWhZQ2JlUWFES1FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0OTg4NDU3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmhkbjdkZmJSNUlEUmlnai90TFMwaEFIc0lGREU5K0dUeGF1VFFyM3dvK0o3djVtcGRKV2cxR01CSFM1VGFYcWVsVlFvalhkOWxKRlMzTlNlZ3pTS0RnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.7/mermark.app.tar.gz"
     }
   }
 }
