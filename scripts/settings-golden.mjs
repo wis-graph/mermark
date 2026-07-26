@@ -213,10 +213,118 @@ const viewerToggleState = {
 await page.click(".settings-close");
 await page.waitForTimeout(200);
 
+// ── showHiddenFilesSetting (_workspace/01_hidden_toggle_design.md) ─────────
+// New "탐색기" category, 3-step round trip (same shape as the conceal/reveal
+// 3-step assertions elsewhere): default OFF (dotfiles absent) → ON (dotfiles
+// present, subscribe sink → explorer.refreshListing() proven) → back OFF
+// (regression guard). Reload onto a MOCK-VAULT-rooted doc first — the
+// dotfile fixtures (.hidden-note.md, .config/) only exist under /mock/vault
+// in the browser mock's TREE (src/mocks/tauri-core.ts), not under the
+// default `x.md` this script otherwise drives. `mermark.showHiddenFiles` is
+// untouched by every scenario above, so its localStorage value is still
+// unset here — the true cold-boot default, not a reset.
+await page.goto("http://localhost:1430/?file=/mock/vault/index.md", {
+  waitUntil: "networkidle",
+  timeout: 15000,
+});
+await page.waitForTimeout(500);
+await assertPageRendered(page, { context: "settings-golden (hidden-toggle)" });
+
+const rowFor = (path) => page.locator(`.explorer-item[data-path="${path}"]`);
+const HIDDEN_NOTE = "/mock/vault/.hidden-note.md";
+const HIDDEN_DIR = "/mock/vault/.config";
+
+await page.click(".explorer-btn");
+await page.waitForTimeout(300);
+
+async function clickShowHiddenSeg(segLabel) {
+  await page.evaluate((segLabel) => {
+    const rows = Array.from(document.querySelectorAll(".settings-row"));
+    const row = rows.find(
+      (r) => r.querySelector(".settings-row-label")?.textContent?.trim() === "숨김 파일 표시",
+    );
+    const btn = Array.from(row.querySelectorAll(".settings-seg-btn")).find(
+      (b) => b.textContent === segLabel,
+    );
+    btn.click();
+  }, segLabel);
+  await page.waitForTimeout(150);
+}
+
+async function openExplorerCategory() {
+  await page.click(".settings-btn");
+  await page.waitForTimeout(200);
+  const cats = await page.$$(".settings-cat");
+  for (const b of cats) {
+    const text = await b.textContent();
+    if (text?.trim() === "탐색기") {
+      await b.click();
+      break;
+    }
+  }
+  await page.waitForTimeout(200);
+}
+
+const hiddenToggleStates = [];
+
+// ① default (off, no prior write): dotfile rows absent.
+hiddenToggleStates.push({
+  label: "default-off",
+  lsShowHidden: await page.evaluate(() => localStorage.getItem("mermark.showHiddenFiles")),
+  hiddenNoteCount: await rowFor(HIDDEN_NOTE).count(),
+  hiddenDirCount: await rowFor(HIDDEN_DIR).count(),
+});
+
+// ② settings modal → 탐색기 category → "켜기" → close → dotfile rows appear
+//    (proves the subscribe sink drove explorer.refreshListing(), not just a
+//    localStorage write).
+await openExplorerCategory();
+await clickShowHiddenSeg("켜기");
+const lsAfterOn = await page.evaluate(() => localStorage.getItem("mermark.showHiddenFiles"));
+await page.click(".settings-close");
+await page.waitForTimeout(200);
+
+hiddenToggleStates.push({
+  label: "after-on",
+  lsShowHidden: lsAfterOn,
+  hiddenNoteCount: await rowFor(HIDDEN_NOTE).count(),
+  hiddenDirCount: await rowFor(HIDDEN_DIR).count(),
+});
+
+// ③ "끄기" → dotfile rows disappear again (round-trip regression guard).
+await openExplorerCategory();
+await clickShowHiddenSeg("끄기");
+const lsAfterOff = await page.evaluate(() => localStorage.getItem("mermark.showHiddenFiles"));
+await page.click(".settings-close");
+await page.waitForTimeout(200);
+
+hiddenToggleStates.push({
+  label: "after-off",
+  lsShowHidden: lsAfterOff,
+  hiddenNoteCount: await rowFor(HIDDEN_NOTE).count(),
+  hiddenDirCount: await rowFor(HIDDEN_DIR).count(),
+});
+
+const hiddenToggleState = {
+  states: hiddenToggleStates,
+  roundTrips:
+    (hiddenToggleStates[0].lsShowHidden === null || hiddenToggleStates[0].lsShowHidden === "off") &&
+    hiddenToggleStates[0].hiddenNoteCount === 0 &&
+    hiddenToggleStates[0].hiddenDirCount === 0 &&
+    hiddenToggleStates[1].lsShowHidden === "on" &&
+    hiddenToggleStates[1].hiddenNoteCount === 1 &&
+    hiddenToggleStates[1].hiddenDirCount === 1 &&
+    hiddenToggleStates[2].lsShowHidden === "off" &&
+    hiddenToggleStates[2].hiddenNoteCount === 0 &&
+    hiddenToggleStates[2].hiddenDirCount === 0,
+};
+
 writeFileSync(
   out,
-  JSON.stringify({ states, headingStates, viewerToggleState, errors }, null, 2),
+  JSON.stringify({ states, headingStates, viewerToggleState, hiddenToggleState, errors }, null, 2),
 );
-console.log(JSON.stringify({ states, headingStates, viewerToggleState, errors }, null, 2));
+console.log(
+  JSON.stringify({ states, headingStates, viewerToggleState, hiddenToggleState, errors }, null, 2),
+);
 console.log("\nwrote", out);
 await browser.close();

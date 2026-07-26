@@ -289,18 +289,29 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       ] as T;
     }
     case "list_dir": {
-      // Mirrors the real `list_dir(path) -> Result<Vec<DirEntry>>`: the immediate
-      // children (one level) of `path`, folders first then name, hidden/artifact
-      // entries excluded. The browser has no real FS, so the lazy tree is faked
-      // with a deterministic per-path lookup — nested hover walks the table.
-      // Parent (`..`) resolution is folded by normalizeMockPath, mirroring the
+      // Mirrors the real `list_dir(path, show_hidden) -> Result<Vec<DirEntry>>`:
+      // the immediate children (one level) of `path`, folders first then name,
+      // mermark artifacts always excluded, dotfiles excluded unless showHidden.
+      // The browser has no real FS, so the lazy tree is faked with a
+      // deterministic per-path lookup — nested hover walks the table. Parent
+      // (`..`) resolution is folded by normalizeMockPath, mirroring the
       // backend's normalize_path so `${root}/..` lands on the parent key.
       // `is_dir` stays snake_case to match the Rust serde shape. Roots align with
       // the golden's `?file=/mock/vault/index.md` entry point.
+      const showHidden = a.showHidden === true;
       const norm = normalizeMockPath(String(a.path ?? ""));
       const TREE: Record<string, DirEntry[]> = {
         "/mock/vault": [
+          // .config sorts first within the folder group (ascii '.' < letters),
+          // matching the real backend's dir_entry_sort_key. Dotfile — filtered
+          // below unless showHidden. Never add a `*.mermark-tmp.*`/
+          // `*.mermark-recovered` row here: the artifact-exclusion invariant is
+          // expressed by ABSENCE in this mock (filter can't un-invariant it),
+          // mirroring commands.rs's unconditional `is_mermark_artifact` check.
+          { name: ".config", path: "/mock/vault/.config", is_dir: true },
           { name: "notes", path: "/mock/vault/notes", is_dir: true },
+          // .hidden-note.md sorts first within the file group, same reason.
+          { name: ".hidden-note.md", path: "/mock/vault/.hidden-note.md", is_dir: false },
           { name: "index.md", path: "/mock/vault/index.md", is_dir: false },
           { name: "logo.svg", path: "/mock/vault/logo.svg", is_dir: false },
           { name: "data.json", path: "/mock/vault/data.json", is_dir: false },
@@ -356,13 +367,17 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
         "/mock/vault/notes": [
           { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },
         ],
+        // Empty so expanding .config while showHidden=on doesn't error.
+        "/mock/vault/.config": [],
         "/mock": [
           // `..` from /mock/vault lands here — the parent listing.
           { name: "vault", path: "/mock/vault", is_dir: true },
         ],
       };
-      console.info("[mock] list_dir", a.path, "->", norm);
-      return (TREE[norm] ?? []) as T;
+      const entries = TREE[norm] ?? [];
+      const result = showHidden ? entries : entries.filter((e) => !e.name.startsWith("."));
+      console.info("[mock] list_dir", a.path, "showHidden", showHidden, "->", norm);
+      return result as T;
     }
     case "watch_file":
       // Single-slot fs watcher. No real watcher in the browser — record the

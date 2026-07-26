@@ -43,6 +43,7 @@ import {
   sidebarWidthSetting,
   disabledViewersSetting,
   isViewerEnabled,
+  showHiddenFilesSetting,
 } from "./settings/app";
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink, headingFontSink } from "./settings/sinks";
 import { createSidebarSash } from "./sidebar/sash";
@@ -461,7 +462,8 @@ async function boot() {
   //    onOpenFileNewWindow (⌘/Ctrl+click, ⌘+Enter) reuses open_path — the same
   //    IPC command wikilink clicks already use to spawn a new document window.
   const explorer = createExplorerPanel({
-    listDir: (p) => invoke<DirEntry[]>("list_dir", { path: p }),
+    listDir: (p) =>
+      invoke<DirEntry[]>("list_dir", { path: p, showHidden: showHiddenFilesSetting.get() === "on" }),
     getBaseDir: () => currentBaseDir,
     onOpenFile: async (absPath) => {
       if (!file) {
@@ -596,6 +598,11 @@ async function boot() {
   // on every mount. Explorer owns no state here — this is a pure DOM sink,
   // same shape as the favoriteFoldersSetting subscription just above.
   disabledViewersSetting.subscribe(() => explorer.refreshOpenability());
+  // showHiddenFiles changes the listing CONTENT (dotfiles appear/disappear),
+  // not just a rendered row's state — refreshListing clears childrenCache and
+  // re-reads the current root so the next listDir() call picks up the new
+  // showHidden value (read at call time via the closure above, not cached).
+  showHiddenFilesSetting.subscribe(() => explorer.refreshListing());
 
   // ── Per-file session persistence. The key is recomputed per open; the timer
   //    is scoped to the live editor and cancelled on teardown. ────────────────

@@ -591,15 +591,26 @@ fn dir_entry_sort_key(e: &DirEntry) -> (u8, String) {
 
 /// Classify a single directory entry into a `DirEntry`, or `None` when the
 /// listing policy hides it. The domain rule lives here as one named function
-/// instead of being scattered through `list_dir`: hidden dotfiles and mermark's
-/// own scratch/recovery artifacts are excluded; everything else — files *and*
-/// directories, of any type — is kept and shown by its full name. `is_dir` is
-/// passed in from the entry's `file_type()` (not re-derived from `path`) so a
-/// symlink-to-directory reports `is_dir = true` without the classifier following
-/// the link. `path` is normalized to a `..`/`.`-collapsed absolute path.
-fn classify_dir_entry(path: &Path, is_dir: bool) -> Option<DirEntry> {
+/// instead of being scattered through `list_dir`, and is two *independent*
+/// exclusions rather than one combined check, because they obey different
+/// rules: mermark's own scratch/recovery artifacts are excluded
+/// **unconditionally** (invariant — the toggle below has no say over them),
+/// while hidden dotfiles are excluded only when the caller has not opted into
+/// seeing them (`show_hidden == false`, the explorer's "표시 숨김 파일" toggle
+/// off). Everything else — files *and* directories, of any type — is kept and
+/// shown by its full name. `is_dir` is passed in from the entry's
+/// `file_type()` (not re-derived from `path`) so a symlink-to-directory
+/// reports `is_dir = true` without the classifier following the link. `path`
+/// is normalized to a `..`/`.`-collapsed absolute path.
+fn classify_dir_entry(path: &Path, is_dir: bool, show_hidden: bool) -> Option<DirEntry> {
     let file_name = path.file_name()?.to_str()?.to_owned();
-    if is_hidden_entry(&file_name) || is_mermark_artifact(&file_name) {
+    // Invariant: mermark's own artifacts are never listed, regardless of the
+    // show_hidden toggle — the toggle controls user dotfiles, not editor
+    // internals.
+    if is_mermark_artifact(&file_name) {
+        return None;
+    }
+    if !show_hidden && is_hidden_entry(&file_name) {
         return None;
     }
     Some(DirEntry {
@@ -610,8 +621,10 @@ fn classify_dir_entry(path: &Path, is_dir: bool) -> Option<DirEntry> {
 }
 
 /// List the immediate children (one level only — non-recursive) of `path` for
-/// the file explorer's lazy tree. Hidden dotfiles and mermark artifacts are
-/// excluded; folders sort first, then case-insensitively by name.
+/// the file explorer's lazy tree. Mermark artifacts are always excluded;
+/// hidden dotfiles are excluded unless `show_hidden` is true (the explorer's
+/// "숨김 파일 표시" setting). Folders sort first, then case-insensitively by
+/// name.
 ///
 /// Graceful by design (mirrors `list_link_targets`): a missing/unreadable
 /// directory returns `Err(String)` (never panics) — the user explicitly opened
@@ -632,10 +645,11 @@ fn classify_dir_entry(path: &Path, is_dir: bool) -> Option<DirEntry> {
 /// runaway because this reads only one level — deeper reads happen only when the
 /// user hovers, so there is no automatic recursive walk to loop.
 ///
-/// `path` is a single-word arg; Tauri maps it to `path` on the JS side, which
-/// the `invoke` call and the browser mock must mirror.
+/// `path` and `show_hidden` are single-word args; Tauri maps them to `path`
+/// and `showHidden` on the JS side (snake_case → camelCase), which the
+/// `invoke` call and the browser mock (`src/mocks/tauri-core.ts`) must mirror.
 #[tauri::command]
-pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
+pub fn list_dir(path: String, show_hidden: bool) -> Result<Vec<DirEntry>, String> {
     let normalized = expand_home(&path);
     let entries = std::fs::read_dir(&normalized)
         .map_err(|e| format!("list {}: {e}", normalized.display()))?;
@@ -647,7 +661,7 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
                 .file_type()
                 .map(|t| entry_is_dir(t, &path))
                 .unwrap_or(false);
-            classify_dir_entry(&path, is_dir)
+            classify_dir_entry(&path, is_dir, show_hidden)
         })
         .collect();
     result.sort_by_key(dir_entry_sort_key);
@@ -1031,7 +1045,7 @@ mod tests {
         fs::write(dir.join("a.md"), "x").unwrap();
         fs::create_dir_all(dir.join("sub")).unwrap();
         fs::create_dir_all(dir.join("Beta")).unwrap();
-        let got = list_dir(dir.to_string_lossy().into_owned()).unwrap();
+        let got = list_dir(dir.to_string_lossy().into_owned(), false).unwrap();
         let order: Vec<&str> = got.iter().map(|e| e.name.as_str()).collect();
         // folders first (case-insensitive name), then files (case-insensitive name).
         assert_eq!(order, vec!["Beta", "sub", "a.md", "z.md"]);
@@ -1046,7 +1060,7 @@ mod tests {
     #[test]
     fn list_dir_empty_dir_returns_empty() {
         let dir = temp_dir("ld_empty");
-        let got = list_dir(dir.to_string_lossy().into_owned()).unwrap();
+        let got = list_dir(dir.to_string_lossy().into_owned(), false).unwrap();
         assert!(got.is_empty(), "an empty directory yields an empty vec");
         fs::remove_dir_all(&dir).ok();
     }
@@ -1058,7 +1072,7 @@ mod tests {
             .join(format!("mermark_ld_missing_{}", std::process::id()))
             .to_string_lossy()
             .into_owned();
-        let res = list_dir(missing);
+        let res = list_dir(missing, false);
         assert!(res.is_err(), "missing directory is a graceful error");
     }
 
@@ -1071,7 +1085,7 @@ mod tests {
         let sub = base.join("sub");
         fs::create_dir_all(&sub).unwrap();
         let up = format!("{}/..", sub.to_string_lossy());
-        let got = list_dir(up).unwrap();
+        let got = list_dir(up, false).unwrap();
         let names: Vec<&str> = got.iter().map(|e| e.name.as_str()).collect();
         // Listing base: its file `root.md` and its child dir `sub`.
         assert!(names.contains(&"root.md"), "parent listing sees root.md, got {names:?}");
@@ -1088,10 +1102,32 @@ mod tests {
         fs::write(dir.join("y.md.mermark-recovered"), "x").unwrap(); // recovery marker
         fs::write(dir.join("real.md"), "x").unwrap(); // valid file
         fs::create_dir_all(dir.join("sub")).unwrap(); // valid dir
-        let got = list_dir(dir.to_string_lossy().into_owned()).unwrap();
+        let got = list_dir(dir.to_string_lossy().into_owned(), false).unwrap();
         let order: Vec<&str> = got.iter().map(|e| e.name.as_str()).collect();
         // hidden + artifacts excluded; folder first, then file.
         assert_eq!(order, vec!["sub", "real.md"]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn list_dir_show_hidden_includes_dotfiles_but_never_artifacts() {
+        // Same fixture as list_dir_excludes_hidden_and_artifacts, but called
+        // with show_hidden=true: dotfiles must now appear, while mermark's own
+        // artifacts (never dotfiles themselves) must still be absent — proving
+        // the artifact exclusion is unconditional, not accidentally covered by
+        // the dotfile check.
+        let dir = temp_dir("ld_show_hidden");
+        fs::create_dir_all(dir.join(".git")).unwrap(); // hidden dir
+        fs::write(dir.join(".hidden.md"), "x").unwrap(); // dotfile
+        fs::write(dir.join("x.md.mermark-tmp.1"), "x").unwrap(); // autosave temp
+        fs::write(dir.join("y.md.mermark-recovered"), "x").unwrap(); // recovery marker
+        fs::write(dir.join("real.md"), "x").unwrap(); // valid file
+        fs::create_dir_all(dir.join("sub")).unwrap(); // valid dir
+        let got = list_dir(dir.to_string_lossy().into_owned(), true).unwrap();
+        let order: Vec<&str> = got.iter().map(|e| e.name.as_str()).collect();
+        // dotfiles now included (folders first, then files — each group's own
+        // dotfile sorts first ascii-wise); artifacts still excluded.
+        assert_eq!(order, vec![".git", "sub", ".hidden.md", "real.md"]);
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -1106,7 +1142,7 @@ mod tests {
         let outside = temp_dir("ld_symlink_outside");
         fs::write(outside.join("secret.md"), "x").unwrap();
         symlink(&outside, base.join("link")).unwrap();
-        let got = list_dir(base.to_string_lossy().into_owned()).unwrap();
+        let got = list_dir(base.to_string_lossy().into_owned(), false).unwrap();
         let link = got.iter().find(|e| e.name == "link").expect("symlink dir is shown");
         assert!(link.is_dir, "symlink-to-dir reports is_dir=true");
         assert!(

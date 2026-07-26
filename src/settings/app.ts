@@ -390,6 +390,31 @@ export const recursiveImageSearchSetting = registerSetting<RecursiveImageSearch>
   },
 });
 
+// ── Explorer (탐색기) ──────────────────────────────────────────────────────────
+
+export type ShowHiddenFiles = "on" | "off";
+/** Explorer listing of dotfiles (`.git/`, `.gitignore`, …). Default off =
+ *  today's behavior exactly. mermark's own artifacts (is_mermark_artifact)
+ *  stay excluded REGARDLESS — the backend owns that invariant. Sink:
+ *  main.ts injects the live value into the explorer's listDir invoke and
+ *  subscribes → explorer.refreshListing() (cache clear + re-render). */
+export const showHiddenFilesSetting = registerSetting<ShowHiddenFiles>({
+  key: "mermark.showHiddenFiles",
+  default: "off",
+  parse: (raw) => (raw === "on" || raw === "off" ? raw : null),
+  ui: {
+    label: "숨김 파일 표시",
+    group: "탐색기",
+    control: {
+      kind: "segmented",
+      options: [
+        { value: "on", label: "켜기" },
+        { value: "off", label: "끄기" },
+      ],
+    },
+  },
+});
+
 // ── Mermaid (plugin-registered category) ─────────────────────────────────────
 
 export type PanZoom = "on" | "off";

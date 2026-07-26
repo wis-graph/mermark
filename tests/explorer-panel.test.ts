@@ -888,6 +888,68 @@ describe("explorer: sidebar shell interface (7)", () => {
   });
 });
 
+// refreshListing (showHiddenFilesSetting sink, hidden-toggle design 분기3) —
+// unlike resetToBaseDir (jumps to getBaseDir()) or refreshOpenability/
+// refreshFavoriteStars (pure DOM refresh), refreshListing clears the children
+// cache AND rebuilds at the CURRENT root — a listing-policy change (dotfiles
+// on/off) invalidates cached content, but shouldn't discard navigation.
+describe("explorer: refreshListing (showHiddenFiles setting sink)", () => {
+  it("clears the children cache so both the root and an already-expanded folder are re-read", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(listDir).toHaveBeenCalledTimes(1); // root
+
+    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
+    clickItem(sub);
+    await flush();
+    expect(listDir).toHaveBeenCalledTimes(2); // root + sub
+
+    panel.refreshListing();
+    await flush();
+    expect(listDir).toHaveBeenCalledTimes(3); // root re-read, not served from cache
+    expect(listDir).toHaveBeenLastCalledWith("/root");
+    expect(names(panel.aside)).toEqual(["..", "sub", "a.md", "pic.png"]); // fresh render, collapsed
+
+    // Re-expand the (freshly rendered, collapsed) sub folder: a cache hit here
+    // would mean refreshListing only cleared the ROOT's cache entry, not every
+    // entry — it must clear the whole map.
+    const subAgain = panel.aside.querySelector(".explorer-dir") as HTMLElement;
+    clickItem(subAgain);
+    await flush();
+    expect(listDir).toHaveBeenCalledTimes(4);
+    expect(listDir).toHaveBeenLastCalledWith("/root/sub");
+  });
+
+  it("rebuilds at the CURRENT root after a `..` navigation, not back at getBaseDir()", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
+    expect(listDir).toHaveBeenLastCalledWith("/root/child");
+
+    const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
+    clickItem(up);
+    await flush();
+    expect(listDir).toHaveBeenLastCalledWith("/root"); // changeRoot landed here
+
+    panel.refreshListing();
+    await flush();
+    // getBaseDir() still answers "/root/child" — if refreshListing fell back to
+    // it (like resetToBaseDir does), this would assert "/root/child" instead.
+    expect(listDir).toHaveBeenLastCalledWith("/root");
+    expect(names(panel.aside)).toEqual(["..", "sub", "a.md", "pic.png"]);
+  });
+
+  it("is a no-op while the panel is closed (listDir call count unchanged)", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    panel.close();
+    const callsBefore = listDir.mock.calls.length;
+
+    panel.refreshListing();
+    await flush();
+    expect(listDir.mock.calls.length).toBe(callsBefore);
+  });
+});
+
 // M5: folder-row favorite star (design 분기5, plan Phase B) -------------------
 // Gated on BOTH isFavorite + onToggleFavorite being injected. Renders on
 // .explorer-dir rows only (never .explorer-file/.explorer-up), tabindex=-1

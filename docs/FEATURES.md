@@ -2,7 +2,7 @@
 
 > mermark의 전체 기능을 아키텍처 계층별로 구조화한 단일 참조. **기능을 추가/변경하면 이 문서를 갱신한다**(mermark-dev 파이프라인 Phase 6 규약). 정체성: 볼트 무게 없이 단일 마크다운 파일을 CLI로 즉시 열어 Obsidian급 품질로 편집·렌더하는 경량 에디터.
 >
-> 기준 버전: v0.5.9 · 최종 갱신: 2026-07-12
+> 기준 버전: v0.5.9 · 최종 갱신: 2026-07-26
 
 ---
 
@@ -13,7 +13,7 @@
 - **conflict guard** — read 시 mtime baseline 기록 → write 시 디스크 변경 감지(`CONFLICT:`), `.mermark-recovered` 복구.
 - **fs 와처** — `notify` 크레이트로 **열린 파일 1개만** watch(`watch_file`/`unwatch_file`, 경로 전환 시 슬롯 교체). 외부 변경 시 `file-changed` 이벤트(`{text,mtime}`) emit. 자기 쓰기 self-trigger 방지(mtime baseline `record_self_write`/`is_self_write`).
 - **path_exists** — 위키링크 대상 존재 확인.
-- **list_dir** — 한 디렉토리 레벨을 `Vec<DirEntry>`(`{name, path, is_dir}`)로 반환하는 레이지 리스팅. 폴더 먼저·이름순 정렬, 숨김(`.`)·아티팩트 제외, read-only. 없는/막힌 폴더는 graceful `Err`(빈 폴더는 `[]`). 파일 탐색기가 폴더 클릭마다 한 레벨씩 호출.
+- **list_dir** — 한 디렉토리 레벨을 `Vec<DirEntry>`(`{name, path, is_dir}`)로 반환하는 레이지 리스팅. 폴더 먼저·이름순 정렬, read-only. 제외 규칙은 두 갈래: 아티팩트(`is_mermark_artifact`)는 **항상** 제외, 숨김(`.` 시작)은 `show_hidden` 인자로 **조건부** 제외(기본 제외 — L2 §2.3 "숨김 파일 표시 토글"이 인자를 준다). 없는/막힌 폴더는 graceful `Err`(빈 폴더는 `[]`). 파일 탐색기가 폴더 클릭마다 한 레벨씩 호출.
 - **resolve_image** — 리터럴 경로에서 못 찾은 이미지를 baseDir 가두리(≤3 depth) 안에서 read-only 재귀 스캔해 basename 일치 파일의 절대경로를 반환(`Option<String>`). 경로 탈출/심링크 가드, 확장자 화이트리스트, 깊이·엔트리 상한. 못 찾으면 `None`(graceful).
 - **경로 정규화** — `normalize_path`(`..` collapse) + `expand_home`(선두 `~`/`~/` 홈 확장, `~user` 과확장 금지).
 - **hwp_open / hwp_render_page / hwp_close** (`src-tauri/src/hwp.rs`, 신규) — 고정 rev `rhwp` 크레이트로 HWP/HWPX를 파싱·페이지 단위 SVG 렌더. 단일 슬롯 세션(`Mutex<Option<HwpSession>>`, 파싱 1회 후 페이지는 세션 재사용, `hwp_open`이 기존 세션 교체). 읽기 전용(쓰기 0, conflict guard 미해당). 방어: 파일 크기 상한 100MB(read 전 거부), 파싱 30s/렌더 10s 타임아웃, `catch_unwind`로 파서/렌더러 패닉을 `Err`로 봉쇄(손상 파일이 프로세스를 절대 죽이지 않는다 — 잔여 리스크는 스택오버플로 abort, 문서화하고 수용). 플랫폼별 한글 폴백 폰트 오버라이드(`platform_fallback_font`). CSP/capabilities/`read_file`·`write_file` 시그니처 전부 무변경.
@@ -54,6 +54,7 @@
 - **최근 문서 SSOT** — `recentDocsSetting`(`string[]` localStorage, 재시작 유지). `openInWindow` 단일 지점에서 `pushRecent`(dedup→최근순→상한 15), 없는 경로는 `pruneMissing`으로 정리.
 - **줌 가드(ZOOM GUARD)** — `.cm-content`/`.cm-line`에 font-size 직접 금지(async 위젯 0-height 붕괴 방지), `.cm-line` em만.
 - **뷰어 on/off 토글** — 설정 "뷰어" 카테고리에 등록된 모든 비마크다운 뷰어(image/hwp/ext.excel/ext.html/ext.pdf)가 행으로 열거되어 각각 켜고 끌 수 있다. `disabledViewersSetting`(`string[]`, key `mermark.disabledViewers`, 기본값 `[]` = 전부 켜짐) 단일 설정 + `chrome/viewer/registry.ts`의 `listViewers()`(카탈로그 열거 순수 쿼리) 조합으로 새 뷰어가 등록되기만 하면 목록에서 절대 누락되지 않는다(별도 동기화 불필요). 끈 뷰어의 파일 형식은 `main.ts`의 `viewerForEntry`가 `viewerFor` 결과를 `isViewerEnabled`로 필터링해 기존 `open_path`(OS 기본 앱) 폴백으로 넘어간다 — 새 폴백 경로 없음, 신규 IPC 0. 저장 즉시 다음 열기 판정부터 유효(`.get()` 판정 시점 읽기, sink 불필요); 단, 탐색기 행의 openable 게이트(`.is-nonmd`)는 트리 렌더 시점에 굳어지므로 이미 렌더된 행은 토글 후에도 탐색기 트리가 재렌더(폴더 이동/breadcrumb 클릭 등)되기 전까지는 클릭이 막혀 있다 — 실제 open 판정 자체는 항상 최신이지만 이 시각적/클릭 지연은 알려진 한계.
+- **숨김 파일 표시 토글** (신규) — 설정 "탐색기" 카테고리(신규)의 세그먼트 토글. `showHiddenFilesSetting`(`"on"|"off"`, key `mermark.showHiddenFiles`, 기본값 `off` = 기존 동작과 동일)이 `list_dir`의 `show_hidden` 인자로 흘러 dotfile(`.git`, `.gitignore` 등) 노출 여부를 결정한다 — mermark 자체 스크래치/복구 아티팩트(`is_mermark_artifact`)는 토글과 무관하게 항상 제외(백엔드 불변식). `켜기` 선택 시 `showHiddenFilesSetting.subscribe(() => explorer.refreshListing())`(main.ts 단일 sink) → `ExplorerPanel.refreshListing()`이 `childrenCache`를 비우고 **현재 루트**를 유지한 채 재조회한다(resetToBaseDir과 달리 루트를 문서 폴더로 되돌리지 않음). `[[`-피커(`list_link_targets`)는 이 토글과 무관하게 dotfile을 계속 제외.
 
 ---
 

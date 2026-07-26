@@ -80,6 +80,17 @@ export interface ExplorerPanel {
    *  a pure DOM refresh sink for a setting the explorer doesn't own, called
    *  from main.ts's disabledViewersSetting.subscribe. Command (void). */
   refreshOpenability(): void;
+  /** Re-read the whole tree at the CURRENT root after a listing-POLICY change
+   *  (showHiddenFilesSetting): cache clear + renderTree. Contrast
+   *  refreshOpenability/refreshFavoriteStars — those are pure DOM refreshes,
+   *  sufficient when only a rendered ROW's state changes; here the listing
+   *  CONTENT itself changes (dotfiles appear/disappear), so every cached
+   *  `childrenCache` entry is stale by definition and must be dropped, not
+   *  patched. Root is PRESERVED (unlike resetToBaseDir, which jumps back to
+   *  the document's folder) — a policy toggle shouldn't discard wherever the
+   *  user navigated to. A hidden panel is a no-op (open() rebuilds fresh
+   *  anyway, same guard as resetToBaseDir). Command (void). */
+  refreshListing(): void;
   /** ⌘⇧B's handler (M5 재배선, design 분기3): open the explorer if it's
    *  closed, then scroll the hosted favorites section into view and DELEGATE
    *  keyboard landing to the injected `focusFavorites` (the section's own
@@ -92,7 +103,10 @@ export interface ExplorerPanel {
 
 export interface ExplorerHandlers {
   /** Read one directory level. Injected so the panel unit-tests with a fake tree
-   *  and, in main, is `(p) => invoke<DirEntry[]>("list_dir", { path: p })`. */
+   *  and, in main, is
+   *  `(p) => invoke<DirEntry[]>("list_dir", { path: p, showHidden: … })` — the
+   *  panel stays domain-blind (the showHiddenFiles setting lives in the closure,
+   *  not here), so this signature carries no toggle knowledge. */
   listDir(path: string): Promise<DirEntry[]>;
   /** The current document's directory — the initial tree root. A closure (not a
    *  captured value) so a fresh open reseeds the root, like outline's getView. */
@@ -253,6 +267,13 @@ export function createExplorerPanel({
   // (no re-call). Cleared on root change / panel reopen — MVP has no fs-watch
   // invalidation (lazy read-only tree, "look around this doc lightly").
   const childrenCache = new Map<string, DirEntry[]>();
+
+  /** The tree's current root path (canonical, post-normalization) — set at the
+   *  single canonicalization/observation point in renderTree (same spot
+   *  onRootChange fires), so it's always what the tree is ACTUALLY showing,
+   *  never a stale or pre-normalized value. `refreshListing` reads this to
+   *  rebuild in place instead of falling back to getBaseDir(). */
+  let currentRoot: string | null = null;
 
   /** The focus cursor (roving tabindex owner). Distinct from selection: arrows
    *  move this, but only Enter/click activates. Reset on every renderTree. */
@@ -450,6 +471,7 @@ export function createExplorerPanel({
    *  stale or pre-normalized value. */
   const renderTree = async (rootPath: string): Promise<void> => {
     rootPath = normalizePath(rootPath);
+    currentRoot = rootPath;
     onRootChange?.(rootPath);
     tree.replaceChildren();
     focused = null;
@@ -616,6 +638,19 @@ export function createExplorerPanel({
     }
   };
 
+  /** Re-read the CURRENT root after a listing-policy change (showHiddenFiles):
+   *  cache clear + renderTree. See the interface doc comment for why this
+   *  differs from refreshOpenability/refreshFavoriteStars (content vs. row
+   *  state) and from resetToBaseDir (root preserved vs. reset). `aside.hidden`
+   *  guard matches resetToBaseDir's — a closed panel has nothing to redraw,
+   *  and open() rebuilds fresh from getBaseDir() on its own anyway. Command
+   *  (void). */
+  const refreshListing = (): void => {
+    if (aside.hidden) return;
+    childrenCache.clear();
+    void renderTree(currentRoot ?? getBaseDir());
+  };
+
   /** ⌘⇧B's handler: reveal the explorer (open it if closed — reusing the
    *  SAME shell-reveal command jumpToRoot uses, so "open" logic lives in one
    *  place), then land the user in the hosted favorites section: scroll it
@@ -733,6 +768,7 @@ export function createExplorerPanel({
     close,
     refreshFavoriteStars,
     refreshOpenability,
+    refreshListing,
     revealFavorites,
   };
 }

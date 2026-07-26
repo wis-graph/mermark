@@ -272,11 +272,11 @@ describe("app settings", () => {
     expect(defaultModeSetting.get()).toBe("read"); // boot source untouched by the toggle
   });
 
-  it("renders all seven categories in the registry (Theme/Typography/Editor/Mermaid/Shortcuts/Viewers/Plugins)", async () => {
+  it("renders all eight categories in the registry (Theme/Typography/Editor/Explorer/Mermaid/Shortcuts/Viewers/Plugins)", async () => {
     await import("../src/settings/app");
     const { groups } = await import("../src/settings/registry");
     const names = groups().map((g) => g.name);
-    expect(names).toEqual(["테마", "타이포그래피", "에디터", "Mermaid", "단축키", "뷰어", "플러그인"]);
+    expect(names).toEqual(["테마", "타이포그래피", "에디터", "탐색기", "Mermaid", "단축키", "뷰어", "플러그인"]);
   });
 
   // ── P0: Pretendard bundle — default-value regression guard ──────────────────
@@ -492,6 +492,39 @@ describe("app settings", () => {
       const { groups } = await import("../src/settings/registry");
       const editorGroup = groups().find((g) => g.name === "에디터");
       const entry = editorGroup!.entries.find((e) => e.ui.label === "Vim 모드");
+      expect(entry).toBeDefined();
+      expect(entry!.ui.control.kind).toBe("segmented");
+    });
+  });
+
+  describe("showHiddenFilesSetting", () => {
+    it("defaults to off and persists under mermark.showHiddenFiles", async () => {
+      const { showHiddenFilesSetting } = await import("../src/settings/app");
+      expect(showHiddenFilesSetting.get()).toBe("off");
+      showHiddenFilesSetting.set("on");
+      expect(localStorage.getItem("mermark.showHiddenFiles")).toBe("on");
+    });
+
+    it("reads a saved on/off preference over the default (roundtrip)", async () => {
+      localStorage.setItem("mermark.showHiddenFiles", "on");
+      const { showHiddenFilesSetting } = await import("../src/settings/app");
+      expect(showHiddenFilesSetting.get()).toBe("on");
+      showHiddenFilesSetting.set("off");
+      expect(showHiddenFilesSetting.get()).toBe("off");
+      expect(localStorage.getItem("mermark.showHiddenFiles")).toBe("off");
+    });
+
+    it("falls back to off on a garbage saved value", async () => {
+      localStorage.setItem("mermark.showHiddenFiles", "garbage");
+      const { showHiddenFilesSetting } = await import("../src/settings/app");
+      expect(showHiddenFilesSetting.get()).toBe("off");
+    });
+
+    it("belongs to 탐색기 group as segmented control", async () => {
+      await import("../src/settings/app");
+      const { groups } = await import("../src/settings/registry");
+      const explorerGroup = groups().find((g) => g.name === "탐색기");
+      const entry = explorerGroup!.entries.find((e) => e.ui.label === "숨김 파일 표시");
       expect(entry).toBeDefined();
       expect(entry!.ui.control.kind).toBe("segmented");
     });
