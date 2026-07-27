@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { fitWidthScale } from "../src/extensions/pdf-viewer/fit-width-scale";
 import { viewerFor } from "../src/chrome/viewer/registry";
@@ -114,5 +117,26 @@ describe("ensureReadableStreamAsyncIterator (WKWebView ReadableStream async-iter
     } finally {
       proto[Symbol.asyncIterator] = original;
     }
+  });
+});
+
+// 재호출 4차 (팀리드 지시, 2026-07-27): pdf pages used to render as a floating
+// A4 sheet — box-shadow + a 0.9-fraction reading margin — inside the column.
+// The team lead asked for the same flat, borderless, edge-to-edge look the
+// html/docx viewers already have, while keeping the per-page gap (pdf stays
+// genuinely multi-page, unlike docx which went page-less flat the same day).
+// These lock the new contract at the source level (same technique
+// docx-viewer.test.ts's "flat panel-filling layout" describe block uses).
+describe("pdf viewer: flat page-column layout (no page-frame shadow, full-width pages)", () => {
+  const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const src = readFileSync(join(ROOT, "src", "extensions", "pdf-viewer", "index.ts"), "utf8");
+
+  it("no drop-shadow rule is injected for .pdf-viewer-page (the page-frame look is gone)", () => {
+    expect(src).not.toMatch(/box-shadow:\s*0[^;]*;/);
+    expect(src).toMatch(/\.pdf-viewer-page\s*\{[^}]*box-shadow:\s*none/);
+  });
+
+  it("PDF_PAGE_WIDTH_FRACTION is 1 (fills the column, no reading margin either side)", () => {
+    expect(src).toMatch(/const PDF_PAGE_WIDTH_FRACTION = 1;/);
   });
 });

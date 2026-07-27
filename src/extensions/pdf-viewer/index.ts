@@ -50,7 +50,7 @@ function ensureStyleInjected(): void {
   display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 8px 0;
 }
 .pdf-viewer-page {
-  position: relative; background: #fff; box-shadow: 0 1px 4px color-mix(in srgb, #000 25%, transparent);
+  position: relative; background: #fff; box-shadow: none;
 }
 .pdf-viewer-page .pdf-viewer-canvas-wrap { position: relative; display: block; }
 .pdf-viewer-page canvas { display: block; }
@@ -107,16 +107,20 @@ interface PdfLoadingTask {
   destroy(): Promise<void>;
 }
 
-/** The fraction of the pages column ONE page occupies — a reading column
- *  narrower than the full panel, leaving a modest margin on both sides. Kept in
- *  lockstep with hwp-viewer.ts's `HWP_PAGE_WIDTH_FRACTION` so both document
- *  viewers render pages at the SAME width (사용자 지정 2026-07-18: "hwp 는 90%",
- *  and PDF was rendering at the FULL column width — "과도하게 크게"). Change
- *  this and the other one together — they are one design decision. (docx
- *  briefly joined this lockstep at 2026-07-27 but the docx viewer has since
- *  moved to a page-less flat layout — 재호출 3차 — and no longer has a "page"
- *  to fit a fraction of.) */
-const PDF_PAGE_WIDTH_FRACTION = 0.9;
+/** The fraction of the pages column ONE page occupies. Kept in lockstep with
+ *  hwp-viewer.ts's `HWP_PAGE_WIDTH_FRACTION` so both document viewers render
+ *  pages at the SAME width — change this and the other one together, they are
+ *  one design decision. Was 0.9 (사용자 지정 2026-07-18: "hwp 는 90%", and PDF
+ *  was rendering at the FULL column width — "과도하게 크게") for a reading
+ *  margin either side of the page; **재호출 4차 (팀리드 지시, 2026-07-27,
+ *  html/docx 뷰어 정렬)**: the page is still multi-sheet (unlike docx, which
+ *  went page-less flat the same day — see that viewer's comment), so a page
+ *  boundary must stay legible, but the "page inside a frame" look — margin +
+ *  drop shadow — is gone; a page now fills the column edge-to-edge and the
+ *  ONLY remaining page-break cue is the gap between `.pdf-viewer-page`
+ *  elements (`.pdf-viewer-pages`'s `gap: 12px`) plus the white/surface
+ *  background against the (usually non-white) panel background. */
+const PDF_PAGE_WIDTH_FRACTION = 1;
 
 /** The width (px) one page is fit to — `PDF_PAGE_WIDTH_FRACTION` of the page
  *  column's actual rendered width. Reading `clientWidth` forces a synchronous
@@ -162,7 +166,7 @@ function pagePlaceholder(n: number): HTMLElement {
   const el = document.createElement("div");
   el.className = "pdf-viewer-page";
   el.dataset.page = String(n);
-  el.style.width = "90%";
+  el.style.width = `${PDF_PAGE_WIDTH_FRACTION * 100}%`;
   el.style.aspectRatio = "210 / 297";
   return el;
 }

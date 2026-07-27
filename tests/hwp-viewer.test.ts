@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // The HWP viewer (_workspace/01_hwp_viewer.md §8 F-2/F-3) — jsdom shape
@@ -145,20 +148,21 @@ describe("openHwpViewer: page width is independent of editor fontScale (T6)", ()
   // A document viewer fits the WHOLE page to the panel; it must NOT inherit the
   // editor's body-text zoom (fontScale) and render past the panel edge (사용자
   // 리포트 2026-07-18: "본문보다 2배 커보여, 컨텐츠가 다 안 보임"). 600px jsdom
-  // fallback × 0.9 fraction = 540px, regardless of fontScale.
-  it("width stays fit-to-panel (540px) no matter the fontScale on open or after a change", async () => {
+  // fallback × 1 fraction (재호출 4차: page fills the column, no reading
+  // margin) = 600px, regardless of fontScale.
+  it("width stays fit-to-panel (600px) no matter the fontScale on open or after a change", async () => {
     fontScaleSetting.set(1.5); // a zoomed editor must NOT inflate the page
     const v = viewerFor("hwp")!;
     const handle = v.open("/vault/sample.hwp");
     await flush();
 
     const pagesEl = document.querySelector(".hwp-viewer-pages") as HTMLElement;
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("540px"); // 600 × 0.9, NOT × 1.5
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("600px"); // 600 × 1, NOT × 1.5
 
     fontScaleSetting.set(2.0); // change zoom while open → width must not move
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("540px");
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("600px");
     fontScaleSetting.set(0.8);
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("540px");
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("600px");
 
     handle.close();
   });
@@ -179,19 +183,19 @@ describe("openHwpViewer: viewer-local zoom, independent of fontScale (T8, design
     await flush();
 
     const pagesEl = document.querySelector(".hwp-viewer-pages") as HTMLElement;
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("540px"); // 600 x 0.9 fallback, factor 1
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("600px"); // 600 x 1 fallback (재호출 4차), factor 1
 
     // POSITIVE half: the shell's own zoom-in button DOES scale the page width.
     const zoomIn = document.querySelector(".viewer-panel-zoom-in") as HTMLButtonElement;
     zoomIn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("594px"); // 540 x 1.1
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("660px"); // 600 x 1.1
 
     // NEGATIVE half (adversarial pair): fontScaleSetting changes must NEVER
     // touch this viewer's page width.
     fontScaleSetting.set(1.5);
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("594px");
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("660px");
     fontScaleSetting.set(0.8);
-    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("594px");
+    expect(pagesEl.style.getPropertyValue("--hwp-page-width")).toBe("660px");
 
     handle.close();
   });
@@ -237,5 +241,29 @@ describe("openHwpViewer: render serialization (T7 — single-slot backend sessio
 
     invokeMock.mockImplementation(original); // restore for other tests
     handle.close();
+  });
+});
+
+// 재호출 4차 (팀리드 지시, 2026-07-27): hwp pages used to render inside a
+// bordered, rounded-corner frame at a 0.9-fraction reading width. The team
+// lead asked for the same flat, outline-free, edge-to-edge look the
+// html/docx/pdf viewers now share, while keeping the per-page gap (hwp stays
+// genuinely multi-page, unlike docx which went page-less flat the same day).
+// These lock the new contract at the source level (same technique
+// docx-viewer.test.ts's "flat panel-filling layout" describe block uses) —
+// styles.css owns hwp-viewer-page's CSS since HWP is built-in, not an
+// extension (unlike pdf/docx, which inject their own <style>).
+describe("hwp viewer: flat page layout (no border frame, full-width pages)", () => {
+  const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const viewerSrc = readFileSync(join(ROOT, "src", "chrome", "viewer", "hwp-viewer.ts"), "utf8");
+  const cssSrc = readFileSync(join(ROOT, "src", "styles.css"), "utf8");
+
+  it("HWP_PAGE_WIDTH_FRACTION is 1 (fills the column, no reading margin either side)", () => {
+    expect(viewerSrc).toMatch(/const HWP_PAGE_WIDTH_FRACTION = 1;/);
+  });
+
+  it(".hwp-viewer-page carries no border/border-radius rule (the page-frame look is gone)", () => {
+    const rule = /\.hwp-viewer-page\s*\{[^}]*\}/.exec(cssSrc)?.[0] ?? "";
+    expect(rule).not.toMatch(/border(-radius)?:/);
   });
 });

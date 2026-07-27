@@ -41,18 +41,23 @@ import { pagePlaceholder, svgToDataUrl, pageAspectFrom, isNearViewport } from ".
  *  grew but the pages inside it didn't). */
 const HWP_PAGE_FALLBACK_WIDTH = 600;
 
-/** The fraction of the pages column ONE page occupies — a reading column
- *  narrower than the full panel, kept in lockstep with the PDF viewer's
- *  `PDF_PAGE_WIDTH_FRACTION` (pdf-viewer/index.ts) so both document viewers
- *  render pages at the SAME width. At 100% a portrait A4 page (aspect ~0.69)
- *  rendered ~1.45× the panel width TALL — far past the `88vh` envelope — so you
- *  had to zoom OUT to see a single page (사용자 리포트 2026-07-18: "축소를 해야
- *  전체가 보인다"). 0.9 leaves a modest reading margin on both sides while still
- *  filling most of the panel (사용자 지정 2026-07-18: "hwp 는 90%"). Change this
- *  and the other one together — they are one design decision. (docx briefly
- *  joined this lockstep at 2026-07-27 but has since moved to a page-less flat
- *  layout — 재호출 3차 — and no longer has a "page" to fit a fraction of.) */
-const HWP_PAGE_WIDTH_FRACTION = 0.9;
+/** The fraction of the pages column ONE page occupies, kept in lockstep with
+ *  the PDF viewer's `PDF_PAGE_WIDTH_FRACTION` (pdf-viewer/index.ts) so both
+ *  document viewers render pages at the SAME width — change this and the
+ *  other one together, they are one design decision. Was 0.9, a reading
+ *  margin either side of the page (사용자 지정 2026-07-18: "hwp 는 90%"; at
+ *  100% a portrait A4 page's aspect-ratio-derived height overflowed the
+ *  panel's vertical envelope enough that "축소를 해야 전체가 보인다" — that
+ *  vertical-overflow concern is about `.viewer-panel-body`'s height, not this
+ *  fraction, and is unaffected by widening back to 1). **재호출 4차 (팀리드
+ *  지시, 2026-07-27, html/docx 뷰어 정렬)**: the "page inside a frame" look
+ *  (margin + border) is gone — a page fills the column edge-to-edge. HWP
+ *  stays multi-sheet (unlike docx, which went page-less flat the same day),
+ *  so a page boundary must stay legible: the gap between `.hwp-viewer-page`
+ *  elements (`.hwp-viewer-pages`'s `gap: 12px`) plus the page's `--surface`
+ *  background against the (usually different) panel background is now the
+ *  ONLY page-break cue. */
+const HWP_PAGE_WIDTH_FRACTION = 1;
 
 /** The page's fit-to-panel width (px) — `HWP_PAGE_WIDTH_FRACTION` of the page
  *  column's ACTUAL rendered width, so pages fill a reading column proportional

@@ -1057,12 +1057,20 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    under a CSS scale()). aspect-ratio starts at the A4 default
    (hwp-pages.ts's pagePlaceholder) and is corrected once page 0's real
    width/height is known (pageAspectFrom). */
+/* 재호출 4차 (팀리드 지시, 2026-07-27, pdf/html/docx 뷰어 정렬): no border, no
+   radius — a page-frame outline, not the page itself. HWP's own page cue was
+   never box-shadow (pdf-viewer's precedent) but this border; both read as the
+   same "outlined page" look the team lead asked removed, so both go.
+   background switched var(--surface) -> #fff (measured live, dev:browser,
+   aside MCP: dark theme's --surface #1c1917 sits only ~2 RGB steps off --bg
+   #131110 — with the border gone that made a dark-mode page nearly
+   invisible, no page-break cue left besides the 12px gap). #fff matches
+   pdf-viewer's own precedent ("종이는 다크에서도 흰색") and restores a strong
+   page-break cue without reintroducing a border/shadow frame. */
 .hwp-viewer-page {
   position: relative; flex: none;
   width: var(--hwp-page-width, 600px);
-  background: var(--surface);
-  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
-  border-radius: var(--radius-md, 8px);
+  background: #fff;
   overflow: hidden;
 }
 .hwp-viewer-page-img { display: block; width: 100%; height: 100%; object-fit: contain; }
