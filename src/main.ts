@@ -49,6 +49,7 @@ import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink, headingFontSi
 import { createSidebarSash } from "./sidebar/sash";
 import { createSettingsButton } from "./settings/panel/modal";
 import { copyBundleToClipboard } from "./document/bundle";
+import { copyTextToClipboard } from "./clipboard";
 import { registerHandler, installDispatcher, bindKeybindings, effectiveBinding } from "./shortcuts/registry";
 import { displayChord } from "./shortcuts/keys";
 import { arrangeStatusBar } from "./chrome/status-bar";
@@ -955,16 +956,15 @@ async function boot() {
       flashStatus(copied ? "✓ 번들 복사됨" : "⚠ 번들 복사 실패");
     });
   });
-  // ⌥⌘C: copy the current document's absolute path to the clipboard. No IPC —
-  // `currentFile` is already the live-file SSOT cell (same one bundle.copy
-  // reads), and the webview's navigator.clipboard is the same write path
-  // bundle.ts uses. Graceful no-op when no document is open.
+  // ⌥⌘C: copy the current document's absolute path to the clipboard via the
+  // backend IPC command (copyTextToClipboard, the same helper bundle.copy
+  // uses). `currentFile` is already the live-file SSOT cell. Graceful no-op
+  // when no document is open.
   registerHandler("path.copy", () => {
     if (!currentFile) return;
-    navigator.clipboard
-      .writeText(currentFile)
-      .then(() => flashStatus("✓ 경로 복사됨"))
-      .catch(() => flashStatus("⚠ 경로 복사 실패"));
+    void copyTextToClipboard(currentFile).then((ok) =>
+      flashStatus(ok ? "✓ 경로 복사됨" : "⚠ 경로 복사 실패"),
+    );
   });
   bindKeybindings(keybindingsSetting);
   installDispatcher();

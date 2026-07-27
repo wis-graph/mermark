@@ -1,6 +1,6 @@
 [package]
 name = "mermark"
-version = "0.9.9"
+version = "0.9.10"
 description = "Mermaid + Markdown viewer"
 authors = ["you"]
 edition = "2021"
@@ -60,4 +60,10 @@ tokio = { version = "1", default-features = false, features = ["time"] }
 # VIEW over an infinite `WITH RECURSIVE` CTE) can spin a command thread's CPU
 # forever with no I/O to time out on.
 rusqlite = { version = "=0.39.0", features = ["bundled", "hooks"] }
+# Clipboard write for path.copy/bundle.copy. We use `arboard` directly (not
+# tauri-plugin-clipboard-manager) so the clipboard surface stays exactly one
+# write-only text command with no plugin capability — same reasoning as the
+# `notify` pin above. `default-features = false` drops image-data; the macOS
+# backend rides on objc2 crates tauri/wry already compile.
+arboard = { version = "3", default-features = false }
 

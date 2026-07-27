@@ -214,6 +214,29 @@ pub fn create_markdown_file(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Write `text` to the system clipboard (⌥⌘C path.copy / ⌘⇧C bundle.copy).
+///
+/// This is a backend command rather than `navigator.clipboard.writeText`
+/// because the webview's own clipboard API is the wrong tool here: it's gated
+/// on secure-context/focus/gesture conditions that don't reliably hold in a
+/// WKWebView custom-scheme app, so `navigator.clipboard` can be missing or
+/// silently blocked in the shipped app even though it works in the dev/golden
+/// browser (http origin) — see `wkwebview-custom-scheme-test-gap`. Routing
+/// through `arboard` sidesteps that sacred-cow web surface entirely.
+///
+/// Write-only and text-only on purpose: there is no matching "read from
+/// clipboard" command, which keeps macOS 15.4+'s pasteboard-read privacy
+/// prompt out of the picture — the read path simply doesn't exist in this
+/// binary. Linux X11's "clipboard is lost when the writing process exits" is
+/// a known `arboard` limitation, but mermark ships macOS by default and
+/// Windows only opt-in, so it doesn't apply to this app's actual targets.
+#[tauri::command]
+pub fn copy_to_clipboard(text: String) -> Result<(), String> {
+    arboard::Clipboard::new()
+        .and_then(|mut c| c.set_text(text))
+        .map_err(|e| e.to_string())
+}
+
 /// Check whether a path points to an existing file (used by wikilink rendering).
 #[tauri::command]
 pub fn path_exists(path: String) -> bool {
@@ -1370,5 +1393,19 @@ mod tests {
         let got = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
         assert_eq!(got, Some(normalize_path(&dir.join("Pic.PNG")).to_string_lossy().into_owned()));
         fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- copy_to_clipboard ---
+    //
+    // Ignored by default: this test mutates the *real* OS clipboard, which is
+    // hostile to an unattended `cargo test` sweep (and to whatever the
+    // developer happens to have copied). Run it manually:
+    //   cargo test -- --ignored clipboard
+    #[test]
+    #[ignore = "mutates the real OS clipboard; run manually: cargo test -- --ignored"]
+    fn clipboard_roundtrip_writes_the_exact_text() {
+        copy_to_clipboard("mermark-clipboard-roundtrip".into()).unwrap();
+        let got = arboard::Clipboard::new().unwrap().get_text().unwrap();
+        assert_eq!(got, "mermark-clipboard-roundtrip");
     }
 }

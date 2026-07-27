@@ -482,6 +482,18 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       for (let i = offset; i < end; i++) rows.push(mockSqliteRow(table, i));
       return rows as T;
     }
+    case "copy_to_clipboard":
+      // Mirrors the real `copy_to_clipboard(text) -> Result<(), String>`, but
+      // fire-and-forget and always-successful: dev:browser (http origin,
+      // secure context) has a real clipboard, so this actually writes to it
+      // for manual developer verification, but a rejected write (no focus, no
+      // permission under CDP/headless) is swallowed rather than propagated —
+      // the golden must stay deterministic regardless of the browser's
+      // clipboard-permission state. Same "simulate the effect, report success"
+      // pattern as the watch_file stub above.
+      void navigator.clipboard?.writeText(String(a.text ?? "")).catch(() => {});
+      console.info("[mock] copy_to_clipboard", `${String(a.text ?? "").length} chars`);
+      return undefined as T;
     case "path_exists":
       return true as T;
     case "open_path": {

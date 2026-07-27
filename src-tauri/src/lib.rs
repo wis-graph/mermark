@@ -237,6 +237,7 @@ pub fn run() {
             commands::resolve_image,
             commands::watch_file,
             commands::unwatch_file,
+            commands::copy_to_clipboard,
             hwp::hwp_open,
             hwp::hwp_render_page,
             hwp::hwp_close,

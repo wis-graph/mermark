@@ -18,12 +18,15 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => mockWindow,
 }));
 
-const invokeMock = vi.fn((cmd: string, _args?: unknown) => {
+function defaultInvokeImpl(cmd: string, _args?: unknown) {
   if (cmd === "read_file") return Promise.resolve({ text: "hello world", mtime: 1 });
   if (cmd === "write_file") return Promise.resolve(2);
   if (cmd === "bundle_doc") return Promise.resolve("<bundle/>");
+  if (cmd === "copy_to_clipboard") return Promise.resolve();
   return Promise.resolve(false);
-});
+}
+
+const invokeMock = vi.fn(defaultInvokeImpl);
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
@@ -34,6 +37,9 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
 }));
 
+// No longer the write path — path.copy/bundle.copy go through the backend IPC
+// command (copy_to_clipboard) now. Kept as a spy so every test can assert the
+// web API is never re-entered (regression guard against the old fallback).
 const clipboardWriteText = vi.fn(() => Promise.resolve());
 
 describe("flashStatus overlap (path.copy / bundle.copy)", () => {
@@ -61,6 +67,7 @@ describe("flashStatus overlap (path.copy / bundle.copy)", () => {
     vi.unstubAllGlobals();
     vi.resetModules();
     vi.useRealTimers();
+    invokeMock.mockImplementation(defaultInvokeImpl); // undo any per-test override below
   });
 
   it("restores the true original text after two overlapping flashes expire", async () => {
@@ -96,5 +103,29 @@ describe("flashStatus overlap (path.copy / bundle.copy)", () => {
     // Advance past the second timer's expiry: must restore the real original.
     await vi.advanceTimersByTimeAsync(600);
     expect(pos.textContent).toBe(original);
+    expect(clipboardWriteText).not.toHaveBeenCalled(); // single IPC path, no web fallback
+  });
+
+  it("flashes the failure message when the backend copy_to_clipboard invoke rejects", async () => {
+    invokeMock.mockImplementation((cmd: string, args?: unknown) =>
+      cmd === "copy_to_clipboard"
+        ? Promise.reject("clipboard write failed: permission denied")
+        : defaultInvokeImpl(cmd, args),
+    );
+    const { dispatchChord } = await import("../src/shortcuts/registry");
+    await import("../src/main");
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const pos = app.querySelector(".status-pos") as HTMLElement;
+    expect(pos).toBeTruthy();
+
+    vi.useFakeTimers();
+
+    // ⌥⌘C: path.copy — the backend invoke rejects, so the failure flash fires.
+    dispatchChord("Mod+Alt+C");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pos.textContent).toBe("⚠ 경로 복사 실패");
+    expect(clipboardWriteText).not.toHaveBeenCalled(); // no web fallback on IPC failure
   });
 });
