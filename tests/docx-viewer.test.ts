@@ -5,7 +5,6 @@ import { dirname, join, resolve } from "node:path";
 import { docxContainerKind } from "../src/extensions/docx-viewer/container-kind";
 import { viewerFor } from "../src/chrome/viewer/registry";
 import { registerDocxViewer, docxOpenErrorMessage } from "../src/extensions/docx-viewer";
-import { docxFitScale, DOCX_PAGE_WIDTH_FRACTION } from "../src/extensions/docx-viewer/fit-scale";
 
 function bytesOf(...values: number[]): ArrayBuffer {
   return new Uint8Array(values).buffer;
@@ -37,42 +36,6 @@ describe("docxContainerKind (pure — zip/CFB/unknown signature classifier)", ()
   });
 });
 
-describe("docxFitScale (pure — page-width-parity fit ratio, mirrors pdf-viewer's fitWidthScale table)", () => {
-  it(`fits a 793.7px page into ${DOCX_PAGE_WIDTH_FRACTION * 100}% of a 1050px available width`, () => {
-    // Real measured numbers from the browser-mode repro (1050 clientWidth /
-    // 793.7 section.docx width, 76% before this fix) — after the fix the
-    // page should scale to exactly DOCX_PAGE_WIDTH_FRACTION of 1050.
-    expect(docxFitScale(1050, 793.7)).toBeCloseTo((1050 * DOCX_PAGE_WIDTH_FRACTION) / 793.7, 10);
-  });
-
-  it("a wider available width scales the page UP", () => {
-    expect(docxFitScale(2000, 793.7)).toBeGreaterThan(1);
-  });
-
-  it("a narrower available width scales the page DOWN", () => {
-    expect(docxFitScale(400, 793.7)).toBeLessThan(1);
-  });
-
-  it("zero page width -> 1 (safe default, never divides by zero)", () => {
-    expect(docxFitScale(1050, 0)).toBe(1);
-  });
-
-  it("NaN page width -> 1 (safe default, never propagates NaN)", () => {
-    expect(docxFitScale(1050, NaN)).toBe(1);
-  });
-
-  it("zero available width -> 1 (safe default)", () => {
-    expect(docxFitScale(0, 793.7)).toBe(1);
-  });
-
-  it("negative available width -> 1 (safe default)", () => {
-    expect(docxFitScale(-100, 793.7)).toBe(1);
-  });
-
-  it("NaN available width -> 1 (safe default)", () => {
-    expect(docxFitScale(NaN, 793.7)).toBe(1);
-  });
-});
 
 describe("docx viewer registration", () => {
   it('registerDocxViewer() claims "docx" — viewerFor("docx") resolves to id "ext.docx"', () => {
@@ -156,5 +119,33 @@ describe("docx viewer: content IS the scroll container (no third wrapper layer)"
 
   it("the zoom sink writes to `content.style.zoom` — the SAME element as the scroll container", () => {
     expect(src).toMatch(/content\.style\.zoom\s*=/);
+  });
+});
+
+// 재호출 3차 (팀리드 지시, 2026-07-27): the docx viewer used to render a
+// floating A4 "page" — box-shadow + a 0.9-fraction fit-to-width scale — inside
+// the panel, framed like a photo. The user asked for the html-viewer's flat,
+// borderless, panel-filling layout instead. These lock the new contract at
+// the source level (same technique as the describe block above): no shadow
+// rule survives, and the three inline sectPr properties docx-preview writes
+// onto `section.docx` (measured in the real app via aside MCP: `padding:
+// 70.85pt; width: 595.3pt; min-height: 841.9pt;`) are overridden so the
+// section fills the panel instead of floating at its own native size.
+describe("docx viewer: flat panel-filling layout (no page frame)", () => {
+  const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const src = readFileSync(join(ROOT, "src", "extensions", "docx-viewer", "index.ts"), "utf8");
+
+  it("no box-shadow rule is injected for section.docx (the page-frame look is gone)", () => {
+    expect(src).not.toMatch(/box-shadow:\s*0[^;]*;/);
+    expect(src).toMatch(/box-shadow:\s*none/);
+  });
+
+  it("section.docx's inline width/min-height are overridden with !important (beats docx-preview's own inline style)", () => {
+    expect(src).toMatch(/width:\s*100%\s*!important/);
+    expect(src).toMatch(/min-height:\s*0\s*!important/);
+  });
+
+  it("no fit-to-width scale machinery remains (the page-fraction fit this superseded)", () => {
+    expect(src).not.toMatch(/docxFitScale|nativePageWidth|refitDocx|DOCX_PAGE_WIDTH_FRACTION/);
   });
 });

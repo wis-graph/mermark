@@ -32,7 +32,6 @@ import {
   type ViewerHandle,
 } from "../../api";
 import { docxContainerKind, type DocxContainerKind } from "./container-kind";
-import { docxFitScale } from "./fit-scale";
 
 const STYLE_ID = "ext-docx-viewer-style";
 
@@ -55,22 +54,41 @@ function ensureStyleInjected(): void {
   style.textContent = `
 .docx-viewer-pages {
   flex: 1; min-height: 0; overflow: auto;
-  display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 8px 0;
+  display: block; padding: 0;
 }
 .docx-viewer-status { padding: 12px; color: var(--muted); font-size: 1em; }
 /* docx-preview's own generated markup — className "docx" (the library's
  * default className option, kept as-is: design §핵심 판정 2(a), unlikely to
  * collide since mermark itself owns no .docx* class). White paper even in
- * dark mode (pdf-viewer's ".pdf-viewer-page { background: #fff }" precedent
- * — a document viewer's whole promise is showing the ORIGINAL document, not
- * a theme-inverted one) plus the same shadow pdf-viewer's page uses, for a
- * visually consistent "this is a page" cue across document viewers. */
+ * dark mode (html-viewer's ".html-viewer-frame { background: #fff }"
+ * precedent — a document viewer's whole promise is showing the ORIGINAL
+ * document, not a theme-inverted one). 재호출 3차 (팀리드 지시, html 뷰어와
+ * 정렬): no shadow, no page frame — this is a FLAT surface filling the panel,
+ * not a floating sheet of paper, matching how .html-viewer-frame fills its
+ * pane edge-to-edge. */
 .docx-viewer-pages .docx-wrapper {
   background: transparent; padding: 0;
 }
+/* docx-preview writes width/padding/min-height as an INLINE style on every
+ * generated section (from the document's sectPr) — measured directly in the
+ * real app (aside MCP, dev server, sample.docx): the observed inline style
+ * was exactly "padding: 70.85pt; width: 595.3pt; min-height: 841.9pt;". An
+ * inline style beats any stylesheet rule without !important, so these are
+ * the ONLY three properties overridden here — nothing else about
+ * docx-preview's own markup is touched. width:100% fills the panel (no more
+ * "photo in a frame" sub-panel box); the 94px/2.5cm Word page margin becomes
+ * a modest reading padding instead (html-viewer parity, not a literal page
+ * margin); min-height:0 lets multiple sections stack as one continuous
+ * document rather than each claiming a fixed A4 height. box-sizing:border-box
+ * so the padding doesn't push the element past width:100%. */
 .docx-viewer-pages .docx-wrapper > section.docx {
-  background: #fff; box-shadow: 0 1px 4px color-mix(in srgb, #000 25%, transparent);
+  background: #fff;
+  box-shadow: none;
   margin-bottom: 0;
+  width: 100% !important;
+  min-height: 0 !important;
+  padding: 40px 48px !important;
+  box-sizing: border-box;
 }
 `;
   document.head.appendChild(style);
@@ -132,55 +150,6 @@ function openDocxViewer(absPath: string): ViewerHandle {
     closed = true;
   });
 
-  // Fit-to-width state, composed with the shell's own viewer-local zoom
-  // (design parity with pdf/hwp, 사용자 지정 2026-07-27 — see fit-scale.ts's
-  // `docxFitScale`). `nativePageWidth` is captured ONCE, right after
-  // renderAsync inserts `section.docx` at `content.style.zoom` still unset
-  // (=1) — docx-preview lays a page out at its document's absolute
-  // cm-derived px width regardless of any zoom this file applies afterward,
-  // so one measurement is enough; a page never needs re-measuring on
-  // resize/zoom, only re-SCALING (`refitDocx` below). 0 = "not yet known"
-  // (still loading), the same sentinel `docxFitScale`'s degenerate-input
-  // guard treats as "no fit available".
-  let nativePageWidth = 0;
-  let userZoom = shell.zoom.get();
-
-  // The single "what zoom value does `content` actually carry right now"
-  // rule (mermark-frontend §7 naming discipline) — called after EITHER input
-  // changes (`userZoom` via the header's −/+/label buttons, or the panel's
-  // available width via resize), so `content.style.zoom` is always
-  // `userZoom * fit` and never drifts to one or the other alone. Reads
-  // `content.parentElement` (`.viewer-panel-body`, openViewerShell's own
-  // scroll-boundary parent) for "available width" rather than `content`
-  // itself — `content` carries the very `zoom` this function writes, and a
-  // zoomed element's own `clientWidth` is reported in zoom-affected units,
-  // which would feed this computation's own output back into its input and
-  // oscillate on every recompute (fit-scale.ts's docxFitScale doc comment).
-  // Command (void) — a DOM mutation.
-  function refitDocx(): void {
-    if (!(nativePageWidth > 0)) {
-      content.style.zoom = String(userZoom);
-      return;
-    }
-    const availableWidth = (content.parentElement as HTMLElement | null)?.clientWidth ?? 0;
-    const fit = docxFitScale(availableWidth, nativePageWidth);
-    content.style.zoom = String(userZoom * fit);
-  }
-
-  // jsdom (unit tests) has no ResizeObserver — guarded rather than polyfilled,
-  // same precedent as excel-viewer's `sheetGeometryObserver`. Watches
-  // `.viewer-panel-body` (NOT `content`, which the zoom this triggers would
-  // otherwise feed back into) so a sidebar drag or window resize — either of
-  // which changes the AVAILABLE width without necessarily firing a `resize`
-  // event on `window` — re-fits the page too.
-  const panelBody = content.parentElement as HTMLElement | null;
-  const panelResizeObserver =
-    typeof ResizeObserver === "undefined" || !panelBody
-      ? null
-      : new ResizeObserver(() => refitDocx());
-  if (panelResizeObserver && panelBody) panelResizeObserver.observe(panelBody);
-  shell.onTeardown(() => panelResizeObserver?.disconnect());
-
   (async () => {
     const [bytes, docxPreview] = await Promise.all([
       readLocalFileBytes(absPath),
@@ -233,14 +202,6 @@ function openDocxViewer(absPath: string): ViewerHandle {
     if (closed) return;
     content.className = "docx-viewer-pages";
     content.replaceChildren(styleHost, bodyHost);
-
-    // Capture the page's native (pre-fit) width — see `nativePageWidth`'s
-    // comment above for why this reads ONCE, right here, rather than on
-    // every refit. `.docx-wrapper > section.docx` is docx-preview's own
-    // generated markup (this file's injected CSS targets the same selector).
-    const pageEl = bodyHost.querySelector<HTMLElement>(".docx-wrapper > section.docx");
-    if (pageEl) nativePageWidth = pageEl.getBoundingClientRect().width;
-    refitDocx();
   })().catch((err: unknown) => {
     if (closed) return;
     content.replaceChildren();
@@ -254,15 +215,16 @@ function openDocxViewer(absPath: string): ViewerHandle {
   // scroll area matches what's actually shown at any zoom level (a
   // transform-scaled seq of stacked pages would either leave dead scroll
   // space when shrunk or clip when enlarged). Applied to `content` itself —
-  // now the SAME element as the scroll container above, so the zoomed box
-  // and the scrolling box are never two different elements that could drift
-  // out of sync. The applied value is `userZoom * fit` (`refitDocx`), not the
-  // raw ladder factor alone — page-width parity (0.9, 사용자 지정 2026-07-27)
-  // composes with the user's own zoom rather than replacing it.
+  // the SAME element as the scroll container above, so the zoomed box and
+  // the scrolling box are never two different elements that could drift out
+  // of sync. 재호출 3차: the fit-to-width composition (`userZoom * fit`) is
+  // GONE along with the page frame it served — there is no "page" to fit to
+  // a fraction of the panel anymore (width:100% fills it directly), so this
+  // is back to the plain single-factor sink pdf/hwp use before the 2차
+  // detour.
   shell.onTeardown(
     shell.zoom.bind((factor) => {
-      userZoom = factor;
-      refitDocx();
+      content.style.zoom = String(factor);
     }),
   );
 
