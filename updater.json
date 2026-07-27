@@ -1,11 +1,11 @@
 {
-  "version": "0.9.13",
-  "notes": "### Fixed\n\n- **검색 입력창의 글자가 보이지 않던 문제**: `⌘F` 찾기 상자에 글자를 쳐도 배경이 어두워 무엇을 쳤는지 보이지 않았다. 이제 밝은 테마·어두운 테마·클로드 테마 어디서든 입력한 글자가 또렷하게 보인다.\n- **찾아 바꾸기를 쓸 수 없던 문제**: mermark는 처음에 **읽기 모드**로 열리는데, 읽기 모드에서는 바꾸기 칸이 나타나지 않아 사실상 바꾸기를 쓸 수 없었다. 이제 **`⌥⌘F`를 누르면 편집 모드로 알아서 넘어가면서 바꾸기 칸이 열린다**. 읽기 모드에서 `⌘F`로 찾기만 열었을 때도 상자 안에 **\"바꾸기 (⌥⌘F)\"** 버튼이 함께 나와, 바로 바꾸기로 넘어갈 수 있다(단축키를 바꿔 두었다면 그 키가 표시된다). `⌥⌘F`도 설정 › 단축키에서 바꿀 수 있다.",
-  "pub_date": "2026-07-27T20:23:04Z",
+  "version": "0.9.14",
+  "notes": "### Fixed\n\n- **찾기 상자를 열어 둔 채 편집 모드로 바꿔도 바꾸기 칸이 안 나오던 문제**: 읽기 모드에서 `⌘F`로 찾기를 연 다음 `⌘E`로 편집 모드로 넘어가면, 바꾸기 칸이 여전히 나타나지 않아 상자를 닫았다 다시 열어야 했다. 이제 모드를 바꾸는 즉시 상자가 그 모드에 맞게 다시 그려진다 — 편집으로 가면 바꾸기 칸이 바로 생기고, 읽기로 돌아가면 다시 \"바꾸기 (⌥⌘F)\" 버튼으로 바뀐다. **입력해 둔 검색어와 옵션(대소문자 구분·정규식·단어 단위)은 그대로 유지되고** 커서도 입력창에 남는다.",
+  "pub_date": "2026-07-27T22:26:21Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzRwQ0ppN2dWK3p2M3JQd2NlMjdRSVE3MUN3NDZ4MXlRbisxYlczRldzcXBDbnJTMUNvdk5SdmVDNkg2cm1pd0RDVjYvek5Cb29jZ2NmL3RPTVJ4Z1FrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MTgzNzYwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CksxdTJuSjlFRFJDbHlmMUUwMnZtV3I0RkMxWlhnOUJET2Y0N0xVTWo5U0ZwYWZ6bm9LUXI1WUJTV2VSR2VNU2JqT1JEMVpLa09TR0p2QVJUUVRwNUNRPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.13/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzdmQ3ROZmkyaDMvTVBsRVJpWTBheXV0WkNXdkJjNVp4eTg4Vmc2V1ZIeXh0MllibzdRci9kUmdQdzRJMzhjM3A5TmZCNWJkd2MvanB3YmFGckJuMmc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MTkxMTUwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CjBvaVBwL2ZzUXJVYWp0NVNNbHNSbllPNnJaODNxZzRuWmhoZjB0Z0NNRCtUMXFQREQ3SE8ydjB0MDNoZ0RUU2FYdmdKZlp2RHFBcU1LdDJCUi9XT0JnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.14/mermark.app.tar.gz"
     }
   }
 }
