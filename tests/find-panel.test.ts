@@ -3,7 +3,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { mountEditor } from "../src/editor";
-import { openFindPanel, enterEditModeForReplace, FIND_KEYMAP_WITHOUT_MOD_F } from "../src/markdown/find";
+import {
+  openFindPanel,
+  enterEditModeForReplace,
+  resyncFindPanelForMode,
+  FIND_KEYMAP_WITHOUT_MOD_F,
+} from "../src/markdown/find";
 import { modeSetting } from "../src/settings/app";
 
 // Tauri invoke is stubbed exactly per the mermark-frontend skill's canonical
@@ -148,6 +153,80 @@ describe("search.replace mode switch (v0.9.12 defect 2)", () => {
     const { view } = mountEditor(host, "hello world", "/tmp", "/tmp/doc.md", { initialMode: "read" });
     openFindPanel(view);
     expect(host.querySelector(".cm-search-replace-hint")).toBeNull();
+    view.destroy();
+  });
+});
+
+// v0.9.13 real-app defect — @codemirror/search's SearchPanel bakes whether it
+// draws a replace row into its CONSTRUCTOR (reads state.readOnly ONCE, at
+// panel-open time). mermark's mode toggle reconfigures a Compartment on the
+// SAME EditorView (editor.ts's setMode never remounts), so a panel opened
+// before a mode switch never grew (or lost) its replace row — until
+// resyncFindPanelForMode(view) started forcing a close+reopen via
+// editor.ts's setMode. These tests drive the real EditorController.setMode
+// path (not the raw find.ts function in isolation) so a regression in the
+// editor.ts wiring is caught, not just in find.ts.
+describe("search panel resyncs on mode switch while open (v0.9.13 defect)", () => {
+  it("panel opened in reader mode grows a replace row once setMode('edit') fires", () => {
+    const controller = mountEditor(host, "hello world", "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    openFindPanel(controller.view, { chordLabel: "⌥⌘F", activate: () => {} });
+    expect(host.querySelector(".cm-search-replace-hint")).not.toBeNull();
+    expect(host.querySelector('input[name="replace"]')).toBeNull();
+
+    controller.setMode("edit");
+
+    expect(host.querySelector('input[name="replace"]')).not.toBeNull();
+    expect(host.querySelector(".cm-search-replace-hint")).toBeNull(); // real row covers it now
+    controller.view.destroy();
+  });
+
+  it("panel opened in edit mode loses its replace row and gains the hint once setMode('read') fires", () => {
+    const controller = mountEditor(host, "hello world", "/tmp", "/tmp/doc.md", {
+      initialMode: "edit",
+      findReplaceHint: () => ({ chordLabel: "⌥⌘F", activate: () => {} }),
+    });
+    openFindPanel(controller.view);
+    expect(host.querySelector('input[name="replace"]')).not.toBeNull();
+
+    controller.setMode("read");
+
+    expect(host.querySelector('input[name="replace"]')).toBeNull();
+    const hint = host.querySelector(".cm-search-replace-hint");
+    expect(hint).not.toBeNull();
+    expect(hint?.textContent).toContain("⌥⌘F");
+    controller.view.destroy();
+  });
+
+  it("resync preserves the typed search term and options (case/regexp/word)", () => {
+    const controller = mountEditor(host, "hello world", "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    openFindPanel(controller.view);
+    const searchField = host.querySelector<HTMLInputElement>('input[name="search"]')!;
+    const caseField = host.querySelector<HTMLInputElement>('input[name="case"]')!;
+    searchField.value = "wor.d";
+    searchField.dispatchEvent(new Event("change", { bubbles: true }));
+    caseField.checked = true;
+    caseField.dispatchEvent(new Event("change", { bubbles: true }));
+
+    controller.setMode("edit"); // triggers a close+reopen resync
+
+    const searchFieldAfter = host.querySelector<HTMLInputElement>('input[name="search"]')!;
+    const caseFieldAfter = host.querySelector<HTMLInputElement>('input[name="case"]')!;
+    expect(searchFieldAfter.value).toBe("wor.d");
+    expect(caseFieldAfter.checked).toBe(true);
+    controller.view.destroy();
+  });
+
+  it("mode switches with no panel open are a no-op (nothing to resync)", () => {
+    const controller = mountEditor(host, "hello world", "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    expect(() => controller.setMode("edit")).not.toThrow();
+    expect(host.querySelector(".cm-search")).toBeNull();
+    controller.view.destroy();
+  });
+
+  it("resyncFindPanelForMode is a no-op when the panel isn't open (unit-level guard)", () => {
+    const { view } = mountEditor(host, "hello world", "/tmp", "/tmp/doc.md", { initialMode: "edit" });
+    expect(() => resyncFindPanelForMode(view)).not.toThrow();
+    expect(host.querySelector(".cm-search")).toBeNull();
     view.destroy();
   });
 });

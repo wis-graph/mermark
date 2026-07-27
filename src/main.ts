@@ -725,6 +725,14 @@ async function boot() {
       // Outline panel's docChanged listener — re-attaches per mount, so the
       // outline tracks whichever document is currently live.
       extraExtensions: outline.listener,
+      // Search-panel replace-hint (v0.9.12/v0.9.13 defects) — replaceHintEntry
+      // is defined below (registerHandler block) and shared with
+      // search.document's initial ⌘F open; a getter (not a value) so a
+      // keybindings rebind is reflected the next time a mode switch resyncs
+      // an open panel. Safe forward reference: openInWindow (this call's
+      // enclosing function) only ever RUNS after the registerHandler block
+      // below has executed at boot.
+      findReplaceHint: replaceHintEntry,
     });
 
     const scroller = host.querySelector(".cm-scroller");
@@ -968,6 +976,19 @@ async function boot() {
     openFindPanel(current.view);
   };
   registerHandler("search.replace", openReplacePanel);
+  // The search-panel replace-hint entry (label + activate) — ONE definition
+  // shared by search.document's initial ⌘F open (below) and editor.ts's
+  // resync-on-mode-switch (mountEditor's findReplaceHint getter, wired
+  // above openInWindow) so the two call sites can't drift into different
+  // labels/activate behavior. Label reads the LIVE bound chord
+  // (effectiveBinding), never a hardcoded "⌥⌘F" string, so a rebind can't
+  // leave a stale hint. Pure query.
+  function replaceHintEntry(): { chordLabel: string; activate: () => void } {
+    return {
+      chordLabel: displayChord(effectiveBinding("search.replace") ?? "Mod+Alt+F"),
+      activate: openReplacePanel,
+    };
+  }
   // Mod-F: open the document search/replace panel. No-op while a full-pane
   // viewer (pdf/docx/hwp/…) is showing — the editor isn't on screen, so
   // popping its find panel behind the viewer would be silent confusion (see
@@ -976,18 +997,13 @@ async function boot() {
   // (openInWindow's first line already calls closeOpenViewer()).
   //
   // Reader mode still opens ⌘F, but the panel then has no replace row (see
-  // enterEditModeForReplace above) — so it always passes a replaceEntry.
+  // enterEditModeForReplace above) — so it always passes replaceHintEntry().
   // openFindPanel/syncReplaceHint show a "바꾸기 (⌥⌘F)" affordance ONLY when
   // the row is actually missing, and remove it once edit mode supplies the
-  // real row, so edit mode never shows a redundant hint. The label reads the
-  // LIVE bound chord (effectiveBinding), never a hardcoded "⌥⌘F" string, so
-  // a rebind can't leave a stale hint.
+  // real row, so edit mode never shows a redundant hint.
   registerHandler("search.document", () => {
     if (openViewer || !current) return;
-    openFindPanel(current.view, {
-      chordLabel: displayChord(effectiveBinding("search.replace") ?? "Mod+Alt+F"),
-      activate: openReplacePanel,
-    });
+    openFindPanel(current.view, replaceHintEntry());
   });
   registerHandler("search.files", () => searchPanel.revealSearch());
   // Transient status-bar feedback shared by clipboard-copy handlers: shows

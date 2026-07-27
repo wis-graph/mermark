@@ -6,7 +6,7 @@ import { EditorView, keymap, highlightActiveLine, drawSelection } from "@codemir
 import { vim } from "@replit/codemirror-vim";
 import { invoke } from "@tauri-apps/api/core";
 import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode } from "./markdown/live-preview";
-import { findExtensions } from "./markdown/find";
+import { findExtensions, resyncFindPanelForMode } from "./markdown/find";
 import { footnoteNav } from "./markdown/footnote-nav";
 import { footnoteHover } from "./markdown/footnote-hover";
 import { markdownFolding } from "./markdown/fold";
@@ -265,6 +265,13 @@ export function mountEditor(
      *  setup (e.g. the outline panel's docChanged listener). Threaded in so they
      *  re-attach on every re-mount, tracking the new document automatically. */
     extraExtensions?: Extension;
+    /** Getter for the reader-mode "바꾸기 (⌥⌘F)" search-panel hint (see
+     *  find.ts's syncReplaceHint) — called fresh on every mode switch so a
+     *  resync into reader mode can restore the hint. Injected rather than
+     *  owned here because building it needs app-level state this module
+     *  doesn't have (effectiveBinding, the search.replace handler) — mirrors
+     *  extraExtensions' injection shape. undefined = no hint offered. */
+    findReplaceHint?: () => { chordLabel: string; activate: () => void } | undefined;
   } = {},
 ): EditorController {
   const {
@@ -275,6 +282,7 @@ export function mountEditor(
     autosaveDelay = DEFAULT_AUTOSAVE_DELAY_MS,
     conflictPolicy = "pause",
     extraExtensions = [],
+    findReplaceHint,
   } = opts;
   // The SSOT settings are the writers; these mutable cells are the editor's sink
   // for them. makeAutosave reads them live via getters so a settings change
@@ -307,6 +315,9 @@ export function mountEditor(
       if (mode === "edit") autosave.flush(); // leaving edit = save point
       mode = m;
       controller.view.dispatch({ effects: modeCompartment.reconfigure(modeExtensions(m)) });
+      // v0.9.13 real-app bug: an open search panel doesn't rebuild itself when
+      // readOnly flips underneath it (same EditorView — see resyncFindPanelForMode).
+      resyncFindPanelForMode(controller.view, findReplaceHint?.());
     },
     refresh() {
       controller.view.dispatch({ effects: refreshBlocks.of(null) });

@@ -1,6 +1,6 @@
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
+import { search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen } from "@codemirror/search";
 import { modeSetting } from "../settings/app";
 
 // ---------------------------------------------------------------------------
@@ -140,5 +140,35 @@ export function openFindPanel(
   const opened = openSearchPanel(view);
   if (replaceEntry) syncReplaceHint(view, replaceEntry.chordLabel, replaceEntry.activate);
   return opened;
+}
+
+/** Rebuild an ALREADY-OPEN search panel after `view`'s readOnly flag changes
+ *  out from under it (mermark's mode toggle reconfigures a Compartment on
+ *  the SAME EditorView — editor.ts's `setMode` — it never remounts the
+ *  editor). `@codemirror/search`'s own `SearchPanel` bakes whether it draws
+ *  a replace row into its CONSTRUCTOR, reading `view.state.readOnly` exactly
+ *  once at panel-open time (see file header); its `update()` method only
+ *  reacts to search-query effects, never to readOnly changing. So a panel
+ *  opened before a mode switch keeps showing the OLD mode's replace-row-or-
+ *  not forever (v0.9.13 real-app bug: open ⌘F in reader mode, then ⌘E to
+ *  edit — no replace row ever appears). The package's own supported way to
+ *  force a fresh `SearchPanel` instance is close-then-reopen (this changes
+ *  the `panel` sub-field's identity, which IS what the panel-hosting
+ *  machinery diffs on). This does NOT lose the user's typed search term or
+ *  case/regexp/word-boundary options — `searchState`'s `query` sub-field is
+ *  untouched by a panel close (only `panel` resets to null), and
+ *  `openSearchPanel` reseeds the reopened panel from that exact query via
+ *  its own `defaultQuery(state, fallback)` call. `replaceEntry` is forwarded
+ *  to `openFindPanel` unchanged, so a reopen into reader mode still gets the
+ *  "바꾸기 (⌥⌘F)" hint and a reopen into edit mode still gets the real row.
+ *  No-op when the panel isn't open — a mode switch with no panel open has
+ *  nothing to resync. Command (void). */
+export function resyncFindPanelForMode(
+  view: EditorView,
+  replaceEntry?: { chordLabel: string; activate: () => void },
+): void {
+  if (!searchPanelOpen(view.state)) return;
+  closeSearchPanel(view);
+  openFindPanel(view, replaceEntry);
 }
 
