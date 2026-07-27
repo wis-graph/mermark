@@ -47,5 +47,11 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: "vim.toggle", label: "Vim 모드 토글", defaultBinding: null },
   { id: "save.flush", label: "저장 (강제 플러시)", defaultBinding: null },
   { id: "search.document", label: "문서 내 찾기/바꾸기", defaultBinding: "Mod+F" },
+  // Reader mode hides @codemirror/search's replace row (package branches on
+  // state.readOnly), and mermark's default mode IS reader — so without a
+  // dedicated action, replace was unreachable from boot (v0.9.12 real-app
+  // bug). This action switches to edit mode first, then opens the panel —
+  // see main.ts's openReplacePanel.
+  { id: "search.replace", label: "찾아 바꾸기 (편집 모드로 전환)", defaultBinding: "Mod+Alt+F" },
   { id: "search.files", label: "파일 찾기", defaultBinding: "Mod+Shift+F" },
 ];

@@ -131,6 +131,21 @@ describe("shortcut registry", () => {
     expect(files).toHaveBeenCalledOnce();
   });
 
+  // v0.9.12 real-app defect 2 ("찾아 바꾸기가 없는데?"): search.replace must be
+  // in the catalog with its own default chord, distinct from search.document,
+  // and dispatch to its own handler.
+  it("search.replace ships with Mod+Alt+F, does not conflict with search.document, and dispatches", () => {
+    bindKeybindings(keybindSetting("kb.searchReplace"));
+    expect(effectiveBinding("search.replace")).toBe("Mod+Alt+F");
+    expect(findConflict("Mod+Alt+F")).toBe("search.replace");
+    expect(findConflict("Mod+Alt+F", "search.replace")).toBeNull();
+    expect(findConflict("Mod+F", "search.replace")).toBe("search.document"); // distinct chords
+    const replace = vi.fn();
+    registerHandler("search.replace", replace);
+    expect(dispatchChord("Mod+Alt+F")).toBe(true);
+    expect(replace).toHaveBeenCalledOnce();
+  });
+
   it("override map round-trips through localStorage (JSON serialize)", () => {
     const s1 = keybindSetting("kb.persist");
     s1.set({ "zoom.in": "Mod+Shift+=" });

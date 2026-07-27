@@ -2464,25 +2464,37 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    markdown/find.ts). CM docks it via `search({ top: true })`; these rules
    only re-theme the package's own classnames (.cm-search / .cm-textfield /
    .cm-button) with mermark's editor tokens, so it doesn't look like an
-   unstyled browser-default overlay against the reading surface. --------- */
+   unstyled browser-default overlay against the reading surface.
+   CANVAS SURFACE, NOT SIDEBAR: this panel docks over the editor canvas, so it
+   must use the plain --bg/--fg/--border/--accent/--muted tokens — never the
+   --sidebar-* family. Light and claude themes invert the sidebar to a DARK
+   palette (SIDEBAR CONTRAST RULE above) while the canvas stays light, so a
+   `var(--sidebar-bg, ...)` background paired with `var(--fg)` text produces
+   dark-on-dark (v0.9.12 real-app bug: input text unreadable in light theme).
+   `--border`/`--accent`/`--muted` are root-level tokens defined by every
+   theme block (see :root above) — no `, var(--sidebar-*))` fallback needed;
+   the fallback was itself the bug (silently resolves to the sidebar palette
+   whenever the primary custom-property lookup succeeds is fine, but here the
+   author intent was "canvas token", so keep it canvas-only). ------------- */
 .cm-panel.cm-search {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   padding: 6px 10px; font-size: 13px;
   background: var(--bg); color: var(--fg);
-  border-bottom: 1px solid var(--border, var(--sidebar-border));
+  border-bottom: 1px solid var(--border);
 }
 .cm-panel.cm-search .cm-textfield {
-  background: var(--sidebar-bg, var(--bg)); color: var(--fg);
-  border: 1px solid var(--border, var(--sidebar-border));
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
   padding: 3px 6px; font: inherit; min-width: 10em;
 }
+.cm-panel.cm-search .cm-textfield::placeholder { color: var(--muted); }
 .cm-panel.cm-search .cm-textfield:focus-visible {
-  outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--sidebar-accent)) 50%, transparent);
+  outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 .cm-panel.cm-search .cm-button {
   background: transparent; color: var(--fg);
-  border: 1px solid var(--border, var(--sidebar-border));
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
   padding: 3px 8px; font: inherit; cursor: pointer;
 }
@@ -2493,8 +2505,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   font-size: 1.1em; line-height: 1; cursor: pointer; padding: 2px 6px;
 }
 .cm-panel.cm-search button[name="close"]:hover { color: var(--fg); }
-.cm-searchMatch { background: color-mix(in srgb, var(--sidebar-accent, gold) 35%, transparent); }
-.cm-searchMatch-selected { background: color-mix(in srgb, var(--sidebar-accent, orange) 60%, transparent); }
+/* Entry to replace when the panel opened without it (see .cm-search-replace-hint
+   below) — same button chrome as the panel's own .cm-button so it reads as
+   part of the family, not a bolted-on control. */
+.cm-panel.cm-search .cm-search-replace-hint {
+  background: transparent; color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 3px 8px; font: inherit; font-size: .92em; cursor: pointer;
+}
+.cm-panel.cm-search .cm-search-replace-hint:hover { color: var(--fg); border-color: var(--muted); }
+/* Highlight uses --accent (canvas action color), not the sidebar's accent
+   token — the matches are drawn on the editor canvas, so they must contrast
+   against --bg/--fg, not the sidebar's inverted palette. */
+.cm-searchMatch { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.cm-searchMatch-selected { background: color-mix(in srgb, var(--accent) 60%, transparent); }
 
 /* ---------------------------------------------------------------------------
    File-finder LEFT SIDEBAR panel (Mod-Shift-F, sidebar/search/search-panel.ts)

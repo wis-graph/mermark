@@ -1,6 +1,7 @@
 import { EditorState, type Extension } from "@codemirror/state";
-import { keymap } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
 import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
+import { modeSetting } from "../settings/app";
 
 // ---------------------------------------------------------------------------
 // Document-search (Mod-F) — `@codemirror/search`'s built-in panel, verbatim
@@ -70,15 +71,74 @@ export function findExtensions(): Extension[] {
   ];
 }
 
-/** Open the Mod-F panel programmatically — main.ts's `search.document` handler
- *  call this instead of importing `@codemirror/search` directly, so the
- *  package dependency stays confined to this one file (the same "main
- *  imports the wrapper, not the library" shape sidebar/search/search-panel.ts
- *  uses for the Tauri `invoke` call). Just `openSearchPanel` re-exported
- *  under the app-level name this codebase's action is named after
- *  (`search.document`, not "search"). NOT also re-exported under its
- *  original `openSearchPanel` name — this file's own header warns against
- *  exactly that shape (two live paths to the same command drift apart), so
- *  it doesn't repeat the mistake for its own export. */
-export const openFindPanel = openSearchPanel;
+/** Leave reader mode before opening the replace panel. The package's own
+ *  `SearchPanel` hides its replace row whenever `state.readOnly` is true
+ *  (see file header), and mermark DEFAULTS to reader mode (`modeSetting`,
+ *  settings/app.ts) — so without this, replace was unreachable from a fresh
+ *  boot (v0.9.12 real-app bug: "찾아 바꾸기가 없는데?"). Goes through
+ *  `modeSetting` (the SSOT ⌘E also writes) rather than touching the editor's
+ *  mode compartment directly, so every mode-driven sink (status-bar label,
+ *  readOnly compartment, live-preview conceal) reacts the normal way. No-op
+ *  when already in edit mode. Command (void). */
+export function enterEditModeForReplace(): void {
+  if (modeSetting.get() === "read") modeSetting.set("edit");
+}
+
+/** True when the panel — if opened right now — would omit its replace row.
+ *  Mirrors the package's own `SearchPanel` branch on `state.readOnly` (see
+ *  the file header): a reader-mode document gets no replace field/buttons at
+ *  all. Named so "why is the hint showing" is one query, not an inline
+ *  `view.state.readOnly` check duplicated at each call site. Pure query. */
+function replaceRowHidden(view: EditorView): boolean {
+  return view.state.readOnly;
+}
+
+/** Add (or drop) the "바꾸기 (⌥⌘F)"-style affordance in the search panel's own
+ *  DOM. Reader mode hides the package's real replace row (see
+ *  `replaceRowHidden`), so without this a reader-mode Mod-F user has no
+ *  visible path to replace at all (v0.9.12 real-app bug). Once the replace
+ *  row IS present (edit mode) any stale hint is removed — the panel must
+ *  never show both a real replace UI and a hint pointing at it. `chordLabel`
+ *  is the caller-supplied *actual* bound chord (never hardcoded here), so a
+ *  rebind never leaves a stale label. Command (void), idempotent. */
+function syncReplaceHint(view: EditorView, chordLabel: string, activate: () => void): void {
+  const panel = view.dom.querySelector<HTMLElement>(".cm-panel.cm-search");
+  if (!panel) return;
+  const existing = panel.querySelector<HTMLButtonElement>(".cm-search-replace-hint");
+  if (!replaceRowHidden(view)) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return; // already showing — do not duplicate
+  const hint = document.createElement("button");
+  hint.type = "button";
+  hint.className = "cm-search-replace-hint";
+  hint.textContent = `바꾸기 (${chordLabel})`;
+  hint.addEventListener("mousedown", (e) => e.preventDefault()); // keep panel focus
+  hint.addEventListener("click", (e) => {
+    e.preventDefault();
+    activate();
+  });
+  panel.appendChild(hint);
+}
+
+/** Open the Mod-F panel programmatically — main.ts's `search.document` and
+ *  `search.replace` handlers call this instead of importing
+ *  `@codemirror/search` directly, so the package dependency stays confined
+ *  to this one file (the same "main imports the wrapper, not the library"
+ *  shape sidebar/search/search-panel.ts uses for the Tauri `invoke` call).
+ *
+ *  `replaceEntry`, when given, syncs the reader-mode replace-hint button
+ *  (see `syncReplaceHint`) after the panel opens — `search.document` passes
+ *  it (⌘F must show a path to replace even in reader mode); `search.replace`
+ *  omits it (it already switched to edit mode itself, so the real replace
+ *  row is showing and no hint is needed — see main.ts's openReplacePanel). */
+export function openFindPanel(
+  view: EditorView,
+  replaceEntry?: { chordLabel: string; activate: () => void },
+): boolean {
+  const opened = openSearchPanel(view);
+  if (replaceEntry) syncReplaceHint(view, replaceEntry.chordLabel, replaceEntry.activate);
+  return opened;
+}
 

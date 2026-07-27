@@ -67,7 +67,7 @@ import { registerSidebarPanel, closeOtherSidebarPanels, installSidebarPanels } f
 import { createBreadcrumb } from "./chrome/breadcrumb";
 import { createRecentPanel } from "./sidebar/recent/recent-panel";
 import { createSearchPanel, type ScanResult } from "./sidebar/search/search-panel";
-import { openFindPanel } from "./markdown/find";
+import { openFindPanel, enterEditModeForReplace } from "./markdown/find";
 import { pushRecent, pruneMissing } from "./sidebar/recent/recent-docs";
 import { createFavoritesSection } from "./sidebar/favorites/favorites-panel";
 import { createWelcomePane } from "./chrome/welcome/welcome-pane";
@@ -958,15 +958,36 @@ async function boot() {
     vimModeSetting.set(vimModeSetting.get() === "on" ? "off" : "on"),
   );
   registerHandler("save.flush", () => current?.flushSave());
+  // Mod-Alt-F ("찾아 바꾸기"): switch out of reader mode (see find.ts's
+  // enterEditModeForReplace for why that's necessary — v0.9.12 real-app
+  // bug), then open the same panel ⌘F uses. Same viewer/no-current guard as
+  // search.document below.
+  const openReplacePanel = (): void => {
+    if (openViewer || !current) return;
+    enterEditModeForReplace();
+    openFindPanel(current.view);
+  };
+  registerHandler("search.replace", openReplacePanel);
   // Mod-F: open the document search/replace panel. No-op while a full-pane
   // viewer (pdf/docx/hwp/…) is showing — the editor isn't on screen, so
   // popping its find panel behind the viewer would be silent confusion (see
   // _workspace/01_architect_design.md 판정3 "뷰어 열림 시"). Mod-Shift-F is
   // unaffected by the viewer — opening a result CLOSES the viewer for free
   // (openInWindow's first line already calls closeOpenViewer()).
+  //
+  // Reader mode still opens ⌘F, but the panel then has no replace row (see
+  // enterEditModeForReplace above) — so it always passes a replaceEntry.
+  // openFindPanel/syncReplaceHint show a "바꾸기 (⌥⌘F)" affordance ONLY when
+  // the row is actually missing, and remove it once edit mode supplies the
+  // real row, so edit mode never shows a redundant hint. The label reads the
+  // LIVE bound chord (effectiveBinding), never a hardcoded "⌥⌘F" string, so
+  // a rebind can't leave a stale hint.
   registerHandler("search.document", () => {
     if (openViewer || !current) return;
-    openFindPanel(current.view);
+    openFindPanel(current.view, {
+      chordLabel: displayChord(effectiveBinding("search.replace") ?? "Mod+Alt+F"),
+      activate: openReplacePanel,
+    });
   });
   registerHandler("search.files", () => searchPanel.revealSearch());
   // Transient status-bar feedback shared by clipboard-copy handlers: shows

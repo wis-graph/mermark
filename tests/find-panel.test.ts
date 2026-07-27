@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { mountEditor } from "../src/editor";
-import { openFindPanel, FIND_KEYMAP_WITHOUT_MOD_F } from "../src/markdown/find";
+import { openFindPanel, enterEditModeForReplace, FIND_KEYMAP_WITHOUT_MOD_F } from "../src/markdown/find";
+import { modeSetting } from "../src/settings/app";
 
 // Tauri invoke is stubbed exactly per the mermark-frontend skill's canonical
 // pattern (render-smoke.test.ts) — read_file/write_file shapes match the real
@@ -88,5 +92,83 @@ describe("Mod-F document search panel", () => {
     // Other panel-scoped chords are preserved verbatim.
     expect(FIND_KEYMAP_WITHOUT_MOD_F.some((b) => b.key === "Escape")).toBe(true);
     expect(FIND_KEYMAP_WITHOUT_MOD_F.some((b) => b.key === "F3")).toBe(true);
+  });
+});
+
+// v0.9.12 real-app defect 2 — "찾아 바꾸기가 없는데?": mermark defaults to
+// reader mode, and @codemirror/search's panel omits the replace row whenever
+// state.readOnly, so replace was unreachable until enterEditModeForReplace
+// (search.replace's mode-switch) shipped.
+describe("search.replace mode switch (v0.9.12 defect 2)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("enterEditModeForReplace flips reader mode to edit via the modeSetting SSOT", () => {
+    modeSetting.set("read");
+    enterEditModeForReplace();
+    expect(modeSetting.get()).toBe("edit");
+  });
+
+  it("enterEditModeForReplace is a no-op already in edit mode", () => {
+    modeSetting.set("edit");
+    enterEditModeForReplace();
+    expect(modeSetting.get()).toBe("edit");
+  });
+
+  it("read mode: ⌘F panel shows a replace-hint button pointing at the live search.replace chord", () => {
+    const { view } = mountEditor(host, "hello world", "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    openFindPanel(view, { chordLabel: "⌥⌘F", activate: () => {} });
+    const hint = host.querySelector(".cm-search-replace-hint");
+    expect(hint).not.toBeNull();
+    expect(hint?.textContent).toContain("⌥⌘F");
+    expect(host.querySelector('input[name="replace"]')).toBeNull(); // real row absent
+    view.destroy();
+  });
+
+  it("read mode: clicking the replace hint runs the caller's activate callback", () => {
+    const { view } = mountEditor(host, "hello world", "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    const activate = vi.fn();
+    openFindPanel(view, { chordLabel: "⌥⌘F", activate });
+    const hint = host.querySelector<HTMLButtonElement>(".cm-search-replace-hint");
+    hint?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(activate).toHaveBeenCalledOnce();
+    view.destroy();
+  });
+
+  it("edit mode: no replace-hint is shown (the real replace row already covers it)", () => {
+    const { view } = mountEditor(host, "hello world", "/tmp", "/tmp/doc.md", { initialMode: "edit" });
+    openFindPanel(view, { chordLabel: "⌥⌘F", activate: () => {} });
+    expect(host.querySelector(".cm-search-replace-hint")).toBeNull();
+    expect(host.querySelector('input[name="replace"]')).not.toBeNull();
+    view.destroy();
+  });
+
+  it("omitting replaceEntry never adds a hint (search.replace's own ⌘F reopen path)", () => {
+    const { view } = mountEditor(host, "hello world", "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    openFindPanel(view);
+    expect(host.querySelector(".cm-search-replace-hint")).toBeNull();
+    view.destroy();
+  });
+});
+
+// v0.9.12 real-app defect 1 — 검정 위 검정: light/claude themes invert the
+// sidebar to a DARK palette (SIDEBAR CONTRAST RULE), so a search-panel rule
+// that fell back to --sidebar-bg/border/accent produced dark-on-dark text on
+// the (light) editor canvas. Source-scan guard: the panel block must never
+// reference --sidebar-* again, on any theme.
+describe("search panel CSS uses canvas tokens, never --sidebar-* (v0.9.12 defect 1)", () => {
+  const cssPath = resolve(dirname(fileURLToPath(import.meta.url)), "../src/styles.css");
+  const css = readFileSync(cssPath, "utf8");
+
+  it("the .cm-panel.cm-search / .cm-searchMatch block contains no --sidebar- token", () => {
+    const start = css.indexOf(".cm-panel.cm-search {");
+    expect(start).toBeGreaterThan(-1);
+    const selEnd = css.indexOf(".cm-searchMatch-selected", start);
+    expect(selEnd).toBeGreaterThan(start);
+    const ruleEnd = css.indexOf("}", selEnd); // close of .cm-searchMatch-selected { ... }
+    expect(ruleEnd).toBeGreaterThan(selEnd);
+    const block = css.slice(start, ruleEnd + 1);
+    expect(block).not.toMatch(/--sidebar-/);
   });
 });
