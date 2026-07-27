@@ -43,13 +43,14 @@ const HWP_PAGE_FALLBACK_WIDTH = 600;
 
 /** The fraction of the pages column ONE page occupies — a reading column
  *  narrower than the full panel, kept in lockstep with the PDF viewer's
- *  `PDF_PAGE_WIDTH_FRACTION` (pdf-viewer/index.ts) so the two document viewers
- *  render pages at the SAME width. At 100% a portrait A4 page (aspect ~0.69)
+ *  `PDF_PAGE_WIDTH_FRACTION` (pdf-viewer/index.ts) and the docx viewer's
+ *  `DOCX_PAGE_WIDTH_FRACTION` (docx-viewer/fit-scale.ts) so all THREE document
+ *  viewers render pages at the SAME width. At 100% a portrait A4 page (aspect ~0.69)
  *  rendered ~1.45× the panel width TALL — far past the `88vh` envelope — so you
  *  had to zoom OUT to see a single page (사용자 리포트 2026-07-18: "축소를 해야
  *  전체가 보인다"). 0.9 leaves a modest reading margin on both sides while still
  *  filling most of the panel (사용자 지정 2026-07-18: "hwp 는 90%"). Change this
- *  and `PDF_PAGE_WIDTH_FRACTION` together — they are one design decision. */
+ *  and the other two together — they are one design decision. */
 const HWP_PAGE_WIDTH_FRACTION = 0.9;
 
 /** The page's fit-to-panel width (px) — `HWP_PAGE_WIDTH_FRACTION` of the page

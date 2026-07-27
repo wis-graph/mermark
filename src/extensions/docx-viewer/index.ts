@@ -32,6 +32,7 @@ import {
   type ViewerHandle,
 } from "../../api";
 import { docxContainerKind, type DocxContainerKind } from "./container-kind";
+import { docxFitScale } from "./fit-scale";
 
 const STYLE_ID = "ext-docx-viewer-style";
 
@@ -131,6 +132,55 @@ function openDocxViewer(absPath: string): ViewerHandle {
     closed = true;
   });
 
+  // Fit-to-width state, composed with the shell's own viewer-local zoom
+  // (design parity with pdf/hwp, 사용자 지정 2026-07-27 — see fit-scale.ts's
+  // `docxFitScale`). `nativePageWidth` is captured ONCE, right after
+  // renderAsync inserts `section.docx` at `content.style.zoom` still unset
+  // (=1) — docx-preview lays a page out at its document's absolute
+  // cm-derived px width regardless of any zoom this file applies afterward,
+  // so one measurement is enough; a page never needs re-measuring on
+  // resize/zoom, only re-SCALING (`refitDocx` below). 0 = "not yet known"
+  // (still loading), the same sentinel `docxFitScale`'s degenerate-input
+  // guard treats as "no fit available".
+  let nativePageWidth = 0;
+  let userZoom = shell.zoom.get();
+
+  // The single "what zoom value does `content` actually carry right now"
+  // rule (mermark-frontend §7 naming discipline) — called after EITHER input
+  // changes (`userZoom` via the header's −/+/label buttons, or the panel's
+  // available width via resize), so `content.style.zoom` is always
+  // `userZoom * fit` and never drifts to one or the other alone. Reads
+  // `content.parentElement` (`.viewer-panel-body`, openViewerShell's own
+  // scroll-boundary parent) for "available width" rather than `content`
+  // itself — `content` carries the very `zoom` this function writes, and a
+  // zoomed element's own `clientWidth` is reported in zoom-affected units,
+  // which would feed this computation's own output back into its input and
+  // oscillate on every recompute (fit-scale.ts's docxFitScale doc comment).
+  // Command (void) — a DOM mutation.
+  function refitDocx(): void {
+    if (!(nativePageWidth > 0)) {
+      content.style.zoom = String(userZoom);
+      return;
+    }
+    const availableWidth = (content.parentElement as HTMLElement | null)?.clientWidth ?? 0;
+    const fit = docxFitScale(availableWidth, nativePageWidth);
+    content.style.zoom = String(userZoom * fit);
+  }
+
+  // jsdom (unit tests) has no ResizeObserver — guarded rather than polyfilled,
+  // same precedent as excel-viewer's `sheetGeometryObserver`. Watches
+  // `.viewer-panel-body` (NOT `content`, which the zoom this triggers would
+  // otherwise feed back into) so a sidebar drag or window resize — either of
+  // which changes the AVAILABLE width without necessarily firing a `resize`
+  // event on `window` — re-fits the page too.
+  const panelBody = content.parentElement as HTMLElement | null;
+  const panelResizeObserver =
+    typeof ResizeObserver === "undefined" || !panelBody
+      ? null
+      : new ResizeObserver(() => refitDocx());
+  if (panelResizeObserver && panelBody) panelResizeObserver.observe(panelBody);
+  shell.onTeardown(() => panelResizeObserver?.disconnect());
+
   (async () => {
     const [bytes, docxPreview] = await Promise.all([
       readLocalFileBytes(absPath),
@@ -183,6 +233,14 @@ function openDocxViewer(absPath: string): ViewerHandle {
     if (closed) return;
     content.className = "docx-viewer-pages";
     content.replaceChildren(styleHost, bodyHost);
+
+    // Capture the page's native (pre-fit) width — see `nativePageWidth`'s
+    // comment above for why this reads ONCE, right here, rather than on
+    // every refit. `.docx-wrapper > section.docx` is docx-preview's own
+    // generated markup (this file's injected CSS targets the same selector).
+    const pageEl = bodyHost.querySelector<HTMLElement>(".docx-wrapper > section.docx");
+    if (pageEl) nativePageWidth = pageEl.getBoundingClientRect().width;
+    refitDocx();
   })().catch((err: unknown) => {
     if (closed) return;
     content.replaceChildren();
@@ -198,10 +256,13 @@ function openDocxViewer(absPath: string): ViewerHandle {
   // space when shrunk or clip when enlarged). Applied to `content` itself —
   // now the SAME element as the scroll container above, so the zoomed box
   // and the scrolling box are never two different elements that could drift
-  // out of sync.
+  // out of sync. The applied value is `userZoom * fit` (`refitDocx`), not the
+  // raw ladder factor alone — page-width parity (0.9, 사용자 지정 2026-07-27)
+  // composes with the user's own zoom rather than replacing it.
   shell.onTeardown(
     shell.zoom.bind((factor) => {
-      content.style.zoom = String(factor);
+      userZoom = factor;
+      refitDocx();
     }),
   );
 

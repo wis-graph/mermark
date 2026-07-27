@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { docxContainerKind } from "../src/extensions/docx-viewer/container-kind";
 import { viewerFor } from "../src/chrome/viewer/registry";
 import { registerDocxViewer, docxOpenErrorMessage } from "../src/extensions/docx-viewer";
+import { docxFitScale, DOCX_PAGE_WIDTH_FRACTION } from "../src/extensions/docx-viewer/fit-scale";
 
 function bytesOf(...values: number[]): ArrayBuffer {
   return new Uint8Array(values).buffer;
@@ -33,6 +34,43 @@ describe("docxContainerKind (pure — zip/CFB/unknown signature classifier)", ()
 
   it("empty ArrayBuffer -> \"unknown\" (never throws)", () => {
     expect(docxContainerKind(new ArrayBuffer(0))).toBe("unknown");
+  });
+});
+
+describe("docxFitScale (pure — page-width-parity fit ratio, mirrors pdf-viewer's fitWidthScale table)", () => {
+  it(`fits a 793.7px page into ${DOCX_PAGE_WIDTH_FRACTION * 100}% of a 1050px available width`, () => {
+    // Real measured numbers from the browser-mode repro (1050 clientWidth /
+    // 793.7 section.docx width, 76% before this fix) — after the fix the
+    // page should scale to exactly DOCX_PAGE_WIDTH_FRACTION of 1050.
+    expect(docxFitScale(1050, 793.7)).toBeCloseTo((1050 * DOCX_PAGE_WIDTH_FRACTION) / 793.7, 10);
+  });
+
+  it("a wider available width scales the page UP", () => {
+    expect(docxFitScale(2000, 793.7)).toBeGreaterThan(1);
+  });
+
+  it("a narrower available width scales the page DOWN", () => {
+    expect(docxFitScale(400, 793.7)).toBeLessThan(1);
+  });
+
+  it("zero page width -> 1 (safe default, never divides by zero)", () => {
+    expect(docxFitScale(1050, 0)).toBe(1);
+  });
+
+  it("NaN page width -> 1 (safe default, never propagates NaN)", () => {
+    expect(docxFitScale(1050, NaN)).toBe(1);
+  });
+
+  it("zero available width -> 1 (safe default)", () => {
+    expect(docxFitScale(0, 793.7)).toBe(1);
+  });
+
+  it("negative available width -> 1 (safe default)", () => {
+    expect(docxFitScale(-100, 793.7)).toBe(1);
+  });
+
+  it("NaN available width -> 1 (safe default)", () => {
+    expect(docxFitScale(NaN, 793.7)).toBe(1);
   });
 });
 

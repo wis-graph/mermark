@@ -109,10 +109,12 @@ interface PdfLoadingTask {
 
 /** The fraction of the pages column ONE page occupies — a reading column
  *  narrower than the full panel, leaving a modest margin on both sides. Kept in
- *  lockstep with hwp-viewer.ts's `HWP_PAGE_WIDTH_FRACTION` so the two document
+ *  lockstep with hwp-viewer.ts's `HWP_PAGE_WIDTH_FRACTION` and
+ *  docx-viewer/fit-scale.ts's `DOCX_PAGE_WIDTH_FRACTION` so all THREE document
  *  viewers render pages at the SAME width (사용자 지정 2026-07-18: "hwp 는 90%",
- *  and PDF was rendering at the FULL column width — "과도하게 크게"). Change this
- *  and `HWP_PAGE_WIDTH_FRACTION` together — they are one design decision. */
+ *  and PDF was rendering at the FULL column width — "과도하게 크게"; 사용자 지정
+ *  2026-07-27: docx가 이 정책에서 이탈해 76%로 렌더되던 것을 합류시킴). Change this
+ *  and the other two together — they are one design decision. */
 const PDF_PAGE_WIDTH_FRACTION = 0.9;
 
 /** The width (px) one page is fit to — `PDF_PAGE_WIDTH_FRACTION` of the page
