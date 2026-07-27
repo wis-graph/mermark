@@ -363,6 +363,13 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
           // so no bytes need to be served by Vite's publicDir — this TREE
           // entry only makes the row visible/openable in the explorer.
           { name: "demo.sqlite", path: "/mock/vault/demo.sqlite", is_dir: false },
+          // docx viewer golden (G-docx-1..4, 01_architect_plan.md §골든마스터
+          // 시나리오): the positive fixture. Same shape as report.xlsx/
+          // sample.pdf above — bytes served by Vite's browser-mode publicDir
+          // at mock-assets/mock/vault/sample.docx
+          // (scripts/lib/make-docx-fixture.mjs); this TREE entry only makes
+          // the row visible/openable in the explorer.
+          { name: "sample.docx", path: "/mock/vault/sample.docx", is_dir: false },
         ],
         "/mock/vault/notes": [
           { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },

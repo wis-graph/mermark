@@ -277,6 +277,11 @@ const result = {
   // page of rows, the same class of jsdom-blind-spot G14 closed for the PDF
   // viewer's lazy render.
   g22: {},
+  // G-docx-1..4 (docx/Word viewer, 01_architect_plan.md §골든마스터 시나리오 —
+  // qa-verifier addition, feature itself lands with no golden-script changes
+  // per 02_frontend_changes.md's "만지지 않은 것"): cold-load absence/presence,
+  // render + style isolation, close cleanup, and zoom.
+  gdocx: {},
   errors: [],
   failedRequests: [],
 };
@@ -363,6 +368,15 @@ await assertPageRendered(page, { context: "viewer-golden" });
 const xlsxResourceCount = () =>
   page.evaluate(
     () => performance.getEntriesByType("resource").filter((r) => /xlsx/i.test(r.name)).length,
+  );
+
+// G-docx-1's cold-load probe (01_architect_plan.md §골든마스터 시나리오,
+// "excel G2/G3 동형") — `docx-preview` AND its transitive `jszip` dependency
+// must both be dynamic-imported ONLY inside openDocxViewer's handler
+// (docx-viewer/index.ts header comment), never pulled into the boot bundle.
+const docxResourceCount = () =>
+  page.evaluate(
+    () => performance.getEntriesByType("resource").filter((r) => /docx-preview|jszip/i.test(r.name)).length,
   );
 
 /** The shared shell-chrome contract EVERY viewer panel must satisfy — full-
@@ -522,6 +536,9 @@ function rectsClose(a, b, eps = 1) {
 
 // ── G2 (negative) — measured BEFORE anything opens a viewer ────────────────
 result.g2.xlsxResourcesAtBoot = await xlsxResourceCount();
+// G-docx-1 negative half — measured at the same boot instant as G2's, before
+// ANY viewer (docx or otherwise) has opened.
+result.gdocx.resourcesAtBoot = await docxResourceCount();
 
 // Open the explorer sidebar (⌘B's button) so the fixture tree rows exist.
 await page.click(".explorer-btn");
@@ -982,6 +999,188 @@ result.g22.editorHostRestoredAfterEsc = await page
   .locator(".editor-host")
   .first()
   .evaluate((el) => el.hidden === false);
+
+// ── G-docx-1..4 — docx (Word) viewer (extension, src/extensions/docx-viewer)
+//    01_architect_plan.md §골든마스터 시나리오. mock 갱신 불필요(read_file/
+//    write_file 시그니처 불변, 02_frontend_changes.md) — readLocalFileBytes
+//    reuses the same asset-protocol path report.xlsx/sample.pdf already rely
+//    on in dev:browser.
+await rowFor("/mock/vault/sample.docx").click();
+await page.waitForTimeout(700); // fetch bytes + dynamic import("docx-preview"+jszip) + renderAsync
+
+// G-docx-1 positive half — docx-preview/jszip chunks now present, proving
+// the negative (gdocx.resourcesAtBoot, measured above at boot) wasn't just a
+// broken/always-empty probe.
+result.gdocx.resourcesAfterOpen = await docxResourceCount();
+
+result.gdocx.hasDocxViewer = (await page.locator(".docx-viewer").count()) > 0;
+// G-docx-2 render: docx-preview's own generated markup, one <section class=
+// "docx"> per rendered page (the fixture is 1-2 short paragraphs + a 1-row
+// table — no pagination, so exactly 1 is expected, but the contract this
+// probe protects is "at least one real page rendered", matching the plan's
+// "section.docx ≥ 1" wording).
+result.gdocx.sectionCount = await page.locator(".docx-viewer section.docx").count();
+result.gdocx.bodyText = await page.locator(".docx-viewer").innerText().catch(() => "");
+// Fixture (scripts/lib/make-docx-fixture.mjs): Korean paragraph text — proves
+// real OOXML content reached the DOM, not just an empty page shell.
+result.gdocx.hasKoreanText = /[가-힣]/.test(result.gdocx.bodyText);
+
+// STYLE ISOLATION (design §핵심 판정 2(a)/(c), plan Stage 6): the ONE style
+// element this extension ever puts in document.head is its own fixed
+// STYLE_ID ("ext-docx-viewer-style", index.ts's ensureStyleInjected) — every
+// OTHER style docx-preview generates (per-document, via renderAsync's
+// styleContainer argument) must land inside the PANE-LOCAL styleHost div,
+// never document.head. A regression here would leak per-document CSS
+// globally, the same class of bug excel/pdf-viewer's precedent avoids by
+// never touching document.head themselves.
+result.gdocx.headStyleCheck = await page.evaluate(() => {
+  const headStyles = Array.from(document.head.querySelectorAll("style"));
+  const extStyle = headStyles.filter((s) => s.id === "ext-docx-viewer-style");
+  const strayDocxStyles = headStyles.filter(
+    (s) => s.id !== "ext-docx-viewer-style" && /docx/i.test(s.textContent ?? ""),
+  );
+  const paneStyleCount = document.querySelectorAll(".docx-viewer style").length;
+  return {
+    extStyleCount: extStyle.length,
+    strayDocxStyleCount: strayDocxStyles.length,
+    paneStyleCount,
+  };
+});
+result.gdocx.headHasExactlyOneExtStyle = result.gdocx.headStyleCheck.extStyleCount === 1;
+result.gdocx.headHasNoStrayDocxStyle = result.gdocx.headStyleCheck.strayDocxStyleCount === 0;
+
+Object.assign(result.gdocx, await checkPanelChrome(page, ".docx-viewer", ".docx-viewer-caption"));
+
+await page.screenshot({ path: out.replace(/\.json$/, ".gdocx-docx-viewer.png") });
+
+// G-docx-2b — REAL vertical scroll (team-lead follow-up, 재호출: the
+// scroll-contract audit blocker that motivated collapsing
+// styleHost/bodyHost's dead wrapper into `content` itself — `content` IS
+// the `.docx-viewer-pages` scroll container post-render, design §핵심
+// 판정 2(a)/구조). A 1-2 paragraph fixture can NEVER prove this — it fits
+// on screen and scrollHeight === clientHeight regardless of whether the
+// CSS contract is even correct. scripts/lib/make-docx-fixture.mjs now
+// bakes in 60 filler paragraphs specifically so this measurement is real:
+// scrollHeight must exceed clientHeight (the validity gate — same
+// discipline as G6/G21's own "did the probe even have room to fail"
+// checks), AND a real `scrollTop` write must actually move (not silently
+// clamp to 0, the symptom the 3-layer wrapper bug produced — a dead
+// middle `flex:1` div never grows to fill its parent, so the actual
+// scrollable content never overflowed ITS OWN box and `scrollTop` stayed
+// inert at 0 no matter what was written).
+const docxScrollBefore = await page.locator(".docx-viewer-pages").evaluate((el) => ({
+  scrollHeight: el.scrollHeight,
+  clientHeight: el.clientHeight,
+  scrollTop: el.scrollTop,
+}));
+result.gdocx.scrollHeightBefore = docxScrollBefore.scrollHeight;
+result.gdocx.clientHeightBefore = docxScrollBefore.clientHeight;
+result.gdocx.scrollOverflowExists = docxScrollBefore.scrollHeight > docxScrollBefore.clientHeight;
+
+await page.locator(".docx-viewer-pages").evaluate((el) => {
+  el.scrollTop = el.scrollHeight;
+});
+await page.waitForTimeout(150);
+result.gdocx.scrollTopAfterWrite = await page
+  .locator(".docx-viewer-pages")
+  .evaluate((el) => el.scrollTop);
+// A real overflow:auto container clamps scrollTop to (scrollHeight -
+// clientHeight), not necessarily scrollHeight itself — comparing against
+// that clamp target (not a bare ">0") is what actually proves the write
+// took effect rather than merely "didn't throw".
+result.gdocx.scrollTopExpectedMax = docxScrollBefore.scrollHeight - docxScrollBefore.clientHeight;
+result.gdocx.scrollTopReallyMoved =
+  result.gdocx.scrollOverflowExists &&
+  result.gdocx.scrollTopAfterWrite > 0 &&
+  Math.abs(result.gdocx.scrollTopAfterWrite - result.gdocx.scrollTopExpectedMax) <= 4;
+
+// Reset scroll position before the zoom probe below so G-docx-4's own
+// scrollWidth-before/after pair starts from a known (top) state.
+await page.locator(".docx-viewer-pages").evaluate((el) => {
+  el.scrollTop = 0;
+});
+await page.waitForTimeout(100);
+
+// G-docx-4 — zoom: CSS `zoom` (not a transform — design §핵심 판정 4), so the
+// pages column's OWN scrollWidth must not blow out (a transform-scale
+// mistake would either clip or leave dead scroll space; a correct `zoom`
+// keeps layout/scroll math consistent at any factor).
+const docxPagesWidthBefore = await page
+  .locator(".docx-viewer-pages")
+  .evaluate((el) => el.scrollWidth)
+  .catch(() => null);
+const docxZoomInBtn = page.locator(".viewer-panel-zoom-in").first();
+await docxZoomInBtn.click().catch(() => {});
+await page.waitForTimeout(200);
+// `content` (openDocxViewer's own top element, the `zoom` sink) IS
+// `.docx-viewer-pages` itself post-render (index.ts's flattened DOM — no
+// separate wrapper div), so this selector doubles as both "the zoom target"
+// and "the pages scroll column".
+result.gdocx.zoomAfterClick = await page
+  .locator(".docx-viewer-pages")
+  .first()
+  .evaluate((el) => getComputedStyle(el).zoom)
+  .catch(() => null);
+const docxPagesWidthAfter = await page
+  .locator(".docx-viewer-pages")
+  .evaluate((el) => el.scrollWidth)
+  .catch(() => null);
+result.gdocx.zoomFactorChanged = result.gdocx.zoomAfterClick != null && result.gdocx.zoomAfterClick !== "1";
+result.gdocx.pagesScrollWidthBefore = docxPagesWidthBefore;
+result.gdocx.pagesScrollWidthAfter = docxPagesWidthAfter;
+// "no scrollWidth blow-out": zoom is expected to grow content somewhat, but
+// not runaway (a mis-applied transform on an overflow:auto ancestor can
+// balloon scrollWidth by 10x+ instead of the ~10-25% a single zoom-in step
+// should produce) — tolerant upper bound, not an exact pixel match.
+result.gdocx.pagesScrollWidthNoBlowout =
+  docxPagesWidthBefore == null ||
+  docxPagesWidthAfter == null ||
+  docxPagesWidthBefore === 0 ||
+  docxPagesWidthAfter / Math.max(docxPagesWidthBefore, 1) < 3;
+
+// G-docx-4b — scroll STILL works at the zoomed factor (the zoom sink and the
+// scroll container are the SAME `content` element post-fix, so a zoom that
+// broke scroll math would show up here, not just as a width blow-out).
+const docxScrollAfterZoom = await page.locator(".docx-viewer-pages").evaluate((el) => ({
+  scrollHeight: el.scrollHeight,
+  clientHeight: el.clientHeight,
+}));
+result.gdocx.scrollOverflowExistsAfterZoom = docxScrollAfterZoom.scrollHeight > docxScrollAfterZoom.clientHeight;
+await page.locator(".docx-viewer-pages").evaluate((el) => {
+  el.scrollTop = el.scrollHeight;
+});
+await page.waitForTimeout(150);
+result.gdocx.scrollTopAfterZoomWrite = await page
+  .locator(".docx-viewer-pages")
+  .evaluate((el) => el.scrollTop);
+result.gdocx.scrollStillWorksAfterZoom =
+  result.gdocx.scrollOverflowExistsAfterZoom && result.gdocx.scrollTopAfterZoomWrite > 0;
+await page.locator(".docx-viewer-pages").evaluate((el) => {
+  el.scrollTop = 0;
+});
+await page.waitForTimeout(100);
+
+// ── G-docx-3 — close cleanup: pane/backdrop gone, injected style/DOM gone,
+//    title-bar slot restored (pdf G13 동형) ─────────────────────────────────
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+result.gdocx.paneCountAfterEsc = await page.locator(".main-column > .viewer-panel").count();
+result.gdocx.hasDocxViewerAfterEsc = (await page.locator(".docx-viewer").count()) > 0;
+result.gdocx.editorHostHiddenAfterEsc = await page
+  .locator(".editor-host")
+  .first()
+  .evaluate((el) => el.hidden);
+// The extension's OWN <style id="ext-docx-viewer-style"> is idempotent
+// module-level state (ensureStyleInjected's `if (document.getElementById...)
+// return`, index.ts) shared across opens — by design it is NOT expected to
+// disappear on close (same precedent as excel/pdf/html-viewer's own
+// ensureStyleInjected). What close MUST remove is the per-document CSS
+// docx-preview generated inside the pane's styleHost, which dies with the
+// pane itself (pane.remove(), no separate teardown code needed — design §핵심
+// 판정 2(c)) — checked here by confirming `.docx-viewer` (and everything
+// inside it, including any pane-local <style>) is fully gone from the DOM.
+result.gdocx.paneStyleGoneAfterEsc = (await page.locator(".docx-viewer style").count()) === 0;
+result.gdocx.editorStillResponsiveAfterEsc = await page.evaluate(() => !!document.querySelector(".cm-content"));
 
 // ── G16 — layout/restore (plan's "G15") ─────────────────────────────────────
 // Give the editor a real, non-zero scroll position first — a "scroll
@@ -1651,6 +1850,46 @@ const pass =
   // content-box width. overflowExists is the measurement-validity gate.
   result.g21.overflowExists &&
   result.g21.stickyCol0MatchesGutterWidth &&
+  // G-docx-1 — cold-load: docx-preview/jszip chunks absent at boot, present
+  // after the fixture is opened (negative + positive, same discipline as
+  // G2/G3's xlsx pair).
+  result.gdocx.resourcesAtBoot === 0 &&
+  result.gdocx.resourcesAfterOpen >= 1 &&
+  // G-docx-2 — render + style isolation.
+  result.gdocx.hasDocxViewer &&
+  result.gdocx.sectionCount >= 1 &&
+  result.gdocx.hasKoreanText &&
+  result.gdocx.headHasExactlyOneExtStyle &&
+  result.gdocx.headHasNoStrayDocxStyle &&
+  result.gdocx.paneMountedAsEditorHostSibling &&
+  result.gdocx.editorHostHidden &&
+  result.gdocx.panelDisplay === "flex" &&
+  result.gdocx.panelInViewport &&
+  result.gdocx.captionInsideTitleBar &&
+  result.gdocx.bodyContainedInPanel &&
+  result.gdocx.contentContainedInBody &&
+  !result.gdocx.closeButtonOverlapsInteractive &&
+  // G-docx-2b — REAL vertical scroll (team-lead re-check, 재호출: the
+  // 3-layer→2-layer scroll-contract blocker's regression guard). The
+  // filler-paragraph fixture must actually overflow the pane AND a
+  // scrollTop write must actually move it, clamped to the real max — not
+  // silently stuck at 0 (the exact symptom the dead wrapper div produced).
+  result.gdocx.scrollOverflowExists &&
+  result.gdocx.scrollTopReallyMoved &&
+  // G-docx-4 — zoom: a real CSS `zoom` change, no scrollWidth blow-out, AND
+  // scroll still functions at the zoomed factor (not just "doesn't blow
+  // out horizontally" — the zoom sink and scroll container are the SAME
+  // element post-fix, so a broken interaction between the two would show
+  // here).
+  result.gdocx.zoomFactorChanged &&
+  result.gdocx.pagesScrollWidthNoBlowout &&
+  result.gdocx.scrollStillWorksAfterZoom &&
+  // G-docx-3 — close cleanup: pane/DOM/pane-local style gone, editor restored.
+  result.gdocx.paneCountAfterEsc === 0 &&
+  !result.gdocx.hasDocxViewerAfterEsc &&
+  result.gdocx.editorHostHiddenAfterEsc === false &&
+  result.gdocx.paneStyleGoneAfterEsc &&
+  result.gdocx.editorStillResponsiveAfterEsc &&
   result.errors.length === 0;
 
 console.log("\nwrote", out);

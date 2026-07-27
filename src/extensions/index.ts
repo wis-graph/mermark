@@ -8,6 +8,7 @@
 // in the very first mount's snapshot (no reloadFeatures() needed for boot-time
 // extensions; that path exists for extensions that register LATE, e.g. after
 // an async init).
+import { registerDocxViewer } from "./docx-viewer";
 import { registerExcelViewer } from "./excel-viewer";
 import { registerHtmlViewer } from "./html-viewer";
 import { registerPdfViewer } from "./pdf-viewer";
@@ -28,4 +29,9 @@ export function activateExtensions(): void {
   // lands at boot; `pdfjs-dist` (~1MB+) is dynamic-imported inside the
   // viewer's own open() call, never here.
   registerPdfViewer();
+  // registerDocxViewer() (src/extensions/docx-viewer): same shape as
+  // Excel/PDF's boot-time registration — only the {id, extensions, open}
+  // catalog entry lands at boot; `docx-preview` is dynamic-imported inside
+  // the viewer's own open() call, never here.
+  registerDocxViewer();
 }

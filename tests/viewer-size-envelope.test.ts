@@ -35,7 +35,7 @@ describe("viewer size envelope (style contract — no viewer reinvents its own p
   // `.settings-*` is deliberately OUT of this prefix — the settings modal is
   // a declared, separate exception (see styles.css's comment on
   // `.settings-modal`), not a viewer.
-  const VIEWER_SIZE_PREFIX_RE = /(^|[\s,>~+])\.(viewer-|image-viewer-|excel-viewer|html-viewer|hwp-viewer)/;
+  const VIEWER_SIZE_PREFIX_RE = /(^|[\s,>~+])\.(viewer-|image-viewer-|excel-viewer|html-viewer|hwp-viewer|docx-viewer)/;
 
   // Declared exceptions — window CHROME with a genuinely fixed hit-target
   // size, not a content/document size envelope. Named explicitly (not
@@ -208,7 +208,7 @@ describe("viewer content roots declare no size envelope (shell .viewer-panel is 
    *  "the shell owns my size, period" is the content-root judgment call this
    *  list makes, mirroring `CHROME_EXEMPT_SELECTORS`'s "declared exception,
    *  not pattern-matched" shape. */
-  const CONTENT_ROOT_SELECTORS = [".pdf-viewer", ".html-viewer", ".excel-viewer", ".hwp-viewer"];
+  const CONTENT_ROOT_SELECTORS = [".pdf-viewer", ".html-viewer", ".excel-viewer", ".hwp-viewer", ".docx-viewer"];
 
   function findEnvelopeOffenders(source: string): string[] {
     // Comments MUST be stripped before sweeping (mirrors the px-cap gate's
@@ -243,11 +243,12 @@ describe("viewer content roots declare no size envelope (shell .viewer-panel is 
     expect(findEnvelopeOffenders(css)).toEqual([]);
   });
 
-  it("extension-injected CSS: .pdf-viewer/.html-viewer/.excel-viewer declare no width/height/max-width/max-height", () => {
+  it("extension-injected CSS: .pdf-viewer/.html-viewer/.excel-viewer/.docx-viewer declare no width/height/max-width/max-height", () => {
     const files = [
       join(ROOT, "src", "extensions", "pdf-viewer", "index.ts"),
       join(ROOT, "src", "extensions", "html-viewer", "index.ts"),
       join(ROOT, "src", "extensions", "excel-viewer", "index.ts"),
+      join(ROOT, "src", "extensions", "docx-viewer", "index.ts"),
     ];
     const css = files.flatMap((f) => extractInjectedStyleStrings(f)).join("\n");
     expect(findEnvelopeOffenders(css)).toEqual([]);
