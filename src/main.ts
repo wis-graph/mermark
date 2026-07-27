@@ -66,6 +66,8 @@ import {
 import { registerSidebarPanel, closeOtherSidebarPanels, installSidebarPanels } from "./sidebar/registry";
 import { createBreadcrumb } from "./chrome/breadcrumb";
 import { createRecentPanel } from "./sidebar/recent/recent-panel";
+import { createSearchPanel, type ScanResult } from "./sidebar/search/search-panel";
+import { openFindPanel } from "./markdown/find";
 import { pushRecent, pruneMissing } from "./sidebar/recent/recent-docs";
 import { createFavoritesSection } from "./sidebar/favorites/favorites-panel";
 import { createWelcomePane } from "./chrome/welcome/welcome-pane";
@@ -517,6 +519,37 @@ async function boot() {
     onOpen: () => closeOtherSidebarPanels("recent"),
   });
 
+  // ── File finder LEFT SIDEBAR panel (⌘⇧F) — VS Code ⌘P-style filename fuzzy
+  //    quick-open over ONE recursive scan of the current explorer root (or
+  //    currentBaseDir when the explorer has never been opened — same
+  //    fallback shape as getBaseDir above). onOpenFile/onOpenFileNewWindow/
+  //    canOpenWithViewer mirror explorer's own wiring exactly (same
+  //    viewerForEntry/open_path/read_file calls), so the two panels can never
+  //    disagree about what's openable. list_files_recursive is READ-ONLY
+  //    (backend-engineer's command; see _workspace/01_architect_design.md
+  //    §보안·성능) — no atomic-write/conflict-guard surface touched. ───────
+  const searchPanel = createSearchPanel({
+    scan: (root) =>
+      invoke<ScanResult>("list_files_recursive", { root, showHidden: showHiddenFilesSetting.get() === "on" }),
+    getRoot: () => explorer.currentRootPath() ?? currentBaseDir,
+    onOpenFile: async (absPath) => {
+      if (!file) {
+        location.href = `index.html?file=${encodeURIComponent(absPath)}`;
+      } else {
+        const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
+        await commitBeforeSwitch();
+        openInWindow(absPath, fresh);
+      }
+    },
+    onOpenFileNewWindow: (absPath) => {
+      invoke("open_path", { path: absPath }).catch((err) => {
+        console.error("Failed to open in a new window", err);
+      });
+    },
+    canOpenWithViewer: (name) => viewerForEntry(name) != null,
+    onOpen: () => closeOtherSidebarPanels("search"),
+  });
+
   // Title-bar order (single contract, arrangeTitleBar owns it): leftGroup
   // (탐색기 · 최근 · 목차 · 경로열기) · [drag spacer] · 모드 · 테마 · ⚙,
   // window-controls always last (win/linux). M5: 즐겨찾기 button REMOVED (see
@@ -565,6 +598,7 @@ async function boot() {
   registerSidebarPanel({ id: "explorer", button: explorer.button, aside: explorer.aside, close: explorer.close });
   registerSidebarPanel({ id: "recent", button: recent.button, aside: recent.aside, close: recent.close });
   registerSidebarPanel({ id: "outline", button: outline.button, aside: outline.aside, close: outline.close });
+  registerSidebarPanel({ id: "search", button: searchPanel.button, aside: searchPanel.aside, close: searchPanel.close });
   installSidebarPanels({ workspace, bar: titleBar.el, group: leftGroup, buttonAnchor: prompt.button });
   // The drag sash sits between whichever left sidebar is open and .main-column.
   // DOM order among the asides is arbitrary (installSidebarPanels prepends
@@ -924,6 +958,17 @@ async function boot() {
     vimModeSetting.set(vimModeSetting.get() === "on" ? "off" : "on"),
   );
   registerHandler("save.flush", () => current?.flushSave());
+  // Mod-F: open the document search/replace panel. No-op while a full-pane
+  // viewer (pdf/docx/hwp/…) is showing — the editor isn't on screen, so
+  // popping its find panel behind the viewer would be silent confusion (see
+  // _workspace/01_architect_design.md 판정3 "뷰어 열림 시"). Mod-Shift-F is
+  // unaffected by the viewer — opening a result CLOSES the viewer for free
+  // (openInWindow's first line already calls closeOpenViewer()).
+  registerHandler("search.document", () => {
+    if (openViewer || !current) return;
+    openFindPanel(current.view);
+  });
+  registerHandler("search.files", () => searchPanel.revealSearch());
   // Transient status-bar feedback shared by clipboard-copy handlers: shows
   // `msg` in the `pos` cell, then restores whatever was there before the
   // *first* flash of the current burst. Command, void — no return value,

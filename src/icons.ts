@@ -176,6 +176,10 @@ const PATHS = {
     '<path d="M21 3v5h-5"/>' +
     '<path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>' +
     '<path d="M8 16H3v5"/>',
+  // search — file-finder sidebar panel (⌘⇧F)
+  search:
+    '<circle cx="11" cy="11" r="8"/>' +
+    '<path d="m21 21-4.3-4.3"/>',
   // maximize — mermaid diagram: open fullscreen (four corner brackets pointing out)
   maximize:
     '<path d="M8 3H5a2 2 0 0 0-2 2v3"/>' +

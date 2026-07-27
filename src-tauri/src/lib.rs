@@ -234,6 +234,7 @@ pub fn run() {
             commands::bundle_doc,
             commands::list_link_targets,
             commands::list_dir,
+            commands::list_files_recursive,
             commands::resolve_image,
             commands::watch_file,
             commands::unwatch_file,

@@ -159,6 +159,93 @@ function normalizeMockPath(path: string): string {
   return "/" + out.join("/");
 }
 
+/** The mock's fixed directory tree, keyed by normalized path. Shared by
+ *  `list_dir` (one-level lookup) and `list_files_recursive` (recursive walk
+ *  over the same keys) so the two commands can never see a different
+ *  filesystem in the mock — same single-source-of-truth reasoning as the
+ *  real backend reusing `is_hidden_entry`/`is_mermark_artifact` for both. */
+const TREE: Record<string, DirEntry[]> = {
+  "/mock/vault": [
+    // .config sorts first within the folder group (ascii '.' < letters),
+    // matching the real backend's dir_entry_sort_key. Dotfile — filtered
+    // below unless showHidden. Never add a `*.mermark-tmp.*`/
+    // `*.mermark-recovered` row here: the artifact-exclusion invariant is
+    // expressed by ABSENCE in this mock (filter can't un-invariant it),
+    // mirroring commands.rs's unconditional `is_mermark_artifact` check.
+    { name: ".config", path: "/mock/vault/.config", is_dir: true },
+    { name: "notes", path: "/mock/vault/notes", is_dir: true },
+    // .hidden-note.md sorts first within the file group, same reason.
+    { name: ".hidden-note.md", path: "/mock/vault/.hidden-note.md", is_dir: false },
+    { name: "index.md", path: "/mock/vault/index.md", is_dir: false },
+    { name: "logo.svg", path: "/mock/vault/logo.svg", is_dir: false },
+    { name: "data.json", path: "/mock/vault/data.json", is_dir: false },
+    { name: "app.ts", path: "/mock/vault/app.ts", is_dir: false },
+    // PDF viewer golden (G14 — lazy render + MAX_RENDERED_PAGES canvas-
+    // eviction cap): "guide.pdf" predates the PDF viewer's existence
+    // (this row used to have no backing file — a dummy icon/list-only
+    // entry) and REGRESSED to an error panel the moment
+    // registerPdfViewer() started claiming "pdf" (readLocalFileBytes
+    // 404 against a nonexistent file). Fixed by backing it with a REAL
+    // 25-page fixture (scripts/lib/make-pdf-fixture.mjs →
+    // mock-assets/mock/vault/guide.pdf, pages marked "PAGE 1".."PAGE 25"
+    // so a golden can assert exactly which page rendered) instead of
+    // adding a third PDF row — this TREE entry only makes the row
+    // visible/openable; bytes are served by Vite's browser-mode publicDir.
+    { name: "guide.pdf", path: "/mock/vault/guide.pdf", is_dir: false },
+    { name: "LICENSE", path: "/mock/vault/LICENSE", is_dir: false },
+    { name: "pic.png", path: "/mock/vault/pic.png", is_dir: false },
+    // R11 (_workspace/01_r11.md §9 Step 5): the Excel-viewer golden's
+    // positive fixture. Bytes are served by Vite's browser-mode
+    // publicDir (vite.config.ts) at mock-assets/mock/vault/report.xlsx
+    // — this TREE entry only makes the row visible/openable; it never
+    // reads the file itself (list_dir doesn't touch content).
+    { name: "report.xlsx", path: "/mock/vault/report.xlsx", is_dir: false },
+    // R11 2단계 (_workspace/01_html_viewer.md §8): the HTML-viewer
+    // golden's positive fixture (G7~G9). Same shape as report.xlsx
+    // above — bytes served by Vite's browser-mode publicDir at
+    // mock-assets/mock/vault/{sample.html,sample-asset.png}; this TREE
+    // entry only makes the rows visible/openable in the explorer.
+    { name: "sample.html", path: "/mock/vault/sample.html", is_dir: false },
+    { name: "sample-asset.png", path: "/mock/vault/sample-asset.png", is_dir: false },
+    // HWP viewer golden (_workspace/01_hwp_viewer.md §9 G10~G12): three
+    // rows dispatched by *name* in the hwp_open/hwp_render_page cases
+    // below (there's no real HWP parser here, so no real bytes are
+    // needed for these to be openable) — normal / corrupted / oversized.
+    { name: "sample.hwp", path: "/mock/vault/sample.hwp", is_dir: false },
+    { name: "corrupt.hwp", path: "/mock/vault/corrupt.hwp", is_dir: false },
+    { name: "huge.hwp", path: "/mock/vault/huge.hwp", is_dir: false },
+    // PDF viewer golden (G13): the 1-page positive fixture (basic
+    // render/text-layer). Same shape as report.xlsx/sample.html above
+    // — bytes served by Vite's browser-mode publicDir at
+    // mock-assets/mock/vault/sample.pdf (scripts/lib/make-pdf-fixture.mjs);
+    // this TREE entry only makes the row visible/openable in the
+    // explorer. "guide.pdf" (above) is the 25-page fixture for G14.
+    { name: "sample.pdf", path: "/mock/vault/sample.pdf", is_dir: false },
+    // SQLite viewer golden: the positive fixture. Unlike report.xlsx/
+    // sample.html, the sqlite_* commands never read file bytes (they're
+    // dispatched purely by the `table` arg against SQLITE_SCHEMA above),
+    // so no bytes need to be served by Vite's publicDir — this TREE
+    // entry only makes the row visible/openable in the explorer.
+    { name: "demo.sqlite", path: "/mock/vault/demo.sqlite", is_dir: false },
+    // docx viewer golden (G-docx-1..4, 01_architect_plan.md §골든마스터
+    // 시나리오): the positive fixture. Same shape as report.xlsx/
+    // sample.pdf above — bytes served by Vite's browser-mode publicDir
+    // at mock-assets/mock/vault/sample.docx
+    // (scripts/lib/make-docx-fixture.mjs); this TREE entry only makes
+    // the row visible/openable in the explorer.
+    { name: "sample.docx", path: "/mock/vault/sample.docx", is_dir: false },
+  ],
+  "/mock/vault/notes": [
+    { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },
+  ],
+  // Empty so expanding .config while showHidden=on doesn't error.
+  "/mock/vault/.config": [],
+  "/mock": [
+    // `..` from /mock/vault lands here — the parent listing.
+    { name: "vault", path: "/mock/vault", is_dir: true },
+  ],
+};
+
 // --- SQLite DB viewer (native rusqlite backend, read-only) ---
 
 /** Fixed per-table schema for the mock's SQLite fixture (demo.sqlite):
@@ -300,91 +387,47 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // the golden's `?file=/mock/vault/index.md` entry point.
       const showHidden = a.showHidden === true;
       const norm = normalizeMockPath(String(a.path ?? ""));
-      const TREE: Record<string, DirEntry[]> = {
-        "/mock/vault": [
-          // .config sorts first within the folder group (ascii '.' < letters),
-          // matching the real backend's dir_entry_sort_key. Dotfile — filtered
-          // below unless showHidden. Never add a `*.mermark-tmp.*`/
-          // `*.mermark-recovered` row here: the artifact-exclusion invariant is
-          // expressed by ABSENCE in this mock (filter can't un-invariant it),
-          // mirroring commands.rs's unconditional `is_mermark_artifact` check.
-          { name: ".config", path: "/mock/vault/.config", is_dir: true },
-          { name: "notes", path: "/mock/vault/notes", is_dir: true },
-          // .hidden-note.md sorts first within the file group, same reason.
-          { name: ".hidden-note.md", path: "/mock/vault/.hidden-note.md", is_dir: false },
-          { name: "index.md", path: "/mock/vault/index.md", is_dir: false },
-          { name: "logo.svg", path: "/mock/vault/logo.svg", is_dir: false },
-          { name: "data.json", path: "/mock/vault/data.json", is_dir: false },
-          { name: "app.ts", path: "/mock/vault/app.ts", is_dir: false },
-          // PDF viewer golden (G14 — lazy render + MAX_RENDERED_PAGES canvas-
-          // eviction cap): "guide.pdf" predates the PDF viewer's existence
-          // (this row used to have no backing file — a dummy icon/list-only
-          // entry) and REGRESSED to an error panel the moment
-          // registerPdfViewer() started claiming "pdf" (readLocalFileBytes
-          // 404 against a nonexistent file). Fixed by backing it with a REAL
-          // 25-page fixture (scripts/lib/make-pdf-fixture.mjs →
-          // mock-assets/mock/vault/guide.pdf, pages marked "PAGE 1".."PAGE 25"
-          // so a golden can assert exactly which page rendered) instead of
-          // adding a third PDF row — this TREE entry only makes the row
-          // visible/openable; bytes are served by Vite's browser-mode publicDir.
-          { name: "guide.pdf", path: "/mock/vault/guide.pdf", is_dir: false },
-          { name: "LICENSE", path: "/mock/vault/LICENSE", is_dir: false },
-          { name: "pic.png", path: "/mock/vault/pic.png", is_dir: false },
-          // R11 (_workspace/01_r11.md §9 Step 5): the Excel-viewer golden's
-          // positive fixture. Bytes are served by Vite's browser-mode
-          // publicDir (vite.config.ts) at mock-assets/mock/vault/report.xlsx
-          // — this TREE entry only makes the row visible/openable; it never
-          // reads the file itself (list_dir doesn't touch content).
-          { name: "report.xlsx", path: "/mock/vault/report.xlsx", is_dir: false },
-          // R11 2단계 (_workspace/01_html_viewer.md §8): the HTML-viewer
-          // golden's positive fixture (G7~G9). Same shape as report.xlsx
-          // above — bytes served by Vite's browser-mode publicDir at
-          // mock-assets/mock/vault/{sample.html,sample-asset.png}; this TREE
-          // entry only makes the rows visible/openable in the explorer.
-          { name: "sample.html", path: "/mock/vault/sample.html", is_dir: false },
-          { name: "sample-asset.png", path: "/mock/vault/sample-asset.png", is_dir: false },
-          // HWP viewer golden (_workspace/01_hwp_viewer.md §9 G10~G12): three
-          // rows dispatched by *name* in the hwp_open/hwp_render_page cases
-          // below (there's no real HWP parser here, so no real bytes are
-          // needed for these to be openable) — normal / corrupted / oversized.
-          { name: "sample.hwp", path: "/mock/vault/sample.hwp", is_dir: false },
-          { name: "corrupt.hwp", path: "/mock/vault/corrupt.hwp", is_dir: false },
-          { name: "huge.hwp", path: "/mock/vault/huge.hwp", is_dir: false },
-          // PDF viewer golden (G13): the 1-page positive fixture (basic
-          // render/text-layer). Same shape as report.xlsx/sample.html above
-          // — bytes served by Vite's browser-mode publicDir at
-          // mock-assets/mock/vault/sample.pdf (scripts/lib/make-pdf-fixture.mjs);
-          // this TREE entry only makes the row visible/openable in the
-          // explorer. "guide.pdf" (above) is the 25-page fixture for G14.
-          { name: "sample.pdf", path: "/mock/vault/sample.pdf", is_dir: false },
-          // SQLite viewer golden: the positive fixture. Unlike report.xlsx/
-          // sample.html, the sqlite_* commands never read file bytes (they're
-          // dispatched purely by the `table` arg against SQLITE_SCHEMA above),
-          // so no bytes need to be served by Vite's publicDir — this TREE
-          // entry only makes the row visible/openable in the explorer.
-          { name: "demo.sqlite", path: "/mock/vault/demo.sqlite", is_dir: false },
-          // docx viewer golden (G-docx-1..4, 01_architect_plan.md §골든마스터
-          // 시나리오): the positive fixture. Same shape as report.xlsx/
-          // sample.pdf above — bytes served by Vite's browser-mode publicDir
-          // at mock-assets/mock/vault/sample.docx
-          // (scripts/lib/make-docx-fixture.mjs); this TREE entry only makes
-          // the row visible/openable in the explorer.
-          { name: "sample.docx", path: "/mock/vault/sample.docx", is_dir: false },
-        ],
-        "/mock/vault/notes": [
-          { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },
-        ],
-        // Empty so expanding .config while showHidden=on doesn't error.
-        "/mock/vault/.config": [],
-        "/mock": [
-          // `..` from /mock/vault lands here — the parent listing.
-          { name: "vault", path: "/mock/vault", is_dir: true },
-        ],
-      };
       const entries = TREE[norm] ?? [];
       const result = showHidden ? entries : entries.filter((e) => !e.name.startsWith("."));
       console.info("[mock] list_dir", a.path, "showHidden", showHidden, "->", norm);
       return result as T;
+    }
+    case "list_files_recursive": {
+      // Mirrors the real `list_files_recursive(root, show_hidden) ->
+      // Result<ScanResult, String>` (⌘⇧F fuzzy file-finder). The browser mock
+      // has no real recursive FS walk, so it flattens the same fixed TREE the
+      // list_dir case above uses — walking every key that sits at or below
+      // `norm`, applying the identical dotfile/show_hidden policy and folder
+      // exclusion (`.config`/`.git`/`node_modules`-style names) so the two
+      // commands stay behaviorally consistent in the mock, same as the real
+      // backend reusing is_hidden_entry/is_mermark_artifact for both. `rel_path`
+      // stays snake_case to match the Rust serde shape (FileHit); ScanResult's
+      // `truncated` is always false here — the fixture tree is tiny, nowhere
+      // near MAX_SCAN_FILES/MAX_SCAN_DEPTH.
+      const showHidden = a.showHidden === true;
+      const norm = normalizeMockPath(String(a.root ?? ""));
+      const EXCLUDED_SCAN_DIRS = new Set(["node_modules", ".git", "target", "dist", "build", "__pycache__", ".venv"]);
+      const files: { name: string; path: string; rel_path: string }[] = [];
+      const visited = new Set<string>();
+      const walk = (dirPath: string, relPrefix: string) => {
+        if (visited.has(dirPath)) return; // cycle guard, mirrors symlink-dir non-follow
+        visited.add(dirPath);
+        const entries = TREE[dirPath] ?? [];
+        for (const e of entries) {
+          if (!showHidden && e.name.startsWith(".")) continue; // is_hidden_entry policy
+          const rel = relPrefix ? `${relPrefix}/${e.name}` : e.name;
+          if (e.is_dir) {
+            if (EXCLUDED_SCAN_DIRS.has(e.name)) continue; // unconditional, like is_excluded_scan_dir
+            walk(e.path, rel);
+          } else {
+            files.push({ name: e.name, path: e.path, rel_path: rel });
+          }
+        }
+      };
+      walk(norm, "");
+      files.sort((x, y) => (x.rel_path < y.rel_path ? -1 : x.rel_path > y.rel_path ? 1 : 0));
+      console.info("[mock] list_files_recursive", a.root, "showHidden", showHidden, "->", norm, files.length, "files");
+      return { files, truncated: false } as T;
     }
     case "watch_file":
       // Single-slot fs watcher. No real watcher in the browser — record the

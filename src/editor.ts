@@ -6,6 +6,7 @@ import { EditorView, keymap, highlightActiveLine, drawSelection } from "@codemir
 import { vim } from "@replit/codemirror-vim";
 import { invoke } from "@tauri-apps/api/core";
 import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode } from "./markdown/live-preview";
+import { findExtensions } from "./markdown/find";
 import { footnoteNav } from "./markdown/footnote-nav";
 import { footnoteHover } from "./markdown/footnote-hover";
 import { markdownFolding } from "./markdown/fold";
@@ -360,6 +361,12 @@ export function mountEditor(
       // Footnote click navigation: ref chip → definition, def marker → first
       // reference. Capture-phase mousedown (like core's clickEntry); same
       // document, so no baseDir/filePath needed.
+      // Mod-F document search/replace — @codemirror/search's own panel,
+      // Korean-phrased, with Mod-f stripped from its keymap (the global
+      // shortcut dispatcher owns that chord; see markdown/find.ts header).
+      // Always-on (not mode-gated): the panel's own readOnly branch already
+      // hides the replace row in read mode.
+      findExtensions(),
       footnoteNav,
       // Footnote hover preview: ⌘/Ctrl + mouseover a ref chip pops a small
       // floating card with the definition text. Read-only overlay (no dispatch,

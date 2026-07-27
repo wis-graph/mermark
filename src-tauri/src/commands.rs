@@ -691,6 +691,183 @@ pub fn list_dir(path: String, show_hidden: bool) -> Result<Vec<DirEntry>, String
     Ok(result)
 }
 
+/// Hard ceiling on directory nesting depth for `list_files_recursive`'s walk.
+/// A defensive invariant (not a user preference — see the design's SSOT
+/// judgment), so it's a named Rust constant rather than a setting. Depth 0 is
+/// `root` itself: a directory reached at depth `MAX_SCAN_DEPTH` is still
+/// walked for its own files, but its children are not descended into.
+const MAX_SCAN_DEPTH: u32 = 12;
+
+/// Hard ceiling on the number of files `list_files_recursive` returns. Once
+/// reached, the walk stops outright — never "scan everything then truncate a
+/// sorted list" — so the caller's `truncated: true` reflects a genuinely
+/// incomplete scan, not a silently re-ordered one.
+const MAX_SCAN_FILES: usize = 10_000;
+
+/// Directory names excluded from `list_files_recursive` **unconditionally**,
+/// regardless of `show_hidden` — heavy/generated trees that would blow the
+/// scan budget on a real project checkout, not user content the hidden-files
+/// toggle is meant to govern.
+const EXCLUDED_SCAN_DIRS: &[&str] =
+    &["node_modules", ".git", "target", "dist", "build", "__pycache__", ".venv"];
+
+/// Whether a directory name is one of the unconditionally-excluded scan
+/// roots. Pulled into a named function (mirroring `is_hidden_entry`/
+/// `is_mermark_artifact`) so the exclusion rule is one fact, not re-derived
+/// inline inside the walk loop.
+fn is_excluded_scan_dir(name: &str) -> bool {
+    EXCLUDED_SCAN_DIRS.contains(&name)
+}
+
+/// One file found by a recursive scan (`list_files_recursive`), for the
+/// sidebar's fuzzy file-finder (⌘⇧F). The frontend mirrors this exact shape
+/// in `src/mocks/tauri-core.ts` and its `invoke<ScanResult>`.
+#[derive(serde::Serialize)]
+pub struct FileHit {
+    /// File name only (`note.md`), for display.
+    pub name: String,
+    /// Normalized absolute path — fed back into `read_file` on open.
+    pub path: String,
+    /// Path relative to the scan root (`sub/note.md`), forward-slash joined —
+    /// the frontend's fuzzy-match input and the sort/display key.
+    pub rel_path: String,
+}
+
+/// Result of a recursive scan: the files found (sorted by `rel_path`) plus
+/// whether the walk hit a defensive ceiling (`MAX_SCAN_DEPTH`/
+/// `MAX_SCAN_FILES`) and so is a partial, not exhaustive, listing.
+#[derive(serde::Serialize)]
+pub struct ScanResult {
+    pub files: Vec<FileHit>,
+    pub truncated: bool,
+}
+
+/// Pure core of `list_files_recursive`, taking the ceilings as parameters so
+/// tests can exercise truncation with small numbers instead of building a
+/// 10,000-file fixture. Walks with an **explicit stack, never recursion**, so
+/// nesting depth is bounded by a `u32` counter rather than the call stack.
+///
+/// Directory symlinks are never followed — an automatic scan is not the
+/// *user-intended navigation* `list_dir`'s one-level symlink-follow is
+/// designed for (the dual of that reasoning: cycle-safety wins here). File
+/// symlinks are listed like ordinary files, the same convention `list_dir`
+/// uses. An unreadable directory is skipped, not fatal, so one bad entry
+/// can't sink the whole scan (mirrors `scan_match`).
+fn walk_files_recursive(
+    root: &Path,
+    show_hidden: bool,
+    max_depth: u32,
+    max_files: usize,
+) -> (Vec<FileHit>, bool) {
+    let root = normalize_path(root);
+    let mut files: Vec<FileHit> = Vec::new();
+    let mut truncated = false;
+    let mut stack: Vec<(PathBuf, u32)> = vec![(root.clone(), 0)];
+
+    'walk: while let Some((dir, depth)) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue, // unreadable dir → skip, don't abort the scan
+        };
+        let mut children: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+        children.sort();
+
+        for path in &children {
+            let file_name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            let meta = match std::fs::symlink_metadata(path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let is_symlink = meta.file_type().is_symlink();
+            // Mirrors entry_is_dir: a symlink-to-dir follows once to classify,
+            // but (below) is never pushed onto the walk stack.
+            let is_dir = if is_symlink { path.is_dir() } else { meta.file_type().is_dir() };
+
+            if is_dir {
+                if is_symlink {
+                    continue; // never follow a directory symlink into the walk
+                }
+                if is_excluded_scan_dir(file_name) {
+                    continue; // unconditional, regardless of show_hidden
+                }
+                if !show_hidden && is_hidden_entry(file_name) {
+                    continue;
+                }
+                if depth + 1 > max_depth {
+                    truncated = true; // a deeper subtree exists but isn't walked
+                    continue;
+                }
+                stack.push((path.clone(), depth + 1));
+                continue;
+            }
+
+            // File entry: same two exclusion rules `classify_dir_entry` applies —
+            // mermark's own artifacts unconditionally, dotfiles unless show_hidden.
+            if is_mermark_artifact(file_name) {
+                continue;
+            }
+            if !show_hidden && is_hidden_entry(file_name) {
+                continue;
+            }
+            if files.len() >= max_files {
+                truncated = true;
+                break 'walk; // ceiling reached → stop the entire walk, not just this dir
+            }
+            let normalized = normalize_path(path);
+            let rel_path = normalized
+                .strip_prefix(&root)
+                .unwrap_or(&normalized)
+                .to_string_lossy()
+                .into_owned();
+            files.push(FileHit {
+                name: file_name.to_owned(),
+                path: normalized.to_string_lossy().into_owned(),
+                rel_path,
+            });
+        }
+    }
+
+    // rel_path ascending: deterministic for tests; the frontend's fuzzy
+    // scorer re-ranks for display, this is just a stable baseline order.
+    files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+    (files, truncated)
+}
+
+/// Recursively enumerate the files under `root` (files only — no directory
+/// rows, since a picker opens files) for the sidebar's fuzzy file-finder
+/// (⌘⇧F). A command of its own rather than the frontend repeatedly calling
+/// `list_dir`: a real project tree is many directories deep, and one IPC
+/// round-trip per directory would stall the UI for seconds on a large vault
+/// while re-implementing the depth/exclusion policy in TS. The ceilings
+/// (`MAX_SCAN_DEPTH`, `MAX_SCAN_FILES`) and the excluded-directory list are
+/// enforced *inside* the walk (`walk_files_recursive`), so a huge or cyclic
+/// tree can never hang the UI.
+///
+/// `show_hidden` reuses the exact policy `list_dir`'s "숨김 파일 표시" toggle
+/// applies (`is_hidden_entry`); `EXCLUDED_SCAN_DIRS` and mermark's own
+/// scratch/recovery artifacts (`is_mermark_artifact`) are excluded
+/// **unconditionally**, regardless of that toggle.
+///
+/// Read-only: enumerates directories, never writes, so the atomic-write /
+/// conflict-guard machinery doesn't apply (same posture as `list_dir` /
+/// `list_link_targets`). A missing/unreadable root is a graceful `Err` — the
+/// user explicitly picked this root (the explorer's current tree root), so
+/// the failure is surfaced rather than swallowed, mirroring `list_dir`.
+///
+/// `root` and `show_hidden` are single-word args; Tauri maps them to `root`
+/// and `showHidden` on the JS side, which the `invoke` call and the browser
+/// mock (`src/mocks/tauri-core.ts`) must mirror.
+#[tauri::command]
+pub fn list_files_recursive(root: String, show_hidden: bool) -> Result<ScanResult, String> {
+    let normalized = expand_home(&root);
+    std::fs::read_dir(&normalized).map_err(|e| format!("list {}: {e}", normalized.display()))?;
+    let (files, truncated) = walk_files_recursive(&normalized, show_hidden, MAX_SCAN_DEPTH, MAX_SCAN_FILES);
+    Ok(ScanResult { files, truncated })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1407,5 +1584,128 @@ mod tests {
         copy_to_clipboard("mermark-clipboard-roundtrip".into()).unwrap();
         let got = arboard::Clipboard::new().unwrap().get_text().unwrap();
         assert_eq!(got, "mermark-clipboard-roundtrip");
+    }
+
+    // --- list_files_recursive / walk_files_recursive (⌘⇧F fuzzy file-finder scan) ---
+
+    #[test]
+    fn scan_returns_nested_files_sorted_by_rel_path() {
+        let dir = temp_dir("scan_nested");
+        fs::create_dir_all(dir.join("sub/deep")).unwrap();
+        fs::write(dir.join("z.md"), "x").unwrap();
+        fs::write(dir.join("sub/a.md"), "x").unwrap();
+        fs::write(dir.join("sub/deep/b.md"), "x").unwrap();
+        let got = list_files_recursive(dir.to_string_lossy().into_owned(), false).unwrap();
+        assert!(!got.truncated);
+        let rels: Vec<&str> = got.files.iter().map(|f| f.rel_path.as_str()).collect();
+        // files only (no directory rows), rel_path-ascending.
+        assert_eq!(rels, vec!["sub/a.md", "sub/deep/b.md", "z.md"]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_excludes_heavy_dirs_unconditionally() {
+        let dir = temp_dir("scan_excluded");
+        fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::write(dir.join("node_modules/pkg/index.js"), "x").unwrap();
+        fs::write(dir.join(".git/HEAD"), "x").unwrap();
+        fs::write(dir.join("real.md"), "x").unwrap();
+        // show_hidden=true does NOT override the unconditional exclusion.
+        let got = list_files_recursive(dir.to_string_lossy().into_owned(), true).unwrap();
+        let rels: Vec<&str> = got.files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert_eq!(rels, vec!["real.md"], "node_modules/.git contents never surface");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_dotfiles_follow_show_hidden_policy() {
+        let dir = temp_dir("scan_dotfiles");
+        fs::write(dir.join(".hidden.md"), "x").unwrap();
+        fs::write(dir.join("real.md"), "x").unwrap();
+        let off = list_files_recursive(dir.to_string_lossy().into_owned(), false).unwrap();
+        assert_eq!(
+            off.files.iter().map(|f| f.rel_path.as_str()).collect::<Vec<_>>(),
+            vec!["real.md"],
+            "dotfiles excluded when show_hidden=false"
+        );
+        let on = list_files_recursive(dir.to_string_lossy().into_owned(), true).unwrap();
+        assert_eq!(
+            on.files.iter().map(|f| f.rel_path.as_str()).collect::<Vec<_>>(),
+            vec![".hidden.md", "real.md"],
+            "dotfiles included when show_hidden=true"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_excludes_mermark_artifacts_unconditionally() {
+        let dir = temp_dir("scan_artifacts");
+        fs::write(dir.join("x.md.mermark-tmp.1"), "x").unwrap();
+        fs::write(dir.join("y.md.mermark-recovered"), "x").unwrap();
+        fs::write(dir.join("real.md"), "x").unwrap();
+        let got = list_files_recursive(dir.to_string_lossy().into_owned(), true).unwrap();
+        assert_eq!(
+            got.files.iter().map(|f| f.rel_path.as_str()).collect::<Vec<_>>(),
+            vec!["real.md"]
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_stops_at_max_files_and_reports_truncated() {
+        let dir = temp_dir("scan_maxfiles");
+        for name in ["a.md", "b.md", "c.md", "d.md", "e.md"] {
+            fs::write(dir.join(name), "x").unwrap();
+        }
+        // max_files=3 on a flat 5-file dir: the walk stops after the 3rd push
+        // (children are visited in sorted order within one directory).
+        let (files, truncated) = walk_files_recursive(&dir, false, MAX_SCAN_DEPTH, 3);
+        assert_eq!(files.len(), 3, "walk stops exactly at the ceiling");
+        assert!(truncated, "hitting the ceiling must be reported honestly");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_stops_at_max_depth_and_reports_truncated() {
+        let dir = temp_dir("scan_maxdepth");
+        // depth: dir(0)/a(1)/b(2)/c(3)/deep.md — deep.md sits in a dir reached
+        // at depth 3, one level past max_depth=2.
+        fs::create_dir_all(dir.join("a/b/c")).unwrap();
+        fs::write(dir.join("a/b/c/deep.md"), "x").unwrap();
+        fs::write(dir.join("shallow.md"), "x").unwrap();
+        let (files, truncated) = walk_files_recursive(&dir, false, 2, MAX_SCAN_FILES);
+        let rels: Vec<&str> = files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert!(rels.contains(&"shallow.md"), "within-depth file is included");
+        assert!(!rels.contains(&"a/b/c/deep.md"), "past-ceiling file is excluded, got {rels:?}");
+        assert!(truncated, "hitting the depth ceiling must be reported honestly");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_missing_root_is_graceful_err() {
+        let missing = std::env::temp_dir()
+            .join(format!("mermark_scan_missing_{}", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        let res = list_files_recursive(missing, false);
+        assert!(res.is_err(), "missing root is a graceful error, never a panic");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_does_not_follow_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+        // base/link -> outside/, which holds a file that must never surface.
+        let base = temp_dir("scan_symlink_base");
+        let outside = temp_dir("scan_symlink_outside");
+        fs::write(outside.join("leak.md"), "x").unwrap();
+        symlink(&outside, base.join("link")).unwrap();
+        fs::write(base.join("real.md"), "x").unwrap();
+        let got = list_files_recursive(base.to_string_lossy().into_owned(), false).unwrap();
+        let rels: Vec<&str> = got.files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert_eq!(rels, vec!["real.md"], "symlinked directory is never walked into");
+        fs::remove_dir_all(&base).ok();
+        fs::remove_dir_all(&outside).ok();
     }
 }

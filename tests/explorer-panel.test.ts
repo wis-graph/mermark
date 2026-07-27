@@ -475,6 +475,29 @@ describe("explorer: root path stays canonical", () => {
   });
 });
 
+// currentRootPath — the ⌘⇧F file-finder panel's root SSOT (see
+// _workspace/01_architect_design.md §루트 SSOT): a pure query exposing the
+// SAME `currentRoot` renderTree canonicalizes, not a second copy of it.
+describe("explorer: currentRootPath (SSOT for the search panel's root)", () => {
+  it("is null before the first render, then the canonical root after opening", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = createExplorerPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(panel.currentRootPath()).toBeNull();
+    host.append(panel.button, panel.aside);
+    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(panel.currentRootPath()).toBe("/root");
+  });
+
+  it("tracks `..` navigation to the new canonical root", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+    expect(panel.currentRootPath()).toBe("/root");
+  });
+});
+
 // 6. Only .md opens ------------------------------------------------------------
 describe("explorer: opens markdown only (6)", () => {
   it("md click → onOpenFile(absPath); non-md click + Enter are no-ops", async () => {

@@ -46,4 +46,6 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: "path.copy", label: "문서 경로 복사", defaultBinding: "Mod+Alt+C" },
   { id: "vim.toggle", label: "Vim 모드 토글", defaultBinding: null },
   { id: "save.flush", label: "저장 (강제 플러시)", defaultBinding: null },
+  { id: "search.document", label: "문서 내 찾기/바꾸기", defaultBinding: "Mod+F" },
+  { id: "search.files", label: "파일 찾기", defaultBinding: "Mod+Shift+F" },
 ];

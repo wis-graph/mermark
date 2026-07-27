@@ -99,6 +99,12 @@ export interface ExplorerPanel {
    *  legacy storage key only — this function's NAME must match what it
    *  actually does. Command (void). */
   revealFavorites(): void;
+  /** The tree's current root (post-normalization), or `null` before the
+   *  first `renderTree` — the SSOT the ⌘⇧F file-finder panel reads instead
+   *  of duplicating "which folder is the tree showing" as a second piece of
+   *  state (design §루트 SSOT: "탐색기 루트의 정본은 explorer-panel 내부
+   *  currentRoot … 상태를 복제하지 않는다"). Pure query. */
+  currentRootPath(): string | null;
 }
 
 export interface ExplorerHandlers {
@@ -770,5 +776,6 @@ export function createExplorerPanel({
     refreshOpenability,
     refreshListing,
     revealFavorites,
+    currentRootPath: () => currentRoot,
   };
 }

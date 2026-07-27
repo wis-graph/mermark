@@ -107,6 +107,30 @@ describe("shortcut registry", () => {
     expect(fn).toHaveBeenCalledOnce();
   });
 
+  // Search catalog rows (⌘F document search, ⌘⇧F file finder) — new default
+  // chords must not collide with any existing action, and both dispatch.
+  it("search.document ships with Mod+F and search.files with Mod+Shift+F, no conflicts", () => {
+    bindKeybindings(keybindSetting("kb.search"));
+    expect(effectiveBinding("search.document")).toBe("Mod+F");
+    expect(effectiveBinding("search.files")).toBe("Mod+Shift+F");
+    expect(findConflict("Mod+F")).toBe("search.document");
+    expect(findConflict("Mod+F", "search.document")).toBeNull();
+    expect(findConflict("Mod+Shift+F")).toBe("search.files");
+    expect(findConflict("Mod+Shift+F", "search.files")).toBeNull();
+  });
+
+  it("dispatchChord runs the handlers bound to search.document / search.files", () => {
+    bindKeybindings(keybindSetting("kb.searchDispatch"));
+    const doc = vi.fn();
+    const files = vi.fn();
+    registerHandler("search.document", doc);
+    registerHandler("search.files", files);
+    expect(dispatchChord("Mod+F")).toBe(true);
+    expect(doc).toHaveBeenCalledOnce();
+    expect(dispatchChord("Mod+Shift+F")).toBe(true);
+    expect(files).toHaveBeenCalledOnce();
+  });
+
   it("override map round-trips through localStorage (JSON serialize)", () => {
     const s1 = keybindSetting("kb.persist");
     s1.set({ "zoom.in": "Mod+Shift+=" });
