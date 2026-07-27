@@ -1,11 +1,11 @@
 {
-  "version": "0.9.9",
-  "notes": "### Added\n\n- **숨김 파일 표시 토글**: 설정에 새 **\"탐색기\"** 항목이 생겼다. 여기 **\"숨김 파일 표시\"**를 **켜기**로 두면 파일 탐색기에 `.git`·`.gitignore`처럼 점(`.`)으로 시작하는 숨김 파일·폴더가 함께 나타나고, **끄기**(기본값)면 지금까지처럼 숨겨진다. 토글을 바꾸면 탐색기가 곧바로 반영하되 **지금 보고 있던 폴더 위치는 그대로 유지**한다. mermark가 저장 도중 잠깐 만드는 내부 임시 파일은 이 설정과 무관하게 **항상** 감춰진다.",
-  "pub_date": "2026-07-26T10:16:30Z",
+  "version": "0.9.10",
+  "notes": "### Fixed\n\n- **경로·번들 복사가 실제 앱에서 안 되던 문제**: ⌥⌘C(문서 경로 복사)와 ⌘⇧C(LLM 번들 복사)가 상황에 따라 클립보드에 아무것도 넣지 못하던 것을 고쳤다. 브라우저 클립보드 API(`navigator.clipboard`)는 앱 실행 환경에서 막힐 수 있어, **앱 백엔드를 통해 직접 클립보드에 쓰도록** 바꿔 환경과 무관하게 안정적으로 복사된다. 표시 문구(\"✓ 경로 복사됨\"·\"✓ 번들 복사됨\")와 동작은 그대로다.",
+  "pub_date": "2026-07-27T07:25:55Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzVnaHNtQVNWaitkSmtPbmJ6NjZFaGZYa3l5dVErTnRHUjM3WXYycjRnNVVJTDlxQXIxazdtQnVtVzFFTHFUa3RLZ3c3OHNHUlc4S3J1bG41VkxSUGdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDYwOTA5CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnIvQWJ1SWxiSEIzSjUvV2Z5NFBFTTFncW5uclN0WDVsSWJRd1FHV2cvaGpNZ2tNcmlHMVliZ2dlUjBnSlJFdVBHcWtHbFdsNzYzV0ZHa2tNMjdrd0R3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.9/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzByeURjd0RXSnhBVDhTSVpORmFkdUErSDB1NzVCb3gzczN3WXlJc3o4U05VblI1M2dqT1lsRmk0djdydU55TlRSbzY1a2ZEMWttWmczMlhJaVhXN0F3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MTM3MDk3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ck0zRWljeHhiWmlXZ2hVa1RsQUNsbU9xQVBOSUd6NDdIMDBCZnZXNjNZN3dtczY2SnJVdGRLWVhXbjVGdDJLZWJUekljdWVzVk8vWlBXRTZLYms1Q0RnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.10/mermark.app.tar.gz"
     }
   }
 }
