@@ -1,11 +1,11 @@
 {
-  "version": "0.9.15",
-  "notes": "### Added\n\n- **HTML 문서 안의 JavaScript 실행 (설정으로 켜기, 기본 꺼짐)**: 설정 › 뷰어의 **\"HTML 문서 스크립트 실행\"**을 켜면, HTML 뷰어로 여는 문서 안의 스크립트가 실제로 동작한다. 차트를 그리거나 버튼에 반응하는 문서, 옆에 놓인 `.js`·`.css`·이미지를 불러 쓰는 문서를 만든 그대로 볼 수 있다 — **문서와 같은 폴더(하위 폴더 포함)의 파일까지 읽는다**. 스크립트가 돌고 있는 문서는 제목 옆에 작은 **\"JS\" 배지**로 표시돼 지금 무엇을 보고 있는지 헷갈리지 않는다.\n\n  **문서는 앱과 격리된 상태로 실행된다.** 문서마다 열 때마다 새로 발급되는 고유한 신원을 받아, 열린 문서끼리도 서로의 내용에 닿지 못하고 mermark 자체의 기능이나 파일 시스템에도 접근할 수 없다. 읽을 수 있는 범위는 **그 문서가 있는 폴더 하나로 구조적으로 제한**된다 — 바깥 경로를 노린 요청은 형태를 바꿔 시도해도 거부된다. 다만 켜면 문서가 **네트워크 요청은 할 수 있으므로**, 신뢰하는 문서에만 사용하기를 권한다.\n\n  기본값은 **꺼짐**이고, 꺼진 상태의 동작은 이전과 완전히 동일하다(스크립트는 아예 실행되지 않는다). 설정을 바꿔도 **이미 열려 있는 문서에는 소급되지 않고**, 다음에 여는 문서부터 적용된다.",
-  "pub_date": "2026-07-28T13:45:48Z",
+  "version": "0.9.16",
+  "notes": "### Added\n\n- **EPUB(전자책) 뷰어**: 탐색기에서 `.epub` 파일을 클릭하면 책이 열린다. 책 전체가 **순서대로 이어진 하나의 흐름**으로 스크롤되고(장마다 따로 넘길 필요 없이 아래로 계속 읽으면 된다), 책의 **목차는 왼쪽 사이드바 목차 자리에 그대로 뜬다** — 장을 누르면 그 위치로 바로 넘어간다. 구형(EPUB2)·신형(EPUB3) 목차 형식을 모두 읽는다. 원본의 글꼴·스타일·그림이 만들어진 그대로 나오고, 표 글자 크기처럼 헤더의 `[−] [+]`로 확대·축소할 수 있다. 다른 문서 뷰어들과 같은 평면 레이아웃이라 종이 액자 없이 화면을 꽉 채운다.\n\n  **책은 읽기만 할 뿐, 책이 무엇을 하도록 두지 않는다.** 전자책 형식은 원래 책 안에 스크립트를 넣을 수 있지만, mermark는 그것을 **실행하지 않는다** — 책이 몰래 바깥으로 신호를 보내거나(추적) 내려받는 일이 없도록 **외부 네트워크 요청도 전면 차단**한다. 책이 읽을 수 있는 것은 그 책 파일 안에 들어 있는 내용뿐이며, 파일을 풀어 흩뿌리지 않고 **압축을 푼 상태로 저장하지 않는다**(임시 파일이 남지 않는다). 비정상적으로 부풀려진 책 파일이 메모리를 잠식하지 못하도록 읽어 들이는 양에도 상한을 둔다.\n\n  **DRM으로 보호된 책은 열 수 없다**고 분명히 알려준다. 다만 **본문은 잠겨 있지 않고 글꼴만 보호 처리된 정상적인 책은 그대로 열린다** — 둘은 파일 안에서 비슷해 보이지만 다른 것이라, 후자를 잘못 막지 않는다.\n\n  큰 책도 즉시 열린다 — 화면에 보이는 근처의 장만 그때그때 그린다.",
+  "pub_date": "2026-07-28T14:55:39Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3o0dGY0bHRIU3lGRDJ3ZmpFcFpFUXZzUjZyN2JGZE52WWxZRHA4ZTlKaVc3MnJ0YXdqaDBVUTRrK1pvSm1rVmc2ZkIzaWZZYUY2dFdNOHM4amdWVmdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjQ2Mjc0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmpGMWxnOWxsWXVqYThMYzYwTUVHV1JTbGpObGZtZDhNVlVmMUNSbmJ0S1RXN25WVE1lQytXUWF6dzNTcDhtQ3ltTXRkdXJERXlvdzhhSS9UakEwUkJBPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.15/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3pYUm53ZTR2SjlMaVVhREFqMzZuYklwVVpISzBycUJzZHRFM0pwNVhvQnA1dVRoYjdxd3dqWk5YZ3V4M0s1bnNSS1JjazlKcDBLdzVNMG14Wjl0bWdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjUwNTAxCWZpbGU6bWVybWFyay5hcHAudGFyLmd6Cm92ZXZOazRjQVNINWN0VDVsMk42NnRWTlpDa252cHdHVG5UTnBHR2daTzhaRkRBNDI1dHczVTFRWUxaRENMWU1ySnVrRmZRZnQrc1FMUGdiZTRzakFBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.16/mermark.app.tar.gz"
     }
   }
 }
