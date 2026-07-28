@@ -544,6 +544,24 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       void navigator.clipboard?.writeText(String(a.text ?? "")).catch(() => {});
       console.info("[mock] copy_to_clipboard", `${String(a.text ?? "").length} chars`);
       return undefined as T;
+    case "arm_html_view_root": {
+      // Mirrors the real `arm_html_view_root(dir) -> Result<String, String>`
+      // (_workspace/01_architect_design_htmljs.md §10.7 — 개정 1 changed the
+      // return type from `()` to a minted token string; see
+      // _workspace/02_backend_changes_htmljs.md §11 for the full contract).
+      // The browser mock has no `htmlview://` protocol handler and no real
+      // token→root filesystem gate — the scripted HTML viewer path instead
+      // loads `htmlViewUrl()`'s same-origin mock URL directly from Vite's
+      // browser-mode publicDir, so this mock hands back a **fixed** token
+      // string rather than minting a real random one (determinism for
+      // golden/spy assertions matters more here than unguessability, unlike
+      // the real backend). Fixed, not random, so `tests/html-viewer.test.ts`
+      // can assert the exact value `openScriptedHtmlDocument` folds into the
+      // `iframe.src` it builds (spy-return-value assertion, plan §RED-F5).
+      const token = "mock-view-token";
+      console.info("[mock] arm_html_view_root", a.dir, "->", token);
+      return token as T;
+    }
     case "path_exists":
       return true as T;
     case "open_path": {

@@ -4,13 +4,28 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // from tests/excel-viewer.test.ts's sibling `image-viewer.test.ts` (a real
 // DOM-mounted viewer test) — this file is where the security contract lives,
 // so T1/T2 come first and matter most.
+//
+// _workspace/01_architect_design_htmljs.md §8/§10 (F1/F2/F3/F4): the mock's
+// `convertFileSrc` differentiates by protocol so the off-path asset rewrite
+// still resolves through "asset://" (the on-path no longer uses
+// convertFileSrc at all — Revision 1's `htmlViewUrl(token, fileName)` builds
+// its own `htmlview://<token>/…` string, `scripted-url.ts`). `invoke` is a
+// spy (not a plain stub) so F2/F3 can assert `arm_html_view_root` call
+// count/order, matching the plan's "spy 0회"/"spy 호출 순서" asserts — it
+// resolves `arm_html_view_root` to a FIXED mock token (mirrors
+// `src/mocks/tauri-core.ts`'s own `"mock-view-token"`, §10.7's "반환형이
+// `()` → `String`(토큰)" contract) so F2 can assert the exact `src` the
+// scripted path builds from it.
+const MOCK_VIEW_TOKEN = "mock-view-token";
+const invokeMock = vi.fn(async (cmd: string, _args?: unknown) => (cmd === "arm_html_view_root" ? MOCK_VIEW_TOKEN : undefined));
 vi.mock("@tauri-apps/api/core", () => ({
-  convertFileSrc: (p: string) => `asset://localhost${p}`,
+  convertFileSrc: (p: string, protocol?: string) => `${protocol ?? "asset"}://localhost${p}`,
+  invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
 
 import { registerHtmlViewer } from "../src/extensions/html-viewer";
 import { viewerFor } from "../src/chrome/viewer/registry";
-import { fontScaleSetting } from "../src/settings/app";
+import { fontScaleSetting, htmlScriptsSetting } from "../src/settings/app";
 
 // Registered ONCE for the whole file — registerViewer throws on a duplicate
 // id (fail-fast, registry.ts), and vitest's module graph is shared across
@@ -39,6 +54,8 @@ afterEach(() => {
   document.querySelector(".viewer-backdrop")?.remove();
   vi.unstubAllGlobals();
   fontScaleSetting.set(1.0); // reset SSOT between tests (localStorage-backed singleton)
+  htmlScriptsSetting.set(false); // reset SSOT — default is false, tests that opt in must not leak
+  invokeMock.mockClear();
 });
 
 function stubFetchOk(html: string): void {
@@ -62,7 +79,7 @@ describe("registerHtmlViewer registry shape (T3)", () => {
   });
 });
 
-describe("openHtmlViewer: sandbox security contract (T1 — the heart of this design)", () => {
+describe("openHtmlViewer: sandbox security contract — OFF path (T1/F1, the heart of this design)", () => {
   it("the iframe's sandbox attribute is EXACTLY an empty string — never allow-scripts/allow-same-origin", async () => {
     stubFetchOk("<html><body>hi</body></html>");
     const v = viewerFor("html")!;
@@ -74,6 +91,26 @@ describe("openHtmlViewer: sandbox security contract (T1 — the heart of this de
     expect(iframe.getAttribute("sandbox")).toBe("");
     expect(iframe.getAttribute("sandbox")).not.toContain("allow-scripts");
     expect(iframe.getAttribute("sandbox")).not.toContain("allow-same-origin");
+
+    handle.close();
+  });
+
+  // RED-F1 (plan): the default (unarmed) setting state never touches the
+  // scripted path AT ALL — no `src`, `srcdoc` present, `arm_html_view_root`
+  // never invoked, and no "JS" badge. This is the "off costs nothing new"
+  // guarantee — a security-relevant setting existing in the codebase must not
+  // itself change the default open() behavior by one bit.
+  it("default (htmlScriptsSetting=false): no src attribute, srcdoc present, arm_html_view_root never called, no JS badge", async () => {
+    stubFetchOk("<html><body>hi</body></html>");
+    const v = viewerFor("html")!;
+    const handle = v.open("/vault/doc.html");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const iframe = document.querySelector(".html-viewer-frame") as HTMLIFrameElement;
+    expect(iframe.hasAttribute("src")).toBe(false);
+    expect(iframe.srcdoc).toBeTruthy();
+    expect(invokeMock).not.toHaveBeenCalledWith("arm_html_view_root", expect.anything());
+    expect(document.querySelector(".html-viewer-js-badge")).toBeNull();
 
     handle.close();
   });
@@ -195,6 +232,120 @@ describe("openHtmlViewer: a failed fetch surfaces an error, never a silent stuck
 
     const status = document.querySelector(".html-viewer-status");
     expect(status?.textContent).toContain("문서를 열 수 없습니다");
+
+    handle.close();
+  });
+});
+
+// RED-F2 (plan, Revision 1 per design §10.3/§10.7) — the ON contract: opt in
+// via htmlScriptsSetting, then the open path is a completely different shape
+// than T1/F1's off contract. Sandbox is now EXACTLY the two-token string
+// (Revision 1 reverses the old "never allow-same-origin" rule — see this
+// file's index.ts header comment for why that's safe here), asserted with
+// `toBe` (not `contains`) so a THIRD token creeping in would fail loudly.
+describe("openHtmlViewer: sandbox security contract — ON path (F2, design §2ⓔ/§3/§10 Revision 1)", () => {
+  it('sandbox is EXACTLY "allow-scripts allow-same-origin" (no other tokens), src is the token-hosted htmlview:// URL, srcdoc is absent, and arm_html_view_root is called with the parent dir BEFORE src is set', async () => {
+    htmlScriptsSetting.set(true);
+    const v = viewerFor("html")!;
+    const handle = v.open("/vault/dir/doc.html");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const iframe = document.querySelector(".html-viewer-frame") as HTMLIFrameElement;
+    expect(iframe).toBeTruthy();
+    expect(iframe.getAttribute("sandbox")).toBe("allow-scripts allow-same-origin");
+    expect(iframe.hasAttribute("srcdoc")).toBe(false);
+    // The token (from arm_html_view_root's mocked return) is the URL's HOST,
+    // not a path segment — design §10.3's per-open-origin invariant — and
+    // only the document's own FILE NAME follows, never the absolute path.
+    expect(iframe.getAttribute("src")).toBe(`htmlview://${MOCK_VIEW_TOKEN}/doc.html`);
+
+    // arm_html_view_root was called, with the PARENT directory (not the file
+    // itself), and it happened before src was assigned — src only appears
+    // once the invoke() promise the mock resolved has settled (the `await`
+    // above already ran past that resolution, so a call-count check here IS
+    // the ordering check: if arm hadn't resolved yet, src would still be
+    // absent per the assertion above).
+    expect(invokeMock).toHaveBeenCalledWith("arm_html_view_root", { dir: "/vault/dir" });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    handle.close();
+  });
+
+  it("off path's fetch/decode/rewrite machinery is never invoked when scripted", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    htmlScriptsSetting.set(true);
+    const v = viewerFor("html")!;
+    const handle = v.open("/vault/doc.html");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    handle.close();
+  });
+});
+
+// RED-F3 (plan) — toggle is read ONLY at open() time, never retroactively.
+describe("openHtmlViewer: the setting is read once at open() time, non-retroactively (F3, design §6)", () => {
+  it("a viewer opened OFF stays off even after the setting flips to on mid-session", async () => {
+    stubFetchOk("<html><body>hi</body></html>");
+    const v = viewerFor("html")!;
+    const handle = v.open("/vault/doc.html");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const iframe = document.querySelector(".html-viewer-frame") as HTMLIFrameElement;
+    expect(iframe.getAttribute("sandbox")).toBe("");
+    expect(iframe.hasAttribute("src")).toBe(false);
+
+    htmlScriptsSetting.set(true); // flip mid-session — must not reach the already-open viewer
+
+    expect(iframe.getAttribute("sandbox")).toBe("");
+    expect(iframe.hasAttribute("src")).toBe(false);
+
+    handle.close();
+  });
+
+  it("a viewer opened ON stays on even after the setting flips back to off mid-session", async () => {
+    htmlScriptsSetting.set(true);
+    const v = viewerFor("html")!;
+    const handle = v.open("/vault/doc.html");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const iframe = document.querySelector(".html-viewer-frame") as HTMLIFrameElement;
+    expect(iframe.getAttribute("sandbox")).toBe("allow-scripts allow-same-origin");
+
+    htmlScriptsSetting.set(false); // flip mid-session — the already-open scripted viewer keeps running
+
+    expect(iframe.getAttribute("sandbox")).toBe("allow-scripts allow-same-origin");
+    expect(iframe.hasAttribute("src")).toBe(true);
+
+    handle.close();
+  });
+});
+
+// RED-F4 (plan) — the "JS" badge is the user-visible signal that a document
+// is scripted; it must track the open-time decision exactly.
+describe("openHtmlViewer: the JS badge signals scripted mode (F4, design §5)", () => {
+  it("present when opened with scripting on", async () => {
+    htmlScriptsSetting.set(true);
+    const v = viewerFor("html")!;
+    const handle = v.open("/vault/doc.html");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const badge = document.querySelector(".html-viewer-js-badge");
+    expect(badge).toBeTruthy();
+    expect(badge?.textContent).toBe("JS");
+
+    handle.close();
+  });
+
+  it("absent when opened with scripting off (default)", async () => {
+    stubFetchOk("<html><body>hi</body></html>");
+    const v = viewerFor("html")!;
+    const handle = v.open("/vault/doc.html");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(document.querySelector(".html-viewer-js-badge")).toBeNull();
 
     handle.close();
   });

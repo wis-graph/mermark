@@ -483,6 +483,40 @@ export const keybindingsSetting = registerSetting<Record<string, string>>({
 
 // ── 뷰어 (Viewers) — per-viewer on/off toggle (file-type ownership) ───────────
 
+/** Whether the HTML viewer's SCRIPTED (JS-executing) open path is armed.
+ *  Default false — the off path (sandbox="" + srcdoc, zero execution) is what
+ *  every user gets until they explicitly opt in (_workspace/01_architect_design_htmljs.md
+ *  §0/§6). Read ONLY at open time (html-viewer's `scriptExecutionEnabled`) —
+ *  toggling this never reaches an already-open viewer; the next open() call
+ *  picks up the fresh value (design §6, "토글은 비소급"). Exposed to the HTML
+ *  viewer extension read-only via the api facade's `htmlViewerScripts`
+ *  (same ReadonlySetting shape as fontScale — an extension may observe this
+ *  but the panel control below is the only writer). */
+export const htmlScriptsSetting = registerSetting<boolean>({
+  key: "mermark.htmlViewerScripts",
+  default: false,
+  parse: (raw) => (raw === "true" ? true : raw === "false" ? false : null),
+  serialize: (v) => String(v),
+  ui: {
+    label: "HTML 문서 스크립트 실행",
+    group: "뷰어",
+    control: {
+      kind: "select",
+      options: [
+        { value: false, label: "끄기 (기본값)" },
+        { value: true, label: "켜기" },
+      ],
+      // _workspace/01_architect_design_htmljs.md §10.6 판정 ③ — Revision 1
+      // (per-open 토큰 오리진 + allow-same-origin, §10.3)로 형제 리소스 로드가
+      // 실제로 성립하므로 "같은 폴더 파일 읽기"가 참이 된 시점의 정밀화된 문구.
+      help:
+        "켜면 HTML 뷰어로 여는 문서 안의 JavaScript가 실행됩니다. 문서는 앱과 격리되지만, " +
+        "문서와 같은 폴더(하위 폴더 포함)의 파일 읽기와 네트워크 요청이 가능해집니다. " +
+        "신뢰하는 문서에만 사용하세요. 변경은 다음에 여는 문서부터 적용됩니다(이미 열린 뷰어는 그대로 유지).",
+    },
+  },
+});
+
 /** "disabled unless present" rule in one named place — the single definition
  *  of what a disabled-set MEANS, so the panel control and the open-time
  *  filter (main.ts's viewerForEntry) can never disagree about it. Pure query. */

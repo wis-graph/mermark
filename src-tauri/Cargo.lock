@@ -2474,9 +2474,10 @@ dependencies = [
 
 [[package]]
 name = "mermark"
-version = "0.9.13"
+version = "0.9.15"
 dependencies = [
  "arboard",
+ "getrandom 0.3.4",
  "notify",
  "rhwp",
  "rusqlite",

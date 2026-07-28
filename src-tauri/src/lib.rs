@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod bundle;
 pub mod cli;
 mod commands;
+mod htmlview;
 mod hwp;
 mod sqlite;
 mod watcher;
@@ -225,6 +226,20 @@ pub fn run() {
         // `unwatch_file` can swap the one live watcher.
         .manage(watcher::WatchState::default())
         .manage(hwp::HwpState::default())
+        // The set of directories `arm_html_view_root` has admitted; the
+        // `htmlview` protocol handler below reads it via `AppHandle::state`.
+        // See `htmlview.rs` module doc for the full design.
+        .manage(htmlview::HtmlViewRoots::default())
+        // Frame-only CSP delivery for the HTML viewer's opt-in scripted mode
+        // (`_workspace/01_architect_design_htmljs.md` §2). Serves only files
+        // that resolve inside an armed root (`htmlview::handle_html_view_request`);
+        // every other request gets a bare 403. The parent app's own CSP is
+        // untouched — this scheme gets its *own* CSP via the response header
+        // (`htmlview::FRAME_CSP`), which is the whole mechanism that lets a
+        // scripted document execute inline JS without weakening the app.
+        .register_uri_scheme_protocol("htmlview", |ctx, request| {
+            htmlview::handle_html_view_request(ctx.app_handle(), &request)
+        })
         .invoke_handler(tauri::generate_handler![
             commands::read_file,
             commands::write_file,
@@ -239,6 +254,7 @@ pub fn run() {
             commands::watch_file,
             commands::unwatch_file,
             commands::copy_to_clipboard,
+            htmlview::arm_html_view_root,
             hwp::hwp_open,
             hwp::hwp_render_page,
             hwp::hwp_close,

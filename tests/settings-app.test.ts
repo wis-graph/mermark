@@ -78,6 +78,29 @@ describe("app settings", () => {
     expect(fontScaleSetting.get()).toBe(1.0); // NaN → default
   });
 
+  // HTML 뷰어 JS 실행 옵트인 (_workspace/01_architect_design_htmljs.md §0/§6):
+  // default false is the security-load-bearing fact this setting carries —
+  // every user gets the static (off) HTML viewer path until they explicitly
+  // opt in.
+  it("htmlScriptsSetting defaults to false and persists under mermark.htmlViewerScripts", async () => {
+    const { htmlScriptsSetting } = await import("../src/settings/app");
+    expect(htmlScriptsSetting.get()).toBe(false);
+    htmlScriptsSetting.set(true);
+    expect(localStorage.getItem("mermark.htmlViewerScripts")).toBe("true");
+  });
+
+  it("htmlScriptsSetting reads a saved true/false preference", async () => {
+    localStorage.setItem("mermark.htmlViewerScripts", "true");
+    const { htmlScriptsSetting } = await import("../src/settings/app");
+    expect(htmlScriptsSetting.get()).toBe(true);
+  });
+
+  it("htmlScriptsSetting falls back to the default (false) on a corrupt saved value", async () => {
+    localStorage.setItem("mermark.htmlViewerScripts", "garbage");
+    const { htmlScriptsSetting } = await import("../src/settings/app");
+    expect(htmlScriptsSetting.get()).toBe(false);
+  });
+
   it("clampFontScale snaps to the bounds and the 0.1 step", async () => {
     const { clampFontScale } = await import("../src/settings/app");
     expect(clampFontScale(2.5)).toBe(2.0); // above MAX

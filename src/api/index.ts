@@ -111,7 +111,7 @@ export { readLocalFileBytes } from "../chrome/viewer/file-bytes";
 // not exist at runtime. `Object.freeze` keeps an extension from bolting one
 // back on. The single writer stays the app's own zoomIn/zoomOut/resetZoom
 // commands (settings/app.ts). tests/api-fence.test.ts pins all of this.
-import { fontScaleSetting } from "../settings/app";
+import { fontScaleSetting, htmlScriptsSetting } from "../settings/app";
 import type { Setting } from "../settings/store";
 
 /** A setting an extension may READ and OBSERVE but never WRITE — the
@@ -128,4 +128,16 @@ export const fontScale: ReadonlySetting<number> = Object.freeze({
   get: () => fontScaleSetting.get(),
   subscribe: (fn: (v: number) => void) => fontScaleSetting.subscribe(fn),
   bind: (fn: (v: number) => void) => fontScaleSetting.bind(fn),
+});
+
+// HTML 뷰어 JS 실행 옵트인 (_workspace/01_architect_design_htmljs.md §0/§6/§8):
+// the HTML viewer reads this ONCE per open() to decide static vs. scripted —
+// the same READ-ONLY-projection reasoning as `fontScale` above applies
+// verbatim (an extension has no legitimate reason to flip this itself; only
+// the settings panel's control writes it), so it reuses the identical
+// ReadonlySetting<T> shape rather than inventing a second convention.
+export const htmlViewerScripts: ReadonlySetting<boolean> = Object.freeze({
+  get: () => htmlScriptsSetting.get(),
+  subscribe: (fn: (v: boolean) => void) => htmlScriptsSetting.subscribe(fn),
+  bind: (fn: (v: boolean) => void) => htmlScriptsSetting.bind(fn),
 });
