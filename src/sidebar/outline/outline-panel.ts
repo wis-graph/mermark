@@ -30,6 +30,18 @@ const OUTLINE_REFRESH_MS = 180;
 /** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
 const OUTLINE_ASIDE_ID = "outline-aside";
 
+/** One entry in a non-markdown source's table of contents (EPUB nav/NCX,
+ *  a future viewer's own toc) — the override shape `setOverride` accepts.
+ *  `jump()` is a closure the OWNER supplies (EPUB design §5: unified with
+ *  the md path's `jumpTo(getView(), pos)` only at the "both are a jump()
+ *  closure" level, NOT by funneling both through one shared dispatch — the
+ *  md path stays byte-for-byte unchanged). */
+export interface OutlineOverrideItem {
+  readonly level: number;
+  readonly text: string;
+  jump(): void;
+}
+
 export interface OutlinePanel {
   /** The button to place in the status bar (toggles the sidebar). */
   readonly button: HTMLButtonElement;
@@ -45,6 +57,14 @@ export interface OutlinePanel {
   /** A CM extension that re-renders the panel (debounced) on doc changes. Add to
    *  the editor's extension list so the outline tracks edits live. */
   readonly listener: ReturnType<typeof EditorView.updateListener.of>;
+  /** Replace the md-heading source with `items` (a non-markdown viewer's own
+   *  toc — EPUB nav/NCX), or restore the md-heading path with `null`. A
+   *  SidebarPanel is deliberately NOT created for this (design §5: "별도
+   *  SidebarPanel을 만들지 않는다") — the existing outline panel gains one
+   *  override source instead, so the left-rail button/mutual-exclusion/
+   *  lifecycle are all reused as-is. Refreshes immediately if the panel is
+   *  open. Command (void). */
+  setOverride(items: readonly OutlineOverrideItem[] | null): void;
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
@@ -83,12 +103,40 @@ export function createOutlinePanel({ getView, onOpen }: OutlineHandlers): Outlin
     renderSidebarButton(button, "list-tree", "목차", !aside.hidden, OUTLINE_ASIDE_ID);
   renderButton();
 
-  /** Rebuild the heading list from the live document. While the panel is hidden
-   *  this returns immediately — closed panels cost nothing on every keystroke. */
+  // Non-md toc override (EPUB viewer, design §5) — null means "render the
+  // live document's md headings" (the original, sole behavior). Set only via
+  // setOverride below; refresh() is the only reader.
+  let override: readonly OutlineOverrideItem[] | null = null;
+  // jump() closures aren't storable in a DOM dataset (strings only), so the
+  // click handler looks them up by index into THIS array, rebuilt every
+  // refresh() alongside the override's buttons — the two always stay in sync
+  // because both come from the same render pass.
+  let overrideJumps: (() => void)[] = [];
+
+  /** Rebuild the list from whichever source is currently active: the override
+   *  (a non-markdown viewer's own toc) when set, otherwise the live
+   *  document's md headings — the ONE branch point (design §5), so the two
+   *  sources can never both render at once. While the panel is hidden this
+   *  returns immediately — closed panels cost nothing on every keystroke. */
   const refresh = (): void => {
     if (aside.hidden) return;
-    const headings = collectHeadings(getView().state);
     tree.replaceChildren();
+    overrideJumps = [];
+
+    if (override) {
+      empty.hidden = override.length > 0;
+      override.forEach((entry, i) => {
+        const item = create("button", `outline-item outline-h${entry.level}`);
+        item.dataset.overrideIndex = String(i);
+        item.textContent = entry.text;
+        item.title = entry.text;
+        tree.append(item);
+        overrideJumps.push(entry.jump);
+      });
+      return;
+    }
+
+    const headings = collectHeadings(getView().state);
     empty.hidden = headings.length > 0;
     for (const h of headings) {
       const item = create("button", `outline-item outline-h${h.level}`);
@@ -121,7 +169,13 @@ export function createOutlinePanel({ getView, onOpen }: OutlineHandlers): Outlin
   // view.dispatch, so all navigation lands one way.
   tree.addEventListener("mousedown", (e) => {
     const item = (e.target as HTMLElement).closest(".outline-item") as HTMLElement | null;
-    if (!item?.dataset.pos) return;
+    if (!item) return;
+    if (item.dataset.overrideIndex !== undefined) {
+      e.preventDefault();
+      overrideJumps[Number(item.dataset.overrideIndex)]?.();
+      return;
+    }
+    if (!item.dataset.pos) return;
     e.preventDefault();
     jumpTo(getView(), Number(item.dataset.pos));
   });
@@ -136,5 +190,11 @@ export function createOutlinePanel({ getView, onOpen }: OutlineHandlers): Outlin
     timer = setTimeout(refresh, OUTLINE_REFRESH_MS);
   });
 
-  return { button, aside, close, refresh, listener };
+  /** See `OutlinePanel.setOverride`. Command (void). */
+  const setOverride = (items: readonly OutlineOverrideItem[] | null): void => {
+    override = items;
+    refresh();
+  };
+
+  return { button, aside, close, refresh, listener, setOverride };
 }

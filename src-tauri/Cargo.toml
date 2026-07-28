@@ -1,6 +1,6 @@
 [package]
 name = "mermark"
-version = "0.9.15"
+version = "0.9.16"
 description = "Mermaid + Markdown viewer"
 authors = ["you"]
 edition = "2021"
@@ -74,4 +74,12 @@ rusqlite = { version = "=0.39.0", features = ["bundled", "hooks"] }
 # `notify` pin above. `default-features = false` drops image-data; the macOS
 # backend rides on objc2 crates tauri/wry already compile.
 arboard = { version = "3", default-features = false }
+# EPUB viewer's zip-entry server (`epubview.rs`, `_workspace/01_architect_design_epub.md`
+# §1/§2 — `.epub` is a zip, served entry-by-entry with no temp-folder
+# extraction). Not a new dependency in spirit: `zip` is already compiled
+# twice in this build graph transitively (`rhwp` -> zip 8.6.0 for HWPX,
+# `tauri-plugin-updater` -> zip 4.6.1), so naming it directly here — pinned
+# to the major version `rhwp` already pulls — adds zero new crates, only a
+# direct name for one already-compiled version.
+zip = "8"
 

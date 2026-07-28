@@ -562,6 +562,30 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       console.info("[mock] arm_html_view_root", a.dir, "->", token);
       return token as T;
     }
+    case "arm_epub_view": {
+      // Mirrors the real `arm_epub_view(path) -> Result<String, String>`
+      // (_workspace/01_architect_design_epub.md §2). There is no `epub://`
+      // scheme registered in a plain browser (WKWebView-only custom scheme
+      // handler — the same `wkwebview-custom-scheme-test-gap` limitation
+      // documented for `arm_html_view_root`), so unlike that mock (which
+      // hands back a fixed token to let a same-origin mock document load),
+      // the EPUB reader has nothing to load *into* even with a token — this
+      // mock rejects outright rather than returning a token that would only
+      // ever 404. Silent success here would make the EPUB viewer's open
+      // flow look like it works under CDP/DevTools when it structurally
+      // cannot (design plan §알려진 한계).
+      console.info("[mock] arm_epub_view", a.path, "-> rejected (no epub:// scheme in browser dev)");
+      throw "EPUB 뷰어는 브라우저 dev에서 지원되지 않습니다 (epub:// 스킴 없음)";
+    }
+    case "read_epub_entry": {
+      // Mirrors the real `read_epub_entry(token, entry) -> Result<String, String>`.
+      // Same rationale as arm_epub_view above: no real zip-backed token
+      // exists in the browser mock, so any call here (which can only follow
+      // a real token from a real arm_epub_view — itself always rejected
+      // above) is refused rather than fabricating XML content.
+      console.info("[mock] read_epub_entry", a.token, a.entry, "-> rejected (no epub:// scheme in browser dev)");
+      throw "EPUB 뷰어는 브라우저 dev에서 지원되지 않습니다 (epub:// 스킴 없음)";
+    }
     case "path_exists":
       return true as T;
     case "open_path": {

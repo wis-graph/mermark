@@ -1156,6 +1156,47 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   text-align: center; color: var(--muted); padding: 8px;
 }
 
+/* EPUB viewer (built-in, _workspace/01_architect_design_epub.md §3/§7): a
+   scrollable column of chapter placeholders, each swapped for a same-origin
+   `epub://<token>` iframe once lazily loaded (epub-viewer.ts's
+   `loadChapter`) — every chapter is its OWN iframe (per-chapter CSS
+   isolation, design §3), never a single merged document.
+
+   2026-07-27 평면 규약 (pdf/hwp/html/docx 뷰어와 동일 결정, this round applied
+   the same day EPUB was designed): NO page frame/shadow/border — a chapter
+   fills the reading column edge-to-edge, matching html-viewer-frame/
+   docx-viewer-pages' "종이 프레임 아님, 패널을 꽉 채우는 평면 표면" call.
+
+   NO width/height/max-* rule on `.epub-viewer` itself — `.viewer-panel`'s
+   flex:1/min-width:0/min-height:0 (above) is the sole size owner, same
+   contract every other viewer here follows. */
+.epub-viewer-status { padding: 12px; color: var(--muted); font-size: 1em; }
+/* This viewer's OWN scroll boundary inside the shell's .viewer-panel-body
+   (flex:1/min-height:0/overflow:hidden, above) — same two-layer contract
+   .hwp-viewer-pages/.docx-viewer-pages use. Chapters are centered in a
+   reading column (`max-width` in ch units, a text-measure limit, NOT a
+   page-frame width) — a book is prose, not a document grid. */
+.epub-viewer-chapters {
+  flex: 1; min-height: 0; overflow: auto;
+  display: flex; flex-direction: column; align-items: center; padding: 24px 0;
+}
+/* One chapter: `min-height: 60vh` is the ONLY size promise before its
+   iframe has loaded and posted its first measure.js height (design §3's
+   lazy-render placeholder) — once that arrives, epub-viewer.ts sets an
+   explicit inline `height` (× the current zoom factor) that takes over from
+   this floor. `width: 100%` up to the reading-column max-width, centered —
+   the same "prose reading column" contract .html-viewer-frame's sibling
+   text content follows elsewhere in this app. */
+.epub-viewer-chapter {
+  width: 100%; max-width: 74ch;
+  min-height: 60vh;
+  background: #fff; /* a book page is white paper even in dark mode — html/hwp/docx viewer precedent */
+}
+/* Chapter iframes have NO visible border/shadow (평면 규약) — the 흰 배경
+   (above) against the panel's own background is the only chapter-boundary
+   cue, same role `.hwp-viewer-page`'s background plays against its gap. */
+.epub-viewer-chapter-frame { display: block; width: 100%; border: 0; background: #fff; }
+
 /* Open-by-path input row: a thin bar pinned just above the status bar (lives
    outside #app's scroll host, so no .cm-content/.cm-line involved → ZOOM GUARD
    holds). Hidden until the footer "경로 열기" button toggles it. The input

@@ -87,6 +87,7 @@ import { openImageViewer } from "./chrome/viewer/image-viewer";
 import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
 import { registerSqliteViewer } from "./chrome/viewer/sqlite-viewer";
+import { registerEpubViewer } from "./chrome/viewer/epub-viewer";
 import { registerViewer, viewerFor, type Viewer, type ViewerHandle } from "./chrome/viewer/registry";
 import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
 import { icon, type IconName } from "./icons";
@@ -391,6 +392,13 @@ async function boot() {
   // (3 new Tauri commands: sqlite_tables/sqlite_table_info/sqlite_rows; R11's
   // extension contract is "frontend only, zero new IPC").
   registerSqliteViewer();
+  // The built-in EPUB viewer (_workspace/01_architect_design_epub.md §0) —
+  // built-in for the same reason (2 new Tauri commands: arm_epub_view/
+  // read_epub_entry + a custom epub:// scheme). setTocOverride is the ONE
+  // closure epub-viewer.ts is allowed to reach the outline panel through
+  // (design §5: chrome/ never imports sidebar/ directly) — outline is
+  // already in scope here (declared above, before this registration block).
+  registerEpubViewer({ setTocOverride: (items) => outline.setOverride(items) });
 
   /** "Which registered viewer, if any, opens this filename?" — the single
    *  rule canOpenWithViewer/openWithViewer both derive from, so they can

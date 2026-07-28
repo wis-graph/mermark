@@ -84,7 +84,7 @@ const VIEW_TOKEN_BYTES: usize = 16;
 /// it was never armed for), hex-encoded. Two calls always differ in practice
 /// (locked by `mint_view_token_is_not_repeated_across_calls`) precisely
 /// because they're independent CSPRNG draws, not a counter.
-fn mint_view_token() -> String {
+pub(crate) fn mint_view_token() -> String {
     let mut bytes = [0u8; VIEW_TOKEN_BYTES];
     getrandom::fill(&mut bytes).expect("OS CSPRNG must be available to mint a view token");
     bytes.iter().map(|b| format!("{b:02x}")).collect()

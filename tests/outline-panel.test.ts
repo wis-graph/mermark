@@ -50,6 +50,41 @@ describe("outline panel: left-sidebar shell (C)", () => {
   });
 });
 
+describe("outline panel: EPUB toc override (setOverride, design §5)", () => {
+  it("renders override items instead of md headings when the panel is open, and clicking one calls jump()", () => {
+    const p = createOutlinePanel({ getView: () => fakeView("# a\n## b") });
+    const jump = vi.fn();
+    p.setOverride([{ level: 1, text: "Chapter 1", jump }]);
+    p.button.click(); // open() calls refresh()
+    const items = Array.from(p.aside.querySelectorAll(".outline-item"));
+    expect(items.map((i) => i.textContent)).toEqual(["Chapter 1"]);
+    expect(items.some((i) => i.textContent === "a" || i.textContent === "b")).toBe(false);
+
+    (items[0] as HTMLElement).dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(jump).toHaveBeenCalledOnce();
+  });
+
+  it("setOverride(null) restores the md heading path", () => {
+    const p = createOutlinePanel({ getView: () => fakeView("# a\n## b") });
+    p.setOverride([{ level: 1, text: "Chapter 1", jump: vi.fn() }]);
+    p.button.click();
+    expect(Array.from(p.aside.querySelectorAll(".outline-item")).map((i) => i.textContent)).toEqual(["Chapter 1"]);
+
+    p.setOverride(null);
+    expect(Array.from(p.aside.querySelectorAll(".outline-item")).map((i) => i.textContent)).toEqual(["a", "b"]);
+  });
+
+  it("a doc-change refresh while override is active does not fall back to md headings", () => {
+    let doc = "# a\n## b";
+    const p = createOutlinePanel({ getView: () => fakeView(doc) });
+    p.setOverride([{ level: 1, text: "Chapter 1", jump: vi.fn() }]);
+    p.button.click();
+    doc = "# a\n## b\n### c"; // md doc changed underneath the override
+    p.refresh();
+    expect(Array.from(p.aside.querySelectorAll(".outline-item")).map((i) => i.textContent)).toEqual(["Chapter 1"]);
+  });
+});
+
 describe("outline panel: toggle icon + disclosure ARIA (N)", () => {
   it("closed → list-tree identity icon, aria-expanded=false, aria-controls set", () => {
     const p = createOutlinePanel({ getView: () => fakeView("# a") });

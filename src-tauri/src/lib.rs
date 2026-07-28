@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod bundle;
 pub mod cli;
 mod commands;
+mod epubview;
 mod htmlview;
 mod hwp;
 mod sqlite;
@@ -240,6 +241,21 @@ pub fn run() {
         .register_uri_scheme_protocol("htmlview", |ctx, request| {
             htmlview::handle_html_view_request(ctx.app_handle(), &request)
         })
+        // The set of `.epub` files `arm_epub_view` has admitted; the `epub`
+        // protocol handler below reads it via `AppHandle::state`. Sibling of
+        // `htmlview::HtmlViewRoots` by design, not a shared/enum-unified
+        // state — see `epubview.rs` module doc.
+        .manage(epubview::EpubViewRoots::default())
+        // Zip-entry server for the EPUB viewer (`_workspace/01_architect_design_epub.md`).
+        // Never extracts to a temp folder — every request reads one entry
+        // straight out of the armed `.epub`'s own zip central directory
+        // (`epubview::handle_epub_view_request`). Chapter (`text/html`)
+        // responses carry their own per-token CSP (`epubview::epub_frame_csp`)
+        // that allows exactly one script URL (our embedded measure.js) and no
+        // remote origins — book scripts never execute.
+        .register_uri_scheme_protocol("epub", |ctx, request| {
+            epubview::handle_epub_view_request(ctx.app_handle(), &request)
+        })
         .invoke_handler(tauri::generate_handler![
             commands::read_file,
             commands::write_file,
@@ -255,6 +271,8 @@ pub fn run() {
             commands::unwatch_file,
             commands::copy_to_clipboard,
             htmlview::arm_html_view_root,
+            epubview::arm_epub_view,
+            epubview::read_epub_entry,
             hwp::hwp_open,
             hwp::hwp_render_page,
             hwp::hwp_close,
