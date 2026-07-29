@@ -148,6 +148,41 @@ if [ "$KEY_CHECK" != "OK" ]; then
 fi
 echo "✓ 서명키 정합성 OK — .sig가 tauri.conf.json의 pubkey와 같은 키"
 
+# --- 게이트 4: 릴리스할 코드가 origin에 올라가 있는가 -------------------------
+# 이 게이트가 없어서 v0.9.17 1차 시도가 실패했다(2026-07-29). 로컬에 수정 커밋을
+# 두고 푸시하지 않은 채 배포를 돌렸더니, `gh release create`가 만든 태그는 **원격
+# 기본 브랜치의 head**에 붙었다 — 즉 방금 고친 코드가 아니라 한 버전 전 커밋이다.
+# 맥 전용 배포에서는 자산을 로컬에서 빌드해 올리므로 이 어긋남이 드러나지 않고
+# 조용히 넘어간다(태그가 가리키는 소스 ≠ 실제 배포된 바이너리라는 사고를 남긴 채).
+# 윈도우를 포함하면 CI가 그 태그를 체크아웃해 **원격 코드로 다시 빌드**하기 때문에
+# 즉시 터진다 — 실제로 "Verify CHANGELOG/bundle parity"에서 죽었다(CHANGELOG에
+# 새 버전 섹션이 없는 옛 커밋이었으므로).
+#
+# 사람이 "배포 전에 푸시하기"를 기억하는 방식으로는 또 틀린다. 그래서 규칙을
+# 스크립트가 강제한다. 읽기 전용 검사라 dry-run에서도 항상 실제로 실행한다.
+git fetch --quiet origin main 2>/dev/null || true
+LOCAL_HEAD=$(git rev-parse HEAD)
+REMOTE_HEAD=$(git rev-parse origin/main 2>/dev/null || echo "")
+if [ -n "$(git status --porcelain)" ]; then
+  echo "오류: 커밋되지 않은 변경이 있습니다."
+  echo "      배포되는 바이너리는 방금 빌드한 것인데 태그는 커밋을 가리키므로,"
+  echo "      워킹트리가 더러우면 '태그가 가리키는 소스'와 '실제 배포물'이 갈립니다."
+  echo "      해결: 변경을 커밋(또는 정리)한 뒤 다시 실행하세요."
+  git status --short
+  exit 1
+fi
+if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
+  echo "오류: 로컬 HEAD가 origin/main과 다릅니다 — 릴리스할 코드가 원격에 없습니다."
+  echo "      로컬  : $LOCAL_HEAD"
+  echo "      원격  : ${REMOTE_HEAD:-(origin/main 없음)}"
+  echo "      이대로 진행하면 태그가 원격의 옛 커밋에 붙고,"
+  echo "      윈도우 CI는 그 옛 코드를 빌드합니다(맥은 조용히 어긋난 채 넘어갑니다)."
+  echo "      해결: git push origin main 후 다시 실행하세요."
+  echo "      (이미 태그가 잘못 붙었다면: git tag -f $TAG <올바른 커밋> && git push -f origin $TAG)"
+  exit 1
+fi
+echo "✓ 원격 정합성 OK — origin/main이 릴리스할 커밋과 같음 (${LOCAL_HEAD:0:7})"
+
 # 릴리즈 노트 = CHANGELOG.md의 최신 버전 섹션 본문.
 # GH Release 본문과 updater.json의 notes에 같은 내용이 들어가, 앱의
 # "업데이트가 있습니다" 카드가 실제 변경 내역을 보여줄 수 있다 (2026-07-11).
