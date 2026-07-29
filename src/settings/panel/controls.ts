@@ -68,6 +68,15 @@ function renderSegmented<T>(setting: Setting<T>, control: Extract<Control<T>, { 
   };
   reflect(setting.get());
   setting.subscribe(reflect);
+  // Same optional-hint shape as renderSelect/renderText's `help`: a muted
+  // line below the control, not squeezed beside it.
+  if (control.help) {
+    r.classList.add("settings-row-has-help");
+    const hint = document.createElement("div");
+    hint.className = "settings-text-help";
+    hint.textContent = control.help;
+    cell.appendChild(hint);
+  }
   return r;
 }
 

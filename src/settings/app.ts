@@ -8,6 +8,7 @@ import { registerSetting } from "./registry";
 import { systemTheme, type Theme } from "../theme";
 import { builtInTheme, parseTheme, serializeTheme, type Theme as ThemeJson, type PresetName } from "./theme-schema";
 import type { PreviewMode } from "../markdown/live-preview";
+import type { EpubReadingPosition } from "../chrome/viewer/epub-position";
 
 const numberParse = (raw: string | null): number | null => {
   if (raw == null) return null;
@@ -501,10 +502,10 @@ export const htmlScriptsSetting = registerSetting<boolean>({
     label: "HTML 문서 스크립트 실행",
     group: "뷰어",
     control: {
-      kind: "select",
+      kind: "segmented",
       options: [
-        { value: false, label: "끄기 (기본값)" },
         { value: true, label: "켜기" },
+        { value: false, label: "끄기" },
       ],
       // _workspace/01_architect_design_htmljs.md §10.6 판정 ③ — Revision 1
       // (per-open 토큰 오리진 + allow-same-origin, §10.3)로 형제 리소스 로드가
@@ -512,7 +513,14 @@ export const htmlScriptsSetting = registerSetting<boolean>({
       help:
         "켜면 HTML 뷰어로 여는 문서 안의 JavaScript가 실행됩니다. 문서는 앱과 격리되지만, " +
         "문서와 같은 폴더(하위 폴더 포함)의 파일 읽기와 네트워크 요청이 가능해집니다. " +
-        "신뢰하는 문서에만 사용하세요. 변경은 다음에 여는 문서부터 적용됩니다(이미 열린 뷰어는 그대로 유지).",
+        "신뢰하는 문서에만 사용하세요. 변경은 다음에 여는 문서부터 적용됩니다(이미 열린 뷰어는 그대로 유지). " +
+        // 윈도우/WebView2에서는 토큰이 호스트가 아니라 경로 세그먼트로 전달돼 열린 문서들이
+        // 한 오리진을 공유한다(htmlview.rs "Windows/Android surface a registered custom
+        // scheme as ..." 참조). 파일 접근 범위는 토큰→루트 매핑이 그대로 지키지만 문서 간
+        // 격리와 저장소 비승계는 그 플랫폼에서 성립하지 않는다. 사용자 판정(2026-07-29):
+        // 기능은 양쪽 다 제공하되 이 차이를 숨기지 않는다.
+        "윈도우에서는 동시에 열어 둔 스크립트 문서끼리 서로의 내용에 접근할 수 있고 저장한 값이 " +
+        "다시 열어도 남습니다(맥에서는 문서마다 격리됩니다).",
     },
   },
 });
@@ -589,6 +597,63 @@ export const recentDocsSetting = defineSetting<string[]>({
     } catch {
       return null;
     }
+  },
+  serialize: (v) => JSON.stringify(v),
+});
+
+// ── EPUB 읽던 위치 기억 (Reading position memory) — SSOT-only, no panel ui ─────
+
+/** True when `v` has the exact shape of one `EpubReadingPosition` record —
+ *  the per-record shape guard `epubPositionsSetting.parse` applies to every
+ *  value in the saved map, so ONE corrupt/malformed record is dropped
+ *  without discarding every other book's saved position (a stricter "reject
+ *  the whole blob on any bad record" would lose more than it protects —
+ *  recentDocs/favoriteFolders reject whole-array on ANY bad element only
+ *  because THEIR records are single primitives with nothing else worth
+ *  saving alongside a bad one; a position map's records are independent
+ *  books). Pure query. */
+function isEpubReadingPosition(v: unknown): v is EpubReadingPosition {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.entry === "string" &&
+    typeof o.ratio === "number" &&
+    (o.anchor === null || typeof o.anchor === "string") &&
+    typeof o.savedAt === "number"
+  );
+}
+
+/** Per-book EPUB reading positions, keyed by `epubPositionKey`'s output
+ *  (`chrome/viewer/epub-position.ts`) — `"id:<dc:identifier>"` when the book
+ *  declares one (survives a file move/rename, shared across copies),
+ *  otherwise `"path:<absolute path>"`. SSOT-only (no panel row, no off
+ *  switch — `_workspace/01_architect_design_epub_position.md` §7: a
+ *  harmless convenience feature with an already-natural escape hatch,
+ *  same posture as recentDocsSetting/favoriteFoldersSetting having none).
+ *  SINGLE WRITER: `chrome/viewer/epub-viewer.ts`'s debounced scroll-save
+ *  command (via `upsertPosition`); SINGLE READER: the same file's open()
+ *  restore path (`.get()`). Persisted as a JSON object in localStorage —
+ *  same durability level as recentDocs (WKWebView keeps it across restarts,
+ *  no backend command needed). Corrupt JSON / non-object / array → `{}`;
+ *  an individual malformed record within an otherwise-valid object is
+ *  dropped on its own (see `isEpubReadingPosition`). */
+export const epubPositionsSetting = defineSetting<Record<string, EpubReadingPosition>>({
+  key: "mermark.epubPositions",
+  default: {},
+  parse: (raw) => {
+    if (raw == null) return null;
+    let obj: unknown;
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return null;
+    const out: Record<string, EpubReadingPosition> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      if (isEpubReadingPosition(v)) out[k] = v;
+    }
+    return out;
   },
   serialize: (v) => JSON.stringify(v),
 });

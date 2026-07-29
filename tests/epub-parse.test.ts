@@ -110,7 +110,54 @@ describe("parseOpf", () => {
 
   it("degrades to an empty tocless reflowable package on malformed XML", () => {
     const pkg = parseOpf("<not-xml", "OEBPS");
-    expect(pkg).toEqual({ spine: [], manifest: [], tocSource: null, layout: "reflowable" });
+    expect(pkg).toEqual({ spine: [], manifest: [], tocSource: null, layout: "reflowable", identifier: null });
+  });
+});
+
+describe("parseOpf: identifier extraction (epub-position feature, design_epub_position.md §2)", () => {
+  it("prefers the dc:identifier matching package@unique-identifier, even when another dc:identifier exists first", () => {
+    const opf = `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="pub-id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="other">some-other-id</dc:identifier>
+    <dc:identifier id="pub-id">urn:isbn:0-306-40615-2</dc:identifier>
+  </metadata>
+  <manifest/><spine/>
+</package>`;
+    expect(parseOpf(opf, "").identifier).toBe("urn:isbn:0-306-40615-2");
+  });
+
+  it("falls back to the first dc:identifier when unique-identifier doesn't resolve", () => {
+    const opf = `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="missing-id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="a">first-id</dc:identifier>
+    <dc:identifier id="b">second-id</dc:identifier>
+  </metadata>
+  <manifest/><spine/>
+</package>`;
+    expect(parseOpf(opf, "").identifier).toBe("first-id");
+  });
+
+  it("falls back to the first dc:identifier when package has no unique-identifier attribute", () => {
+    const opf = `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier>only-id</dc:identifier></metadata>
+  <manifest/><spine/>
+</package>`;
+    expect(parseOpf(opf, "").identifier).toBe("only-id");
+  });
+
+  it("returns null when there is no dc:identifier at all, or it is blank", () => {
+    const noIdentifier = `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf"><metadata/><manifest/><spine/></package>`;
+    expect(parseOpf(noIdentifier, "").identifier).toBeNull();
+
+    const blankIdentifier = `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier>   </dc:identifier></metadata>
+  <manifest/><spine/>
+</package>`;
+    expect(parseOpf(blankIdentifier, "").identifier).toBeNull();
   });
 });
 

@@ -101,6 +101,24 @@ describe("app settings", () => {
     expect(htmlScriptsSetting.get()).toBe(false);
   });
 
+  // Regression guard: htmlScriptsSetting must render as the same 켜기/끄기
+  // segmented toggle as its sibling 뷰어 group entries, not a lone select
+  // dropdown (a prior consistency defect). Storage format (parse/serialize/
+  // default) is untouched — this only locks the presentation layer.
+  it("htmlScriptsSetting renders as a segmented 켜기/끄기 control matching the 뷰어 group", async () => {
+    await import("../src/settings/app");
+    const { groups } = await import("../src/settings/registry");
+    const viewerGroup = groups().find((g) => g.name === "뷰어");
+    const entry = viewerGroup!.entries.find((e) => e.ui.label === "HTML 문서 스크립트 실행");
+    expect(entry).toBeDefined();
+    expect(entry!.ui.control.kind).toBe("segmented");
+    const control = entry!.ui.control as { kind: "segmented"; options: { value: boolean; label: string }[] };
+    expect(control.options).toEqual([
+      { value: true, label: "켜기" },
+      { value: false, label: "끄기" },
+    ]);
+  });
+
   it("clampFontScale snaps to the bounds and the 0.1 step", async () => {
     const { clampFontScale } = await import("../src/settings/app");
     expect(clampFontScale(2.5)).toBe(2.0); // above MAX
@@ -454,6 +472,50 @@ describe("app settings", () => {
       expect(clampSidebarWidth(100, 1200)).toBe(160); // floor
       expect(clampSidebarWidth(900, 1200)).toBe(480); // absolute ceiling
       expect(clampSidebarWidth(500, 800)).toBe(400); // half-viewport ceiling wins
+    });
+  });
+
+  describe("epubPositionsSetting", () => {
+    it("defaults to an empty object and persists under mermark.epubPositions", async () => {
+      const { epubPositionsSetting } = await import("../src/settings/app");
+      expect(epubPositionsSetting.get()).toEqual({});
+      const pos = { entry: "ch1.xhtml", ratio: 0.5, anchor: "mid", savedAt: 1000 };
+      epubPositionsSetting.set({ "id:book1": pos });
+      expect(localStorage.getItem("mermark.epubPositions")).toBe(JSON.stringify({ "id:book1": pos }));
+    });
+
+    it("parses a saved JSON map, round-tripping every field", async () => {
+      const pos = { entry: "ch2.xhtml", ratio: 0.25, anchor: null, savedAt: 2000 };
+      localStorage.setItem("mermark.epubPositions", JSON.stringify({ "path:/vault/b.epub": pos }));
+      const { epubPositionsSetting } = await import("../src/settings/app");
+      expect(epubPositionsSetting.get()).toEqual({ "path:/vault/b.epub": pos });
+    });
+
+    it("falls back to the default on invalid JSON", async () => {
+      localStorage.setItem("mermark.epubPositions", "not json");
+      const { epubPositionsSetting } = await import("../src/settings/app");
+      expect(epubPositionsSetting.get()).toEqual({});
+    });
+
+    it("falls back to the default on a non-object (array) JSON value", async () => {
+      localStorage.setItem("mermark.epubPositions", "[]");
+      const { epubPositionsSetting } = await import("../src/settings/app");
+      expect(epubPositionsSetting.get()).toEqual({});
+    });
+
+    it("drops an individually malformed record but keeps the other valid ones", async () => {
+      localStorage.setItem(
+        "mermark.epubPositions",
+        JSON.stringify({
+          "id:good": { entry: "ch1.xhtml", ratio: 0.1, anchor: null, savedAt: 1 },
+          "id:bad": { entry: "ch1.xhtml", ratio: "not-a-number", anchor: null, savedAt: 1 },
+          "id:bad2": "not even an object",
+        }),
+      );
+      const { epubPositionsSetting } = await import("../src/settings/app");
+      expect(epubPositionsSetting.get()).toEqual({
+        "id:good": { entry: "ch1.xhtml", ratio: 0.1, anchor: null, savedAt: 1 },
+      });
     });
   });
 

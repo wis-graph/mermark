@@ -297,33 +297,104 @@ pub(crate) fn is_reader_asset_path(entry: &str) -> bool {
     entry == READER_ASSET_PATH
 }
 
+/// The two URL forms a chapter response's CSP/injected `<script>` tag need to
+/// name, derived from the *actual request that arrived* rather than assumed
+/// from one platform (`epub_origin_base`'s doc explains the derivation).
+/// `script_src` is always an exact URL (CSP's default "no trailing `/`"
+/// matching), since only one asset is ever granted; `scoped_src` is whatever
+/// source expression admits every one of this token's own resources and
+/// nothing from another token — a bare origin on the native form (which
+/// already carries no other token's resources, since the token *is* the
+/// host), or an explicit path-prefix source (trailing `/`) on the Windows/
+/// WebView2 fallback form (module doc: every token there shares the *same*
+/// fixed host, so without the path prefix this would silently widen to every
+/// open book).
+struct EpubOriginBase {
+    script_src: String,
+    scoped_src: String,
+}
+
+/// Derive `EpubOriginBase` from `request`'s own URI, mirroring exactly what
+/// `token_and_entry_path` parsed off the same request (module doc, "Windows/
+/// Android fallback"): the native macOS/Linux form, where `uri.host()` *is*
+/// `token` itself, or the WebView2 fallback form, where the host is the fixed
+/// `<scheme>.localhost` and the token instead travels as the first path
+/// segment. Reading the shape back off the request (instead of hardcoding a
+/// platform) is what keeps the CSP/injection tag honest on whichever
+/// platform actually served this response — see `arch:win-origin` fix
+/// (`_workspace/02_backend_changes_windows.md`): before this, both were
+/// hardcoded to the native `epub://{token}` form unconditionally, which is a
+/// scheme that simply doesn't exist on Windows, silently locking out every
+/// sibling resource a chapter needs (measure.js, book CSS/images/fonts).
+fn epub_origin_base(request: &Request<Vec<u8>>, token: &str) -> EpubOriginBase {
+    let uri = request.uri();
+    let scheme = uri.scheme_str().unwrap_or("epub");
+    match uri.host() {
+        Some(host) if host == token => EpubOriginBase {
+            script_src: format!("{scheme}://{token}/{READER_ASSET_PATH}"),
+            scoped_src: format!("{scheme}://{token}"),
+        },
+        Some(host) => EpubOriginBase {
+            script_src: format!("{scheme}://{host}/{token}/{READER_ASSET_PATH}"),
+            scoped_src: format!("{scheme}://{host}/{token}/"),
+        },
+        // No host at all never happens for a request `token_and_entry_path`
+        // already accepted (it requires a non-empty host) — this arm exists
+        // only so the function is total; it falls back to the native form.
+        None => EpubOriginBase {
+            script_src: format!("epub://{token}/{READER_ASSET_PATH}"),
+            scoped_src: format!("epub://{token}"),
+        },
+    }
+}
+
 /// The per-token CSP attached to every chapter (`text/html`) response
 /// (design §4). `script-src` names *exactly one* URL — this token's own
 /// `__mermark__/measure.js` — so no book script, inline or external, can
 /// ever run; the `https:`-free directive list also means the book can't
-/// beacon to any remote origin (image/font/media all scoped to `epub:` +
-/// `data:` only). Unlike `htmlview::FRAME_CSP` (a fixed constant, since that
-/// scheme never varies per-request), this has to be a function: the
-/// `script-src` allowlist must name *this response's own* token so a
-/// same-origin `allow-same-origin` frame's script gate matches the frame it
-/// was actually served into.
-pub(crate) fn epub_frame_csp(token: &str) -> String {
+/// beacon to any remote origin (image/font/media all scoped to this token's
+/// own resources + `data:` only). Unlike `htmlview::frame_csp` (whose grant
+/// is coarse — the whole `htmlview:`/`http://htmlview.localhost` scheme, by
+/// design, per that module's doc), this stays scoped to exactly one token's
+/// own resources on *both* platform shapes (`EpubOriginBase::scoped_src`'s
+/// doc) — this has to be a function of the request, not a fixed constant,
+/// because the allowlisted URL(s) must name *this response's own* reachable
+/// origin/path so a same-origin `allow-same-origin` frame's script gate
+/// matches the frame it was actually served into.
+pub(crate) fn epub_frame_csp(origin: &EpubOriginBase) -> String {
+    let EpubOriginBase { script_src, scoped_src } = origin;
     format!(
-        "default-src 'none'; script-src epub://{token}/{READER_ASSET_PATH}; \
-         style-src 'unsafe-inline' epub://{token}; img-src epub://{token} data:; \
-         font-src epub://{token} data:; media-src epub://{token} data:; \
+        "default-src 'none'; script-src {script_src}; \
+         style-src 'unsafe-inline' {scoped_src}; img-src {scoped_src} data:; \
+         font-src {scoped_src} data:; media-src {scoped_src} data:; \
          connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     )
 }
 
+
 /// Append the reader-runtime `<script src>` tag to a chapter's raw HTML
 /// bytes. Safe specifically because chapters are served as `text/html` (a
-/// tag-soup parser hoists a trailing `<script>` into `<body>` and runs it) —
-/// the same reasoning that motivated serving `.xhtml` as `text/html` in
-/// `epub_mime_for_path` rather than as strict XML.
-fn inject_reader_runtime(mut bytes: Vec<u8>, token: &str) -> Vec<u8> {
-    let tag = format!("<script src=\"epub://{token}/{READER_ASSET_PATH}\"></script>");
-    bytes.extend_from_slice(tag.as_bytes());
+/// tag-soup parser hoists a trailing `<script>` tag into `<body>` and runs it
+/// there) — the same reasoning that motivated serving `.xhtml` as `text/html`
+/// in `epub_mime_for_path` rather than as strict XML. Takes the
+/// already-derived `script_src` URL (`EpubOriginBase::script_src`) rather than
+/// re-deriving it, so the tag and the CSP that allows it are always built from
+/// the same single derivation, never two independent ones that could drift.
+///
+/// HISTORY (2026-07-29, do not re-add without measuring first): this function
+/// briefly also injected a `VIEWPORT_HEIGHT_OVERRIDE_CSS` `<style>` that killed
+/// the `height:100%` / `max-height:100%` authoring idiom, on the theory that it
+/// caused the "chapter content clips at its boundary" bug. That diagnosis was
+/// WRONG. The real cause was a missing `flex: none` on `.epub-viewer-chapter`
+/// (styles.css) letting column-flex shrink every placeholder to its 60vh floor;
+/// a WebKit harness against two real books (`_workspace/05_trace_epub_height.md`)
+/// showed zero overflow with the flex fix and NO injected CSS, including on a
+/// book that uses the idiom. The override was reverted because it fixed nothing
+/// and silently overrode author intent (a full-bleed cover stopped filling the
+/// view). If this idiom ever does look guilty again, measure before patching.
+fn inject_reader_runtime(mut bytes: Vec<u8>, script_src: &str) -> Vec<u8> {
+    let script_tag = format!("<script src=\"{script_src}\"></script>");
+    bytes.extend_from_slice(script_tag.as_bytes());
     bytes
 }
 
@@ -417,8 +488,10 @@ fn build_preflight_response(request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
 /// Build the 200 response for an entry that has already been resolved
 /// (either a real zip entry's bytes, or the embedded reader-runtime asset).
 /// `token` is the request's own token (already known to the caller via
-/// `token_and_entry_path`) — attaching `epub_frame_csp(token)` requires it,
-/// since the CSP's `script-src` must name *this* response's own origin.
+/// `token_and_entry_path`); combined with `request` itself, `epub_origin_base`
+/// derives the platform-correct URL(s) `epub_frame_csp`/`inject_reader_runtime`
+/// need, since the CSP's `script-src` must name *this* response's own
+/// actually-reachable origin/path, not an assumed one.
 /// Pulled out from the handler, same reasoning as
 /// `htmlview::build_ok_response`: testable without a live `AppHandle`.
 fn build_ok_response(request: &Request<Vec<u8>>, token: &str, entry_path: &Path, bytes: Vec<u8>) -> Response<Vec<u8>> {
@@ -432,8 +505,9 @@ fn build_ok_response(request: &Request<Vec<u8>>, token: &str, entry_path: &Path,
             .header(header::ACCESS_CONTROL_ALLOW_METHODS, CORS_ALLOWED_METHODS);
     }
     let body = if mime == "text/html" {
-        builder = builder.header("Content-Security-Policy", epub_frame_csp(token));
-        inject_reader_runtime(bytes, token)
+        let origin = epub_origin_base(request, token);
+        builder = builder.header("Content-Security-Policy", epub_frame_csp(&origin));
+        inject_reader_runtime(bytes, &origin.script_src)
     } else {
         bytes
     };
@@ -763,54 +837,160 @@ mod tests {
         assert_eq!(epub_mime_for_path(Path::new("a.bin")), "application/octet-stream");
     }
 
-    // --- epub_frame_csp: absences carry the security weight ---
+    // --- epub_origin_base / epub_frame_csp ---
+    //
+    // `native_origin`/`windows_origin` build the two request shapes a real
+    // `epub://` request can actually arrive as (module doc, `token_and_entry_path`):
+    // the native macOS/Linux custom-scheme form, and the Windows/WebView2
+    // `http://epub.localhost/<token>/...` fallback form. Every test below runs
+    // once per shape so a regression that only breaks one platform's CSP
+    // still turns a test red.
+
+    fn native_request(token: &str, entry: &str) -> Request<Vec<u8>> {
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("epub://{token}/{entry}"))
+            .body(Vec::new())
+            .unwrap()
+    }
+
+    fn windows_request(token: &str, entry: &str) -> Request<Vec<u8>> {
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("http://epub.localhost/{token}/{entry}"))
+            .body(Vec::new())
+            .unwrap()
+    }
+
+    fn native_origin(token: &str) -> EpubOriginBase {
+        epub_origin_base(&native_request(token, "OEBPS/ch1.xhtml"), token)
+    }
+
+    fn windows_origin(token: &str) -> EpubOriginBase {
+        epub_origin_base(&windows_request(token, "OEBPS/ch1.xhtml"), token)
+    }
 
     #[test]
-    fn epub_frame_csp_script_src_names_exactly_the_measure_js_url() {
-        let csp = epub_frame_csp("tok123");
-        assert!(
-            csp.contains("script-src epub://tok123/__mermark__/measure.js;"),
-            "got: {csp}"
+    fn epub_origin_base_native_form_is_the_bare_token_origin() {
+        let origin = native_origin("tok123");
+        assert_eq!(origin.script_src, "epub://tok123/__mermark__/measure.js");
+        assert_eq!(origin.scoped_src, "epub://tok123");
+    }
+
+    #[test]
+    fn epub_origin_base_windows_form_scopes_the_fixed_host_by_token_path() {
+        // The Windows/WebView2 fallback: every token shares the same host
+        // (`epub.localhost`), so the returned scoped_src must carry a
+        // trailing-slash path prefix (`/tok123/`) — without it, CSP's
+        // exact-path matching rule would either reject every real chapter
+        // resource (no trailing slash = exact match only) or, worse, admit
+        // every other open book's token too if the path were dropped
+        // entirely.
+        let origin = windows_origin("tok123");
+        assert_eq!(origin.script_src, "http://epub.localhost/tok123/__mermark__/measure.js");
+        assert_eq!(origin.scoped_src, "http://epub.localhost/tok123/");
+    }
+
+    #[test]
+    fn epub_frame_csp_script_src_names_exactly_the_measure_js_url_on_both_platform_forms() {
+        for (label, origin, expected) in [
+            ("native", native_origin("tok123"), "script-src epub://tok123/__mermark__/measure.js;"),
+            (
+                "windows",
+                windows_origin("tok123"),
+                "script-src http://epub.localhost/tok123/__mermark__/measure.js;",
+            ),
+        ] {
+            let csp = epub_frame_csp(&origin);
+            assert!(csp.contains(expected), "{label}: got {csp}");
+        }
+    }
+
+    #[test]
+    fn epub_frame_csp_never_allows_unsafe_inline_script_or_unsafe_eval_on_either_form() {
+        for origin in [native_origin("tok123"), windows_origin("tok123")] {
+            let csp = epub_frame_csp(&origin);
+            let script_directive = csp.split(';').find(|d| d.trim().starts_with("script-src")).unwrap();
+            assert!(!script_directive.contains("unsafe-inline"), "got: {script_directive}");
+            assert!(!script_directive.contains("unsafe-eval"), "got: {script_directive}");
+        }
+    }
+
+    #[test]
+    fn epub_frame_csp_style_src_allows_inline_but_not_script_src_on_either_form() {
+        for origin in [native_origin("tok123"), windows_origin("tok123")] {
+            let csp = epub_frame_csp(&origin);
+            let style_directive = csp.split(';').find(|d| d.trim().starts_with("style-src")).unwrap();
+            assert!(style_directive.contains("'unsafe-inline'"), "got: {style_directive}");
+        }
+    }
+
+    #[test]
+    fn epub_frame_csp_blocks_all_remote_https_origins_on_either_form() {
+        for origin in [native_origin("tok123"), windows_origin("tok123")] {
+            assert!(!epub_frame_csp(&origin).contains("https:"), "no remote-origin escape hatch");
+        }
+    }
+
+    #[test]
+    fn epub_frame_csp_never_reopens_ipc_or_asset_or_tauri_schemes_on_either_form() {
+        for origin in [native_origin("tok123"), windows_origin("tok123")] {
+            let csp = epub_frame_csp(&origin);
+            assert!(!csp.contains("ipc"));
+            assert!(!csp.contains("asset"));
+            assert!(!csp.contains("tauri:"));
+        }
+    }
+
+    #[test]
+    fn epub_frame_csp_locks_the_classic_escape_directives_on_either_form() {
+        for origin in [native_origin("tok123"), windows_origin("tok123")] {
+            let csp = epub_frame_csp(&origin);
+            assert!(csp.contains("object-src 'none'"));
+            assert!(csp.contains("frame-src 'none'"));
+            assert!(csp.contains("form-action 'none'"));
+            assert!(csp.contains("base-uri 'none'"));
+            assert!(csp.contains("connect-src 'none'"));
+        }
+    }
+
+    #[test]
+    fn epub_frame_csp_native_form_is_byte_for_byte_unchanged_from_the_shipped_v1_string() {
+        // Locks the exact pre-Windows-fix output for the native macOS/Linux
+        // form — the win-origin fix must not change one byte of what already
+        // shipped and was real-app-verified there.
+        let csp = epub_frame_csp(&native_origin("tok123"));
+        assert_eq!(
+            csp,
+            "default-src 'none'; script-src epub://tok123/__mermark__/measure.js; \
+             style-src 'unsafe-inline' epub://tok123; img-src epub://tok123 data:; \
+             font-src epub://tok123 data:; media-src epub://tok123 data:; \
+             connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
         );
-        assert!(!csp.contains("'unsafe-inline' epub://tok123/__mermark__"), "no inline script grant");
     }
 
     #[test]
-    fn epub_frame_csp_never_allows_unsafe_inline_script_or_unsafe_eval() {
-        let csp = epub_frame_csp("tok123");
-        let script_directive = csp.split(';').find(|d| d.trim().starts_with("script-src")).unwrap();
-        assert!(!script_directive.contains("unsafe-inline"), "got: {script_directive}");
-        assert!(!script_directive.contains("unsafe-eval"), "got: {script_directive}");
+    fn epub_frame_csp_windows_form_scopes_every_directive_to_the_tokens_own_path_prefix() {
+        let csp = epub_frame_csp(&windows_origin("tok123"));
+        assert_eq!(
+            csp,
+            "default-src 'none'; script-src http://epub.localhost/tok123/__mermark__/measure.js; \
+             style-src 'unsafe-inline' http://epub.localhost/tok123/; img-src http://epub.localhost/tok123/ data:; \
+             font-src http://epub.localhost/tok123/ data:; media-src http://epub.localhost/tok123/ data:; \
+             connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+        );
     }
 
     #[test]
-    fn epub_frame_csp_style_src_allows_inline_but_not_script_src() {
-        let csp = epub_frame_csp("tok123");
-        let style_directive = csp.split(';').find(|d| d.trim().starts_with("style-src")).unwrap();
-        assert!(style_directive.contains("'unsafe-inline'"), "got: {style_directive}");
-    }
-
-    #[test]
-    fn epub_frame_csp_blocks_all_remote_https_origins() {
-        assert!(!epub_frame_csp("tok123").contains("https:"), "no remote-origin escape hatch");
-    }
-
-    #[test]
-    fn epub_frame_csp_never_reopens_ipc_or_asset_or_tauri_schemes() {
-        let csp = epub_frame_csp("tok123");
-        assert!(!csp.contains("ipc"));
-        assert!(!csp.contains("asset"));
-        assert!(!csp.contains("tauri:"));
-    }
-
-    #[test]
-    fn epub_frame_csp_locks_the_classic_escape_directives() {
-        let csp = epub_frame_csp("tok123");
-        assert!(csp.contains("object-src 'none'"));
-        assert!(csp.contains("frame-src 'none'"));
-        assert!(csp.contains("form-action 'none'"));
-        assert!(csp.contains("base-uri 'none'"));
-        assert!(csp.contains("connect-src 'none'"));
+    fn epub_frame_csp_windows_form_never_grants_a_different_tokens_path() {
+        let csp = epub_frame_csp(&windows_origin("tok123"));
+        assert!(!csp.contains("other-tok"), "got: {csp}");
+        // The scoped source must be a path *prefix* under this token, not the
+        // bare shared host alone (which would admit every token).
+        assert!(
+            !csp.contains("img-src http://epub.localhost data:"),
+            "img-src must not grant the whole shared host, only this token's own path prefix: {csp}"
+        );
     }
 
     // --- is_reader_asset_path ---
@@ -820,6 +1000,27 @@ mod tests {
         assert!(is_reader_asset_path("__mermark__/measure.js"));
         assert!(!is_reader_asset_path("OEBPS/ch1.xhtml"));
         assert!(!is_reader_asset_path("__mermark__/other.js"));
+    }
+
+    // --- inject_reader_runtime: reader-runtime script tag ---
+
+    #[test]
+    fn inject_reader_runtime_appends_only_the_measure_script_tag() {
+        // The injection is deliberately MINIMAL: a chapter's own styling is the
+        // book author's, and we add exactly one thing to it — the reader runtime.
+        // A `<style>` override once lived here too; see this function's HISTORY
+        // note for why it was reverted (wrong diagnosis, fixed nothing).
+        let out = inject_reader_runtime(
+            b"<html><body>x</body></html>".to_vec(),
+            "epub://tok123/__mermark__/measure.js",
+        );
+        let body = String::from_utf8(out).unwrap();
+        assert!(
+            body.ends_with("<script src=\"epub://tok123/__mermark__/measure.js\"></script>"),
+            "got: {body}"
+        );
+        assert!(!body.contains("<style"), "no style injection — got: {body}");
+        assert!(body.starts_with("<html><body>x</body></html>"), "book bytes must be untouched — got: {body}");
     }
 
     // --- build_ok_response: CSP + injection attach to text/html only ---
@@ -838,10 +1039,27 @@ mod tests {
         let req = get_request("tok123", "OEBPS/ch1.xhtml", None);
         let resp = build_ok_response(&req, "tok123", Path::new("ch1.xhtml"), b"<html><body>hi</body></html>".to_vec());
         let csp = resp.headers().get("Content-Security-Policy").expect("html must carry CSP");
-        assert_eq!(csp.to_str().unwrap(), epub_frame_csp("tok123"));
+        assert_eq!(csp.to_str().unwrap(), epub_frame_csp(&native_origin("tok123")));
         let body = String::from_utf8(resp.body().clone()).unwrap();
         assert!(
             body.ends_with("<script src=\"epub://tok123/__mermark__/measure.js\"></script>"),
+            "got: {body}"
+        );
+        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "text/html");
+    }
+
+    #[test]
+    fn html_response_on_the_windows_request_shape_carries_the_windows_csp_and_injection() {
+        // End-to-end through build_ok_response with a *real* WebView2-shaped
+        // request URI (not a hand-built EpubOriginBase) — this is the exact
+        // path handle_epub_view_request drives in production on Windows.
+        let req = windows_request("tok123", "OEBPS/ch1.xhtml");
+        let resp = build_ok_response(&req, "tok123", Path::new("ch1.xhtml"), b"<html><body>hi</body></html>".to_vec());
+        let csp = resp.headers().get("Content-Security-Policy").expect("html must carry CSP");
+        assert_eq!(csp.to_str().unwrap(), epub_frame_csp(&windows_origin("tok123")));
+        let body = String::from_utf8(resp.body().clone()).unwrap();
+        assert!(
+            body.ends_with("<script src=\"http://epub.localhost/tok123/__mermark__/measure.js\"></script>"),
             "got: {body}"
         );
         assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "text/html");

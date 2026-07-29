@@ -22,7 +22,7 @@ export interface SettingUi<T> {
  *  carry typed option values; `slider` carries numeric bounds; `json`/`info`
  *  carry no config. */
 export type Control<T> =
-  | { kind: "segmented"; options: { value: T; label: string }[] }
+  | { kind: "segmented"; options: { value: T; label: string }[]; help?: string }
   | { kind: "select"; options: { value: T; label: string }[]; help?: string }
   | { kind: "slider"; min: number; max: number; step: number; unit?: string }
   | { kind: "text"; placeholder?: string; help?: string }

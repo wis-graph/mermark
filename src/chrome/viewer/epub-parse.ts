@@ -115,6 +115,28 @@ export interface EpubPackage {
    *  (never an error; a missing toc is not a reason to refuse the book). */
   readonly tocSource: EpubTocSource | null;
   readonly layout: EpubRenditionLayout;
+  /** The book's `dc:identifier` (trimmed, non-empty), or `null` when absent
+   *  — the reading-position feature's preferred SSOT key
+   *  (`epub-position.ts`'s `epubPositionKey`, design_epub_position.md §2:
+   *  survives a file move/rename, shared across copies of the same book).
+   *  `epubIdentifier` below is the single place this extraction rule
+   *  lives. */
+  readonly identifier: string | null;
+}
+
+/** The OPF's `dc:identifier` to use as this book's stable key (design
+ *  §2): the `dc:identifier` element whose `id` matches
+ *  `<package unique-identifier="...">` wins (the spec-sanctioned "this ONE
+ *  is canonical" pointer); if that doesn't resolve (attribute absent, or no
+ *  identifier carries that id), the FIRST `dc:identifier` in document order
+ *  is the fallback; blank/absent altogether → `null` (the caller then falls
+ *  back to the absolute path, `epubPositionKey`). Pure query. */
+function epubIdentifier(opfDoc: Document): string | null {
+  const identifiers = byLocalName(opfDoc, "identifier");
+  const uniqueId = byLocalName(opfDoc, "package")[0]?.getAttribute("unique-identifier");
+  const preferred = uniqueId ? identifiers.find((el) => el.getAttribute("id") === uniqueId) : undefined;
+  const text = (preferred ?? identifiers[0])?.textContent?.trim();
+  return text ? text : null;
 }
 
 /** THE single function that decides EPUB3 nav vs. EPUB2 NCX — the design's
@@ -162,7 +184,7 @@ export function epubRenditionLayout(opfDoc: Document): EpubRenditionLayout {
 export function parseOpf(opfXml: string, opfDir: string): EpubPackage {
   const doc = parseStrictXml(opfXml);
   const dir = normalizeDir(opfDir);
-  if (hasParserError(doc)) return { spine: [], manifest: [], tocSource: null, layout: "reflowable" };
+  if (hasParserError(doc)) return { spine: [], manifest: [], tocSource: null, layout: "reflowable", identifier: null };
 
   const manifest: EpubManifestItem[] = byLocalName(doc, "item").map((el) => ({
     id: el.getAttribute("id") ?? "",
@@ -181,7 +203,7 @@ export function parseOpf(opfXml: string, opfDir: string): EpubPackage {
     ? { kind: rawToc.kind, href: resolveEntryHref(dir, rawToc.href).entry }
     : null;
 
-  return { spine, manifest, tocSource, layout: epubRenditionLayout(doc) };
+  return { spine, manifest, tocSource, layout: epubRenditionLayout(doc), identifier: epubIdentifier(doc) };
 }
 
 // ---------------------------------------------------------------------------

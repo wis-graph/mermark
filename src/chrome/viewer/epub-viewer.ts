@@ -50,6 +50,16 @@ import {
   type EpubTocSource,
   type EpubFrameEntry,
 } from "./epub-parse";
+import {
+  epubPositionKey,
+  readingPositionAt,
+  restoreOffsetInChapter,
+  upsertPosition,
+  shouldRestorePosition,
+  type EpubChapterGeom,
+  type EpubReadingPosition,
+} from "./epub-position";
+import { epubPositionsSetting } from "../../settings/app";
 
 const EPUB_SCHEME = "epub";
 
@@ -128,6 +138,38 @@ function applyEpubZoom(iframe: HTMLIFrameElement, scale: number): void {
   iframe.style.width = `calc(100% / ${scale})`;
   iframe.style.transform = `scale(${scale})`;
   iframe.style.transformOrigin = "0 0";
+}
+
+/** How long to wait, after the LAST measure message during an active
+ *  restore, before declaring the layout converged (design_epub_position.md
+ *  §5's end condition ②). Named so the "quiet" judgment reads as a domain
+ *  rule, not a bare literal in the message handler. */
+const RESTORE_QUIET_MS = 600;
+
+/** Safety-net ceiling on how long a restore may stay pending — protects the
+ *  save gate (below) from locking up forever against a broken chapter whose
+ *  measure.js never reports (design §5's end condition ③). */
+const RESTORE_HARD_TIMEOUT_MS = 10_000;
+
+/** Trailing debounce window for the scroll-position save (design §4) —
+ *  short enough to feel "just saved" on close, long enough that a localStorage
+ *  write never happens more than once per scroll-settle. */
+const SAVE_DEBOUNCE_MS = 800;
+
+/** The user-input events that immediately cancel an in-progress restore
+ *  (design §5's end condition ①) — deliberately NOT `scroll` itself, since
+ *  the restore's own programmatic `content.scrollTo` calls fire `scroll`
+ *  too; these three only ever originate from the reader's own hands. */
+const RESTORE_CANCEL_EVENTS = ["wheel", "pointerdown", "keydown"] as const;
+
+/** A chapter's CURRENT geometry, snapshotted for `epub-position.ts`'s pure
+ *  functions — `placeholder.offsetTop`/`offsetHeight` are SCALED (already
+ *  include the zoom factor, since epub-viewer sets `style.height = height ×
+ *  zoomFactor`), `chapter.anchors` stays UNSCALED (measure.js's raw report)
+ *  — see epub-position.ts's header comment for the full coordinate-system
+ *  contract. Pure query. */
+function chapterGeom(chapter: EpubChapter): EpubChapterGeom {
+  return { entry: chapter.entry, top: chapter.placeholder.offsetTop, height: chapter.placeholder.offsetHeight, anchors: chapter.anchors };
 }
 
 /** Lazily set `chapter`'s iframe `src` (idempotent — a chapter already
@@ -280,6 +322,90 @@ function openEpubViewer(absPath: string, deps: EpubViewerDeps): ViewerHandle {
   });
   shell.onTeardown(unsubscribeZoom);
 
+  // Reading-position memory (design_epub_position.md) — `key` is set once
+  // the OPF is parsed (identifier-or-path, epubPositionKey); the restore/
+  // save state below is all declared here (outer scope) so `endRestore`,
+  // `aimRestore`, and `scheduleSave` are each defined exactly once and
+  // close over the SAME mutable cells the async open flow and the message
+  // handler both read/write.
+  let key = "";
+  let pendingRestore = false;
+  let restoreTarget: EpubChapter | null = null;
+  let restoreSavedPos: EpubReadingPosition | null = null;
+  let restoreTargetMeasured = false;
+  let restoreQuietTimer: ReturnType<typeof setTimeout> | null = null;
+  let restoreHardTimer: ReturnType<typeof setTimeout> | null = null;
+  let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Stop the re-aim loop (design §5's three end conditions all funnel
+   *  here): user input, quiet convergence, hard timeout, a toc jump
+   *  (`jumpToEntry`), or shell teardown. Idempotent — safe to call from any
+   *  of those paths, including more than once. Command (void). */
+  function endRestore(): void {
+    pendingRestore = false;
+    restoreTarget = null;
+    restoreSavedPos = null;
+    if (restoreQuietTimer !== null) {
+      clearTimeout(restoreQuietTimer);
+      restoreQuietTimer = null;
+    }
+    if (restoreHardTimer !== null) {
+      clearTimeout(restoreHardTimer);
+      restoreHardTimer = null;
+    }
+    for (const type of RESTORE_CANCEL_EVENTS) window.removeEventListener(type, endRestore);
+  }
+
+  /** One re-aim: scroll to the target chapter's CURRENT placeholder top plus
+   *  whatever offset `restoreOffsetInChapter` computes from its CURRENT
+   *  geometry (design §5 step 2/3 — never an absolute value computed once,
+   *  always re-derived against the latest layout). No-op outside an active
+   *  restore. Command (void). */
+  function aimRestore(): void {
+    if (!pendingRestore || !restoreTarget || !restoreSavedPos) return;
+    const geom = chapterGeom(restoreTarget);
+    const offset = restoreOffsetInChapter(restoreSavedPos, geom, zoomFactor);
+    content.scrollTo({ top: geom.top + offset, behavior: "auto" });
+  }
+
+  /** Compute and persist the CURRENT reading position — gated (design §4)
+   *  so a restore in progress is never clobbered by a programmatic-scroll
+   *  estimate (①), and so there's nothing meaningful to save before
+   *  chapters exist (②). Both the debounced scroll save and the teardown
+   *  flush call this SAME function, so the gate can never diverge between
+   *  the two paths. Command (void). */
+  function saveNow(): void {
+    if (pendingRestore || chapters.length === 0) return;
+    const geoms = chapters.map(chapterGeom);
+    const pos = readingPositionAt(content.scrollTop, geoms, zoomFactor);
+    if (!pos) return;
+    epubPositionsSetting.set(upsertPosition(epubPositionsSetting.get(), key, pos));
+  }
+
+  const scheduleSave = (): void => {
+    if (saveDebounceTimer !== null) clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = setTimeout(() => {
+      saveDebounceTimer = null;
+      saveNow();
+    }, SAVE_DEBOUNCE_MS);
+  };
+  // ORDER MATTERS: saveNow() (gated on `pendingRestore`) MUST run before
+  // endRestore() clears that gate — a close() that lands mid-restore must
+  // leave the EXISTING saved position untouched (design §4: "pendingRestore
+  // 중 close() → 기존 저장값 불변"), never overwrite it with a programmatic-
+  // scroll estimate. Combined into one teardown callback (rather than two
+  // separate onTeardown registrations) so this ordering can't drift apart
+  // from shell.ts's "registration order" contract in a future edit.
+  shell.onTeardown(() => {
+    if (saveDebounceTimer !== null) {
+      clearTimeout(saveDebounceTimer);
+      saveDebounceTimer = null;
+    }
+    saveNow(); // flush the last debounce window — gated the same as any other save
+    content.removeEventListener("scroll", scheduleSave);
+    endRestore();
+  });
+
   (async () => {
     let token: string;
     try {
@@ -327,12 +453,43 @@ function openEpubViewer(absPath: string, deps: EpubViewerDeps): ViewerHandle {
     content.className = "epub-viewer-chapters";
     content.replaceChildren(...chapters.map((c) => c.placeholder));
 
+    // Reading-position memory: key first (identifier-or-path, design §2),
+    // then the scroll-save listener (design §4 — always wired once chapters
+    // exist, regardless of whether there's a saved position to restore),
+    // then the restore attempt itself (design §5 — a no-op when there's
+    // nothing to restore or `shouldRestorePosition` says not to).
+    key = epubPositionKey(pkg.identifier, absPath);
+    content.addEventListener("scroll", scheduleSave, { passive: true });
+
+    const savedPos = epubPositionsSetting.get()[key] ?? null;
+    if (savedPos && shouldRestorePosition(savedPos, pkg.spine)) {
+      const target = chapters.find((c) => c.entry === savedPos.entry) ?? null;
+      if (target) {
+        pendingRestore = true;
+        restoreTarget = target;
+        restoreSavedPos = savedPos;
+        restoreTargetMeasured = false;
+        // Target-direct load (design §5 step 1): force this ONE chapter to
+        // load immediately, bypassing the IntersectionObserver — the
+        // chapters BEFORE it stay lazy (the reader fills them in by
+        // scrolling up, same v1 tradeoff `jumpToEntry` below already makes).
+        loadChapter(target, token, zoomFactor);
+        aimRestore(); // initial coarse aim (design §5 step 2)
+        restoreHardTimer = setTimeout(endRestore, RESTORE_HARD_TIMEOUT_MS);
+        for (const type of RESTORE_CANCEL_EVENTS) window.addEventListener(type, endRestore, { passive: true });
+      }
+    }
+
     /** Jump to `entryPath`/`fragment` (a toc entry's target): force-load the
      *  chapter if it hasn't been lazily rendered yet, then scroll the
      *  chapters column to its placeholder top plus whatever anchor offset
      *  this chapter's OWN measure.js reported for `fragment` (0 if unknown —
-     *  design §7's "정밀 점프의 완전 보장은 v1 비목표"). Command (void). */
+     *  design §7's "정밀 점프의 완전 보장은 v1 비목표"). Cancels an
+     *  in-progress position restore FIRST (design_epub_position.md §5-5 —
+     *  the reader picked a destination, so the re-aim loop must yield to
+     *  it, not fight it on the next measure message). Command (void). */
     const jumpToEntry = (entryPath: string, fragment: string | null): void => {
+      endRestore();
       const chapter = chapters.find((c) => c.entry === entryPath);
       if (!chapter) return;
       if (!chapter.iframe) loadChapter(chapter, token, zoomFactor);
@@ -372,6 +529,22 @@ function openEpubViewer(absPath: string, deps: EpubViewerDeps): ViewerHandle {
       // overlap/gap at non-1x zoom.
       chapter.placeholder.style.height = `${height * zoomFactor}px`;
       if (anchors) chapter.anchors = anchors;
+
+      // Restore re-aim (design §5 step 3): re-run every time ANY chapter's
+      // measure lands — the target's own first real height AND every
+      // neighbor's height correction both move `restoreTarget.placeholder
+      // .offsetTop`, so any of them can improve the aim. The quiet-
+      // convergence timer only starts counting once the TARGET itself has
+      // reported at least once (before that, we're still waiting for its
+      // real height, not "done and quiet").
+      if (pendingRestore && restoreTarget) {
+        if (chapter === restoreTarget) restoreTargetMeasured = true;
+        if (restoreTargetMeasured) {
+          if (restoreQuietTimer !== null) clearTimeout(restoreQuietTimer);
+          restoreQuietTimer = setTimeout(endRestore, RESTORE_QUIET_MS);
+        }
+        aimRestore();
+      }
     };
     window.addEventListener("message", messageHandler);
 

@@ -1186,10 +1186,28 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    explicit inline `height` (× the current zoom factor) that takes over from
    this floor. `width: 100%` up to the reading-column max-width, centered —
    the same "prose reading column" contract .html-viewer-frame's sibling
-   text content follows elsewhere in this app. */
+   text content follows elsewhere in this app.
+
+   `flex: none` is LOAD-BEARING, not decoration (_workspace/05_trace_epub_height.md,
+   root-caused via a WebKit/Playwright harness against two real books): `.epub-
+   viewer-chapters` (above) is a COLUMN FLEX container, and a book's total
+   height always exceeds the viewport, so WITHOUT this line every chapter is a
+   flex ITEM with the default `flex-shrink: 1` — column-flex shrinking then
+   compresses every placeholder down to the `min-height: 60vh` floor
+   regardless of what inline `height` epub-viewer.ts's message handler sets
+   (flex-shrink overrides an explicit height the same way it would override
+   any other sizing hint on a shrinkable flex item). The iframe inside keeps
+   its OWN real height, so it overflows past its compressed placeholder and
+   paints UNDER the next chapter's white background/text — measured live:
+   a chapter reported/set to 1252.5px rendered its placeholder at exactly
+   480px (60vh @ 800px viewport), +773px silently overflowing beneath the
+   next chapter. `.hwp-viewer-page` (above) already carries this same rule
+   for the identical reason — EPUB was simply missing it. Never remove this
+   without re-running that harness against a book taller than one viewport. */
 .epub-viewer-chapter {
   width: 100%; max-width: 74ch;
   min-height: 60vh;
+  flex: none;
   background: #fff; /* a book page is white paper even in dark mode — html/hwp/docx viewer precedent */
 }
 /* Chapter iframes have NO visible border/shadow (평면 규약) — the 흰 배경

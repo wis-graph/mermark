@@ -8,7 +8,7 @@
 //! exists solely for the *scripted* (on) path: a custom `htmlview://` protocol
 //! that serves files from a caller-armed directory with its own frame-only CSP,
 //! so a scripted `<iframe>` gets real JS execution without inheriting (or
-//! weakening) the parent app's CSP — see `FRAME_CSP` below.
+//! weakening) the parent app's CSP — see `frame_csp` below.
 //!
 //! **Revision 1 (per-open token origin, design §10).** The original judgment
 //! was `sandbox="allow-scripts"` with `allow-same-origin` *never* granted, so
@@ -70,7 +70,45 @@ const CORS_ALLOWED_METHODS: &str = "GET";
 /// revision — still the frame's only CSP, still per-`.html`-response. Cargo
 /// tests below assert both the absences (the security-bearing half) and
 /// presences.
-pub(crate) const FRAME_CSP: &str = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' htmlview: https:; style-src 'unsafe-inline' htmlview: https:; img-src htmlview: data: blob: https:; media-src htmlview: data: blob: https:; font-src htmlview: data: https:; connect-src htmlview: https:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+///
+/// **Windows/WebView2 fix (`_workspace/02_backend_changes_windows.md`).**
+/// Originally a fixed `const` naming the `htmlview:` scheme literally — a
+/// scheme that simply doesn't exist on Windows, where every request instead
+/// arrives on the fixed `http://htmlview.localhost` origin
+/// (`token_and_rel_path`'s doc). A CSP that only ever allowlists `htmlview:`
+/// blocks every sibling resource (script/style/img/font/fetch) on that
+/// platform, breaking scripted HTML view entirely. Turned into a function of
+/// the request's own scheme-source (`html_view_scheme_source`) so the grant
+/// always names whichever origin this response was *actually* served on —
+/// `frame_csp("htmlview:")` reproduces the exact pre-fix string byte for
+/// byte (locked by `frame_csp_native_form_is_byte_for_byte_unchanged_from_the_shipped_v1_string`),
+/// so nothing changes on macOS/Linux.
+pub(crate) fn frame_csp(scheme_source: &str) -> String {
+    format!(
+        "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' {scheme_source} https:; \
+         style-src 'unsafe-inline' {scheme_source} https:; img-src {scheme_source} data: blob: https:; \
+         media-src {scheme_source} data: blob: https:; font-src {scheme_source} data: https:; \
+         connect-src {scheme_source} https:; frame-src 'none'; object-src 'none'; base-uri 'none'; \
+         form-action 'none'"
+    )
+}
+
+/// The CSP scheme-source `frame_csp` should grant for `request`, derived from
+/// the request's own URI the same way `token_and_rel_path` classifies it:
+/// `htmlview:` (the whole native custom scheme — this CSP was never scoped to
+/// one token's own origin even on the native form; see module doc "Revision
+/// 1" for why isolation between concurrently-open scripted documents comes
+/// from `allow-same-origin` + per-open tokens at the browser-origin level
+/// instead) on macOS/Linux, or the single fixed `http://htmlview.localhost`
+/// origin every token collapses onto on the Windows/Android fallback form —
+/// same coarseness either way, just naming whichever origin is actually
+/// reachable on this platform.
+fn html_view_scheme_source(request: &Request<Vec<u8>>) -> &'static str {
+    match request.uri().host() {
+        Some(host) if host == "htmlview.localhost" || host == "localhost" => "http://htmlview.localhost",
+        _ => "htmlview:",
+    }
+}
 
 /// Number of random bytes in a minted view token — 128 bits, hex-encoded to
 /// 32 characters. This is the entire access-control secret for a scripted
@@ -341,7 +379,7 @@ fn build_ok_response(request: &Request<Vec<u8>>, fs_path: &Path, bytes: Vec<u8>)
     // is independent of CORS, so this grant is defense-in-depth for the read
     // step, not the display step. A cross-origin caller gets no header here
     // (`cors_allow_origin` doc explains the exact matching rule) —
-    // `FRAME_CSP`'s `connect-src` is the directive that gates *whether* a
+    // `frame_csp`'s `connect-src` is the directive that gates *whether* a
     // fetch is attempted at all; this header only governs whether a
     // same-token script may read a result the armed-root gate already let
     // through.
@@ -351,7 +389,7 @@ fn build_ok_response(request: &Request<Vec<u8>>, fs_path: &Path, bytes: Vec<u8>)
             .header(header::ACCESS_CONTROL_ALLOW_METHODS, CORS_ALLOWED_METHODS);
     }
     if mime == "text/html" {
-        builder = builder.header("Content-Security-Policy", FRAME_CSP);
+        builder = builder.header("Content-Security-Policy", frame_csp(html_view_scheme_source(request)));
     }
     builder
         .body(bytes)
@@ -597,21 +635,78 @@ mod tests {
         assert_eq!(mime_for_path(Path::new("a.HTML")), "text/html", "case-insensitive");
     }
 
-    // --- FRAME_CSP: absences carry the security weight, presences the policy ---
+    // --- frame_csp / html_view_scheme_source: absences carry the security
+    // weight, presences the policy. Every case runs for both platform
+    // scheme-sources (`htmlview:` native, `http://htmlview.localhost`
+    // Windows/WebView2 fallback) so a regression that only breaks one
+    // platform's CSP still turns a test red.
+
+    const NATIVE_SCHEME_SOURCE: &str = "htmlview:";
+    const WINDOWS_SCHEME_SOURCE: &str = "http://htmlview.localhost";
 
     #[test]
-    fn frame_csp_never_reopens_ipc_or_asset_or_tauri_schemes() {
-        assert!(!FRAME_CSP.contains("ipc"), "IPC must stay unreachable from the frame");
-        assert!(!FRAME_CSP.contains("asset"), "the wide-open asset scope must stay unreachable");
-        assert!(!FRAME_CSP.contains("tauri:"), "no tauri: scheme access from the frame");
+    fn frame_csp_never_reopens_ipc_or_asset_or_tauri_schemes_on_either_form() {
+        for source in [NATIVE_SCHEME_SOURCE, WINDOWS_SCHEME_SOURCE] {
+            let csp = frame_csp(source);
+            assert!(!csp.contains("ipc"), "IPC must stay unreachable from the frame: {csp}");
+            assert!(!csp.contains("asset"), "the wide-open asset scope must stay unreachable: {csp}");
+            assert!(!csp.contains("tauri:"), "no tauri: scheme access from the frame: {csp}");
+        }
     }
 
     #[test]
-    fn frame_csp_locks_the_classic_escape_directives() {
-        assert!(FRAME_CSP.contains("object-src 'none'"));
-        assert!(FRAME_CSP.contains("frame-src 'none'"));
-        assert!(FRAME_CSP.contains("form-action 'none'"));
-        assert!(FRAME_CSP.contains("base-uri 'none'"));
+    fn frame_csp_locks_the_classic_escape_directives_on_either_form() {
+        for source in [NATIVE_SCHEME_SOURCE, WINDOWS_SCHEME_SOURCE] {
+            let csp = frame_csp(source);
+            assert!(csp.contains("object-src 'none'"));
+            assert!(csp.contains("frame-src 'none'"));
+            assert!(csp.contains("form-action 'none'"));
+            assert!(csp.contains("base-uri 'none'"));
+        }
+    }
+
+    #[test]
+    fn frame_csp_native_form_is_byte_for_byte_unchanged_from_the_shipped_v1_string() {
+        // Locks the exact pre-Windows-fix CSP string — this is the v0.9.15
+        // shipped `FRAME_CSP` constant's value, verbatim. The Windows fix
+        // must not change one byte of what already shipped and was
+        // real-app-verified on macOS.
+        assert_eq!(
+            frame_csp(NATIVE_SCHEME_SOURCE),
+            "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' htmlview: https:; \
+             style-src 'unsafe-inline' htmlview: https:; img-src htmlview: data: blob: https:; \
+             media-src htmlview: data: blob: https:; font-src htmlview: data: https:; \
+             connect-src htmlview: https:; frame-src 'none'; object-src 'none'; base-uri 'none'; \
+             form-action 'none'"
+        );
+    }
+
+    #[test]
+    fn frame_csp_windows_form_grants_the_fixed_localhost_origin_in_place_of_the_scheme() {
+        let csp = frame_csp(WINDOWS_SCHEME_SOURCE);
+        assert!(csp.contains("script-src 'unsafe-inline' 'unsafe-eval' http://htmlview.localhost https:;"), "got: {csp}");
+        assert!(csp.contains("style-src 'unsafe-inline' http://htmlview.localhost https:;"), "got: {csp}");
+        assert!(csp.contains("img-src http://htmlview.localhost data: blob: https:;"), "got: {csp}");
+        assert!(csp.contains("media-src http://htmlview.localhost data: blob: https:;"), "got: {csp}");
+        assert!(csp.contains("font-src http://htmlview.localhost data: https:;"), "got: {csp}");
+        assert!(csp.contains("connect-src http://htmlview.localhost https:;"), "got: {csp}");
+        assert!(!csp.contains("htmlview:"), "the Windows form must not also grant the (nonexistent there) native scheme: {csp}");
+    }
+
+    #[test]
+    fn html_view_scheme_source_reads_native_form_off_the_hosts_token() {
+        let req = get_request("tok123", "doc.html", None);
+        assert_eq!(html_view_scheme_source(&req), NATIVE_SCHEME_SOURCE);
+    }
+
+    #[test]
+    fn html_view_scheme_source_reads_windows_fallback_form_off_the_fixed_localhost_host() {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("http://htmlview.localhost/tok123/doc.html")
+            .body(Vec::new())
+            .unwrap();
+        assert_eq!(html_view_scheme_source(&req), WINDOWS_SCHEME_SOURCE);
     }
 
     // --- test request builders ---
@@ -648,7 +743,26 @@ mod tests {
             .headers()
             .get("Content-Security-Policy")
             .expect("an .html response must carry the CSP header");
-        assert_eq!(csp.to_str().unwrap(), FRAME_CSP);
+        assert_eq!(csp.to_str().unwrap(), frame_csp(NATIVE_SCHEME_SOURCE));
+        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "text/html");
+    }
+
+    #[test]
+    fn html_response_on_the_windows_request_shape_carries_the_windows_csp_header() {
+        // End-to-end through build_ok_response with a real WebView2-shaped
+        // request URI — the exact path handle_html_view_request drives in
+        // production on Windows.
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("http://htmlview.localhost/tok123/doc.html")
+            .body(Vec::new())
+            .unwrap();
+        let resp = build_ok_response(&req, Path::new("doc.html"), b"<html></html>".to_vec());
+        let csp = resp
+            .headers()
+            .get("Content-Security-Policy")
+            .expect("an .html response must carry the CSP header");
+        assert_eq!(csp.to_str().unwrap(), frame_csp(WINDOWS_SCHEME_SOURCE));
         assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "text/html");
     }
 
