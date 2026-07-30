@@ -139,11 +139,19 @@ echo "✓ 변경 내역 정합성 OK — CHANGELOG·번들 모두 [$VERSION] 포
 # 실제로 나갈 .sig의 키ID를 pubkey의 키ID와 대조해 2중으로 막는다.
 # 로직은 scripts/lib/check-signing-key.py 하나뿐 — 아래 윈도우 .sig 검증도 같은
 # 스크립트를 쓴다(복붙 아님. 하나가 고장나면 둘 다 고장나야 정직하다).
-KEY_CHECK=$(python3 scripts/lib/check-signing-key.py "$SIG_PATH")
+# `|| true`가 없으면 안 된다: check-signing-key.py는 불일치 시 exit 1로 끝나는데,
+# `set -e` 아래에서는 명령 치환 대입($(...))이 실패하는 순간 스크립트가 **아래
+# 진단 메시지를 출력하기도 전에** 죽는다. 실제로 2026-07-31 배포에서 이 게이트가
+# 불일치를 잡고도 "exit 1, 메시지 없음"만 남겨 원인을 따로 파야 했다. 종료 코드가
+# 아니라 stdout 문자열("OK" / "MISMATCH ...")이 이 게이트의 판정이므로, 종료
+# 코드는 삼키고 문자열로 판단한다 — 자기가 무엇을 막았는지 말하지 못하는 게이트는
+# 절반짜리다.
+KEY_CHECK=$(python3 scripts/lib/check-signing-key.py "$SIG_PATH" || true)
 if [ "$KEY_CHECK" != "OK" ]; then
   echo "오류: 업데이터 서명키가 앱이 신뢰하는 pubkey와 다릅니다 ($KEY_CHECK)"
   echo "      이대로 배포하면 기존 사용자 전원의 자동 업데이트가 서명 검증 실패로 깨집니다."
   echo "      해결: 올바른 키로 다시 빌드하세요 → npm run release:build"
+  echo '      (npm run tauri build 를 직접 쓰면 셸 환경의 기본 키로 서명된다 — 반드시 release:build)'
   exit 1
 fi
 echo "✓ 서명키 정합성 OK — .sig가 tauri.conf.json의 pubkey와 같은 키"

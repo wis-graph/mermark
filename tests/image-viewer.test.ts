@@ -8,7 +8,8 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
-import { openImageViewer } from "../src/chrome/viewer/image-viewer";
+import { openImageViewer, wheelDeltaToPixels } from "../src/chrome/viewer/image-viewer";
+import { panZoomSetting } from "../src/settings/app";
 
 // ---------------------------------------------------------------------------
 // Image viewer — an in-content pane (full-pane rewrite,
@@ -150,10 +151,13 @@ describe("openImageViewer: close paths (Esc / button / idempotent / focus)", () 
     expect(() => handle.close()).not.toThrow();
   });
 
-  it("focuses the close button on open (accessibility)", () => {
+  it("focuses the pannable stage on open (so arrow/Page/wheel keys work immediately), not the close button", () => {
+    // The shell focuses closeBtn first (accessibility default for every
+    // viewer), but the image viewer moves focus onward to its stage so
+    // keyboard panning is immediately usable without an extra Tab/click.
     const handle = openImageViewer("/pics/cat.png");
-    const closeBtn = document.querySelector(".image-viewer-close") as HTMLButtonElement;
-    expect(document.activeElement).toBe(closeBtn);
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    expect(document.activeElement).toBe(stage);
     handle.close();
   });
 });
@@ -190,5 +194,170 @@ describe("openImageViewer: zoom (design §B/C — shell is the writer, applyImag
     expect(img.style.maxHeight).toBe("");
 
     handle.close();
+  });
+});
+
+describe("wheelDeltaToPixels (normalizes WheelEvent.deltaMode to CSS pixels)", () => {
+  it("DOM_DELTA_PIXEL (0) passes the raw delta through unchanged", () => {
+    expect(wheelDeltaToPixels(37, WheelEvent.DOM_DELTA_PIXEL, 500)).toBe(37);
+    expect(wheelDeltaToPixels(-12.5, WheelEvent.DOM_DELTA_PIXEL, 500)).toBe(-12.5);
+  });
+
+  it("DOM_DELTA_LINE (1) scales by the line-height constant, not 1:1", () => {
+    const oneLine = wheelDeltaToPixels(1, WheelEvent.DOM_DELTA_LINE, 500);
+    expect(oneLine).toBeGreaterThan(1); // must NOT be treated as already-pixels
+    expect(wheelDeltaToPixels(3, WheelEvent.DOM_DELTA_LINE, 500)).toBe(oneLine * 3);
+  });
+
+  it("DOM_DELTA_PAGE (2) scales by the given viewport size", () => {
+    expect(wheelDeltaToPixels(1, WheelEvent.DOM_DELTA_PAGE, 500)).toBe(500);
+    expect(wheelDeltaToPixels(2, WheelEvent.DOM_DELTA_PAGE, 300)).toBe(600);
+  });
+});
+
+describe("openImageViewer: keyboard + wheel panning (no native scroll container — position is pure CSS transform)", () => {
+  /** Stub the stage/img rects so the image is much bigger than the stage AND
+   *  centered (150px of slack past the host's edge on every side) — jsdom
+   *  never lays anything out, so every rect is 0×0 by default, which would
+   *  make every pan clamp to 0 and hide real bugs. Centering (rather than
+   *  flush-at-the-edge) matters here specifically so BOTH directions on each
+   *  axis have room to move — an edge-flush stub would make one direction's
+   *  assertions trivially 0 regardless of what panBy computed. */
+  function stubOversizedGeometry(stage: HTMLElement, img: HTMLImageElement): void {
+    Object.defineProperty(stage, "clientWidth", { value: 100, configurable: true });
+    Object.defineProperty(stage, "clientHeight", { value: 100, configurable: true });
+    (stage as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 }) as DOMRect;
+    (img as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
+      ({ left: -150, top: -150, right: 250, bottom: 250, width: 400, height: 400 }) as DOMRect;
+  }
+
+  beforeEach(() => panZoomSetting.set("on")); // panBy is a real no-op stub when "off"
+  afterEach(() => panZoomSetting.set("on"));
+
+  it("still pans when the MERMAID pan/zoom setting is off (the viewer forces it on)", () => {
+    // Regression (2026-07-31): openImageViewer used to call attachPanZoom
+    // without `force`, so `설정 › Mermaid › 팬/줌 → 끄기` silently removed the
+    // image viewer's ONLY way to reach the rest of a zoomed image — drag, and
+    // then keyboard/wheel scrolling too. A diagram preference must not decide
+    // whether an image viewer can scroll; the fullscreen mermaid lightbox
+    // passes `force` for the same reason. The other tests in this block pin
+    // the setting "on", so without this one the coupling is invisible.
+    panZoomSetting.set("off");
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubOversizedGeometry(stage, img);
+
+    stage.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+
+    expect(img.style.transform).toContain("translate(0px, -60px)");
+    handle.close();
+  });
+
+  it("ArrowDown pans the transform so the image's LOWER part comes into view (translateY decreases)", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubOversizedGeometry(stage, img);
+
+    stage.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+
+    expect(img.style.transform).toContain("translate(0px, -60px)");
+    handle.close();
+  });
+
+  it("ArrowUp pans the opposite way (translateY increases)", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubOversizedGeometry(stage, img);
+
+    stage.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+
+    expect(img.style.transform).toContain("translate(0px, 60px)");
+    handle.close();
+  });
+
+  it("PageDown pans by 90% of the stage's visible height, in the ArrowDown direction", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubOversizedGeometry(stage, img);
+
+    stage.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+
+    expect(img.style.transform).toContain("translate(0px, -90px)"); // 100 * 0.9
+    handle.close();
+  });
+
+  it("End jumps to the maximum backward slack on Y (all the way down)", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubOversizedGeometry(stage, img);
+
+    stage.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+
+    // backward slack = content.bottom(250) - host.bottom(100) = 150
+    expect(img.style.transform).toContain("translate(0px, -150px)");
+    handle.close();
+  });
+
+  it("a keydown with a modifier (⌘/Ctrl/Alt) is ignored, so it doesn't fight app shortcuts like ⌘±", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubOversizedGeometry(stage, img);
+
+    stage.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", metaKey: true, bubbles: true }));
+
+    expect(img.style.transform).toBe("");
+    handle.close();
+  });
+
+  it("wheel (no modifier) pans in the same direction as ArrowDown for a downward scroll", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubOversizedGeometry(stage, img);
+
+    stage.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: 40, deltaMode: WheelEvent.DOM_DELTA_PIXEL, bubbles: true, cancelable: true }),
+    );
+
+    // wheel scroll down (deltaY > 0) → content moves up → translateY negative,
+    // same sign as ArrowDown above.
+    expect(img.style.transform).toContain("translate(0px, -40px)");
+    handle.close();
+  });
+
+  it("a ctrl/⌘ wheel (zoom gesture / trackpad pinch) is left untouched by the pan handler", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubOversizedGeometry(stage, img);
+
+    stage.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: 40, ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+
+    // the pan handler bailed; attachPanZoom's own onWheel (ctrl/meta = zoom)
+    // took it instead, which does NOT touch translate for a deltaY-only wheel
+    // (it changes scale). Transform stays untouched by panning.
+    expect(img.style.transform).not.toContain("-40px");
+    handle.close();
+  });
+
+  it("Escape still closes the viewer — the keydown handler does not swallow it", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubOversizedGeometry(stage, img);
+
+    stage.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+    expect(document.querySelector(".viewer-panel")).toBeNull();
+    handle.close(); // idempotent safety net
   });
 });

@@ -5,6 +5,7 @@ import {
   clampZoom,
   zoomAtCursor,
   attachPanZoom,
+  clampPanDelta,
   mermaidPaletteSource,
   mermaidThemeVariables,
   isPureWhite,
@@ -528,5 +529,110 @@ describe("mermaidNodeFill (2026-07-12 design-polish pass ⑤)", () => {
 
   it("mixes correctly when surface is the CSS keyword white", () => {
     expect(mermaidNodeFill({ surface: "white", bg: "#f5f5f5" } as never)).toBe("#fafafa");
+  });
+});
+
+describe("clampPanDelta (keyboard/wheel pan clamp: can't scroll past the end)", () => {
+  it("content smaller than the host always clamps to 0 (nothing to scroll)", () => {
+    const content = { start: 10, end: 40 }; // 30 wide
+    const host = { start: 0, end: 100 }; // 100 wide — content fits entirely
+    expect(clampPanDelta(50, content, host)).toBe(0);
+    expect(clampPanDelta(-50, content, host)).toBe(0);
+  });
+
+  it("clamps a forward (positive) delta to the remaining slack before the content's start hits the host's start", () => {
+    // content is 200 wide, host is 100 wide, content.start is 20px LEFT of
+    // (i.e. already overflowing past) host.start → 20px of forward slack
+    // before content.start would reach host.start (any further would open a
+    // gap on that edge).
+    const content = { start: -20, end: 180 };
+    const host = { start: 0, end: 100 };
+    expect(clampPanDelta(100, content, host)).toBe(20);
+    expect(clampPanDelta(10, content, host)).toBe(10); // within slack: unclamped
+  });
+
+  it("clamps a backward (negative) delta to the remaining slack before the content's end hits the host's end", () => {
+    // content.end is 220, host.end is 100 → 120px of backward slack.
+    const content = { start: -100, end: 220 };
+    const host = { start: 0, end: 100 };
+    expect(clampPanDelta(-200, content, host)).toBe(-120);
+    expect(clampPanDelta(-50, content, host)).toBe(-50); // within slack: unclamped
+  });
+
+  it("returns exactly 0 at the boundary (content edge already flush with host edge)", () => {
+    const content = { start: 0, end: 300 };
+    const host = { start: 0, end: 100 };
+    expect(clampPanDelta(5, content, host)).toBe(0); // already flush at start
+    const content2 = { start: -200, end: 100 };
+    expect(clampPanDelta(-5, content2, host)).toBe(0); // already flush at end
+  });
+
+  it("+Infinity resolves to the max forward slack, -Infinity to the max backward slack, no NaN", () => {
+    const content = { start: -20, end: 320 };
+    const host = { start: 0, end: 100 };
+    expect(clampPanDelta(Infinity, content, host)).toBe(20);
+    expect(clampPanDelta(-Infinity, content, host)).toBe(-220);
+    expect(Number.isNaN(clampPanDelta(Infinity, content, host))).toBe(false);
+    expect(Number.isNaN(clampPanDelta(-Infinity, content, host))).toBe(false);
+  });
+});
+
+describe("attachPanZoom.panBy (keyboard/wheel panning primitive)", () => {
+  afterEach(() => panZoomSetting.set("on"));
+
+  /** A host/content pair where content is deliberately larger than host on
+   *  both axes, so panBy has real room to move (jsdom lays out everything at
+   *  0×0, so both rects must be stubbed by hand). */
+  function fakeOversizedHostAndContent(): { host: HTMLElement; svg: SVGElement } {
+    const host = document.createElement("div");
+    (host as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 }) as DOMRect;
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    // content starts flush with the host (typical initial centered/fit state)
+    // but is much bigger, so there's plenty of backward slack on both axes.
+    (svg as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 400, bottom: 400, width: 400, height: 400 }) as DOMRect;
+    return { host, svg };
+  }
+
+  it("panBy is a no-op returning {dx:0,dy:0} when the panZoom setting is off (the stub shape matches the real one)", () => {
+    panZoomSetting.set("off");
+    const { host, svg } = fakeOversizedHostAndContent();
+    const pz = attachPanZoom(host, svg);
+    expect(pz.panBy(50, 50)).toEqual({ dx: 0, dy: 0 });
+    pz.destroy();
+  });
+
+  it("panBy moves the transform by the requested (unclamped) delta and returns the applied delta", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeOversizedHostAndContent();
+    const pz = attachPanZoom(host, svg);
+    const applied = pz.panBy(-30, -20); // negative: content moves up/left, plenty of backward slack
+    expect(applied).toEqual({ dx: -30, dy: -20 });
+    expect(svg.style.transform).toContain("translate(-30px, -20px)");
+    pz.destroy();
+  });
+
+  it("panBy clamps at the edge: the content's start edge cannot pass the host's start edge", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeOversizedHostAndContent();
+    const pz = attachPanZoom(host, svg);
+    // content.start (0) === host.start (0) already, so 0 forward slack:
+    // any positive delta clamps to 0.
+    const applied = pz.panBy(50, 0);
+    expect(applied).toEqual({ dx: 0, dy: 0 });
+    expect(svg.style.transform).toContain("translate(0px, 0px)");
+    pz.destroy();
+  });
+
+  it("panBy(0, -Infinity) jumps to the maximum backward slack (End-key semantics)", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeOversizedHostAndContent();
+    const pz = attachPanZoom(host, svg);
+    // backward slack on Y = content.bottom(400) - host.bottom(100) = 300
+    const applied = pz.panBy(0, -Infinity);
+    expect(applied).toEqual({ dx: 0, dy: -300 });
+    expect(svg.style.transform).toContain("translate(0px, -300px)");
+    pz.destroy();
   });
 });

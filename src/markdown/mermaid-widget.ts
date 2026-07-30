@@ -325,6 +325,22 @@ interface PanZoomState {
   translateY: number;
 }
 
+/** What `attachPanZoom` hands back: teardown plus a keyboard/wheel-panning
+ *  primitive. `panBy` moves the content by (dx, dy) from its CURRENT
+ *  position, clamped (via `clampPanDelta`) so the content's edges never pull
+ *  inward past the host's edges — pass ±Infinity on an axis to mean "go all
+ *  the way" (Home/End). Returns the delta actually APPLIED (post-clamp), so a
+ *  wheel handler can tell "did this scroll do anything?" and only then
+ *  swallow the event — when the returned delta is {0, 0} the content had no
+ *  room to move and the caller should let the event bubble (e.g. so the page
+ *  can scroll instead). Command with an observation, not a pure query (it
+ *  mutates the transform), but reports what it did rather than forcing every
+ *  caller to re-derive it via a second rect read. */
+export interface PanZoomHandle {
+  destroy(): void;
+  panBy(dx: number, dy: number): { dx: number; dy: number };
+}
+
 /** The zoom-bound rule in one place: never shrink below natural size (1×) and
  *  never magnify past 3×. Pure query. */
 export function clampZoom(scale: number): number {
@@ -357,6 +373,30 @@ export function zoomAtCursor(
  *  so the rule lives in one named place rather than inline in updateTransform. */
 function isTransformed(state: PanZoomState): boolean {
   return state.scale !== 1 || state.translateX !== 0 || state.translateY !== 0;
+}
+
+/** The one axis-agnostic clamp rule for keyboard panning: how far a requested
+ *  delta may actually move the content along one axis without letting either
+ *  of the content's edges pull inward past the host's matching edge (the
+ *  "can't scroll past the end" rule). `maxForward` is how much slack there is
+ *  to push the content in the positive direction (content's start edge is
+ *  right of the host's start edge); `maxBackward` mirrors that for the
+ *  negative direction. Content no bigger than the host has zero slack either
+ *  way, so it always clamps to 0. ±Infinity collapses to ±maxForward/maxBackward,
+ *  which is exactly Home/End's "go all the way" — one function, no special
+ *  casing. Pure query.
+ *
+ *  Deliberately asymmetric with mouse drag: drag never clamps (the mouse
+ *  itself bounds how far a user drags), only `panBy` (keyboard) does. */
+export function clampPanDelta(
+  delta: number,
+  content: { start: number; end: number },
+  host: { start: number; end: number },
+): number {
+  const maxForward = Math.max(0, host.start - content.start);
+  const maxBackward = Math.max(0, content.end - host.end);
+  const clamped = Math.min(maxForward, Math.max(-maxBackward, delta));
+  return clamped === 0 ? 0 : clamped; // never leak -0 (Math.min/max can yield it at a zero-slack edge)
 }
 
 /** Command: write the current pan/zoom state onto the svg as a CSS transform,
@@ -393,13 +433,19 @@ function updateTransform(
  *  fullscreen lightbox (viewer/mermaid-lightbox.ts) always wants pan/zoom
  *  regardless of the inline diagram's setting, since precise inspection is
  *  the entire point of opening fullscreen. Every existing caller omits
- *  `opts`, so `force` defaults to falsy and behavior is unchanged for them. */
+ *  `opts`, so `force` defaults to falsy and behavior is unchanged for them.
+ *
+ *  Returns a `PanZoomHandle`: `destroy()` plus `panBy(dx, dy)` for keyboard
+ *  panning callers (the image viewer's arrow/Page/Home/End bindings). Both
+ *  branches below (off/stub and on/real) return the same shape so callers
+ *  never need to branch on whether pan/zoom is active. */
 export function attachPanZoom(
   host: HTMLElement,
   svg: SVGElement | HTMLImageElement,
   opts?: { force?: boolean },
-): { destroy(): void } {
-  if (panZoomSetting.get() === "off" && !opts?.force) return { destroy() {} };
+): PanZoomHandle {
+  if (panZoomSetting.get() === "off" && !opts?.force)
+    return { destroy() {}, panBy: () => ({ dx: 0, dy: 0 }) };
 
   svg.style.transformOrigin = "0 0";
   const state: PanZoomState = { scale: 1, translateX: 0, translateY: 0 };
@@ -518,6 +564,27 @@ export function attachPanZoom(
       resetBtn.removeEventListener("click", onResetClick);
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+    },
+    // Rect-based (not raw arithmetic): reads the ACTUAL boxes so transform-
+    // origin/scale/flex-centering are already baked in, matching how
+    // `onWheel`'s cursor-zoom reads `host.getBoundingClientRect()` above.
+    panBy(dx, dy) {
+      const hostRect = host.getBoundingClientRect();
+      const contentRect = svg.getBoundingClientRect();
+      const clampedDx = clampPanDelta(
+        dx,
+        { start: contentRect.left, end: contentRect.right },
+        { start: hostRect.left, end: hostRect.right },
+      );
+      const clampedDy = clampPanDelta(
+        dy,
+        { start: contentRect.top, end: contentRect.bottom },
+        { start: hostRect.top, end: hostRect.bottom },
+      );
+      state.translateX += clampedDx;
+      state.translateY += clampedDy;
+      updateTransform(host, svg, state, true);
+      return { dx: clampedDx, dy: clampedDy };
     },
   };
 }
