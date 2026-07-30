@@ -78,6 +78,28 @@ fi
 # "커밋하세요"라고 말하는 시점이 빌드 앞으로 당겨진다.
 (cd src-tauri && cargo metadata --offline --format-version 1 > /dev/null 2>&1) || true
 
+# 동기화 결과 lock만 바뀌었다면 **스크립트가 직접 커밋·푸시한다.** lock의 version은
+# Cargo.toml에서 파생되는 값이라 사람이 판단할 것이 없는 부기(簿記)이고, 아래
+# 원격 정합성 게이트는 깨끗한 트리를 요구하므로, 이걸 사람에게 맡기면 버전을
+# 올리는 릴리스마다 "막힘 → 손으로 커밋 → 재실행" 3단계가 반복된다(v0.9.19·
+# 0.9.20에서 실제로 반복됐다). updater.json을 이 스크립트가 이미 커밋·푸시하는
+# 것과 같은 범주다.
+#
+# **lock 하나만 더러울 때로 엄격히 한정한다** — 다른 파일이 섞여 있으면 손대지
+# 않고 아래 게이트가 평소대로 막게 둔다. 사람이 커밋을 잊은 소스 변경까지
+# 스크립트가 조용히 쓸어 담으면, 그 게이트가 지키려던 것("태그가 가리키는 소스
+# == 실제 배포물")이 무너진다.
+LOCK_PATH="src-tauri/Cargo.lock"
+# 상태 문자열(" M ..." vs "M  ...")이 아니라 **바뀐 경로 목록**으로 판정한다 —
+# lock이 이미 스테이지됐는지 여부 같은 것에 규칙이 흔들리면 안 된다.
+DIRTY_PATHS=$(git status --porcelain | awk '{print $NF}')
+if [ "$DIRTY_PATHS" = "$LOCK_PATH" ]; then
+  echo "→ Cargo.lock이 $VERSION으로 동기화됨 — 파생 파일이므로 스크립트가 커밋합니다."
+  run_mutating git add "$LOCK_PATH"
+  run_mutating git commit -q -m "chore: Cargo.lock 버전 동기화 ($VERSION)"
+  run_mutating git push -q origin main
+fi
+
 # --- 게이트 1: 릴리스할 코드가 원격에 올라가 있는가 ---------------------------
 # 함수로 둔 이유: 이 검사는 **빌드 전에** 한 번(잘못된 상태로 5분을 태우지 않기
 # 위해), **빌드 후에** 한 번 더(빌드가 워킹트리를 더럽히지 않았는지) 돌아야
