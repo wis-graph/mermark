@@ -94,7 +94,7 @@ LOCK_PATH="src-tauri/Cargo.lock"
 # lock이 이미 스테이지됐는지 여부 같은 것에 규칙이 흔들리면 안 된다.
 DIRTY_PATHS=$(git status --porcelain | awk '{print $NF}')
 if [ "$DIRTY_PATHS" = "$LOCK_PATH" ]; then
-  echo "→ Cargo.lock이 $VERSION으로 동기화됨 — 파생 파일이므로 스크립트가 커밋합니다."
+  echo "→ Cargo.lock이 ${VERSION}으로 동기화됨 — 파생 파일이므로 스크립트가 커밋합니다."
   run_mutating git add "$LOCK_PATH"
   run_mutating git commit -q -m "chore: Cargo.lock 버전 동기화 ($VERSION)"
   run_mutating git push -q origin main
@@ -433,7 +433,7 @@ if [ "$WIN_KEY_CHECK" != "OK" ]; then
   echo "      (macOS는 이미 배포됐지만 updater.json 미갱신이라 알림은 안 나갑니다.)"
   exit 1
 fi
-echo "✓ 윈도우 서명키 정합성 OK — $WIN_SIG가 tauri.conf.json의 pubkey와 같은 키"
+echo "✓ 윈도우 서명키 정합성 OK — ${WIN_SIG}가 tauri.conf.json의 pubkey와 같은 키"
 
 echo "=== 4. updater.json 갱신 및 GitHub 배포 (darwin-aarch64 + windows-x86_64) ==="
 run_mutating env \
