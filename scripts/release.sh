@@ -15,12 +15,14 @@ set -e
 # 두 플래그는 순서 무관, 동시 사용 가능(--dry-run --with-windows 또는 반대 순서).
 DRY_RUN=0
 WITH_WINDOWS=0
+SKIP_BUILD=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --with-windows) WITH_WINDOWS=1 ;;
+    --skip-build) SKIP_BUILD=1 ;;
     *)
-      echo "오류: 알 수 없는 인자입니다: $arg (지원: --dry-run, --with-windows)"
+      echo "오류: 알 수 없는 인자입니다: $arg (지원: --dry-run, --with-windows, --skip-build)"
       exit 1
       ;;
   esac
@@ -51,6 +53,41 @@ VERSION=$(node -e "console.log(require('./package.json').version)")
 TAG="v$VERSION"
 
 echo "=================================================="
+
+# --- 게이트 0: 릴리스 노트가 먼저 있어야 빌드가 의미 있다 ----------------------
+# 앱 안 "설정 › 버전 › 변경 내역"은 CHANGELOG.md를 **빌드 시점에** 번들로 구워
+# 넣는다. 그래서 이 검사는 빌드보다 먼저 와야 한다 — 나중에 하면 "CHANGELOG가
+# 없다"는 사실을 5분짜리 빌드를 다 돌린 뒤에야 알게 된다. (같은 규칙의 사후
+# 확인, 즉 실제로 나갈 dist/에 이번 버전 항목이 들어갔는지는 빌드 뒤 게이트 2가
+# 다시 본다. 여기는 소스, 거기는 산출물 — 다른 것을 본다.)
+if ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+  echo "오류: CHANGELOG.md에 '## [$VERSION]' 섹션이 없습니다."
+  echo "      릴리스 노트를 먼저 작성하세요. 순서: 버전범프 → CHANGELOG → 빌드 → 릴리스."
+  exit 1
+fi
+
+# --- 빌드: 이 스크립트가 직접 돌린다 ------------------------------------------
+# 사람이 빌드 명령을 고르지 않는다. 2026-07-31 v0.9.18 배포에서 `npm run tauri
+# build`로 빌드했더니 셸 환경의 TAURI_SIGNING_PRIVATE_KEY 기본값(다른 프로젝트
+# 키)으로 .sig가 서명됐다 — 그대로 나갔으면 기존 사용자 전원의 자동 업데이트가
+# 서명 검증 실패로 깨졌다. 아래 서명키 게이트가 막긴 했지만, 게이트는 최후
+# 방어선이지 명령 선택의 근거가 아니다. 올바른 명령을 기억해야 하는 규칙은
+# 언젠가 또 틀린다(v0.9.17의 푸시 선행 사고와 같은 종류) — 그래서 규칙을
+# 없앤다: 릴리스가 자기 빌드를 소유한다.
+#
+# --skip-build는 방금 release:build로 빌드해 둔 산출물을 재사용하는 탈출구다
+# (재시도·부분 실패 복구용). 그 경우에도 아래 게이트 전부가 그대로 돌므로
+# 낡거나 잘못 서명된 산출물은 여전히 막힌다.
+if [ "$SKIP_BUILD" -eq 1 ]; then
+  echo "[--skip-build] 빌드를 건너뛰고 기존 산출물을 검증합니다."
+elif [ "$DRY_RUN" -eq 1 ]; then
+  echo "[dry-run] 빌드는 실행하지 않고 기존 산출물로 게이트만 검증합니다."
+else
+  echo "=== 0. 릴리스 빌드 (npm run release:build — 서명키 강제) ==="
+  npm run release:build
+  echo "✓ 빌드 완료"
+fi
+
 # 빌드 결과물 경로 정의
 DMG_PATH="src-tauri/target/release/bundle/dmg/mermark_${VERSION}_aarch64.dmg"
 TAR_PATH="src-tauri/target/release/bundle/macos/mermark.app.tar.gz"
@@ -118,15 +155,10 @@ echo "✓ 산출물 버전 정합성 OK — 빌드된 .app이 $VERSION"
 #
 # 그래서 "순서를 기억한다"가 아니라 "틀리면 배포가 막힌다"로 강제한다. 실제로 나갈
 # 산출물(dist/)을 검사하는 게 핵심 — 소스만 보면 이 버그를 못 잡는다.
-if ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
-  echo "오류: CHANGELOG.md에 '## [$VERSION]' 섹션이 없습니다."
-  echo "      릴리스 노트를 먼저 작성하세요. 순서: 버전범프 → CHANGELOG → 빌드 → 릴리스."
-  exit 1
-fi
 if ! grep -rq "\[$VERSION\]" dist/ 2>/dev/null; then
   echo "오류: 빌드된 번들(dist/)에 [$VERSION]의 변경 내역이 없습니다."
   echo "      = CHANGELOG.md를 쓰기 전에 빌드가 실행됐습니다. 앱 안 '변경 내역'이 비어서 나갑니다."
-  echo "      해결: CHANGELOG.md를 확정한 뒤 다시 빌드하세요 → npm run tauri build"
+  echo "      해결: --skip-build 없이 이 스크립트를 다시 실행하세요(스크립트가 직접 빌드합니다)."
   exit 1
 fi
 echo "✓ 변경 내역 정합성 OK — CHANGELOG·번들 모두 [$VERSION] 포함"
