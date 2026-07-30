@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
-import { openImageViewer, wheelDeltaToPixels } from "../src/chrome/viewer/image-viewer";
+import { openImageViewer, wheelDeltaToPixels, panIndicatorFor } from "../src/chrome/viewer/image-viewer";
 import { panZoomSetting } from "../src/settings/app";
 
 // ---------------------------------------------------------------------------
@@ -364,23 +364,34 @@ describe("openImageViewer: keyboard + wheel panning (no native scroll container 
 
 // ---------------------------------------------------------------------------
 // Regression: v0.9.18 real-app bug report — "held-down PageDown flies the
-// image off-screen" / "trackpad wheel jitters". Root cause: `panBy` clamped
-// against `getBoundingClientRect()` while ANIMATING the write
-// (withTransition=true). Mid-transition, the painted rect lags behind
-// `state`, so a fast burst of calls (key repeat, trackpad inertia) each
-// see stale, over-generous slack and keep pushing `state` past the real
-// boundary. Fix: `panBy` writes untransitioned (mermaid-widget.ts panBy,
-// updateTransform(..., false)) so the rect the NEXT call reads back is
-// exactly what the PREVIOUS call committed — no lag, no lag-driven overshoot.
+// image off-screen" / "trackpad wheel jitters".
 //
-// Two tests, deliberately split (mirrors tests/viewer-flex-item.test.ts's
-// rule+premise structure):
-//   (a) RULE — the clamp arithmetic holds under a rapid burst.
-//   (b) PREMISE — panBy writes untransitioned, which is *why* (a) holds in
-//       the real app. jsdom does not simulate CSS transitions, so (a) alone
-//       cannot catch a reintroduced withTransition=true — it would keep
-//       passing here while silently reproducing the exact bug in a real
-//       browser. (b) is what actually locks the mechanism.
+// v0.9.18 fix (superseded): banned animation on `panBy` outright
+// (withTransition always false) — a source-level premise standing in for a
+// real fix, since the actual defect was that the clamp read the PAINTED rect
+// instead of the content's TARGET position.
+//
+// v0.9.19 fix: `panBy` now clamps against the content's TARGET box
+// (`renderedTranslate` + `base = rect − rendered`, `target = base + state` —
+// see mermaid-widget.ts), which is correct regardless of how far a CSS
+// transition has animated. The falsification-capable version of this
+// regression guard (one that actually drives paint LAG under `animate: true`
+// and proves the old rect-based clamp would have overshot) now lives in
+// tests/mermaid-widget.test.ts, next to `panBy`/`renderedTranslate`
+// themselves — `getComputedStyle` stubbing needs full control over a single
+// bare svg/host pair, which is awkward through `openImageViewer`'s DOM.
+//
+// What stays here, at the image-viewer level:
+//   (a) An end-to-end sanity check — the clamp still holds when driven
+//       through the real keydown handler (not just the unit-level pz.panBy).
+//   (b) A visible-BEHAVIOR-PARITY check: image-viewer.ts's call sites all
+//       still omit `opts` (→ `animate` defaults to false), so nothing here
+//       is user-visibly different from v0.9.19 — this is deliberate for now
+//       (see coordinator note in mermaid-widget.ts's panBy comment: which
+//       inputs get `animate: true` is an open UX decision, not shipped yet).
+//       This test exists to catch an ACCIDENTAL animate flip, not to assert
+//       a permanent contract — expect it to need updating once that UX
+//       decision lands.
 // ---------------------------------------------------------------------------
 describe("openImageViewer: panBy burst-clamp regression (v0.9.18 — PageDown-held / trackpad-inertia flies the image off-screen)", () => {
   /** Parse the `translate(Xpx, Ypx)` this codebase's `updateTransform` writes
@@ -390,17 +401,16 @@ describe("openImageViewer: panBy burst-clamp regression (v0.9.18 — PageDown-he
     return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: 0, y: 0 };
   }
 
-  /** An HONEST fake geometry: unlike `stubOversizedGeometry` (a frozen rect),
-   *  this one recomputes the img's rect from its CURRENT `style.transform`
-   *  every time it's called — exactly what a real browser's
-   *  `getBoundingClientRect()` does once a write has actually painted. A
-   *  frozen stub can't reproduce this bug at all (the "remaining slack" it
-   *  reports never changes no matter how far `state` has already gone), so
-   *  the clamp regression can only be exercised against a rect that tracks
-   *  the transform. Host stays fixed at 0,0..100,100; the untransformed
-   *  image occupies -150,-150..250,250 (400×400, centered, 150px slack on
-   *  every edge) — same fixture shape as `stubOversizedGeometry` above. */
-  function stubHonestGeometry(stage: HTMLElement, img: HTMLImageElement): void {
+  /** A geometry fake that recomputes the img's rect from its CURRENT
+   *  `style.transform` on every read — i.e. it assumes the paint has
+   *  instantly caught up to `state` (no lag). That's exactly true for
+   *  image-viewer's current call sites (all `animate: false`), so this is
+   *  the right fake for an end-to-end "does the visible path still clamp"
+   *  check — it is NOT the fake that would catch a paint-lag regression
+   *  (see tests/mermaid-widget.test.ts's `stubStuckPaint` for that one).
+   *  Host stays fixed at 0,0..100,100; the untransformed image occupies
+   *  -150,-150..250,250 (400×400, centered, 150px slack on every edge). */
+  function stubInstantGeometry(stage: HTMLElement, img: HTMLImageElement): void {
     Object.defineProperty(stage, "clientWidth", { value: 100, configurable: true });
     Object.defineProperty(stage, "clientHeight", { value: 100, configurable: true });
     (stage as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
@@ -413,11 +423,11 @@ describe("openImageViewer: panBy burst-clamp regression (v0.9.18 — PageDown-he
     };
   }
 
-  it("(a) RULE: holding PageDown (50 rapid repeats) never pushes the content's edge past the host's edge", () => {
+  it("(a) end-to-end: holding PageDown (50 rapid repeats) never pushes the content's edge past the host's edge", () => {
     const handle = openImageViewer("/pics/cat.png");
     const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
     const img = document.querySelector(".image-viewer img") as HTMLImageElement;
-    stubHonestGeometry(stage, img);
+    stubInstantGeometry(stage, img);
 
     for (let i = 0; i < 50; i++) {
       stage.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
@@ -438,15 +448,184 @@ describe("openImageViewer: panBy burst-clamp regression (v0.9.18 — PageDown-he
     handle.close();
   });
 
-  it("(b) PREMISE: panBy writes the transform WITHOUT a CSS transition — jsdom can't simulate transitions, so this is the only test that would catch a reintroduced withTransition=true (test (a) would keep passing on the honest fake even though the real-app bug would be back)", () => {
+  it("(b) visible-behavior parity: every panning input (wheel, arrow, Page, Home/End) still writes the transform WITHOUT a CSS transition — no animate mapping has shipped yet, so v0.9.19 must look identical to v0.9.19-pre-refactor to the user", () => {
     const handle = openImageViewer("/pics/cat.png");
     const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
     const img = document.querySelector(".image-viewer img") as HTMLImageElement;
-    stubHonestGeometry(stage, img);
+    stubInstantGeometry(stage, img);
+
+    for (const key of ["ArrowDown", "PageDown", "End"]) {
+      stage.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      expect(img.style.transition).toBe("");
+    }
+    stage.dispatchEvent(new WheelEvent("wheel", { deltaY: 40, bubbles: true, cancelable: true }));
+    expect(img.style.transition).toBe("");
+
+    handle.close();
+  });
+});
+
+describe("panIndicatorFor (position-indicator geometry: same arithmetic as a native scrollbar thumb)", () => {
+  it("returns null when the content does not overflow the host (fits exactly)", () => {
+    expect(panIndicatorFor({ start: 0, end: 100 }, { start: 0, end: 100 })).toBeNull();
+  });
+
+  it("returns null when the content is SMALLER than the host", () => {
+    expect(panIndicatorFor({ start: 0, end: 60 }, { start: 0, end: 100 })).toBeNull();
+  });
+
+  it("sizeRatio is host/content — 2× overflow gives a half-length thumb", () => {
+    // content 200 wide, host 100 wide, flush at the start.
+    expect(panIndicatorFor({ start: 0, end: 200 }, { start: 0, end: 100 })).toEqual({
+      sizeRatio: 0.5,
+      startRatio: 0,
+    });
+  });
+
+  it("startRatio is 0 at the very top/left (content flush with host's start)", () => {
+    expect(panIndicatorFor({ start: 0, end: 300 }, { start: 0, end: 100 })!.startRatio).toBe(0);
+  });
+
+  it("startRatio is close to 1 at the very bottom/right (content flush with host's end)", () => {
+    // content 300 long, host 100 long, content's end flush with host's end →
+    // content.start = host.end − contentLen = 100 − 300 = −200.
+    const geo = panIndicatorFor({ start: -200, end: 100 }, { start: 0, end: 100 });
+    expect(geo!.startRatio).toBeCloseTo(200 / 300, 6);
+  });
+
+  it("clamps startRatio to [0,1] when the content sits outside the host's edges (unclamped drag mid-motion)", () => {
+    // content.start > host.start (dragged so far right the content's left
+    // edge has moved PAST the host's left edge) → raw startRatio would be
+    // negative; clamps to 0.
+    const overDraggedRight = panIndicatorFor({ start: 50, end: 350 }, { start: 0, end: 100 });
+    expect(overDraggedRight!.startRatio).toBe(0);
+
+    // content.end < host.end (dragged so far left the content's right edge
+    // has moved BEFORE the host's right edge) → raw startRatio would exceed
+    // 1 ((host.start − content.start)/contentLen with content.start very
+    // negative); clamps to 1.
+    const overDraggedLeft = panIndicatorFor({ start: -400, end: -100 }, { start: 0, end: 100 });
+    expect(overDraggedLeft!.startRatio).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Position indicators (v0.9.19): this viewer has no native scroll container
+// (position is pure CSS transform), so there is no scrollbar to tell the
+// user "how much more is there, and where am I". These read-only overlay
+// bars are the substitute — see image-viewer.ts's `refreshPanIndicators` doc
+// for the "one recompute point, four triggers" design.
+//
+// The DRAG test below is the load-bearing one: `attachPanZoom`'s drag path
+// does NOT go through `panBy` (it mutates `state` directly from the cursor's
+// absolute position), so it's the one gesture most likely to be forgotten if
+// someone later "simplifies" the `onTransform` wiring back down to just
+// `panBy`. This is deliberately verified with falsification (see the
+// frontend-engineer report): temporarily bypassing `commit()` in
+// `attachPanZoom`'s drag-specific `onMouseUp` (calling `updateTransform`
+// directly, same as the pre-`onTransform` code) makes ONLY this drag test
+// fail — PageDown and the others stay green — which is exactly why a single
+// "does SOME indicator test pass" check would not have been enough.
+// ---------------------------------------------------------------------------
+describe("openImageViewer: pan position indicators", () => {
+  /** Geometry fake whose img rect FOLLOWS the current `style.transform` —
+   *  required here (unlike the frozen `stubOversizedGeometry`/
+   *  `stubInstantGeometry` fakes elsewhere in this file) because these tests
+   *  assert the indicator's RATIO actually changes as the content moves;
+   *  a frozen rect would report the same ratio forever regardless of how
+   *  much panning happened, hiding exactly the bug this file is guarding.
+   *  Untransformed base: -150,-150..250,250 (400×400, centered over a
+   *  0,0..100,100 host — 150px of slack on every edge), same fixture shape
+   *  used throughout this file. */
+  function stubTransformFollowingGeometry(stage: HTMLElement, img: HTMLImageElement): void {
+    Object.defineProperty(stage, "clientWidth", { value: 100, configurable: true });
+    Object.defineProperty(stage, "clientHeight", { value: 100, configurable: true });
+    (stage as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 }) as DOMRect;
+    (img as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () => {
+      const m = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(img.style.transform);
+      const x = m ? Number(m[1]) : 0;
+      const y = m ? Number(m[2]) : 0;
+      const left = -150 + x;
+      const top = -150 + y;
+      return { left, top, right: left + 400, bottom: top + 400, width: 400, height: 400 } as DOMRect;
+    };
+  }
+
+  /** Content exactly fills the host on both axes — nothing overflows. */
+  function stubFittingGeometry(stage: HTMLElement, img: HTMLImageElement): void {
+    Object.defineProperty(stage, "clientWidth", { value: 100, configurable: true });
+    Object.defineProperty(stage, "clientHeight", { value: 100, configurable: true });
+    const rect = { left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 } as DOMRect;
+    (stage as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () => rect;
+    (img as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () => rect;
+  }
+
+  it("an image that fits the stage shows neither indicator", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubFittingGeometry(stage, img);
+
+    fireLoad(img, 100, 100); // triggers refreshPanIndicators via onload
+
+    const vTrack = document.querySelector(".image-viewer-pan-indicator-v") as HTMLElement;
+    const hTrack = document.querySelector(".image-viewer-pan-indicator-h") as HTMLElement;
+    expect(vTrack.hidden).toBe(true);
+    expect(hTrack.hidden).toBe(true);
+
+    handle.close();
+  });
+
+  it("an overflowing image shows both indicators once loaded", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubTransformFollowingGeometry(stage, img);
+
+    fireLoad(img, 400, 400);
+
+    const vTrack = document.querySelector(".image-viewer-pan-indicator-v") as HTMLElement;
+    const hTrack = document.querySelector(".image-viewer-pan-indicator-h") as HTMLElement;
+    expect(vTrack.hidden).toBe(false);
+    expect(hTrack.hidden).toBe(false);
+
+    handle.close();
+  });
+
+  it("PageDown moves the vertical indicator's thumb further down its track (startRatio increases)", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubTransformFollowingGeometry(stage, img);
+    fireLoad(img, 400, 400);
+
+    const vBar = document.querySelector(".image-viewer-pan-indicator-v .image-viewer-pan-indicator-bar") as HTMLElement;
+    const before = Number.parseFloat(vBar.style.top); // 150/400 = 37.5% at rest
 
     stage.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
 
-    expect(img.style.transition).toBe("");
+    const after = Number.parseFloat(vBar.style.top);
+    expect(after).toBeGreaterThan(before);
+
+    handle.close();
+  });
+
+  it("dragging the image ALSO updates the indicators — proves onTransform fires for drag, not only for panBy-driven input", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubTransformFollowingGeometry(stage, img);
+    fireLoad(img, 400, 400);
+
+    const vBar = document.querySelector(".image-viewer-pan-indicator-v .image-viewer-pan-indicator-bar") as HTMLElement;
+    const before = vBar.style.top;
+
+    stage.dispatchEvent(new MouseEvent("mousedown", { clientX: 0, clientY: 0, bubbles: true }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: -80, clientY: -80 }));
+    window.dispatchEvent(new MouseEvent("mouseup", {}));
+
+    expect(vBar.style.top).not.toBe(before);
 
     handle.close();
   });

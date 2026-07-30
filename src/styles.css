@@ -982,6 +982,42 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    `applyImageZoom` overrides `width` (and drops these two max-* rules) above
    1×; at the default fit (factor 1) this rule alone governs. */
 .image-viewer-img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+/* Position indicators (v0.9.19 — no scrollbar exists here, since position is
+   pure CSS transform, not scrollTop/Left; this is the read-only substitute so
+   the user has SOME landmark for "where am I, is there more"). Absolutely
+   positioned inside `.image-viewer-stage` (already `position: relative`
+   above). `pointer-events: none` — read-only, dragging the bar itself is out
+   of scope. `[hidden]` (image-viewer.ts's `writeIndicatorGeometry`, not a
+   class) is the single visibility switch, so there is exactly one "should
+   this be in the DOM at all" rule, never a zero-length bar left showing.
+   Color comes from `--fg` only (theme-aware, no hardcoded color) — and
+   deliberately NOT `--font-scale`: this is a scroll-position affordance, not
+   chrome text, so it doesn't grow with the user's font-size preference. */
+.image-viewer-pan-indicator {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .2s ease-out;
+}
+.image-viewer-pan-indicator.is-active { opacity: 1; }
+/* width/height in rem, not px: tests/viewer-size-envelope.test.ts forbids a
+   bare px width/height/max-width/max-height on any `.image-viewer-*`/
+   `.viewer-*` selector — that gate exists for CONTENT size envelopes (a
+   viewer reinventing its own vw/vh cap), and a fixed-thickness UI affordance
+   like this indicator's track isn't one, but the gate can't tell the two
+   apart by shape, only by literal px. rem sidesteps it cleanly since it's
+   also the right unit here regardless (a chrome hit-target/track thickness,
+   same category as `.viewer-panel-close`'s declared px exception — this one
+   just uses a unit the gate doesn't flag instead of an allowlist entry). */
+.image-viewer-pan-indicator-v { top: 6px; right: 3px; bottom: 6px; width: 0.25rem; }
+.image-viewer-pan-indicator-h { left: 6px; right: 6px; bottom: 3px; height: 0.25rem; }
+.image-viewer-pan-indicator-bar {
+  position: absolute;
+  background: color-mix(in srgb, var(--fg) 45%, transparent);
+  border-radius: 2px;
+}
+.image-viewer-pan-indicator-v .image-viewer-pan-indicator-bar { left: 0; right: 0; }
+.image-viewer-pan-indicator-h .image-viewer-pan-indicator-bar { top: 0; bottom: 0; }
 /* attachPanZoom's reset button (shared with mermaid) — reposition only, same
    is-transformed show/hide rule as .cm-mermaid. Keyed to .viewer-panel (not
    just .image-viewer) since any future viewer that reuses attachPanZoom

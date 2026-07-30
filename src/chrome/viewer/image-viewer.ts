@@ -81,6 +81,58 @@ export function wheelDeltaToPixels(delta: number, deltaMode: number, viewportSiz
   return delta;
 }
 
+/** One axis's position-indicator geometry — the same arithmetic a native
+ *  overlay scrollbar uses: `sizeRatio` (0~1) is how much of the full content
+ *  is visible at once (thumb length / track length), `startRatio` (0~1) is
+ *  how far into the content the visible window currently starts (thumb
+ *  offset / track length). `null` when the content doesn't overflow the host
+ *  on this axis at all — nothing to indicate, same size, or smaller.
+ *
+ *  `startRatio` is clamped to [0,1] on purpose: mouse DRAG is deliberately
+ *  left unclamped by `panBy`'s design (the mouse itself bounds how far a
+ *  user drags — see attachPanZoom's doc), so the content can briefly sit
+ *  outside the host's edges mid-drag. Without the clamp here the thumb would
+ *  slide off its own track at that moment; `sizeRatio` needs no clamp since
+ *  it's a genuine ratio of two positive lengths (host is always ≤ content by
+ *  the guard above). Pure query. */
+export function panIndicatorFor(
+  content: { start: number; end: number },
+  host: { start: number; end: number },
+): { sizeRatio: number; startRatio: number } | null {
+  const contentLen = content.end - content.start;
+  const hostLen = host.end - host.start;
+  if (contentLen <= hostLen) return null;
+  const sizeRatio = hostLen / contentLen;
+  const startRatio = Math.min(1, Math.max(0, (host.start - content.start) / contentLen));
+  return { sizeRatio, startRatio };
+}
+
+/** How long a position indicator stays fully visible after the last
+ *  interaction/resize before fading to fully transparent — the native
+ *  overlay-scrollbar "flash then fade" convention. Named so the one place
+ *  that needs tuning (a real-app feel check — jsdom can't judge this) is a
+ *  single constant. */
+const INDICATOR_FADE_DELAY_MS = 800;
+
+/** Write one axis's indicator geometry onto its track/bar DOM, or hide the
+ *  track entirely when there's nothing to indicate (`geo === null` — the
+ *  "don't leave a zero-length bar visible" rule from the design). `hidden`
+ *  (the DOM attribute, not a class) is the single source of visibility here
+ *  so there's no separate "is this indicator on" state to drift out of sync
+ *  with the geometry that justifies it. Command (void). */
+function writeIndicatorGeometry(
+  track: HTMLElement,
+  bar: HTMLElement,
+  sizeProp: "height" | "width",
+  startProp: "top" | "left",
+  geo: { sizeRatio: number; startRatio: number } | null,
+): void {
+  track.hidden = geo === null;
+  if (!geo) return;
+  bar.style[sizeProp] = `${geo.sizeRatio * 100}%`;
+  bar.style[startProp] = `${geo.startRatio * 100}%`;
+}
+
 /** Open the lightbox for `absPath`. Reuses `resolveImageUrl` (the same local
  *  path → asset URL rule markdown images use) so there is exactly one owner
  *  of that conversion. Returns a handle whose close() restores the page. */
@@ -97,12 +149,76 @@ export function openImageViewer(absPath: string): ImageViewerHandle {
   const img = document.createElement("img");
   img.className = "image-viewer-img";
   img.alt = name;
-  stage.append(img);
+
+  // Read-only position indicators (overlay-scrollbar style): vertical along
+  // the stage's right edge for Y-overflow, horizontal along the bottom for
+  // X-overflow. `aria-hidden` — purely visual; position information belongs
+  // in an AT-facing channel, not a decorative bar (none exists yet, tracked
+  // separately, out of this change's scope). `hidden` by default so no
+  // zero-length bar is ever in the DOM before the first `refreshPanIndicators`.
+  const vTrack = document.createElement("div");
+  vTrack.className = "image-viewer-pan-indicator image-viewer-pan-indicator-v";
+  vTrack.setAttribute("aria-hidden", "true");
+  vTrack.hidden = true;
+  const vBar = document.createElement("div");
+  vBar.className = "image-viewer-pan-indicator-bar";
+  vTrack.append(vBar);
+
+  const hTrack = document.createElement("div");
+  hTrack.className = "image-viewer-pan-indicator image-viewer-pan-indicator-h";
+  hTrack.setAttribute("aria-hidden", "true");
+  hTrack.hidden = true;
+  const hBar = document.createElement("div");
+  hBar.className = "image-viewer-pan-indicator-bar";
+  hTrack.append(hBar);
+
+  stage.append(img, vTrack, hTrack);
 
   const shell = openViewerShell({ absPath, paneClass: "image-viewer", content: stage });
 
+  // Flash both tracks to full opacity and (re)start the fade-out timer —
+  // called from `refreshPanIndicators` any time either axis has something to
+  // show. A single timer (not one per axis) keeps "when do they fade" one
+  // rule instead of two independently-drifting ones.
+  let fadeTimer = 0;
+  const markIndicatorsActive = (): void => {
+    vTrack.classList.add("is-active");
+    hTrack.classList.add("is-active");
+    window.clearTimeout(fadeTimer);
+    fadeTimer = window.setTimeout(() => {
+      vTrack.classList.remove("is-active");
+      hTrack.classList.remove("is-active");
+    }, INDICATOR_FADE_DELAY_MS);
+  };
+
+  // THE single recompute point for both indicators — every caller below
+  // (transform changes, zoom, image load, stage resize) calls exactly this,
+  // never writes track/bar geometry itself. That's what guarantees the
+  // indicator can't go stale after some ONE gesture nobody remembered to
+  // wire up (see attachPanZoom's `onTransform` doc for the same reasoning
+  // applied to the transform-write side of this).
+  const refreshPanIndicators = (): void => {
+    const stageRect = stage.getBoundingClientRect();
+    const imgRect = img.getBoundingClientRect();
+    const v = panIndicatorFor(
+      { start: imgRect.top, end: imgRect.bottom },
+      { start: stageRect.top, end: stageRect.bottom },
+    );
+    const h = panIndicatorFor(
+      { start: imgRect.left, end: imgRect.right },
+      { start: stageRect.left, end: stageRect.right },
+    );
+    writeIndicatorGeometry(vTrack, vBar, "height", "top", v);
+    writeIndicatorGeometry(hTrack, hBar, "width", "left", h);
+    if (v || h) markIndicatorsActive();
+  };
+  shell.onTeardown(() => window.clearTimeout(fadeTimer));
+
+  // Trigger 1/4: natural size only becomes known once the image has loaded —
+  // before that every rect is 0×0 and panIndicatorFor correctly reports null.
   img.onload = () => {
     shell.caption.textContent = loadedCaption(name, img);
+    refreshPanIndicators();
   };
   img.onerror = () => {
     // The viewer stays open on a load failure — closing is the user's call,
@@ -119,11 +235,37 @@ export function openImageViewer(absPath: string): ImageViewerHandle {
   // switch off — no drag, and after 2026-07-31 no keyboard or wheel scrolling
   // either. A viewer's only way to reach the rest of a zoomed image is not a
   // Mermaid preference.
-  const pz = attachPanZoom(stage, img, { force: true });
+  //
+  // Trigger 2/4: `onTransform` fires after every write attachPanZoom's
+  // `commit()` makes — drag (live + flush), wheel-zoom, dblclick, reset, AND
+  // `panBy` (keyboard/wheel-pan) — all funneled through that one path inside
+  // attachPanZoom, so this single subscription covers every way the image
+  // can move, including drag, without image-viewer.ts needing to know how
+  // many gestures attachPanZoom implements.
+  const pz = attachPanZoom(stage, img, { force: true, onTransform: refreshPanIndicators });
   shell.onTeardown(() => pz.destroy());
 
-  const unsubscribeZoom = shell.zoom.bind((factor) => applyImageZoom(img, factor));
+  // Trigger 3/4: zooming changes the image's LAYOUT width (applyImageZoom),
+  // which changes both ratios even with translate unchanged.
+  const unsubscribeZoom = shell.zoom.bind((factor) => {
+    applyImageZoom(img, factor);
+    refreshPanIndicators();
+  });
   shell.onTeardown(unsubscribeZoom);
+
+  // Trigger 4/4: the STAGE resizing (window resize, sidebar width change)
+  // changes the host side of every ratio even when nothing about the image
+  // itself changed. jsdom has no `ResizeObserver` (same feature-check
+  // fallback shape as hwp-viewer.ts's `observePages`/IntersectionObserver) —
+  // there is no eager substitute here since a resize is instantaneous, real
+  // (non-jsdom) DOM information; tests instead call `refreshPanIndicators`'s
+  // effects indirectly through the other three triggers.
+  let stageResizeObserver: ResizeObserver | undefined;
+  if (typeof ResizeObserver === "function") {
+    stageResizeObserver = new ResizeObserver(() => refreshPanIndicators());
+    stageResizeObserver.observe(stage);
+  }
+  shell.onTeardown(() => stageResizeObserver?.disconnect());
 
   // attachPanZoom's own onMouseDown calls e.preventDefault(), so a stage
   // click never focuses it natively — grab focus ourselves on pointerdown

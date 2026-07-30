@@ -326,19 +326,26 @@ interface PanZoomState {
 }
 
 /** What `attachPanZoom` hands back: teardown plus a keyboard/wheel-panning
- *  primitive. `panBy` moves the content by (dx, dy) from its CURRENT
- *  position, clamped (via `clampPanDelta`) so the content's edges never pull
- *  inward past the host's edges — pass ±Infinity on an axis to mean "go all
- *  the way" (Home/End). Returns the delta actually APPLIED (post-clamp), so a
- *  wheel handler can tell "did this scroll do anything?" and only then
- *  swallow the event — when the returned delta is {0, 0} the content had no
- *  room to move and the caller should let the event bubble (e.g. so the page
- *  can scroll instead). Command with an observation, not a pure query (it
- *  mutates the transform), but reports what it did rather than forcing every
- *  caller to re-derive it via a second rect read. */
+ *  primitive. `panBy` moves the content by (dx, dy) from its CURRENT TARGET
+ *  position — not its currently PAINTED position (see `renderedTranslate`
+ *  and the comment on `panBy`'s own implementation below for why that
+ *  distinction is the whole point: it's what makes animating the move safe).
+ *  Clamped (via `clampPanDelta`) so the content's edges never pull inward
+ *  past the host's edges — pass ±Infinity on an axis to mean "go all the
+ *  way" (Home/End). `opts.animate` (default false) toggles the CSS
+ *  transition on the write; callers pick per input kind (image-viewer.ts:
+ *  wheel/arrows unanimated for instant feedback, PageUp/PageDown/Home/End
+ *  animated so a big jump reads as "went somewhere" instead of "teleported").
+ *  Returns the delta actually APPLIED (post-clamp), so a wheel handler can
+ *  tell "did this scroll do anything?" and only then swallow the event —
+ *  when the returned delta is {0, 0} the content had no room to move and the
+ *  caller should let the event bubble (e.g. so the page can scroll instead).
+ *  Command with an observation, not a pure query (it mutates the transform),
+ *  but reports what it did rather than forcing every caller to re-derive it
+ *  via a second rect read. */
 export interface PanZoomHandle {
   destroy(): void;
-  panBy(dx: number, dy: number): { dx: number; dy: number };
+  panBy(dx: number, dy: number, opts?: { animate?: boolean }): { dx: number; dy: number };
 }
 
 /** The zoom-bound rule in one place: never shrink below natural size (1×) and
@@ -399,6 +406,48 @@ export function clampPanDelta(
   return clamped === 0 ? 0 : clamped; // never leak -0 (Math.min/max can yield it at a zero-slack edge)
 }
 
+/** A 2D `matrix(a, b, c, d, e, f)` has 6 numbers; tx/ty are the last two (e, f). */
+const MATRIX_2D_LENGTH = 6;
+/** A `matrix3d(...)` is a column-major 4×4 (16 numbers); tx/ty are the 13th/14th
+ *  (index 12/13). */
+const MATRIX_3D_LENGTH = 16;
+
+/** The translate that is currently PAINTED on screen, read off
+ *  `getComputedStyle(el).transform`. While a CSS transition is animating,
+ *  the browser reports the INTERPOLATED matrix mid-flight — this is
+ *  deliberately NOT the same number as `state`'s target. `panBy` uses this to
+ *  recover the content's untransformed base box (`rect − renderedTranslate`)
+ *  so it can re-derive where the content is actually HEADED regardless of
+ *  how far an in-flight transition has gotten (see `panBy`'s own comment).
+ *  Parses `matrix(a,b,c,d,e,f)` (tx=e, ty=f) and `matrix3d(...)` (16 values,
+ *  column-major — tx/ty are index 12/13). Anything else — `"none"`, an
+ *  unresolved literal like jsdom's `getComputedStyle` returns instead of a
+ *  real matrix, garbage — can't be parsed, so this falls back to `fallback`.
+ *  Pass the current `state` translate as `fallback`: that's exactly correct
+ *  when there's no in-flight transition to correct for (rendered === target
+ *  already). Pure query. */
+export function renderedTranslate(
+  computedTransform: string,
+  fallback: { x: number; y: number },
+): { x: number; y: number } {
+  const trimmed = computedTransform.trim();
+  const matrix2d = /^matrix\(([^)]+)\)$/.exec(trimmed);
+  if (matrix2d) {
+    const parts = matrix2d[1].split(",").map((s) => Number.parseFloat(s));
+    if (parts.length === MATRIX_2D_LENGTH && parts.every(Number.isFinite)) {
+      return { x: parts[4], y: parts[5] };
+    }
+  }
+  const matrix3d = /^matrix3d\(([^)]+)\)$/.exec(trimmed);
+  if (matrix3d) {
+    const parts = matrix3d[1].split(",").map((s) => Number.parseFloat(s));
+    if (parts.length === MATRIX_3D_LENGTH && parts.every(Number.isFinite)) {
+      return { x: parts[12], y: parts[13] };
+    }
+  }
+  return fallback;
+}
+
 /** Command: write the current pan/zoom state onto the svg as a CSS transform,
  *  and reflect "is this diagram transformed?" onto the host so the reset button
  *  can show/hide via CSS. The single write path for transform, so the
@@ -435,14 +484,24 @@ function updateTransform(
  *  the entire point of opening fullscreen. Every existing caller omits
  *  `opts`, so `force` defaults to falsy and behavior is unchanged for them.
  *
- *  Returns a `PanZoomHandle`: `destroy()` plus `panBy(dx, dy)` for keyboard
- *  panning callers (the image viewer's arrow/Page/Home/End bindings). Both
- *  branches below (off/stub and on/real) return the same shape so callers
- *  never need to branch on whether pan/zoom is active. */
+ *  `opts.onTransform` fires after EVERY write to the transform, from EVERY
+ *  path that can change it — drag (both the rAF-coalesced live write and the
+ *  mouseup flush), wheel-zoom, dblclick, the reset button, and `panBy`. All
+ *  of them are funneled through one local `commit()` so a caller (the image
+ *  viewer's position indicator) can observe "the content moved" without
+ *  having to know or re-derive which of those six gestures did it — and so
+ *  that adding a SEVENTH way to move the content later can't silently forget
+ *  to notify. Every existing caller omits `opts.onTransform`, so it's a
+ *  no-op for them (mermaid widget, lightbox) — zero behavior change.
+ *
+ *  Returns a `PanZoomHandle`: `destroy()` plus `panBy(dx, dy, opts?)` for
+ *  keyboard panning callers (the image viewer's arrow/Page/Home/End
+ *  bindings). Both branches below (off/stub and on/real) return the same
+ *  shape so callers never need to branch on whether pan/zoom is active. */
 export function attachPanZoom(
   host: HTMLElement,
   svg: SVGElement | HTMLImageElement,
-  opts?: { force?: boolean },
+  opts?: { force?: boolean; onTransform?: () => void },
 ): PanZoomHandle {
   if (panZoomSetting.get() === "off" && !opts?.force)
     return { destroy() {}, panBy: () => ({ dx: 0, dy: 0 }) };
@@ -453,6 +512,16 @@ export function attachPanZoom(
   let startX = 0;
   let startY = 0;
   let rafId = 0;
+
+  // THE single write path (design invariant, see the `opts.onTransform` doc
+  // above): every place in this function that changes the transform calls
+  // `commit`, never `updateTransform` directly. That's what guarantees
+  // `onTransform` fires for every gesture, not just the ones someone
+  // remembered to wire up.
+  const commit = (withTransition = false): void => {
+    updateTransform(host, svg, state, withTransition);
+    opts?.onTransform?.();
+  };
 
   // Pan emits a mousemove stream faster than the 16.7ms frame, so writing the
   // transform on every event repaints the (often large) svg multiple times per
@@ -466,7 +535,7 @@ export function attachPanZoom(
     if (rafId) return; // a frame is already pending → don't double-book
     rafId = requestAnimationFrame(() => {
       rafId = 0;
-      updateTransform(host, svg, state); // one write per frame, latest state
+      commit(); // one write per frame, latest state
     });
   };
   const cancelScheduledTransform = (): void => {
@@ -501,7 +570,7 @@ export function attachPanZoom(
     // synchronously so the diagram lands exactly where the cursor released, even
     // if mouseup beat the last scheduled frame.
     cancelScheduledTransform();
-    updateTransform(host, svg, state);
+    commit();
     window.removeEventListener("mousemove", onMouseMove);
     window.removeEventListener("mouseup", onMouseUp);
   };
@@ -521,7 +590,7 @@ export function attachPanZoom(
     if (newScale === state.scale) return;
     const rect = host.getBoundingClientRect();
     zoomAtCursor(state, e.clientX - rect.left, e.clientY - rect.top, newScale);
-    updateTransform(host, svg, state);
+    commit();
   };
   const onDblClick = (e: MouseEvent) => {
     e.preventDefault();
@@ -533,7 +602,7 @@ export function attachPanZoom(
       state.translateX = 0;
       state.translateY = 0;
     }
-    updateTransform(host, svg, state, true);
+    commit(true);
   };
   // Swallow the button's own mousedown so it can't start a host pan drag, and on
   // click snap back to natural size (animated). updateTransform clears the host's
@@ -545,7 +614,7 @@ export function attachPanZoom(
     state.scale = 1;
     state.translateX = 0;
     state.translateY = 0;
-    updateTransform(host, svg, state, true);
+    commit(true);
   };
 
   host.addEventListener("mousedown", onMouseDown);
@@ -568,39 +637,68 @@ export function attachPanZoom(
     // Rect-based (not raw arithmetic): reads the ACTUAL boxes so transform-
     // origin/scale/flex-centering are already baked in, matching how
     // `onWheel`'s cursor-zoom reads `host.getBoundingClientRect()` above.
-    // No transition (withTransition=false) and no rAF coalescing here — both
-    // would desync the clamp from reality. The clamp reads `getBoundingClientRect()`
-    // as "where is the content RIGHT NOW", then writes a new transform on top
-    // of that reading. If a transition is still animating toward a PRIOR
-    // panBy's target, the painted rect lags behind `state`, so the clamp sees
-    // slack that's already spoken for — every call in a fast burst (key
-    // repeat, trackpad inertia) then thinks it still has room and keeps
-    // adding to `state`, which sails past the real boundary (content flies
-    // off-screen) while the transition itself restarts on every event
-    // (visible jitter). Writing untransitioned means the rect the NEXT call
-    // reads back is the exact position this call just committed — the
-    // "current position" premise the clamp math depends on. Coalescing via
-    // rAF (like drag's `scheduleTransform`) would reintroduce the same lag:
-    // drag is safe to coalesce because it recomputes state from the cursor's
-    // ABSOLUTE position, but panBy is a RELATIVE delta, so any gap between
-    // reading the rect and writing the transform re-opens this bug. Reading
-    // one <img>'s layout per event is cheap — don't "optimize" this.
-    panBy(dx, dy) {
+    //
+    // v0.9.18 incident (fixed, then re-derived here — history kept because the
+    // fix shape changed): panBy used to clamp against `getBoundingClientRect()`
+    // directly, i.e. "wherever the content is currently PAINTED". That's wrong
+    // whenever a transition is still animating toward a prior panBy's target —
+    // the painted rect lags `state`, so the clamp sees slack that's already
+    // spoken for, and a fast burst (key repeat, trackpad inertia) keeps adding
+    // to `state` past the real boundary (content flies off-screen) while the
+    // restarted transition also visibly jitters. The v0.9.18 patch banned
+    // animation on panBy entirely to route around this — a source-level
+    // premise ("never animate here") standing in for a fix.
+    //
+    // v0.9.19: the clamp is now computed against the content's TARGET box, not
+    // its painted box, so animating panBy is safe regardless of how much of an
+    // in-flight transition has completed — the "never animate" premise above
+    // is gone; `opts.animate` is a free choice for callers.
+    //   base   = renderedRect − renderedTranslate   (the untransformed box —
+    //            invariant no matter how far a transition has gotten, since a
+    //            transition only ever animates translate, not size)
+    //   target = base + state.translate             (where the content is
+    //            actually HEADED — `state` is the authoritative accumulator,
+    //            updated synchronously by every panBy call regardless of
+    //            whether the paint has caught up)
+    // Clamping `target` against `hostRect` makes the clamp correct on the
+    // first call after a burst, not just once painting has settled.
+    //
+    // Still no rAF coalescing — but for a DIFFERENT reason than v0.9.18's now-
+    // obsolete one (that reason no longer applies: target-based clamping does
+    // NOT desync under a deferred write, since `state` — not the paint — is
+    // what the clamp reads). The real reason: panBy fires at most once per
+    // discrete input event (one keydown, one wheel tick), not a continuous
+    // pixel-by-pixel stream like `onMouseMove` — there is no "N writes per
+    // frame" problem here to coalesce away, so the added indirection would buy
+    // nothing. Revisit only if a real input source starts calling panBy at
+    // sub-frame frequency.
+    panBy(dx, dy, opts) {
+      const animate = opts?.animate ?? false;
       const hostRect = host.getBoundingClientRect();
       const contentRect = svg.getBoundingClientRect();
+      const rendered = renderedTranslate(getComputedStyle(svg).transform, {
+        x: state.translateX,
+        y: state.translateY,
+      });
+      const baseLeft = contentRect.left - rendered.x;
+      const baseTop = contentRect.top - rendered.y;
+      const width = contentRect.right - contentRect.left;
+      const height = contentRect.bottom - contentRect.top;
+      const targetLeft = baseLeft + state.translateX;
+      const targetTop = baseTop + state.translateY;
       const clampedDx = clampPanDelta(
         dx,
-        { start: contentRect.left, end: contentRect.right },
+        { start: targetLeft, end: targetLeft + width },
         { start: hostRect.left, end: hostRect.right },
       );
       const clampedDy = clampPanDelta(
         dy,
-        { start: contentRect.top, end: contentRect.bottom },
+        { start: targetTop, end: targetTop + height },
         { start: hostRect.top, end: hostRect.bottom },
       );
       state.translateX += clampedDx;
       state.translateY += clampedDy;
-      updateTransform(host, svg, state, false);
+      commit(animate);
       return { dx: clampedDx, dy: clampedDy };
     },
   };

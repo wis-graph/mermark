@@ -6,6 +6,7 @@ import {
   zoomAtCursor,
   attachPanZoom,
   clampPanDelta,
+  renderedTranslate,
   mermaidPaletteSource,
   mermaidThemeVariables,
   isPureWhite,
@@ -633,6 +634,130 @@ describe("attachPanZoom.panBy (keyboard/wheel panning primitive)", () => {
     const applied = pz.panBy(0, -Infinity);
     expect(applied).toEqual({ dx: 0, dy: -300 });
     expect(svg.style.transform).toContain("translate(0px, -300px)");
+    pz.destroy();
+  });
+
+  it("panBy(dx, dy, { animate: true }) still clamps and animates (defaults to false when opts omitted, as asserted above)", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeOversizedHostAndContent();
+    const pz = attachPanZoom(host, svg);
+    const applied = pz.panBy(-30, -20, { animate: true });
+    expect(applied).toEqual({ dx: -30, dy: -20 });
+    expect(svg.style.transform).toContain("translate(-30px, -20px)");
+    expect(svg.style.transition).toBe("transform 0.2s ease-out");
+    pz.destroy();
+  });
+});
+
+describe("renderedTranslate (the currently PAINTED translate, parsed off a computed transform)", () => {
+  it("parses matrix(a,b,c,d,e,f): tx=e, ty=f", () => {
+    expect(renderedTranslate("matrix(1, 0, 0, 1, 30, 50)", { x: -1, y: -1 })).toEqual({ x: 30, y: 50 });
+  });
+
+  it("parses matrix3d(...): tx/ty are the 13th/14th value (index 12/13, column-major)", () => {
+    const m = Array(16).fill(0);
+    m[0] = 1;
+    m[5] = 1;
+    m[10] = 1;
+    m[15] = 1;
+    m[12] = 42; // tx
+    m[13] = -7; // ty
+    expect(renderedTranslate(`matrix3d(${m.join(", ")})`, { x: -1, y: -1 })).toEqual({ x: 42, y: -7 });
+  });
+
+  it('falls back to the given fallback on "none" (no transform applied)', () => {
+    expect(renderedTranslate("none", { x: 5, y: 6 })).toEqual({ x: 5, y: 6 });
+  });
+
+  it("falls back on an empty string", () => {
+    expect(renderedTranslate("", { x: 5, y: 6 })).toEqual({ x: 5, y: 6 });
+  });
+
+  it("falls back on an unresolved literal — exactly what jsdom's getComputedStyle actually returns (it echoes the inline transform string verbatim instead of resolving a matrix)", () => {
+    expect(renderedTranslate("translate(30px, 50px) scale(1)", { x: 5, y: 6 })).toEqual({ x: 5, y: 6 });
+  });
+
+  it("falls back on garbage input, never throws", () => {
+    expect(renderedTranslate("not-a-transform-at-all", { x: 5, y: 6 })).toEqual({ x: 5, y: 6 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression: v0.9.18 real-app bug report — "held-down PageDown flies the
+// image off-screen" / "trackpad wheel jitters". Root cause (see panBy's own
+// comment in mermaid-widget.ts for the full account): the OLD clamp read
+// `getBoundingClientRect()` as "where is the content right now" and compared
+// the REQUESTED delta against that. While a CSS transition is still animating
+// toward a PRIOR panBy's target, the painted rect lags `state` — every call
+// in a fast burst (key repeat, trackpad inertia) then sees the SAME stale,
+// over-generous slack and keeps adding to `state`, which sails past the real
+// boundary. The v0.9.18 patch banned animation on `panBy` entirely to route
+// around this (a source-level premise standing in for a real fix).
+//
+// v0.9.19 fix: the clamp now targets the content's TARGET box, recovered via
+// `base = rect − renderedTranslate(getComputedStyle(...).transform, state)`
+// then `target = base + state`. Because `base` is invariant under ANY amount
+// of paint lag (a transition only ever animates translate, never resizes the
+// box) and `target` is derived from `state` — the same accumulator every
+// panBy call mutates synchronously, regardless of what has or hasn't
+// painted — the clamp is now correct even while animating. This test proves
+// exactly that: it drives `panBy` with `animate: true` under a WORST-CASE
+// stuck paint (the rect and computed style never move at all, simulating a
+// transition that never advances past frame zero) and asserts the clamp
+// still holds. Unlike the old `stubOversizedGeometry`-style frozen rect used
+// elsewhere in this file (which never exercises repeated calls meaningfully
+// since each call is independent), holding the rect frozen ACROSS 50 calls
+// here is deliberate — it is the specific condition that broke the old,
+// rect-based clamp (see the falsification note below).
+// ---------------------------------------------------------------------------
+describe("attachPanZoom.panBy — target-based clamp survives paint lag (v0.9.19 fix for the v0.9.18 burst-overshoot bug)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    panZoomSetting.set("on");
+  });
+
+  /** Freeze BOTH `getBoundingClientRect()` and `getComputedStyle(svg).transform`
+   *  at the content's untransformed resting position, no matter how many
+   *  `panBy` calls have already landed — as if the paint were permanently
+   *  stuck (the worst case of "lag"). The computed style reports a matrix
+   *  whose tx/ty are exactly {0, 0}, consistent with the frozen rect (a
+   *  rendered translate of {0,0} IS what that rect would look like) — so
+   *  `renderedTranslate` parses it successfully (not the jsdom-fallback
+   *  path) and the fix's `base = rect − rendered` math is genuinely
+   *  exercised, not accidentally bypassed.
+   *
+   *  FALSIFICATION NOTE (verified manually, see the frontend-engineer report):
+   *  reverting `panBy` to clamp directly against `contentRect` (the OLD,
+   *  v0.9.18-era code) makes this test fail — the frozen rect reports the
+   *  SAME "150px of slack" on every one of the 50 calls (it never reflects
+   *  any prior write), so the old clamp approves every -90 delta in full and
+   *  `state`/the final transform overshoots to -4500 instead of clamping at
+   *  -150. */
+  function stubStuckPaint(host: HTMLElement, svg: SVGElement): void {
+    (host as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 }) as DOMRect;
+    (svg as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
+      ({ left: -150, top: -150, right: 250, bottom: 250, width: 400, height: 400 }) as DOMRect;
+    const realGetComputedStyle = globalThis.getComputedStyle;
+    vi.stubGlobal("getComputedStyle", (el: Element, pseudoElt?: string | null) => {
+      if (el === svg) return { transform: "matrix(1, 0, 0, 1, 0, 0)" } as CSSStyleDeclaration;
+      return realGetComputedStyle(el, pseudoElt ?? undefined);
+    });
+  }
+
+  it("holding a PageDown-equivalent panBy(0, -90, { animate: true }) for 50 rapid repeats never overshoots the boundary, even though the paint is permanently stuck at frame zero", () => {
+    panZoomSetting.set("on");
+    const { host, svg } = fakeHostAndSvg();
+    stubStuckPaint(host, svg);
+    const pz = attachPanZoom(host, svg);
+
+    for (let i = 0; i < 50; i++) pz.panBy(0, -90, { animate: true });
+
+    // max backward slack on Y = content.bottom(250) − host.bottom(100) = 150.
+    // `svg.style.transform` always reflects `state` (the target) directly —
+    // updateTransform writes it synchronously regardless of the `animate`
+    // flag, which only toggles the `transition` CSS property.
+    expect(svg.style.transform).toContain("translate(0px, -150px)");
     pz.destroy();
   });
 });
