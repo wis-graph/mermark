@@ -568,6 +568,23 @@ export function attachPanZoom(
     // Rect-based (not raw arithmetic): reads the ACTUAL boxes so transform-
     // origin/scale/flex-centering are already baked in, matching how
     // `onWheel`'s cursor-zoom reads `host.getBoundingClientRect()` above.
+    // No transition (withTransition=false) and no rAF coalescing here — both
+    // would desync the clamp from reality. The clamp reads `getBoundingClientRect()`
+    // as "where is the content RIGHT NOW", then writes a new transform on top
+    // of that reading. If a transition is still animating toward a PRIOR
+    // panBy's target, the painted rect lags behind `state`, so the clamp sees
+    // slack that's already spoken for — every call in a fast burst (key
+    // repeat, trackpad inertia) then thinks it still has room and keeps
+    // adding to `state`, which sails past the real boundary (content flies
+    // off-screen) while the transition itself restarts on every event
+    // (visible jitter). Writing untransitioned means the rect the NEXT call
+    // reads back is the exact position this call just committed — the
+    // "current position" premise the clamp math depends on. Coalescing via
+    // rAF (like drag's `scheduleTransform`) would reintroduce the same lag:
+    // drag is safe to coalesce because it recomputes state from the cursor's
+    // ABSOLUTE position, but panBy is a RELATIVE delta, so any gap between
+    // reading the rect and writing the transform re-opens this bug. Reading
+    // one <img>'s layout per event is cheap — don't "optimize" this.
     panBy(dx, dy) {
       const hostRect = host.getBoundingClientRect();
       const contentRect = svg.getBoundingClientRect();
@@ -583,7 +600,7 @@ export function attachPanZoom(
       );
       state.translateX += clampedDx;
       state.translateY += clampedDy;
-      updateTransform(host, svg, state, true);
+      updateTransform(host, svg, state, false);
       return { dx: clampedDx, dy: clampedDy };
     },
   };

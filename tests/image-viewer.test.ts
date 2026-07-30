@@ -361,3 +361,93 @@ describe("openImageViewer: keyboard + wheel panning (no native scroll container 
     handle.close(); // idempotent safety net
   });
 });
+
+// ---------------------------------------------------------------------------
+// Regression: v0.9.18 real-app bug report — "held-down PageDown flies the
+// image off-screen" / "trackpad wheel jitters". Root cause: `panBy` clamped
+// against `getBoundingClientRect()` while ANIMATING the write
+// (withTransition=true). Mid-transition, the painted rect lags behind
+// `state`, so a fast burst of calls (key repeat, trackpad inertia) each
+// see stale, over-generous slack and keep pushing `state` past the real
+// boundary. Fix: `panBy` writes untransitioned (mermaid-widget.ts panBy,
+// updateTransform(..., false)) so the rect the NEXT call reads back is
+// exactly what the PREVIOUS call committed — no lag, no lag-driven overshoot.
+//
+// Two tests, deliberately split (mirrors tests/viewer-flex-item.test.ts's
+// rule+premise structure):
+//   (a) RULE — the clamp arithmetic holds under a rapid burst.
+//   (b) PREMISE — panBy writes untransitioned, which is *why* (a) holds in
+//       the real app. jsdom does not simulate CSS transitions, so (a) alone
+//       cannot catch a reintroduced withTransition=true — it would keep
+//       passing here while silently reproducing the exact bug in a real
+//       browser. (b) is what actually locks the mechanism.
+// ---------------------------------------------------------------------------
+describe("openImageViewer: panBy burst-clamp regression (v0.9.18 — PageDown-held / trackpad-inertia flies the image off-screen)", () => {
+  /** Parse the `translate(Xpx, Ypx)` this codebase's `updateTransform` writes
+   *  (mermaid-widget.ts). Returns {0,0} before any pan has happened. */
+  function currentTranslate(img: HTMLImageElement): { x: number; y: number } {
+    const m = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(img.style.transform);
+    return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: 0, y: 0 };
+  }
+
+  /** An HONEST fake geometry: unlike `stubOversizedGeometry` (a frozen rect),
+   *  this one recomputes the img's rect from its CURRENT `style.transform`
+   *  every time it's called — exactly what a real browser's
+   *  `getBoundingClientRect()` does once a write has actually painted. A
+   *  frozen stub can't reproduce this bug at all (the "remaining slack" it
+   *  reports never changes no matter how far `state` has already gone), so
+   *  the clamp regression can only be exercised against a rect that tracks
+   *  the transform. Host stays fixed at 0,0..100,100; the untransformed
+   *  image occupies -150,-150..250,250 (400×400, centered, 150px slack on
+   *  every edge) — same fixture shape as `stubOversizedGeometry` above. */
+  function stubHonestGeometry(stage: HTMLElement, img: HTMLImageElement): void {
+    Object.defineProperty(stage, "clientWidth", { value: 100, configurable: true });
+    Object.defineProperty(stage, "clientHeight", { value: 100, configurable: true });
+    (stage as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 }) as DOMRect;
+    (img as unknown as { getBoundingClientRect(): DOMRect }).getBoundingClientRect = () => {
+      const { x, y } = currentTranslate(img);
+      const left = -150 + x;
+      const top = -150 + y;
+      return { left, top, right: left + 400, bottom: top + 400, width: 400, height: 400 } as DOMRect;
+    };
+  }
+
+  it("(a) RULE: holding PageDown (50 rapid repeats) never pushes the content's edge past the host's edge", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubHonestGeometry(stage, img);
+
+    for (let i = 0; i < 50; i++) {
+      stage.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+    }
+
+    // max backward slack on Y = content.bottom(250) − host.bottom(100) = 150,
+    // so translateY must settle at exactly −150 and never overshoot past it,
+    // however many repeats land after the boundary is reached.
+    const { y } = currentTranslate(img);
+    expect(y).toBe(-150);
+
+    // Equivalent boundary statement in rect terms: the content's bottom edge
+    // must never end up ABOVE (numerically less than) the host's bottom edge
+    // — that would mean the image scrolled fully past the host and off-screen.
+    const finalRect = img.getBoundingClientRect();
+    expect(finalRect.bottom).toBeGreaterThanOrEqual((stage.getBoundingClientRect() as DOMRect).bottom);
+
+    handle.close();
+  });
+
+  it("(b) PREMISE: panBy writes the transform WITHOUT a CSS transition — jsdom can't simulate transitions, so this is the only test that would catch a reintroduced withTransition=true (test (a) would keep passing on the honest fake even though the real-app bug would be back)", () => {
+    const handle = openImageViewer("/pics/cat.png");
+    const stage = document.querySelector(".image-viewer-stage") as HTMLElement;
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    stubHonestGeometry(stage, img);
+
+    stage.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+
+    expect(img.style.transition).toBe("");
+
+    handle.close();
+  });
+});
