@@ -2,9 +2,53 @@ import { WidgetType } from "@codemirror/view";
 import { renderInlineMarkdown } from "./inline-render";
 import { looksNumeric } from "../text/numeric-cell";
 
-/** Split a GFM table row into trimmed cells (strip leading/trailing pipes). */
+/**
+ * Split a GFM table row on unescaped `|` only. `\|` is a literal pipe and
+ * does not separate cells (GFM spec: this holds even inside code spans — a
+ * table's code span must itself write `\|` to show a literal pipe, so no
+ * code-span carve-out is needed here). `\\|` is an escaped backslash
+ * followed by a real separator, so it still splits — hence the char-by-char
+ * scan tracking a run of backslashes rather than a single regex pass.
+ */
+function splitEscapedPipes(line: string): string[] {
+  const cells: string[] = [];
+  let cell = "";
+  let backslashes = 0;
+  for (const ch of line) {
+    if (ch === "|" && backslashes % 2 === 0) {
+      cells.push(cell);
+      cell = "";
+    } else {
+      cell += ch;
+    }
+    backslashes = ch === "\\" ? backslashes + 1 : 0;
+  }
+  cells.push(cell);
+  return cells;
+}
+
+/** Turn an escaped `\|` back into a literal `|` for the inline renderer. */
+function unescapePipes(cell: string): string {
+  return cell.replace(/\\\|/g, "|");
+}
+
+/**
+ * True if `line` ends with a separator pipe (not a literal `\|`) — i.e. the
+ * trailing pipe should be stripped as a row delimiter rather than kept as
+ * cell content.
+ */
+function endsWithSeparatorPipe(line: string): boolean {
+  let backslashes = 0;
+  for (let i = line.length - 2; i >= 0 && line[i] === "\\"; i--) backslashes++;
+  return line.endsWith("|") && backslashes % 2 === 0;
+}
+
+/** Split a GFM table row into trimmed cells (strip leading/trailing separator pipes). */
 function splitRow(line: string): string[] {
-  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (endsWithSeparatorPipe(s)) s = s.slice(0, -1);
+  return splitEscapedPipes(s).map((c) => unescapePipes(c.trim()));
 }
 
 /** Map an alignment spec cell (`:---`, `---:`, `:--:`, `---`) to a CSS text-align. */

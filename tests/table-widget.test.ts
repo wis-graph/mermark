@@ -83,3 +83,75 @@ describe("TableWidget — is-num auto-align vs. explicit markdown alignment (rep
     expect(ths[1].classList.contains("is-num")).toBe(false);
   });
 });
+
+// Bug fix (2026-08-05, team-lead report): splitRow used to split on every
+// `|`, so an escaped pipe (`\|`) inside a cell — including inside a code
+// span, where GFM requires `\|` to show a literal pipe — shattered one row
+// into many cells instead of keeping the escaped pipe as literal text.
+describe("TableWidget — escaped pipes (\\|) do not split cells", () => {
+  it("a code span with multiple escaped pipes inside a cell stays one cell, unescaped in the rendered text", () => {
+    const src =
+      "| **머리글 줄과 `\\|---\\|---\\|---\\|`** | 표로 안 그려지고 막대기 섞인 글자로 남습니다 |\n" +
+      "|---|---|\n" +
+      "| a | b |";
+    const dom = new TableWidget(src).toDOM();
+    const ths = dom.querySelectorAll("th");
+    expect(ths.length).toBe(2); // exactly 2 cells, not shattered into 6-7
+    expect(ths[0].querySelector("code")?.textContent).toBe("|---|---|---|");
+    expect(ths[1].textContent).toBe("표로 안 그려지고 막대기 섞인 글자로 남습니다");
+  });
+
+  it("an escaped pipe in the middle of plain cell text stays literal and does not split the cell", () => {
+    const src = "| A | B |\n|---|---|\n| left\\|right | plain |";
+    const dom = new TableWidget(src).toDOM();
+    const tds = dom.querySelectorAll("td");
+    expect(tds.length).toBe(2);
+    expect(tds[0].textContent).toBe("left|right");
+  });
+
+  it("a row ending in an escaped pipe keeps the trailing pipe as literal cell content, not a delimiter", () => {
+    const src = "| A | B |\n|---|---|\n| foo | bar\\| |";
+    const dom = new TableWidget(src).toDOM();
+    const tds = dom.querySelectorAll("td");
+    expect(tds.length).toBe(2);
+    expect(tds[1].textContent).toBe("bar|");
+  });
+
+  it("an escaped backslash before a separator pipe (\\\\|) still splits — only the backslash is escaped, the pipe is real", () => {
+    const src = "| A | B |\n|---|---|\n| foo\\\\ | bar |";
+    const dom = new TableWidget(src).toDOM();
+    const tds = dom.querySelectorAll("td");
+    expect(tds.length).toBe(2);
+    expect(tds[0].textContent).toBe("foo\\");
+    expect(tds[1].textContent).toBe("bar");
+  });
+
+  it("a plain table with no escapes renders exactly as before (regression)", () => {
+    const src = "| name | amount |\n|---|---|\n| a | 1,234 |";
+    const dom = new TableWidget(src).toDOM();
+    const ths = dom.querySelectorAll("th");
+    const tds = dom.querySelectorAll("td");
+    expect(ths.length).toBe(2);
+    expect(ths[0].textContent).toBe("name");
+    expect(ths[1].textContent).toBe("amount");
+    expect(tds[0].textContent).toBe("a");
+    expect(tds[1].textContent).toBe("1,234");
+  });
+
+  it("an empty cell between escaped-pipe content still counts as its own cell", () => {
+    const src = "| A | B | C |\n|---|---|---|\n| x |  | z |";
+    const dom = new TableWidget(src).toDOM();
+    const tds = dom.querySelectorAll("td");
+    expect(tds.length).toBe(3);
+    expect(tds[1].textContent).toBe("");
+  });
+
+  it("a row without leading/trailing pipes still splits correctly (GFM allows omitting outer pipes)", () => {
+    const src = "A | B\n---|---\nleft\\|lit | plain";
+    const dom = new TableWidget(src).toDOM();
+    const tds = dom.querySelectorAll("td");
+    expect(tds.length).toBe(2);
+    expect(tds[0].textContent).toBe("left|lit");
+    expect(tds[1].textContent).toBe("plain");
+  });
+});
