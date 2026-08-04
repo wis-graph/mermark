@@ -35,6 +35,16 @@ describe("wikilinkPath", () => {
   it("resolves bare [[#heading]] to the current file", () => {
     expect(wikilinkPath("#section", baseDir, "/home/u/notes/self.md")).toBe("/home/u/notes/self.md");
   });
+  // txt-as-md (_workspace/01_architect_design_txt.md §0): the default
+  // extension for an extensionless target stays `.md` — never `.txt` — or
+  // every existing vault's [[bare]] links break. An explicit `.txt` target
+  // keeps its own extension (same "explicit extension survives" rule as .md).
+  it("REGRESSION: a bare (no-extension) target still defaults to .md, not .txt", () => {
+    expect(wikilinkPath("note", baseDir)).toBe("/home/u/notes/note.md");
+  });
+  it("keeps an explicit .txt extension (does not get relabeled .md)", () => {
+    expect(wikilinkPath("note.txt", baseDir)).toBe("/home/u/notes/note.txt");
+  });
 });
 
 describe("sameFileHeadingAnchor", () => {
@@ -64,6 +74,9 @@ describe("isImageTarget", () => {
     expect(isImageTarget("photo.JPEG")).toBe(true);
     expect(isImageTarget("note")).toBe(false);
     expect(isImageTarget("doc.md")).toBe(false);
+  });
+  it("REGRESSION: .txt is never treated as an image target", () => {
+    expect(isImageTarget("x.txt")).toBe(false);
   });
 });
 
@@ -149,6 +162,50 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     expect(mockInvoke).toHaveBeenCalledWith("open_path", { path: "missing.md" });
     expect(dom.className).toContain("cm-wikilink-active");
     expect(dom.className).not.toContain("cm-wikilink-missing");
+  });
+
+  // txt-as-md (_workspace/01_architect_design_txt.md §4): [[note.txt]] opens
+  // via open_path (mermark's own window), same as [[note.md]] — NOT openAsset
+  // (the external-app path a pre-txt .txt target used to take).
+  it("[[note.txt]] existing target opens via open_path (mermark window), not openAsset", async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === "path_exists") return Promise.resolve(true);
+      return Promise.resolve();
+    });
+
+    const widget = new WikilinkWidget("alias", "existing.txt");
+    const dom = widget.toDOM({} as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(dom.className).toContain("cm-wikilink-active");
+
+    dom.click();
+    expect(mockInvoke).toHaveBeenCalledWith("open_path", { path: "existing.txt" });
+    expect(mockOpenAsset).not.toHaveBeenCalled();
+  });
+
+  it("[[note.txt]] missing target auto-creates via create_markdown_file then opens (same as .md)", async () => {
+    let exists = false;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === "path_exists") return Promise.resolve(exists);
+      if (cmd === "create_markdown_file") {
+        exists = true;
+        return Promise.resolve();
+      }
+      if (cmd === "open_path") return Promise.resolve();
+      return Promise.resolve();
+    });
+
+    const widget = new WikilinkWidget("alias", "missing.txt");
+    const dom = widget.toDOM({} as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(dom.className).toContain("cm-wikilink-missing");
+
+    dom.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockInvoke).toHaveBeenCalledWith("create_markdown_file", { path: "missing.txt" });
+    expect(mockInvoke).toHaveBeenCalledWith("open_path", { path: "missing.txt" });
+    expect(dom.className).toContain("cm-wikilink-active");
   });
 
   it("shows error and does not auto-create if missing asset is clicked", async () => {

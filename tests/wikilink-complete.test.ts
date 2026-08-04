@@ -89,6 +89,15 @@ describe("completionInsertText (pure)", () => {
     expect(out.startsWith("!")).toBe(false);
     expect(out.endsWith("]]")).toBe(false);
   });
+  // txt-as-md (_workspace/01_architect_design_txt.md §B1): a txt target's
+  // `name` is the FULL filename ("plain.txt"), unlike a real markdown
+  // target's stemmed name — so this inserts "plain.txt" even though
+  // kind === "markdown". Inserting the stem ("plain") would have
+  // wikilinkPath default it back to "plain.md", a different file.
+  it("REGRESSION: a txt target (kind='markdown', name has the extension) inserts the full filename", () => {
+    const txtTarget: LinkTarget = { name: "plain.txt", rel: "plain.txt", kind: "markdown" };
+    expect(completionInsertText(txtTarget)).toBe("plain.txt");
+  });
 });
 
 describe("hasClosingBrackets (pure)", () => {

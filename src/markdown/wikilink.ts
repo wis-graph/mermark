@@ -4,9 +4,14 @@ import { openPath as openAsset } from "@tauri-apps/plugin-opener";
 import { findHeadingByText } from "./outline";
 import { jumpTo } from "./footnote-nav";
 import { openExternal } from "./open-external";
+import { isEditableTextFile } from "../sidebar/explorer/file-icons";
 
-function isMarkdownPath(path: string): boolean {
-  return path.toLowerCase().endsWith(".md");
+/** Whether a wikilink target opens in mermark's own editor window (`open_path`)
+ *  rather than being handed to the external app (`openAsset`). Delegates to
+ *  the explorer/search SSOT (`isEditableTextFile`) so `.txt` targets open the
+ *  same way `.md` targets do — one gate, not a third copy of ".md-only". */
+function isEditorOpenablePath(path: string): boolean {
+  return isEditableTextFile(path.split("/").pop() ?? path);
 }
 
 /**
@@ -131,7 +136,7 @@ export class WikilinkWidget extends WidgetType {
       return a;
     }
 
-    const isMd = isMarkdownPath(this.path);
+    const isMd = isEditorOpenablePath(this.path);
     let fileExists: boolean | null = null;
 
     a.addEventListener("click", (e) => {

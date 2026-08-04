@@ -1,5 +1,5 @@
 import { icon } from "../../icons";
-import { extensionOf, iconNameForEntry } from "./file-icons";
+import { iconNameForEntry, isEditableTextFile } from "./file-icons";
 import { basename, normalizePath } from "../../document/path";
 import { renderSidebarButton } from "../toggle";
 
@@ -190,15 +190,6 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => 
   return e;
 };
 
-/** A markdown file is the only kind the explorer opens — mermark is a markdown
- *  editor, so read_file'ing a binary would render a broken view. Named rule so
- *  the "only open .md" gate lives in one place, not an inline click `if`. Shares
- *  `extensionOf` so extension parsing converges (still .md-only: `.markdown`
- *  keeps its file-text glyph but stays inert — open policy is out of scope). */
-function isMarkdownEntry(name: string): boolean {
-  return extensionOf(name) === "md";
-}
-
 /** Swap a folder node's glyph to match its open state (`folder` ↔ `folder-open`).
  *  Command (void). Called from the SAME command that sets `aria-expanded`
  *  (expandFolder / collapseFolder) so the glyph and the state can't drift. The
@@ -234,15 +225,15 @@ export function createExplorerPanel({
   favoritesSlot,
   focusFavorites,
 }: ExplorerHandlers): ExplorerPanel {
-  /** "Does clicking/Entering this row open something?" — isMarkdownEntry's
-   *  reach extended by the gated viewer case: a non-md row is only openable
-   *  when BOTH canOpenWithViewer/onOpenWithViewer were injected AND the
-   *  injected query claims this filename (isFavorite/onToggleFavorite gating
-   *  shape), so callers that omit them keep every non-md row inert exactly
-   *  as before. Drives BOTH the `.is-nonmd` dim (makeEntry) and the
-   *  activation branch (activateItem) from one rule. Pure query. */
+  /** "Does clicking/Entering this row open something?" — isEditableTextFile's
+   *  reach extended by the gated viewer case: a non-editable row is only
+   *  openable when BOTH canOpenWithViewer/onOpenWithViewer were injected AND
+   *  the injected query claims this filename (isFavorite/onToggleFavorite
+   *  gating shape), so callers that omit them keep every non-editable row
+   *  inert exactly as before. Drives BOTH the `.is-nonmd` dim (makeEntry) and
+   *  the activation branch (activateItem) from one rule. Pure query. */
   const isOpenableEntry = (name: string): boolean =>
-    isMarkdownEntry(name) || (!!onOpenWithViewer && !!canOpenWithViewer?.(name));
+    isEditableTextFile(name) || (!!onOpenWithViewer && !!canOpenWithViewer?.(name));
   const button = create("button", "chrome-btn explorer-btn icon-only") as HTMLButtonElement;
   button.title = "파일 탐색기 (⌘B · 폴더 클릭 펼침 · 파일 클릭/Enter 열기 · ⌘클릭/⌘Enter 새 창 · .. 상위)";
 

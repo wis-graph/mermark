@@ -154,6 +154,31 @@ describe("createSearchPanel", () => {
     expect(onOpenFile).toHaveBeenCalledWith("/root/pic.png");
   });
 
+  // txt-as-md (_workspace/01_architect_design_txt.md): .txt is openable via
+  // the SSOT with no canOpenWithViewer injection needed; .log stays inert.
+  it(".txt row is openable (isEditableTextFile SSOT), no canOpenWithViewer needed", async () => {
+    const { panel, onOpenFile } = mount({ canOpenWithViewer: () => false }, () =>
+      Promise.resolve({
+        files: [
+          hit("a.md", "/root/a.md", "a.md"),
+          hit("plain.txt", "/root/plain.txt", "plain.txt"),
+          hit("notes.log", "/root/notes.log", "notes.log"),
+        ],
+        truncated: false,
+      }),
+    );
+    panel.revealSearch();
+    await flush();
+
+    const txtRow = rows(panel.aside).find((r) => r.dataset.path === "/root/plain.txt")!;
+    expect(txtRow.classList.contains("is-nonmd")).toBe(false);
+    txtRow.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onOpenFile).toHaveBeenCalledWith("/root/plain.txt");
+
+    const logRow = rows(panel.aside).find((r) => r.dataset.path === "/root/notes.log")!;
+    expect(logRow.classList.contains("is-nonmd")).toBe(true);
+  });
+
   it("Escape closes the panel", async () => {
     const { panel } = mount();
     panel.revealSearch();

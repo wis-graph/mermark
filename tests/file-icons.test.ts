@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { extensionOf, iconNameForEntry, IMAGE_EXTENSIONS } from "../src/sidebar/explorer/file-icons";
+import {
+  extensionOf,
+  iconNameForEntry,
+  IMAGE_EXTENSIONS,
+  EDITABLE_TEXT_EXTENSIONS,
+  isEditableTextFile,
+} from "../src/sidebar/explorer/file-icons";
 
 // ---------------------------------------------------------------------------
 // Pure extension parsing + icon map. No DOM, no backend — just the two named
@@ -101,5 +107,38 @@ describe("IMAGE_EXTENSIONS: the single image-extension SSOT (icon map + built-in
     for (const ext of IMAGE_EXTENSIONS) {
       expect(iconNameForEntry(`f.${ext}`, false, false)).toBe("file-image");
     }
+  });
+});
+
+// txt-as-md (_workspace/01_architect_design_txt.md): the SSOT explorer,
+// search, and wikilink all converge on — one predicate instead of three
+// independent ".md-only" copies.
+describe("isEditableTextFile / EDITABLE_TEXT_EXTENSIONS: the mermark-editor-openable SSOT", () => {
+  it("md and txt (any case) are editable", () => {
+    expect(isEditableTextFile("a.md")).toBe(true);
+    expect(isEditableTextFile("A.TXT")).toBe(true);
+    expect(isEditableTextFile("note.txt")).toBe(true);
+  });
+
+  it(".markdown/.mdx stay OUT of scope, plus other non-members", () => {
+    expect(isEditableTextFile("a.markdown")).toBe(false);
+    expect(isEditableTextFile("a.mdx")).toBe(false);
+    expect(isEditableTextFile("a.log")).toBe(false);
+    expect(isEditableTextFile("a.png")).toBe(false);
+  });
+
+  it("dotfile and extensionless names are not editable (extensionOf returns '')", () => {
+    expect(isEditableTextFile(".txt")).toBe(false);
+    expect(isEditableTextFile("txt")).toBe(false);
+  });
+
+  it("EDITABLE_TEXT_EXTENSIONS contains exactly md and txt", () => {
+    expect(EDITABLE_TEXT_EXTENSIONS.has("md")).toBe(true);
+    expect(EDITABLE_TEXT_EXTENSIONS.has("txt")).toBe(true);
+    expect(EDITABLE_TEXT_EXTENSIONS.has("markdown")).toBe(false);
+  });
+
+  it("iconNameForEntry maps .txt to file-text (same glyph as .md)", () => {
+    expect(iconNameForEntry("a.txt", false, false)).toBe("file-text");
   });
 });

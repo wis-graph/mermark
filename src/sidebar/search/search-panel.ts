@@ -1,5 +1,5 @@
 import { icon } from "../../icons";
-import { extensionOf, iconNameForEntry } from "../explorer/file-icons";
+import { iconNameForEntry, isEditableTextFile } from "../explorer/file-icons";
 import { renderSidebarButton } from "../toggle";
 import { rankHits, MAX_RESULTS, type FuzzyMatch } from "./fuzzy";
 
@@ -89,15 +89,6 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => 
   return e;
 };
 
-/** A markdown file is always openable — the same rule explorer-panel.ts's
- *  private `isMarkdownEntry` encodes, duplicated here (not exported from
- *  explorer-panel.ts, and this panel must stay import-independent of it —
- *  the two panels share the RULE, not a function reference) so a row without
- *  an injected `canOpenWithViewer` still opens `.md` files correctly. */
-function isMarkdownEntry(name: string): boolean {
-  return extensionOf(name) === "md";
-}
-
 /** True while an IME composition (e.g. Korean) is in progress — an Enter
  *  that CONFIRMS the composition must not also activate the selected row
  *  (mermark-frontend §7: name the domain rule, don't bury it in an inline
@@ -142,7 +133,9 @@ export function createSearchPanel({
   canOpenWithViewer,
   onOpen,
 }: SearchHandlers): SearchPanel {
-  const isOpenableEntry = (name: string): boolean => isMarkdownEntry(name) || !!canOpenWithViewer?.(name);
+  // isEditableTextFile is the SSOT (file-icons.ts) both this panel and
+  // explorer-panel.ts derive from — no duplicated ".md-only" rule to drift.
+  const isOpenableEntry = (name: string): boolean => isEditableTextFile(name) || !!canOpenWithViewer?.(name);
 
   const button = create("button", "chrome-btn search-btn icon-only") as HTMLButtonElement;
   button.title = "파일 찾기 (⌘⇧F · 퍼지 검색 · ↑↓ 이동 · Enter 열기 · ⌘Enter 새 창)";

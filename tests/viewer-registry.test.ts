@@ -31,6 +31,16 @@ describe("viewer registry (R11)", () => {
     expect(viewerFor("single-ext")).toBe(v);
   });
 
+  // txt-as-md (_workspace/01_architect_design_txt.md §1): no viewer claims
+  // "txt" — that absence is the CONTRACT that routes .txt into the editor
+  // path (explorer/search's isEditableTextFile gate) instead of a viewer.
+  // Registering a viewer for "txt" in the future would silently break that
+  // routing, so this guard is a deliberate never-registered assertion.
+  it("viewerFor('txt') is null — no viewer claims .txt (routes to the editor instead)", async () => {
+    const { viewerFor } = await import("../src/chrome/viewer/registry");
+    expect(viewerFor("txt")).toBeNull();
+  });
+
   it("two viewers claiming the same extension: first-registered wins (first-claim-wins)", async () => {
     const { registerViewer, viewerFor } = await import("../src/chrome/viewer/registry");
     const first = { id: "claim-first", extensions: ["shared"], open: handle };

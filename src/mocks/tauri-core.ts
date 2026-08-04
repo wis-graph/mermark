@@ -177,6 +177,12 @@ const TREE: Record<string, DirEntry[]> = {
     // .hidden-note.md sorts first within the file group, same reason.
     { name: ".hidden-note.md", path: "/mock/vault/.hidden-note.md", is_dir: false },
     { name: "index.md", path: "/mock/vault/index.md", is_dir: false },
+    // txt-as-md (_workspace/01_architect_design_txt.md): mermark opens .txt
+    // in the same editor/live-preview as .md, so it needs a row here to
+    // exercise that path in dev:browser — read_file/write_file/open_path
+    // are extension-agnostic already, this fixture just makes the file
+    // visible/openable/searchable.
+    { name: "plain.txt", path: "/mock/vault/plain.txt", is_dir: false },
     { name: "logo.svg", path: "/mock/vault/logo.svg", is_dir: false },
     { name: "data.json", path: "/mock/vault/data.json", is_dir: false },
     { name: "app.ts", path: "/mock/vault/app.ts", is_dir: false },
@@ -369,9 +375,16 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // name. Deterministic so the `[[` picker golden is stable; the values line
       // up with the SAMPLE body's `[[some-note]]` and `[[diagram.png]]`. The
       // browser mock can't read a real FS, so `dir` is accepted but ignored.
+      // plain.txt mirrors the real classify_link_target's txt branch
+      // (commands.rs): kind stays "markdown" (txt opens the same as md), but
+      // `name` is the FULL filename (not a stem) — inserting "plain" would
+      // resolve back to "plain.md" (wikilinkPath's default-extension rule),
+      // an entirely different file. See _workspace/01_architect_design_txt.md
+      // §B1.
       console.info("[mock] list_link_targets", a.dir);
       return [
         { name: "some-note", rel: "some-note.md", kind: "markdown" },
+        { name: "plain.txt", rel: "plain.txt", kind: "markdown" },
         { name: "diagram.png", rel: "diagram.png", kind: "image" },
       ] as T;
     }

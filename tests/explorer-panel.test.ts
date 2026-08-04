@@ -30,6 +30,20 @@ function fakeTree(): (path: string) => Promise<DirEntry[]> {
   return (path: string) => Promise.resolve(TREE[path] ?? []);
 }
 
+/** A tree with a .txt and a .markdown row alongside a.md, isolated from
+ *  fakeTree() above so the "6. Only .md opens" describe's baselines stay
+ *  untouched (its ordering/count assertions must not shift). */
+function fakeTreeWithTxt(): (path: string) => Promise<DirEntry[]> {
+  const TREE: Record<string, DirEntry[]> = {
+    "/root": [
+      file("a.md", "/root/a.md"),
+      file("plain.txt", "/root/plain.txt"),
+      file("legacy.markdown", "/root/legacy.markdown"),
+    ],
+  };
+  return (path: string) => Promise.resolve(TREE[path] ?? []);
+}
+
 let host: HTMLElement;
 
 beforeEach(() => {
@@ -517,6 +531,31 @@ describe("explorer: opens markdown only (6)", () => {
     expect(nameOf(focusedItem(panel.aside))).toBe("pic.png");
     press(panel.aside, "Enter");
     expect(onOpenFile).toHaveBeenCalledTimes(1); // Enter on non-md is inert too
+  });
+});
+
+// txt-as-md (_workspace/01_architect_design_txt.md): .txt opens exactly like
+// .md; .markdown stays out of scope (inert, unlike the "6" describe above
+// which only exercises pic.png).
+describe("explorer: .txt opens like .md; .markdown stays out of scope (txt-as-md)", () => {
+  it(".txt row is NOT .is-nonmd; click calls onOpenFile, never onOpenWithViewer", async () => {
+    const onOpenFile = vi.fn();
+    const panel = await openPanel({ listDir: vi.fn(fakeTreeWithTxt()), getBaseDir: () => "/root", onOpenFile });
+
+    const txt = items(panel.aside).find((e) => nameOf(e) === "plain.txt") as HTMLElement;
+    expect(txt.classList.contains("is-nonmd")).toBe(false);
+    clickItem(txt);
+    expect(onOpenFile).toHaveBeenCalledWith("/root/plain.txt");
+  });
+
+  it(".markdown row stays .is-nonmd and inert (out of scope)", async () => {
+    const onOpenFile = vi.fn();
+    const panel = await openPanel({ listDir: vi.fn(fakeTreeWithTxt()), getBaseDir: () => "/root", onOpenFile });
+
+    const md = items(panel.aside).find((e) => nameOf(e) === "legacy.markdown") as HTMLElement;
+    expect(md.classList.contains("is-nonmd")).toBe(true);
+    clickItem(md);
+    expect(onOpenFile).not.toHaveBeenCalled();
   });
 });
 

@@ -492,13 +492,41 @@ fn is_mermark_artifact(file_name: &str) -> bool {
     file_name.contains(".mermark-tmp.") || file_name.contains(".mermark-recovered")
 }
 
+/// Whether `ext` (without the dot) names a file the editor opens as a live-preview
+/// document — `.md` and `.txt` are treated identically once inside the editor, so
+/// both share this one gate. This is the Rust mirror of `file-icons.ts`'s
+/// `EDITABLE_TEXT_EXTENSIONS`/`isEditableTextFile`; the two sets must stay
+/// identical so the picker (here), the explorer/search dim-gate, and the wikilink
+/// open-vs-external-app branch all agree on what the editor can open.
+/// Case-insensitive to match that TS set's `extensionOf` lowercasing.
+fn is_editor_text_ext(ext: &str) -> bool {
+    matches!(ext.to_ascii_lowercase().as_str(), "md" | "txt")
+}
+
+/// Whether an editor-openable extension is inserted by *stem* (extension
+/// stripped) rather than by full file name. Only `.md` qualifies: `wikilinkPath`
+/// appends `.md` to an extension-less insertion, so a stem-only `note` still
+/// resolves back to `note.md`. Every other editor-openable extension (currently
+/// just `.txt`) must keep its extension in `name` — a stem-only `note` for
+/// `note.txt` would make `[[note]]` resolve to `note.md` instead, the wrong file.
+/// This is a *separate* concept from `is_editor_text_ext`: that gate asks "can the
+/// editor open this at all," this one asks "does its insertion label drop the
+/// extension." Keeping them as two named facts (instead of letting the `.md`
+/// branch re-test `"md"` inline) is what stops a future editable extension from
+/// silently bypassing the SSOT gate.
+fn uses_stem_as_link_name(ext: &str) -> bool {
+    ext.eq_ignore_ascii_case("md")
+}
+
 /// Classify a single directory entry into a `LinkTarget`, or `None` when it isn't
 /// a pickable target. The domain rule lives here as one named function instead of
-/// being scattered through `list_link_targets`: a `.md` file becomes a markdown
-/// target labeled by its stem; a file with an image extension becomes an image
-/// target labeled by its full name; everything else — directories, dotfiles,
-/// mermark artifacts, and non-target files — is excluded. `path` is expected to be
-/// directory-local (a single entry name); `rel` is set to that file name.
+/// being scattered through `list_link_targets`: an editor-openable file
+/// (`is_editor_text_ext`) becomes a markdown-kind target — labeled by stem or by
+/// full file name per `uses_stem_as_link_name` — and a file with an image
+/// extension becomes an image target labeled by its full name; everything else —
+/// directories, dotfiles, mermark artifacts, and non-target files — is excluded.
+/// `path` is expected to be directory-local (a single entry name); `rel` is set to
+/// that file name.
 fn classify_link_target(path: &Path) -> Option<LinkTarget> {
     if path.is_dir() {
         return None;
@@ -509,9 +537,13 @@ fn classify_link_target(path: &Path) -> Option<LinkTarget> {
         return None;
     }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    if ext.eq_ignore_ascii_case("md") {
-        let stem = path.file_stem()?.to_str()?.to_owned();
-        return Some(LinkTarget { name: stem, rel: file_name, kind: "markdown".into() });
+    if is_editor_text_ext(ext) {
+        let name = if uses_stem_as_link_name(ext) {
+            path.file_stem()?.to_str()?.to_owned()
+        } else {
+            file_name.clone()
+        };
+        return Some(LinkTarget { name, rel: file_name, kind: "markdown".into() });
     }
     if is_image_ext(ext) {
         return Some(LinkTarget { name: file_name.clone(), rel: file_name, kind: "image".into() });
@@ -1166,9 +1198,63 @@ mod tests {
         let dir = temp_dir("non_targets");
         fs::write(dir.join("data.json"), "x").unwrap();
         fs::write(dir.join("script.ts"), "x").unwrap();
-        fs::write(dir.join("readme.txt"), "x").unwrap();
+        fs::write(dir.join("notes.markdown"), "x").unwrap(); // out of scope (md/txt only)
+        fs::write(dir.join("out.log"), "x").unwrap();
         let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
-        assert!(got.is_empty(), "non-md/non-image files are excluded, got {:?}", got.iter().map(|t| &t.rel).collect::<Vec<_>>());
+        assert!(got.is_empty(), "non-md/non-txt/non-image files are excluded, got {:?}", got.iter().map(|t| &t.rel).collect::<Vec<_>>());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn txt_target_is_labeled_by_full_file_name() {
+        // `.txt` gets markdown `kind` (the editor treats it identically to `.md`),
+        // but `name` must be the full file name — not the stem — because
+        // `wikilinkPath` appends `.md` to a stem-only insertion, which would
+        // resolve `[[note]]` to the wrong file (`note.md` instead of `note.txt`).
+        let dir = temp_dir("txt_target");
+        fs::write(dir.join("note.txt"), "x").unwrap();
+        let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "note.txt", "txt name is the full file name, not the stem");
+        assert_eq!(got[0].rel, "note.txt");
+        assert_eq!(got[0].kind, "markdown", "txt is editor-openable, same kind as md");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn txt_classification_is_case_insensitive() {
+        let dir = temp_dir("txt_case");
+        fs::write(dir.join("Note.TXT"), "x").unwrap();
+        let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "Note.TXT");
+        assert_eq!(got[0].kind, "markdown");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn txt_sorts_alongside_markdown_ahead_of_images() {
+        // txt shares markdown's kind_rank (0), so it sorts before images and
+        // alphabetically alongside real .md notes.
+        let dir = temp_dir("txt_sort");
+        fs::write(dir.join("z.md"), "x").unwrap();
+        fs::write(dir.join("a.png"), "x").unwrap();
+        fs::write(dir.join("m.txt"), "x").unwrap();
+        let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
+        let order: Vec<&str> = got.iter().map(|t| t.rel.as_str()).collect();
+        assert_eq!(order, vec!["m.txt", "z.md", "a.png"], "txt sorts by name among notes, before images");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn non_editor_text_ext_excluded_from_link_targets() {
+        // Scope guard: only md/txt are editor-openable; .markdown and .log are not,
+        // even though they're also plain text files.
+        let dir = temp_dir("txt_scope");
+        fs::write(dir.join("a.markdown"), "x").unwrap();
+        fs::write(dir.join("b.log"), "x").unwrap();
+        let got = list_link_targets(dir.to_string_lossy().into_owned()).unwrap();
+        assert!(got.is_empty(), "only md/txt are editor-openable link targets, got {:?}", got.iter().map(|t| &t.rel).collect::<Vec<_>>());
         fs::remove_dir_all(&dir).ok();
     }
 

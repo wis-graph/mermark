@@ -43,6 +43,29 @@ export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
   "avif",
 ]);
 
+/** Extensions mermark opens in its own editor (same live-preview pipeline for
+ *  every member — no plain-text-mode branch). The SSOT for "can the explorer/
+ *  search/wikilink layer open this file with mermark itself" — txt was added
+ *  here (2026-08) to join md; `.markdown`/`.mdx` deliberately stay OUT (scoped
+ *  out of the txt-as-md decision, see _workspace/01_architect_design_txt.md
+ *  §0). Keyed by the lowercased extension `extensionOf` returns.
+ *  Mirrored in Rust by `commands.rs`'s `is_editor_text_ext` (the
+ *  `list_link_targets`/`classify_link_target` picker gate) — the language
+ *  boundary means this can't be a shared reference, so the two sets are
+ *  synced BY HAND. Adding an extension here without also updating
+ *  `is_editor_text_ext` splits the two gates. */
+export const EDITABLE_TEXT_EXTENSIONS: ReadonlySet<string> = new Set(["md", "txt"]);
+
+/** Whether `name` is a file mermark's own editor can open (see
+ *  EDITABLE_TEXT_EXTENSIONS above). Named rule so explorer-panel.ts's click
+ *  gate, search-panel.ts's openability gate, and wikilink.ts's
+ *  mermark-window-vs-external-app branch all converge on ONE predicate instead
+ *  of re-deriving ".md-only" three times (the drift `file-icons.ts`'s own
+ *  header comment warns against). Pure query. */
+export function isEditableTextFile(name: string): boolean {
+  return EDITABLE_TEXT_EXTENSIONS.has(extensionOf(name));
+}
+
 /** Extension → curated icon id. A tight set (one shared icon per file family)
  *  so the explorer reads at a glance; anything not listed falls back to the
  *  generic `file`. Keyed by the lowercased extension `extensionOf` returns.
@@ -51,6 +74,7 @@ export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
 const EXT_ICON: Readonly<Record<string, IconName>> = {
   md: "file-text",
   markdown: "file-text",
+  txt: "file-text",
   ...Object.fromEntries([...IMAGE_EXTENSIONS].map((ext) => [ext, "file-image" as const])),
   json: "braces",
   js: "file-code",
