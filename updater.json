@@ -1,11 +1,11 @@
 {
-  "version": "0.9.21",
-  "notes": "### Added\n\n- **`.txt` 파일도 에디터에서 열린다**: 탐색기와 파일 찾기(⌘⇧F)에서 `.txt` 파일이 `.md`와 똑같이 열린다. 열린 뒤에는 완전히 같은 편집기라서 마크다운 문법을 쓰면 그대로 미리보기가 된다. 위키링크도 `[[메모.txt]]` 형태로 걸 수 있고, 자동완성 목록에도 `.txt` 파일이 뜬다.\n  - 확장자를 안 쓴 `[[메모]]`는 지금까지처럼 `메모.md`를 가리킨다 — 기존 문서의 링크는 그대로다.\n  - 새 파일을 만들 때 붙는 확장자도 계속 `.md`다.\n  - 이번에 열리게 된 건 `.txt`뿐이다. `.markdown`·`.mdx` 등은 여전히 열리지 않는다.",
-  "pub_date": "2026-08-04T20:34:54Z",
+  "version": "0.9.22",
+  "notes": "### Fixed\n\n- **표 안에 파이프 기호를 쓰면 표가 깨지던 문제**: 셀 안에서 `\\|`로 이스케이프한 파이프를 칸 구분자로 잘못 읽어, 두 칸짜리 행이 예닐곱 칸으로 흩어졌다. 특히 코드 표기(`` ` ``) 안에 파이프를 넣은 행에서 눈에 띄었다. 이제 이스케이프하지 않은 파이프만 칸을 나누며, 이스케이프한 것은 글자 그대로 표시된다.",
+  "pub_date": "2026-08-04T23:55:20Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzcxSHcycTVMTSt0Z1pMVERMdUtvM1hId0NJd1FvTFozaEd3VGhiRW9ralBJTHRQVEZhYWNuWjMxdk1uU3N6RHRYVTdJQ0thSXlRa0JVcnhwUUMwQWdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1ODc1Njc3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClJYZC84cXNVWmozRHJTbU94ZmRZbG4vMitzbXAxakMrelhVdVVIY0ZhTXRTUWdyeDVSL3AvemFqdXVFWlNuYVlnYmJ3RVdtYzk3YTIyZTByTlBPYUJnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.21/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzd4T21qNFRmbVNwRVp2TDFzamNMVjZ1bzNpYXJJZXA1US9XbzlrN1pOZDVLc1gxcVlMU2FleXhGNkJ1RHBOWDAyajlqd0hTWG5hTWhWNHpsTWRnR2djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1ODg3NzAzCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkUxdC9waXZORGRlajAyOEpaSGI2TGk2TU1VMEh2a3NhZDRneTRKMWhyMkdpUUJMYVZPeCtxaTU2cTBRd0JXejlXSEV1U29yeHp5SnhPTUd0cExQZUJRPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.22/mermark.app.tar.gz"
     }
   }
 }
