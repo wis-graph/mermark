@@ -346,9 +346,10 @@ describe("full-editor render smoke", () => {
     e.view.destroy();
   });
 
-  it("renders a copy button on a code block widget and copies the raw code on click", () => {
-    const writeText = vi.fn(() => Promise.resolve());
-    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  it("renders a copy button on a code block widget and copies the raw code via the backend IPC path", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+    invokeMock.mockClear();
     const doc = "intro\n\n```ts\nconst a = 1;\n```\n\ntail";
     const e = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "edit" });
     e.view.dispatch({ selection: { anchor: 0 } });
@@ -358,7 +359,7 @@ describe("full-editor render smoke", () => {
     expect(btn?.getAttribute("aria-label")).toBe("코드 복사");
     // clicking the button copies the fence's raw code body, not the fence markers
     btn?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    expect(writeText).toHaveBeenCalledWith("const a = 1;");
+    expect(invokeMock).toHaveBeenCalledWith("copy_to_clipboard", { text: "const a = 1;" });
     // the click landed on the button, not on a caret placement inside the block
     expect(e.view.contentDOM.querySelector(".cm-codeblock")).not.toBeNull();
     e.view.destroy();
@@ -527,6 +528,66 @@ describe("full-editor render smoke", () => {
     expect(view.contentDOM.querySelector(".cm-blockquote")).not.toBeNull();
     expect(view.contentDOM.querySelector(".cm-callout-icon")).toBeNull();
     view.destroy();
+  });
+
+  // ── blockquote copy button ───────────────────────────────────────────────
+  it("renders exactly one quote-copy button on a plain blockquote", () => {
+    const doc = "intro\n\n> a\n> b";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelectorAll(".cm-quote-copy").length).toBe(1);
+    view.destroy();
+  });
+
+  it("a nested `>>` quote still gets exactly one button (no duplicate per nesting level)", () => {
+    const doc = "intro\n\n> a\n> > inner";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelectorAll(".cm-quote-copy").length).toBe(1);
+    view.destroy();
+  });
+
+  it("a callout also gets exactly one button", () => {
+    const doc = "intro\n\n> [!tip] Pro move\n> body";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelectorAll(".cm-quote-copy").length).toBe(1);
+    view.destroy();
+  });
+
+  it("the quote-copy button copies the doc-derived, one-layer-stripped text via the backend IPC path", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+    invokeMock.mockClear();
+    const doc = "intro\n\n> a\n> b";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const btn = view.contentDOM.querySelector(".cm-quote-copy");
+    btn?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(invokeMock).toHaveBeenCalledWith("copy_to_clipboard", { text: "a\nb" });
+    view.destroy();
+  });
+
+  it("the button stays present when the caret enters the quote (source revealed) — edit mode", () => {
+    const doc = "intro\n\n> a\n> b";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: doc.indexOf("> a") + 1 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("> a"); // source revealed on this line
+    expect(view.contentDOM.querySelectorAll(".cm-quote-copy").length).toBe(1);
+    view.destroy();
+  });
+
+  it("the button is present in read mode too", () => {
+    const doc = "intro\n\n> a\n> b";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    (ed.view as unknown as { measure(): void }).measure();
+    expect(ed.view.contentDOM.querySelectorAll(".cm-quote-copy").length).toBe(1);
+    ed.view.destroy();
   });
 
   it("task items keep the checkbox and get no bullet", () => {

@@ -118,6 +118,24 @@
   --sidebar-muted: #a8a29e;
   --sidebar-accent: #a8c8e8;
   --sidebar-border: rgba(255,255,255,.12);
+  /* BLOCK FILL RULE (사용자 리포트 2026-08-05: "인용구·코드블럭 배경이 문서
+     배경과 안 구분돼" — light/claude의 --bg vs --surface 차이가 ~4%뿐이라
+     사실상 안 보였다): quote/code/note-callout이 공유하는 단일 "면" 톤.
+     --fg를 --bg에 살짝 섞어 파생한다 — 다크는 fg(백)를 bg에 섞어 지금의
+     --surface 카드-리프트와 같은 방향(밝게)으로, light/claude는 fg(잉크)를
+     섞어 반대 방향(어둡게)으로 틀어진다 — 그래서 세 테마 모두 "카드"가 아니라
+     "면"으로 읽힌다. %는 테마마다 다르다(다크는 지금 대비가 이미 충분해
+     4%로 현재 시각을 보존, light/claude는 8%로 강화) — 그래도 색 자체는
+     하드코딩 없이 전부 --fg/--bg 토큰에서 파생되는 단일 규칙(SSOT)이다. */
+  --block-fill: color-mix(in srgb, var(--fg) 4%, var(--bg));
+  /* BLOCK EDGE RULE (team-lead 2026-08-05 후속: light에서 --block-fill과 전역
+     --border가 채널당 5 차이라 거의 같은 색이라, 인용구의 좌측 강조선이 새
+     배경에 묻혔다 — 코드블럭 테두리/인용구 좌측선/callout-quote 좌측선은
+     이제 전역 --border가 아니라 이 토큰을 쓴다(전역 --border는 그 외 UI
+     크롬용으로 그대로 둔다). --block-fill과 같은 파생(--fg를 --bg에 섞음),
+     비중은 fill의 2배 — fill 위에 얹혀도 실제로 보이되(다크는 지금 대비를
+     보존, light/claude는 fill이 가려버린 만큼만 되찾음) 튀지 않는 지점. */
+  --block-edge: color-mix(in srgb, var(--fg) 8%, var(--bg));
 }
 :root[data-theme="light"] {
   /* light = brand editorial default */
@@ -137,6 +155,13 @@
   --sidebar-muted: #a3a09a;
   --sidebar-accent: #a8c8e8;
   --sidebar-border: rgba(255,255,255,.14);
+  /* BLOCK FILL RULE (see :root's --block-fill comment) — light needs the
+     stronger 8% mix; --surface (4% lighter than --bg here) read as almost no
+     difference at all. */
+  --block-fill: color-mix(in srgb, var(--fg) 8%, var(--bg));
+  /* BLOCK EDGE RULE (see :root's --block-edge comment) — light needs 16% (2x
+     fill) since --border (#e7e5e4) sits only ~5/channel from fill (#e2e2e2). */
+  --block-edge: color-mix(in srgb, var(--fg) 16%, var(--bg));
 }
 /* claude = the Anthropic editorial palette: tinted-cream canvas + warm-ink text,
    coral reserved for action/link/code (coral is scarce). These 18 color values are
@@ -189,6 +214,12 @@
   --sidebar-muted: #a8a29e;
   --sidebar-accent: #e0906f;
   --sidebar-border: rgba(255,255,255,.12);
+  /* BLOCK FILL RULE (see :root's --block-fill comment) — claude also needs
+     the stronger 8% mix; same rationale as light. */
+  --block-fill: color-mix(in srgb, var(--fg) 8%, var(--bg));
+  /* BLOCK EDGE RULE (see :root's --block-edge comment) — claude also needs
+     the 16% (2x fill) mix; same rationale as light. */
+  --block-edge: color-mix(in srgb, var(--fg) 16%, var(--bg));
 }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); margin: 0; }
 
@@ -369,7 +400,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    use, but an unbroken run with no wrap opportunity at all, e.g. a giant
    base64 blob under overflow-wrap corner cases, still gets a scrollbar
    instead of blowing out the column). */
-.cm-codeblock { display: block; margin: 0; position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: .7em .9em; overflow-x: auto; font-size: var(--block-font-size); line-height: 1.5; }
+.cm-codeblock { display: block; margin: 0; position: relative; background: var(--block-fill); border: 1px solid var(--block-edge); border-radius: var(--radius-md); padding: .7em .9em; overflow-x: auto; font-size: var(--block-font-size); line-height: 1.5; }
 /* `pre-wrap` preserves whitespace/indentation (like `pre`) but wraps at normal
    break points; `overflow-wrap: anywhere` further breaks inside unbroken
    tokens (long URLs, hashes) so long lines wrap inside the block instead of
@@ -394,12 +425,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   text-indent: calc(-1 * var(--code-hang, 0ch));
 }
 .cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: 2.4em; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
-/* Copy-to-clipboard button: hidden until the code block is hovered (or the
-   button itself has focus/hover), fixed to the top-right corner regardless of
-   scroll since `.cm-codeblock` is the `position: relative` host. */
-.cm-codeblock-copy { position: absolute; top: .4em; right: .4em; width: 1.6em; height: 1.6em; display: inline-flex; align-items: center; justify-content: center; padding: 0; line-height: 1; background: color-mix(in srgb, var(--surface) 85%, transparent); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); cursor: pointer; opacity: 0; transition: opacity .12s ease, color .12s ease; }
-.cm-codeblock:hover .cm-codeblock-copy, .cm-codeblock-copy:focus-visible { opacity: .8; }
-.cm-codeblock-copy:hover { opacity: 1; color: var(--fg); }
+/* Copy-to-clipboard button base (shared by code-block + blockquote copy
+   buttons — markdown/copy-button.ts's single DOM factory): fixed to the
+   top-right corner of its `position: relative` host, hidden until that host
+   signals it should show. Each host wires its OWN show-trigger below (hover
+   for the code block; the `cm-copy-visible` class for the blockquote, since a
+   blockquote has no wrapper element for CSS `:hover` to key off). */
+.cm-copy-btn { position: absolute; top: .4em; right: .4em; width: 1.6em; height: 1.6em; display: inline-flex; align-items: center; justify-content: center; padding: 0; line-height: 1; background: color-mix(in srgb, var(--surface) 85%, transparent); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); cursor: pointer; opacity: 0; transition: opacity .12s ease, color .12s ease; }
+.cm-copy-btn:hover { opacity: 1; color: var(--fg); }
+.cm-codeblock:hover .cm-copy-btn, .cm-copy-btn:focus-visible { opacity: .8; }
 /* revealed (editing) fenced code keeps a code background, so it still reads as a
    code block while you edit it. */
 .cm-code-line { background: var(--surface-veil); font-family: var(--font-mono); letter-spacing: normal; }
@@ -447,10 +481,22 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-mermaid:hover .cm-mermaid-fullscreen:hover { opacity: 1; color: var(--fg); }
 .cm-math-block { display: block; padding: .5em 0; text-align: center; }
 .cm-math-inline { padding: 0 .15em; }
-/* blockquote: a left rule + soft tint, kept whether focused or not. */
-.cm-blockquote { border-left: 3px solid var(--border); background: color-mix(in srgb, var(--muted) 9%, transparent); padding-left: .75em; }
-.cm-callout { background: var(--surface-veil); border-left: 3px solid var(--accent); padding-left: .75em; }
-.cm-callout-head { font-weight: 700; }
+/* blockquote: a left rule + soft tint, kept whether focused or not. Shares
+   --block-fill with .cm-codeblock/.cm-callout-note/.cm-callout-quote — one
+   "면" family (BLOCK FILL RULE, :root's --block-fill comment) so quote and
+   code read as the same kind of surface instead of two unrelated tints. */
+/* position: relative on both: the quote-copy button (an absolutely
+   positioned child) anchors to whichever of these two the caller pushes it
+   into. */
+.cm-blockquote { position: relative; border-left: 3px solid var(--block-edge); background: var(--block-fill); padding-left: .75em; }
+.cm-callout { position: relative; background: var(--surface-veil); border-left: 3px solid var(--accent); padding-left: .75em; }
+.cm-callout-head { font-weight: 700; padding-right: 2.2em; } /* clears the copy button on the head line */
+/* Quote copy button: sized for a text line (not a full code-block chrome),
+   and shown via `cm-copy-visible` — toggled by blockquote.ts's hover
+   delegate — instead of a host `:hover`, since a blockquote's lines are
+   plain sibling `.cm-line`s with no wrapper for `:hover` to key off. */
+.cm-quote-copy { top: .15em; right: .3em; width: 1.4em; height: 1.4em; }
+.cm-quote-copy.cm-copy-visible, .cm-quote-copy:focus-visible { opacity: .8; }
 /* head widget: icon + title chip rendered in place of the `[!type] title` source.
    Colours come from currentColor (icon stroke=currentColor), so each type's head
    colour below drives the icon for free. No font-size/calc on cm-content/cm-line
@@ -464,7 +510,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Backgrounds/border accents are theme-invariant (low-alpha tints read on both
    canvases). Head text colour: base = dark-canvas-readable (light tints, since
    :root is the dark theme); [data-theme="light"] overrides with darker AA values. */
-.cm-callout-note { background: color-mix(in srgb, var(--muted) 9%, transparent); border-left-color: var(--muted); }
+.cm-callout-note { background: var(--block-fill); border-left-color: var(--muted); }
 .cm-callout-note.cm-callout-head { color: var(--fg); }
 .cm-callout-abstract { background: rgba(20,184,166,.12); border-left-color: #14b8a6; }
 .cm-callout-abstract.cm-callout-head { color: #5eead4; }
@@ -488,7 +534,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-callout-bug.cm-callout-head { color: #fda4af; }
 .cm-callout-example { background: rgba(99,102,241,.12); border-left-color: #6366f1; }
 .cm-callout-example.cm-callout-head { color: #a5b4fc; }
-.cm-callout-quote { background: color-mix(in srgb, var(--muted) 10%, transparent); border-left-color: var(--border); }
+.cm-callout-quote { background: var(--block-fill); border-left-color: var(--block-edge); }
 .cm-callout-quote.cm-callout-head { color: var(--muted); }
 :root[data-theme="light"] .cm-callout-abstract.cm-callout-head { color: #0d9488; }
 :root[data-theme="light"] .cm-callout-info.cm-callout-head { color: #2563eb; }

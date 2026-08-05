@@ -685,7 +685,7 @@ export const favoriteFoldersSetting = defineSetting<string[]>({
 // ── Body text zoom (fontScale, ⌘±) — SSOT-only, no panel ui ───────────────────
 
 const FONT_SCALE_MIN = 0.8;
-const FONT_SCALE_MAX = 2.0;
+const FONT_SCALE_MAX = 3.0;
 const FONT_SCALE_STEP = 0.1;
 const FONT_SCALE_DEFAULT = 1.0;
 

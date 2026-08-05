@@ -1,4 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// Stub the Tauri invoke boundary the same way clipboard.test.ts does:
+// copyTextToClipboard (src/clipboard.ts) is the theme-JSON copy button's only
+// clipboard path — no navigator.clipboard fallback.
+const invokeMock = vi.fn();
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (cmd: string, args?: Record<string, unknown>) => invokeMock(cmd, args),
+}));
+
 import { defineSetting } from "../src/settings/store";
 import { RENDER } from "../src/settings/panel/controls";
 import { serializeTheme, parseTheme, builtInTheme } from "../src/settings/theme-schema";
@@ -190,13 +199,16 @@ describe("json control (theme import/export)", () => {
     expect(ta.value).toBe(serializeTheme(builtInTheme("light")));
   });
 
-  it("export copy uses serializeTheme(get())", async () => {
-    const s = jsonSetting();
+  it("export copy writes serializeTheme(get()) via the backend IPC path, not navigator.clipboard", async () => {
+    invokeMock.mockReset().mockResolvedValue(undefined);
     const writeText = vi.fn(() => Promise.resolve());
     vi.stubGlobal("navigator", { clipboard: { writeText } } as unknown as Navigator);
+    const s = jsonSetting();
     const row = RENDER.json(s, { kind: "json" });
     (row.querySelector("[data-act=copy]") as HTMLButtonElement).click();
-    expect(writeText).toHaveBeenCalledWith(serializeTheme(s.get()));
+    await Promise.resolve();
+    expect(invokeMock).toHaveBeenCalledWith("copy_to_clipboard", { text: serializeTheme(s.get()) });
+    expect(writeText).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 });

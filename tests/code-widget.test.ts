@@ -1,16 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// Stub the Tauri invoke boundary the same way tests/clipboard.test.ts does —
+// the copy button (via copy-button.ts's copyTextToClipboard) writes through
+// copy_to_clipboard, never navigator.clipboard.
+const invokeMock = vi.fn();
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (cmd: string, args?: Record<string, unknown>) => invokeMock(cmd, args),
+}));
+
 import { CodeBlockWidget, codeHangCh } from "../src/markdown/code-widget";
 
-function stubClipboard(writeText: (s: string) => Promise<void>) {
-  Object.defineProperty(navigator, "clipboard", {
-    value: { writeText: vi.fn(writeText) },
-    configurable: true,
-  });
-  return (navigator.clipboard as { writeText: ReturnType<typeof vi.fn> }).writeText;
+function stubClipboard() {
+  const writeText = vi.fn(() => Promise.resolve());
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  return writeText;
 }
 
 describe("CodeBlockWidget copy button", () => {
   beforeEach(() => {
+    invokeMock.mockReset();
     vi.useFakeTimers();
   });
   afterEach(() => {
@@ -26,22 +34,24 @@ describe("CodeBlockWidget copy button", () => {
     expect(btn?.querySelector("svg.icon-copy")).not.toBeNull();
   });
 
-  it("copies the fenced source (not fence markers) verbatim on click", () => {
-    const writeText = stubClipboard(() => Promise.resolve());
+  it("copies the fenced source (not fence markers) verbatim via the backend IPC path, never navigator.clipboard", () => {
+    invokeMock.mockResolvedValue(undefined);
+    const writeText = stubClipboard();
     const widget = new CodeBlockWidget("const a = 1;\nconst b = 2;", "ts");
     const dom = widget.toDOM();
     const btn = dom.querySelector<HTMLButtonElement>(".cm-codeblock-copy")!;
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    expect(writeText).toHaveBeenCalledWith("const a = 1;\nconst b = 2;");
+    expect(invokeMock).toHaveBeenCalledWith("copy_to_clipboard", { text: "const a = 1;\nconst b = 2;" });
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it("swaps the icon to check on success, then reverts after the feedback window", async () => {
-    const writeText = stubClipboard(() => Promise.resolve());
+    invokeMock.mockResolvedValue(undefined);
     const dom = new CodeBlockWidget("x", "").toDOM();
     const btn = dom.querySelector<HTMLButtonElement>(".cm-codeblock-copy")!;
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(writeText).toHaveBeenCalled());
-    await Promise.resolve(); // let the resolved clipboard promise's .then run
+    await vi.waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    await Promise.resolve(); // let the resolved invoke promise's .then run
     expect(btn.querySelector("svg.icon-check")).not.toBeNull();
     vi.advanceTimersByTime(1500);
     expect(btn.querySelector("svg.icon-copy")).not.toBeNull();
@@ -49,7 +59,7 @@ describe("CodeBlockWidget copy button", () => {
   });
 
   it("shows a failure title (not silence) when the clipboard write is refused", async () => {
-    stubClipboard(() => Promise.reject(new Error("denied")));
+    invokeMock.mockRejectedValue(new Error("denied"));
     const dom = new CodeBlockWidget("x", "").toDOM();
     const btn = dom.querySelector<HTMLButtonElement>(".cm-codeblock-copy")!;
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -74,6 +84,7 @@ describe("CodeBlockWidget copy button", () => {
     const dom = widget.toDOM();
     const btn = dom.querySelector<HTMLButtonElement>(".cm-codeblock-copy")!;
     const code = dom.querySelector("code")!;
+    expect(btn.classList.contains("cm-copy-btn")).toBe(true);
     expect(widget.ignoreEvent({ target: btn } as unknown as Event)).toBe(true);
     expect(widget.ignoreEvent({ target: code } as unknown as Event)).toBe(false);
   });
@@ -139,11 +150,11 @@ describe("CodeBlockWidget per-row rendering (soft-wrap hanging indent)", () => {
   });
 
   it("copy button still copies the ORIGINAL multi-line source verbatim (row split is toDOM-only)", () => {
-    const writeText = stubClipboard(() => Promise.resolve());
+    invokeMock.mockResolvedValue(undefined);
     const widget = new CodeBlockWidget("a\n  b\nc", "ts");
     const dom = widget.toDOM();
     const btn = dom.querySelector<HTMLButtonElement>(".cm-codeblock-copy")!;
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    expect(writeText).toHaveBeenCalledWith("a\n  b\nc");
+    expect(invokeMock).toHaveBeenCalledWith("copy_to_clipboard", { text: "a\n  b\nc" });
   });
 });

@@ -10,6 +10,7 @@ import { allActions, effectiveBinding, findConflict, suppressDispatcher } from "
 import { eventToChord, displayChord } from "../../shortcuts/keys";
 import { listViewers, type Viewer } from "../../chrome/viewer/registry";
 import { isViewerEnabled, toggleViewerDisabled } from "../app";
+import { copyTextToClipboard } from "../../clipboard";
 
 // Subscription cleanup: a control that calls setting.subscribe must hand back its
 // unsubscribe fns so the modal can tear them down on category swap / close,
@@ -314,7 +315,7 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
   });
 
   copy.addEventListener("click", () => {
-    void navigator.clipboard?.writeText(serializeTheme(setting.get()));
+    void copyTextToClipboard(serializeTheme(setting.get()));
   });
 
   download.addEventListener("click", () => downloadTheme(setting.get()));

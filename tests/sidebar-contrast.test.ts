@@ -244,11 +244,23 @@ describe("sidebar strong-contrast palette (style contract)", () => {
     expect(block).not.toMatch(/var\(--surface\)/);
   });
 
-  it.each([".cm-codeblock", ".settings-modal"])(
+  it.each([".settings-modal"])(
     "%s keeps its existing background: var(--surface) (--surface consumers untouched)",
     (selector) => {
       const block = ruleBlock(selector);
       expect(block).toMatch(/background:\s*var\(--surface\)/);
+    },
+  );
+
+  // BLOCK FILL RULE (2026-08-05 사용자 리포트: light/claude에서 --surface와
+  // --bg 차이가 ~4%뿐이라 코드블럭이 문서 배경과 안 구분됨): .cm-codeblock은
+  // --surface를 떠나 .cm-blockquote/.cm-callout-note/.cm-callout-quote와
+  // --block-fill을 공유한다 — 네 셀렉터 모두 같은 "면" 계열로 읽혀야 한다.
+  it.each([".cm-codeblock", ".cm-blockquote", ".cm-callout-note", ".cm-callout-quote"])(
+    "%s paints the shared --block-fill (quote/code/note-callout are one surface family)",
+    (selector) => {
+      const block = ruleBlock(selector);
+      expect(block).toMatch(/background:\s*var\(--block-fill\)/);
     },
   );
 

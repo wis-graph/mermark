@@ -50,7 +50,7 @@ describe("app settings", () => {
   it("fontScaleSetting clamps an out-of-range saved scale to the bounds", async () => {
     localStorage.setItem("mermark.fontScale", "5");
     const { fontScaleSetting } = await import("../src/settings/app");
-    expect(fontScaleSetting.get()).toBe(2.0); // MAX
+    expect(fontScaleSetting.get()).toBe(3.0); // MAX
   });
 
   it("fontScaleSetting clamps a below-min saved scale up to the floor", async () => {
@@ -121,7 +121,7 @@ describe("app settings", () => {
 
   it("clampFontScale snaps to the bounds and the 0.1 step", async () => {
     const { clampFontScale } = await import("../src/settings/app");
-    expect(clampFontScale(2.5)).toBe(2.0); // above MAX
+    expect(clampFontScale(3.5)).toBe(3.0); // above MAX
     expect(clampFontScale(0.5)).toBe(0.8); // below MIN
     expect(clampFontScale(1.04)).toBe(1.0); // snaps down to step
     expect(clampFontScale(1.06)).toBe(1.1); // snaps up to step
@@ -135,9 +135,9 @@ describe("app settings", () => {
     expect(fontScaleSetting.get()).toBe(1.1);
     expect(localStorage.getItem("mermark.fontScale")).toBe("1.1"); // SSOT writer persists
 
-    // clamp at MAX: spamming zoomIn stops at 2.0
-    for (let i = 0; i < 20; i++) zoomIn();
-    expect(fontScaleSetting.get()).toBe(2.0);
+    // clamp at MAX: spamming zoomIn stops at 3.0
+    for (let i = 0; i < 30; i++) zoomIn();
+    expect(fontScaleSetting.get()).toBe(3.0);
 
     resetZoom();
     expect(fontScaleSetting.get()).toBe(1.0);

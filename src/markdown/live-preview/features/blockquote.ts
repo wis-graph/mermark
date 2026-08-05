@@ -1,10 +1,39 @@
-import { Decoration } from "@codemirror/view";
+import { Decoration, EditorView } from "@codemirror/view";
 import { hide, type InlineFeature } from "../core";
 import { parseCalloutHead, resolveCalloutType } from "./callout-types";
 import { CalloutHeadWidget } from "../../callout";
+import { QuoteCopyWidget, quoteClipboardText, isTopLevelQuote, quoteRunHead } from "../../quote-copy";
+
+// Toggles `cm-copy-visible` on the quote-run's head button when the pointer
+// hovers ANY of the run's lines. A blockquote has no wrapper DOM (its lines
+// are plain sibling `.cm-line`s), so CSS `:hover` can't express "hovering
+// line 3 reveals the button that lives on line 1" — this delegate is the one
+// place that rule is decided (quoteRunHead names it), rather than each
+// widget/feature guessing selection/hover state on its own.
+function quoteButton(lineEl: HTMLElement | null): HTMLElement | null {
+  const head = lineEl && quoteRunHead(lineEl);
+  return head?.querySelector<HTMLElement>(".cm-quote-copy") ?? null;
+}
+const quoteHoverView = EditorView.domEventHandlers({
+  mouseover(event) {
+    const lineEl = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+      ".cm-blockquote, .cm-callout",
+    );
+    quoteButton(lineEl ?? null)?.classList.add("cm-copy-visible");
+    return false;
+  },
+  mouseout(event) {
+    const lineEl = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+      ".cm-blockquote, .cm-callout",
+    );
+    quoteButton(lineEl ?? null)?.classList.remove("cm-copy-visible");
+    return false;
+  },
+});
 
 export const blockquote: InlineFeature = {
   nodes: ["QuoteMark", "Blockquote"],
+  view: quoteHoverView,
   enter(node, ctx) {
     if (node.name === "QuoteMark") {
       if (node.to > node.from) ctx.push({ from: node.from, to: node.to, deco: hide, conceal: true });
@@ -13,6 +42,19 @@ export const blockquote: InlineFeature = {
     // Blockquote: a `> [!type]` head turns the quote into a callout; otherwise
     // it gets a plain quote background + left rule (kept whether focused or not).
     const first = ctx.state.doc.lineAt(node.from);
+    // One copy button per quote RUN, on its outermost node only — nested
+    // `>>` must not stack a second button on the same first line.
+    if (isTopLevelQuote(node)) {
+      ctx.push({
+        from: first.to,
+        to: first.to,
+        deco: Decoration.widget({
+          widget: new QuoteCopyWidget(quoteClipboardText(ctx.state, node)),
+          side: 1,
+        }),
+        conceal: false,
+      });
+    }
     const head = parseCalloutHead(first.text);
     if (head) {
       const type = resolveCalloutType(head.type);
