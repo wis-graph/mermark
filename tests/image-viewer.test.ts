@@ -8,7 +8,13 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
-import { openImageViewer, wheelDeltaToPixels, panIndicatorFor } from "../src/chrome/viewer/image-viewer";
+import {
+  openImageViewer,
+  wheelDeltaToPixels,
+  panIndicatorFor,
+  imageDisplayName,
+  imageViewerUrl,
+} from "../src/chrome/viewer/image-viewer";
 import { panZoomSetting } from "../src/settings/app";
 
 // ---------------------------------------------------------------------------
@@ -47,6 +53,65 @@ function fireLoad(img: HTMLImageElement, width: number, height: number): void {
   img.onload?.(new Event("load"));
 }
 const fireError = (img: HTMLImageElement) => img.onerror?.(new Event("error"));
+
+describe("imageDisplayName (_workspace/01_architect_design_imgclick.md판정5)", () => {
+  it("local absolute path → basename", () => {
+    expect(imageDisplayName("/a/b/pic.png")).toBe("pic.png");
+  });
+  it("remote URL → last path segment, query stripped", () => {
+    expect(imageDisplayName("https://ex.com/img/cat.png?w=2")).toBe("cat.png");
+  });
+  it("remote URL with an empty pathname falls back to the hostname", () => {
+    expect(imageDisplayName("https://ex.com")).toBe("ex.com");
+  });
+  it("data: URL has no filename — a fixed placeholder", () => {
+    expect(imageDisplayName("data:image/png;base64,AAAA")).toBe("이미지");
+  });
+
+  // Regression (04_audit_report_imgclick.md 🟡①): `isRemoteSrc` only checks
+  // the `https?://` prefix, not well-formedness, so a degenerate target like
+  // `![](https://)` still passes it but makes `new URL` throw. Before this
+  // fix that throw propagated out of `openImageViewer`'s first line, AFTER
+  // `placeInViewerSlot` had already closed the previous viewer but BEFORE it
+  // stored the new handle — a stale slot. imageDisplayName must be total.
+  it("a malformed remote URL (fails new URL()) falls back to the placeholder instead of throwing", () => {
+    expect(() => imageDisplayName("https://")).not.toThrow();
+    expect(imageDisplayName("https://")).toBe("이미지");
+  });
+});
+
+describe("imageViewerUrl (never re-resolves a remote/data source)", () => {
+  it("passes a remote URL through unchanged (no convertFileSrc prefix)", () => {
+    expect(imageViewerUrl("https://ex.com/cat.png")).toBe("https://ex.com/cat.png");
+  });
+  it("passes a data: URL through unchanged", () => {
+    expect(imageViewerUrl("data:image/png;base64,AAAA")).toBe("data:image/png;base64,AAAA");
+  });
+  it("a local absolute path resolves the same way resolveImageUrl(source, dirOf(source)) would", () => {
+    expect(imageViewerUrl("/pics/cat.png")).toBe("asset:///pics/cat.png");
+  });
+});
+
+describe("openImageViewer: degenerate remote source (regression — must not throw mid-open)", () => {
+  it("opens without throwing and shows the placeholder caption for a malformed remote target", () => {
+    const handle = openImageViewer("https://");
+    expect(document.querySelector(".viewer-panel")).toBeTruthy();
+    const caption = document.querySelector(".image-viewer-caption") as HTMLElement;
+    expect(caption.textContent).toBe("이미지");
+    handle.close();
+  });
+});
+
+describe("openImageViewer: remote source (editor image click → viewer, no local resolve)", () => {
+  it("mounts with the remote URL as-is and a caption derived from the URL's last path segment", () => {
+    const handle = openImageViewer("https://ex.com/img/cat.png?w=2");
+    const img = document.querySelector(".image-viewer img") as HTMLImageElement;
+    expect(img.src).toBe("https://ex.com/img/cat.png?w=2");
+    const caption = document.querySelector(".image-viewer-caption") as HTMLElement;
+    expect(caption.textContent).toBe("cat.png");
+    handle.close();
+  });
+});
 
 describe("openImageViewer: pane shape + image src", () => {
   it("mounts a pane (role=region) as .editor-host's sibling, with the asset URL and filename aria-label", () => {

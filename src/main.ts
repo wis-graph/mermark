@@ -84,11 +84,14 @@ import {
 import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./document/file-watch";
 import { openConflictModal } from "./document/conflict/conflict-modal";
 import { openImageViewer } from "./chrome/viewer/image-viewer";
+import { isRemoteSrc } from "./markdown/image";
+import { setImageOpenHandler } from "./markdown/image-open";
 import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
 import { registerSqliteViewer } from "./chrome/viewer/sqlite-viewer";
 import { registerEpubViewer } from "./chrome/viewer/epub-viewer";
-import { registerViewer, viewerFor, type Viewer, type ViewerHandle } from "./chrome/viewer/registry";
+import { registerViewer, viewerFor, type Viewer } from "./chrome/viewer/registry";
+import { createDontStackSlot } from "./chrome/viewer/dont-stack-slot";
 import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
 import { icon, type IconName } from "./icons";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
@@ -373,8 +376,11 @@ async function boot() {
   // `openConflict` below: only one overlay at a time, opening a second closes
   // the first rather than stacking. Stays here, not in the registry — the
   // registry is a pure catalog (design §5: a stateful slot inside it would
-  // repeat the God-object shape R9 explicitly avoided).
-  let openViewer: ViewerHandle | null = null;
+  // repeat the God-object shape R9 explicitly avoided). The state machine
+  // itself lives in dont-stack-slot.ts (extracted so its self-clear rule is
+  // unit-testable — see tests/dont-stack-slot.test.ts); main.ts creates
+  // exactly one instance and reads/writes it only through this object.
+  const viewerSlot = createDontStackSlot();
 
   // The built-in image viewer registers through the SAME `registerViewer`
   // path an extension uses (R11 design §3 — dogfooding, like R9's built-in
@@ -414,16 +420,15 @@ async function boot() {
     return v !== null && isViewerEnabled(disabledViewersSetting.get(), v.id) ? v : null;
   }
 
-  /** Open `absPath` in its registered viewer, closing whatever the don't-stack
-   *  slot currently holds first. The single owner of that rule — every viewer
-   *  open (built-in image, any extension) funnels through here. No-op if no
-   *  viewer claims the file (defensive; canOpenWithViewer should already have
-   *  gated the caller). Command (void). */
+  /** Open `absPath` in its registered viewer via the don't-stack slot. The
+   *  single owner of that rule — every viewer open (built-in image, any
+   *  extension) for an on-disk file funnels through here. No-op if no viewer
+   *  claims the file (defensive; canOpenWithViewer should already have gated
+   *  the caller). Command (void). */
   function openWithViewer(absPath: string): void {
     const v = viewerForEntry(basename(absPath));
     if (!v) return;
-    openViewer?.close();
-    openViewer = v.open(absPath);
+    const handle = viewerSlot.open(() => v.open(absPath));
     // The footer breadcrumb points at the folder of whatever the CONTENT AREA
     // is showing. While the viewer was a floating modal OVER the document,
     // "current folder" unambiguously meant the document's; a full-pane viewer
@@ -434,8 +439,30 @@ async function boot() {
     // the breadcrumb to the live document's folder. `currentBaseDir` is read
     // at close time, so a document switch that happened meanwhile still wins.
     breadcrumb.render(dirOf(absPath));
-    openViewer.onClose(() => breadcrumb.render(currentBaseDir));
+    handle.onClose(() => breadcrumb.render(currentBaseDir));
   }
+
+  /** Wired to image.ts's `requestImageOpen` (via `setImageOpenHandler`,
+   *  below) — what actually happens when a clicked image widget in the
+   *  editor asks to open. Mirrors the explorer's own gating
+   *  (`isViewerEnabled`) so turning the image viewer off in settings makes
+   *  an editor click a no-op too, rather than a second "always opens" path
+   *  that disagrees with the explorer. A remote/data source has no
+   *  registered-viewer entry (`viewerForEntry` keys off a file EXTENSION),
+   *  so it goes straight into the slot with `openImageViewer` — skipping
+   *  `openWithViewer`'s breadcrumb rewrite, since there is no on-disk folder
+   *  to point the breadcrumb at. A local absolute path reuses `openWithViewer`
+   *  as-is (breadcrumb included), the same path the explorer already takes.
+   *  Command (void). */
+  function openImageFromEditor(source: string): void {
+    if (!isViewerEnabled(disabledViewersSetting.get(), "image")) return;
+    if (isRemoteSrc(source)) {
+      viewerSlot.open(() => openImageViewer(source));
+      return;
+    }
+    openWithViewer(source);
+  }
+  setImageOpenHandler(openImageFromEditor);
 
   /** "Opening a document closes any open viewer" (full-pane rewrite,
    *  _workspace/01_architect_design.md §A rule 1) — a body-level modal was
@@ -446,13 +473,15 @@ async function boot() {
    *  `openInWindow` calls this as its very first statement, so every
    *  document-open path (explorer/recent/history/prompt — all funnel through
    *  `openInWindow`) gets the rule for free from one call site. This is the
-   *  SECOND (and last) place `openViewer` is written — `openWithViewer`
-   *  above is the first — main.ts's own don't-stack slot stays confined to
-   *  exactly these two functions (code-auditor focus per plan's handoff).
-   *  Command (void). */
+   *  slot's unconditional "clear it, full stop" writer (`viewerSlot.closeAll`)
+   *  — `viewerSlot.open` (used by `openWithViewer`/`openImageFromEditor`) is
+   *  the other, and its own self-clear only nulls the slot when the closing
+   *  handle is still the CURRENT one (see dont-stack-slot.ts), so the two
+   *  writers never race. main.ts never assigns the slot directly — every
+   *  read/write funnels through `viewerSlot` (code-auditor focus per plan's
+   *  handoff). Command (void). */
   function closeOpenViewer(): void {
-    openViewer?.close();
-    openViewer = null;
+    viewerSlot.closeAll();
   }
 
   // ── File explorer LEFT SIDEBAR. A lazy tree rooted at the live document's
@@ -979,7 +1008,7 @@ async function boot() {
   // bug), then open the same panel ⌘F uses. Same viewer/no-current guard as
   // search.document below.
   const openReplacePanel = (): void => {
-    if (openViewer || !current) return;
+    if (viewerSlot.current() || !current) return;
     enterEditModeForReplace();
     openFindPanel(current.view);
   };
@@ -1010,7 +1039,7 @@ async function boot() {
   // the row is actually missing, and remove it once edit mode supplies the
   // real row, so edit mode never shows a redundant hint.
   registerHandler("search.document", () => {
-    if (openViewer || !current) return;
+    if (viewerSlot.current() || !current) return;
     openFindPanel(current.view, replaceHintEntry());
   });
   registerHandler("search.files", () => searchPanel.revealSearch());

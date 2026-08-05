@@ -54,16 +54,18 @@ export function sameFileHeadingAnchor(target: string): string | null {
   return anchor;
 }
 
-/** Alt+click escape hatch: edit the raw `[[wikilink]]` instead of navigating or
- *  opening. Attached to EVERY toDOM branch (heading anchor, same-file-with-no-
- *  currentFile, and file-open) so Alt+click always means "reveal source"
- *  regardless of what the link resolves to — one shared rule, not re-attached
- *  ad hoc per branch. Command, void. */
-function attachAltClickEdit(a: HTMLAnchorElement, view: EditorView): void {
-  a.addEventListener("mousedown", (e) => {
+/** Alt+click escape hatch: edit the raw source instead of navigating/opening.
+ *  Originally wikilink-only (attached to EVERY toDOM branch — heading anchor,
+ *  same-file-with-no-currentFile, and file-open — so Alt+click always means
+ *  "reveal source" regardless of what the link resolves to, one shared rule
+ *  rather than re-attached ad hoc per branch); generalized to `HTMLElement`
+ *  and exported so ImageWidget (image.ts) reuses the exact same rule instead
+ *  of duplicating it. Command, void. */
+export function attachAltClickEdit(el: HTMLElement, view: EditorView): void {
+  el.addEventListener("mousedown", (e) => {
     if (!e.altKey) return;
     e.preventDefault();
-    view.dispatch({ selection: { anchor: view.posAtDOM(a) } });
+    view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
   });
 }
 

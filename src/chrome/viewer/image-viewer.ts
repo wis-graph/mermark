@@ -13,7 +13,7 @@
 // and wheel panning both go through its `panBy` primitive instead of
 // scrollTop/scrollLeft.
 import { attachPanZoom } from "../../markdown/mermaid-widget";
-import { resolveImageUrl } from "../../markdown/image";
+import { resolveImageUrl, isRemoteSrc } from "../../markdown/image";
 import { basename, dirOf } from "../../document/path";
 import { openViewerShell } from "./shell";
 import type { ViewerHandle } from "./registry";
@@ -25,6 +25,51 @@ export type ImageViewerHandle = ViewerHandle;
  *  agree on the format. Pure query. */
 function loadedCaption(name: string, img: HTMLImageElement): string {
   return `${name} — ${img.naturalWidth}×${img.naturalHeight}`;
+}
+
+/** The last non-empty `/`-separated segment of a URL pathname — e.g.
+ *  "/img/cat.png" → "cat.png", "/img/cat.png/" → "cat.png". Pure query. */
+function lastPathSegment(pathname: string): string {
+  const parts = pathname.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
+/** What the viewer should call `source` in its caption/aria-label — the
+ *  single "what does this image's name say" rule for BOTH a local path and a
+ *  remote/data URL (image.ts's `resolvedPath` priority already guarantees
+ *  this always matches what the widget showed). A local absolute path uses
+ *  its basename, unchanged from before this widened contract. A remote URL
+ *  uses the last non-empty path segment, falling back to the hostname for a
+ *  bare-domain URL with no path (`lastPathSegment` returns ""). A `data:` URL
+ *  carries no filename at all — a fixed placeholder, not an attempt to parse
+ *  one out of the payload. A TOTAL function, deliberately: `isRemoteSrc` only
+ *  checks the `https?://`/`data:` prefix, not well-formedness, so a degenerate
+ *  target (a stray `![](https://)` with no host) still passes that test but
+ *  makes `new URL` throw — caught here and given the same "nothing to name"
+ *  placeholder as `data:`, rather than propagating past `openImageViewer`'s
+ *  first line where a throw would abandon `placeInViewerSlot` mid-assignment
+ *  (closed the old viewer, never stored the new handle). Pure query. */
+export function imageDisplayName(source: string): string {
+  if (source.startsWith("data:")) return "이미지";
+  if (isRemoteSrc(source)) {
+    try {
+      const url = new URL(source);
+      return lastPathSegment(url.pathname) || url.hostname;
+    } catch {
+      return "이미지"; // malformed remote target — nothing sensible to name it
+    }
+  }
+  return basename(source);
+}
+
+/** What `<img>.src` should be for `source` — a remote/data URL passes through
+ *  UNCHANGED (it has no `baseDir` to resolve against; re-resolving it would
+ *  corrupt it), a local absolute path goes through the same `resolveImageUrl`
+ *  markdown images use so the two code paths agree on what a "local path"
+ *  even means. Pure query. */
+export function imageViewerUrl(source: string): string {
+  if (isRemoteSrc(source)) return source;
+  return resolveImageUrl(source, dirOf(source));
 }
 
 /** Scale the image's rendered width to `factor` × its natural width (design
@@ -133,11 +178,14 @@ function writeIndicatorGeometry(
   bar.style[startProp] = `${geo.startRatio * 100}%`;
 }
 
-/** Open the lightbox for `absPath`. Reuses `resolveImageUrl` (the same local
- *  path → asset URL rule markdown images use) so there is exactly one owner
- *  of that conversion. Returns a handle whose close() restores the page. */
-export function openImageViewer(absPath: string): ImageViewerHandle {
-  const name = basename(absPath);
+/** Open the lightbox for `source` — a local absolute filesystem path (the
+ *  explorer's call shape, unchanged) OR a remote/data URL (an editor image
+ *  click on `![](https://…)`, added by _workspace/01_architect_design_imgclick.md).
+ *  `imageDisplayName`/`imageViewerUrl` own the branch between the two; this
+ *  function stays param-name-only "renamed" from the local-only `absPath` it
+ *  used to take. Returns a handle whose close() restores the page. */
+export function openImageViewer(source: string): ImageViewerHandle {
+  const name = imageDisplayName(source);
 
   // The checkerboard stage doubles as the pan/zoom host (attachPanZoom reuse —
   // mermaid-widget's handler only ever touches host/element geometry + CSS
@@ -174,7 +222,7 @@ export function openImageViewer(absPath: string): ImageViewerHandle {
 
   stage.append(img, vTrack, hTrack);
 
-  const shell = openViewerShell({ absPath, paneClass: "image-viewer", content: stage });
+  const shell = openViewerShell({ caption: name, paneClass: "image-viewer", content: stage });
 
   // Flash both tracks to full opacity and (re)start the fade-out timer —
   // called from `refreshPanIndicators` any time either axis has something to
@@ -226,7 +274,7 @@ export function openImageViewer(absPath: string): ImageViewerHandle {
     // recursive-search fallback).
     shell.caption.textContent = "이미지를 불러올 수 없습니다";
   };
-  img.src = resolveImageUrl(absPath, dirOf(absPath));
+  img.src = imageViewerUrl(source);
 
   // `force: true` for the same reason the mermaid fullscreen lightbox passes
   // it: `panZoomSetting` is a MERMAID setting (설정 › Mermaid › 팬/줌 — it
