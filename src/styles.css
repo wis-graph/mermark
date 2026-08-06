@@ -387,6 +387,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-em { font-style: italic; color: var(--italic-color, inherit); }
 .cm-strike { text-decoration: line-through; }
 .cm-inline-code { font-family: var(--font-mono); letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface-veil); color: var(--code-color, inherit); }
+/* <!-- comment --> stays visible (unconcealed) but muted, so it reads as an
+   aside rather than body text — --muted already carries this "quiet" meaning
+   for every other de-emphasized element (gutters, captions, placeholders). */
+.cm-comment { color: var(--muted); }
 /* ==highlight== → a fluorescent <mark>. Pin a dark ink on the highlight so it
    stays legible on dark theme too, where --fg flips to white and white-on-yellow
    would wash out. --highlight-bg gives each theme its own fluorescent tone, and

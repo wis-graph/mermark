@@ -13,7 +13,7 @@ import type { InlineFeature, BlockFeature } from "../src/markdown/live-preview/c
 // this list must track index.ts's INLINE_FEATURES/BLOCK_FEATURES arrays.
 const SHIPPED_INLINE_NAMES = [
   "textStyles",
-  "cjkBold",
+  "cjkEmphasis",
   "heading",
   "blockquote",
   "link",

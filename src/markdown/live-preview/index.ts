@@ -12,7 +12,7 @@ import {
   currentBlockFeatures,
 } from "./feature-registry";
 import { textStyles } from "./features/text-styles";
-import { cjkBold } from "./features/cjk-bold";
+import { cjkEmphasis } from "./features/cjk-emphasis";
 import { heading } from "./features/heading";
 import { blockquote } from "./features/blockquote";
 import { link } from "./features/link";
@@ -48,7 +48,7 @@ export {
  *  registerInlineFeature/registerBlockFeature. */
 const SHIPPED_INLINE_FEATURES: InlineFeature[] = [
   textStyles,
-  cjkBold,
+  cjkEmphasis,
   heading,
   blockquote,
   link,

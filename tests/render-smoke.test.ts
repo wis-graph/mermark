@@ -160,6 +160,37 @@ describe("full-editor render smoke", () => {
     view.destroy();
   });
 
+  it("styles a block comment <!-- x --> as .cm-comment and keeps it visible", () => {
+    const doc = "intro\n\n<!-- a block comment -->\n\noutro";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-comment")).not.toBeNull();
+    expect(view.contentDOM.textContent).toContain("<!-- a block comment -->");
+    view.destroy();
+  });
+
+  it("styles an inline comment <!-- x --> as .cm-comment and keeps it visible", () => {
+    const doc = "before <!-- inline note --> after";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-comment")).not.toBeNull();
+    expect(view.contentDOM.textContent).toContain("<!-- inline note -->");
+    view.destroy();
+  });
+
+  it("styles a multi-line block comment as .cm-comment across all its lines", () => {
+    const doc = "intro\n\n<!--\nline one\nline two\n-->\n\noutro";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-comment")).not.toBeNull();
+    expect(view.contentDOM.textContent).toContain("line one");
+    expect(view.contentDOM.textContent).toContain("line two");
+    view.destroy();
+  });
+
   it("reveals table source when the cursor enters it", () => {
     const doc = "intro\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\noutro";
     const view = mount(host, doc);

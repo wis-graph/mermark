@@ -2,13 +2,18 @@ import { Decoration } from "@codemirror/view";
 import { hide, type InlineFeature } from "../core";
 
 // Emphasis/strong/code/strikethrough get a styling class; their markers
-// (`*`, `` ` ``, `~`) are concealed.
+// (`*`, `` ` ``, `~`) are concealed. Comment/CommentBlock (`<!-- x -->`) are
+// leaf nodes with no markers to conceal — they only need the muted class, so
+// they ride the same STYLE map with nothing left for their `enter` branch to
+// descend into.
 const STYLE: Record<string, string> = {
   StrongEmphasis: "cm-strong",
   Emphasis: "cm-em",
   InlineCode: "cm-inline-code",
   Strikethrough: "cm-strike",
   Highlight: "cm-highlight",
+  Comment: "cm-comment",
+  CommentBlock: "cm-comment",
 };
 
 export const textStyles: InlineFeature = {
