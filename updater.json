@@ -1,11 +1,11 @@
 {
-  "version": "0.9.25",
-  "notes": "### Fixed\n\n- **한글 문장에서 기울임(이탤릭)이 안 먹던 문제**: `*\"동물-되기와 **같은 방식**\"*라`처럼 닫는 `*` 바로 뒤에 한글이 오면 기울임이 통째로 무시됐다(안쪽 볼드만 나오고 바깥 기울임은 안 나오는 증상). 볼드(`**`)는 이미 고쳐져 있었지만 기울임(`*`)은 빠져 있었다. 이제 볼드·기울임 모두, 서로 겹쳐 써도 제대로 나온다.\n- **마크다운 주석이 본문과 같은 색으로 보이던 문제**: `<!-- 주석 -->`이 이제 옅은 색으로 나와 본문과 구분된다. 주석 글자는 그대로 다 보인다.\n- 주석 안에 별표가 있으면 글자가 사라지던 문제(`<!-- 그*\"강조\"*를 -->`가 `<!-- 그\"강조\"를 -->`로 보임). 주석 안은 이제 쓴 그대로 나온다.\n- 같은 줄에 인라인 코드(`` ` ``)나 수식(`$`)이 있으면 그 뒤의 기울임·볼드가 렌더링되지 않던 문제.\n- `가***나***다`처럼 별 세 개를 쓴 곳에서 앞 두 별이 볼드로 잘못 잡히던 문제.",
-  "pub_date": "2026-08-06T19:44:21Z",
+  "version": "0.9.26",
+  "notes": "### Added\n\n- **테마 색상 설정을 문서에서 직접 고른다**: 색 이름이 적힌 목록 대신, 실제 마크다운이 그려진 작은 미리보기 창이 뜬다. 바꾸고 싶은 부분(제목·굵은 글자·주석·인용구 등)을 그 문서에서 그대로 클릭하면 아래에서 색을 고를 수 있다. 색을 바꾸는 순간 미리보기와 실제 문서에 함께 반영된다. 문서에 안 나오는 색(에디터 배경·카드 영역·테두리선·보조 텍스트)도 미리보기 창의 여백·카드·구분선·아래 상태 줄을 클릭해 바꾼다 — 따로 목록을 뒤질 필요가 없다.\n- **글자색과 함께 배경색도 정할 수 있다**: 굵은 글자·기울임꼴·인라인 코드·주석·제목에 배경색을 깔 수 있다. 기본값은 \"없음\"이라 지금 쓰던 화면은 그대로고, 원할 때만 켜면 된다.\n- **주석 색을 따로 정할 수 있다**: 그동안 주석은 \"보조 텍스트\" 색을 같이 쓰고 있어서 따로 못 바꿨다. 이제 독립 항목이 됐고 기본값도 본문과 확실히 구분되는 옅은 색으로 바뀐다(테마를 직접 손보지 않은 경우에만 자동 적용, 직접 만든 테마는 건드리지 않는다).\n\n### Fixed\n\n- **`***볼드이탤릭***`이 한글 앞에서 안 먹던 문제**: `***\"강조\"***를`처럼 닫는 별표 앞이 따옴표고 뒤가 한글이면 서식이 통째로 무시됐다.",
+  "pub_date": "2026-08-06T22:08:39Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3pKUmRSSE5nd3I5Ti93dnB3SlUrMlpHRTZHaFJxYk56RGd1U2pJYS9qNDUzNkN4N1VjR0dzMU1NQWJmM1VNaDZPT0ExRkIzTmdwaTM3WVMrdGd0UlFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MDQ1NDQzCWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ck5OMzQ1bUF6K0NUL3RLbnBjSTdpZEJLbWtGU1VPTVI4WVlHRXpPUjdCa2gydUcvY2JBV1RTSm1GaHFYWFNKL3QrNGJKMEFmclNZNytONG41Z2k5VEN3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.25/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVytCbGJHYTUvVGRoK1hmREx2ZThlTEh5c3V2azlva3BKbG9USDdBYkNvT0IvZ0lzMm5xck1ENERYa1NwczFYdWswVlp6bTdjNjZvZG9PYlYwcVFUUXdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MDU0MTAxCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CjhsNGxDS0txSHdBSjhGc0VQS3IyT29zZmhiV3ZRMjdsL1Y1Ni9GUDBQZ1BDckF0aEt1aHh2OCtubk5GSzA4MFRYQWkyK0RaMWU4aGFBdkRrcWhIR0JnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.26/mermark.app.tar.gz"
     }
   }
 }
