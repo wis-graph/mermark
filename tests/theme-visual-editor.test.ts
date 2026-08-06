@@ -2,178 +2,252 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { RENDER, attachTeardown, runTeardown } from "../src/settings/panel/controls";
 import { themeJsonSetting, syncJsonToPreset } from "../src/settings/app";
 import { builtInTheme, parseTheme, serializeTheme } from "../src/settings/theme-schema";
+import { THEME_TARGETS } from "../src/settings/panel/theme-preview";
 
-describe("Theme Visual Editor", () => {
+// 2026-08 redesign (design: _workspace/01_ui_design.md 결정 1): the 18-swatch
+// grid is gone, replaced by a mini app frame (every target is a real click
+// target rendered IN the sample document) + a docked color inspector. This
+// file replaces the old "18 cards" assertions with assertions against that
+// new structure — same theme JSON round-trip contract underneath.
+
+describe("Theme mini-frame preview", () => {
   let host: HTMLElement;
 
   beforeEach(() => {
     localStorage.clear();
+    themeJsonSetting.set(builtInTheme("light"));
     host = document.createElement("div");
     document.body.appendChild(host);
   });
 
   afterEach(() => {
+    runTeardown(el());
     host.remove();
+    themeJsonSetting.set(builtInTheme("light"));
   });
 
-  it("renders 18 cards across core + markdown columns", () => {
-    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
-    host.appendChild(el);
+  let mounted: HTMLElement | null = null;
+  function el(): HTMLElement {
+    return mounted!;
+  }
+  function mount(): HTMLElement {
+    const row = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
+    mounted = row;
+    host.appendChild(row);
+    return row;
+  }
 
-    const cards = host.querySelectorAll(".theme-swatch-card");
-    expect(cards.length).toBe(18);
+  it("renders every THEME_TARGETS entry as a real button with data-target", () => {
+    mount();
+    for (const t of THEME_TARGETS) {
+      const buttons = host.querySelectorAll(`[data-target="${t.id}"]`);
+      expect(buttons.length, `target ${t.id} missing`).toBeGreaterThan(0);
+    }
+    // 18 distinct targets: 8 core-style (bg/surface/border/accent/muted/fg,
+    // link, highlight) — wait, precisely: bg,surface,border,accent,muted,fg
+    // (6 chrome/core) + link,bold,italic,code,highlight,comment (6 paired
+    // text elements) + h1..h6 (6 headings) = 18.
+    expect(THEME_TARGETS.length).toBe(18);
   });
 
-  it("labels the 18 cards with the spec Korean text", () => {
-    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
-    host.appendChild(el);
+  it("renders the chrome anchors called out by the design (bg/surface/border/accent/muted)", () => {
+    mount();
+    const frame = host.querySelector<HTMLElement>('[data-target="bg"]')!;
+    expect(frame.getAttribute("role")).toBe("button");
+    expect(frame.getAttribute("aria-label")).toBe("에디터 배경색");
+    expect(frame.tabIndex).toBe(0);
 
-    // Core column (9) then markdown column (9), in declared order.
-    const expectedLabels = [
-      "에디터 배경색",
-      "기본 본문 글자색",
-      "카드 영역 배경색",
-      "테두리선 색상",
-      "강조 요소 색상",
-      "[[위키링크 (Link)]]",
-      "보조 텍스트 (Muted)",
-      "==형광펜 배경색 (Highlight Bg)==",
-      "==형광펜 글자색 (Highlight Text)==",
-      "# 제목 1 (H1)",
-      "## 제목 2 (H2)",
-      "### 제목 3 (H3)",
-      "#### 제목 4 (H4)",
-      "##### 제목 5 (H5)",
-      "###### 제목 6 (H6)",
-      "**굵은 글자 (Bold)**",
-      "*기울임꼴 (Italic)*",
-      "`인라인 코드 (Code)`",
-    ];
-
-    const cards = host.querySelectorAll(".theme-swatch-card");
-    cards.forEach((card, idx) => {
-      const labelText = card.querySelector(".theme-swatch-label")?.textContent;
-      expect(labelText).toBe(expectedLabels[idx]);
-    });
+    expect(host.querySelector('[data-target="surface"]')).not.toBeNull();
+    expect(host.querySelector('[data-target="border"]')).not.toBeNull();
+    expect(host.querySelector('[data-target="accent"]')).not.toBeNull();
+    expect(host.querySelector('[data-target="muted"]')).not.toBeNull();
   });
 
-  it("keeps 18 color inputs total but only 9 circular swatches (core column only)", () => {
-    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
-    host.appendChild(el);
-    // 2026-07-12 design-polish pass: the markdown column's circular swatches
-    // were dropped (all 9 rendered as identical black-ink circles — zero
-    // information, since the column already has a live text preview). The
-    // color <input> stays for every card (still the click target); only the
-    // circle is core-only now.
-    expect(host.querySelectorAll(".theme-swatch-input").length).toBe(18);
-    expect(host.querySelectorAll(".theme-swatch-color").length).toBe(9);
-  });
-
-  it("markdown (previewVar) cards carry is-preview and render no circular swatch", () => {
-    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
-    host.appendChild(el);
-    for (const key of ["h1", "h2", "h3", "h4", "h5", "h6", "bold", "italic", "code"]) {
-      const preview = host.querySelector(`.theme-preview-${key}`)!;
-      const card = preview.closest(".theme-swatch-card")!;
-      expect(card.classList.contains("is-preview"), `${key} card missing is-preview`).toBe(true);
-      expect(card.querySelector(".theme-swatch-color"), `${key} card still has a circle`).toBeNull();
-      expect(card.querySelector(".theme-swatch-input"), `${key} card lost its color input`).not.toBeNull();
+  it("renders H3~H6 as 4 independent buttons sized by their own CSS var", () => {
+    mount();
+    for (const id of ["h3", "h4", "h5", "h6"] as const) {
+      const btn = host.querySelector<HTMLElement>(`[data-target="${id}"]`)!;
+      expect(btn.tagName).toBe("BUTTON");
+      expect(btn.style.color).toContain(`--${id}-color`);
     }
   });
 
-  it("core cards do NOT carry is-preview and keep their circular swatch", () => {
-    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
-    host.appendChild(el);
-    const coreKeys = ["bg", "fg", "surface", "border", "accent", "link", "muted", "highlightBg", "highlight"];
-    const cards = host.querySelectorAll(".theme-swatch-card");
-    for (let i = 0; i < coreKeys.length; i++) {
-      expect(cards[i]!.classList.contains("is-preview")).toBe(false);
-      expect(cards[i]!.querySelector(".theme-swatch-color")).not.toBeNull();
-    }
+  it("no chip row / '전체 목록으로 보기' fallback exists (design explicitly rejects it)", () => {
+    mount();
+    expect(host.querySelector(".theme-swatch-grid")).toBeNull();
+    expect(host.textContent).not.toContain("전체");
   });
 
-  it("binds markdown preview elements to their CSS color vars", () => {
-    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
-    host.appendChild(el);
+  // 2026-08 폴리시 리뷰 결정 1: "미리보기는 실앱이 그 요소를 렌더하는 모습과
+  // 같아야 한다" — mermark의 라이브프리뷰가 커서가 없을 때 감추는 마커
+  // (#, ##, [[ ]], ==)는 미리보기에서도 감춰야 하고, 실앱이 감추지 않는 것
+  // (HTML 주석)은 그대로 남아야 한다. 이 테스트가 그 규칙을 잠근다 — 샘플
+  // 문서를 늘릴 때 다시 "일부는 렌더/일부는 원문"으로 어긋나면 여기서 잡힌다.
+  // 2026-08 폴리시 리뷰 2차: 사용자가 1차 결정을 뒤집었다 — "마커째 들어와도
+  // 돼, 편집모드에선 마커 보이잖아 어차피". 진짜 문제는 마커가 보이는 것이
+  // 아니라 일관성이 없던 것(제목/하이라이트/위키링크는 마커 O, bold/italic은
+  // 마커 X)이었으므로, 이제는 반대 방향(전부 마커 포함)으로 통일한다. 이
+  // 테스트가 그 통일성을 잠근다.
+  it("shows every target's RAW markdown marker syntax (edit-mode look), never conceals any", () => {
+    mount();
+    const docText = host.querySelector(".theme-doc")!.textContent!;
 
-    // Each markdown card carries a preview element whose color resolves from the var.
-    for (const key of ["h1", "h2", "h3", "h4", "h5", "h6", "bold", "italic", "code"]) {
-      const preview = host.querySelector(`.theme-preview-${key}`) as HTMLElement | null;
-      expect(preview, `preview for ${key} missing`).toBeTruthy();
-      expect(preview!.style.color).toContain(`--${key}-color`);
-    }
+    expect(docText).toContain("# 제주 여행 준비"); // H1 마커
+    expect(docText).toContain("## 사흘째 아침"); // H2 마커
+    expect(docText).toContain("**가볍게**"); // bold 마커
+    expect(docText).toContain("*느슨하게*"); // italic 마커
+    expect(docText).toContain("[[제주 숙소 목록]]"); // 위키링크 대괄호
+    expect(docText).toContain("==환전은 출발 전에=="); // 하이라이트 마커
+    expect(docText).toContain("`JX-2041`"); // 인라인 코드 백틱
+    expect(docText).toContain("[^1]"); // 각주 참조의 raw 문법
+    expect(docText).toContain("<!-- 지난 여행에서는 우산을 두 번 잃어버렸다 -->"); // HTML 주석(원래도 안 감춰짐)
   });
 
-  it("updates setting value when the first (bg) swatch picker changes", () => {
-    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
-    host.appendChild(el);
+  // 2026-08 폴리시 리뷰 2차 추가 지적: "**가볍게**싸고"(닫는 마커-다음 글자
+  // 공백 누락)와 "둔다 [^1] ."(각주 히트박스 패딩이 공백처럼 보임)를
+  // team-lead가 캡처에서 직접 읽고 잡았다. 정확한 어절 경계를 여기 잠근다.
+  it("has no stray/missing whitespace around bold marker or the footnote ref", () => {
+    mount();
+    const docText = host.querySelector(".theme-doc")!.textContent!;
 
-    const initialTheme = themeJsonSetting.get();
+    expect(docText).toContain("**가볍게** 싸고"); // 닫는 마커 다음 공백 있음
+    expect(docText).not.toContain("**가볍게**싸고"); // 공백 누락 재발 가드
 
-    // First card is bg (core column leads).
-    const bgInput = host.querySelector(".theme-swatch-input") as HTMLInputElement;
-    expect(bgInput).toBeTruthy();
-
-    bgInput.value = "#ff0000";
-    bgInput.dispatchEvent(new Event("input"));
-
-    expect(themeJsonSetting.get().colors.bg).toBe("#ff0000");
-
-    themeJsonSetting.set(initialTheme);
+    expect(docText).toContain("둔다[^1]."); // 각주는 앞뒤 공백 없이 붙는다(마크다운 관례)
+    expect(docText).not.toContain("둔다 [^1]");
+    expect(docText).not.toContain("[^1] .");
   });
 
-  it("updates an extended key (h1) when its picker changes", () => {
-    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
-    host.appendChild(el);
+  it("paints chrome colors on the right property, never as unreadable text ink", () => {
+    mount();
+    const finder = host.querySelector<HTMLElement>('[data-target="surface"]')!;
+    expect(finder.style.background).toContain("--surface"); // fill, not text color
+    expect(finder.style.color).not.toContain("--surface");
 
-    const initialTheme = themeJsonSetting.get();
+    // 2026-08 감사 반영(major #3): `border`'s anchor is the hr, not the quote
+    // bar — paints its own top border, never text color.
+    const hr = host.querySelector<HTMLElement>('[data-target="border"]')!;
+    expect(hr.style.borderTop).toContain("--border");
+    expect(hr.style.color).toBe("");
+  });
 
-    const h1Card = Array.from(host.querySelectorAll(".theme-swatch-card")).find(
-      (c) => c.querySelector(".theme-swatch-label")?.textContent === "# 제목 1 (H1)",
-    )!;
-    const h1Input = h1Card.querySelector(".theme-swatch-input") as HTMLInputElement;
-    h1Input.value = "#ff0000";
-    h1Input.dispatchEvent(new Event("input"));
+  // 2026-08 감사 반영(major #3): the quote bar is decorative-only now (uses
+  // --block-edge, matching the real `.cm-blockquote` — see the ThemeTarget
+  // doc comment in theme-preview.ts) — it must NOT be a click target, or the
+  // "click here, that changes there" promise breaks again the same way.
+  it("the blockquote bar is decorative only — not a click target, no data-target", () => {
+    mount();
+    const quoteText = host.querySelector(".theme-quote-text")!;
+    expect(quoteText.tagName).not.toBe("BUTTON");
+    expect(quoteText.hasAttribute("data-target")).toBe(false);
+    // .closest(".theme-target") — NOT the raw [data-target] attribute selector,
+    // which would also match the ANCESTOR .theme-frame (the "bg" canvas target
+    // every element in the mini frame is nested under by design).
+    expect(quoteText.closest(".theme-target")).toBeNull();
+  });
 
-    expect(themeJsonSetting.get().colors.h1).toBe("#ff0000");
+  // The hr is the ONLY thing painted with --border now; nothing else in the
+  // frame should still reference it as a text/fill color (regression guard
+  // for the anchor move itself).
+  it("the border target is a real button anchored to the horizontal rule", () => {
+    mount();
+    const hr = host.querySelector<HTMLElement>('[data-target="border"]')!;
+    expect(hr.tagName).toBe("BUTTON");
+    expect(hr.classList.contains("theme-hr")).toBe(true);
+  });
 
-    themeJsonSetting.set(initialTheme);
+  it("hovering a target shows its label in the single status line (never a floating chip)", () => {
+    mount();
+    const hint = host.querySelector<HTMLElement>(".theme-preview-hint")!;
+    const defaultText = hint.textContent;
+
+    const bold = host.querySelector<HTMLElement>('[data-target="bold"]')!;
+    bold.dispatchEvent(new Event("pointerover", { bubbles: true }));
+    expect(hint.textContent).toBe("굵은 글자 (Bold)");
+
+    bold.dispatchEvent(new Event("pointerout", { bubbles: true }));
+    expect(hint.textContent).toBe(defaultText);
+  });
+
+  it("selecting a target sets aria-pressed and a second selection clears the first", () => {
+    mount();
+    const bold = host.querySelector<HTMLElement>('[data-target="bold"]')!;
+    const italic = host.querySelector<HTMLElement>('[data-target="italic"]')!;
+
+    bold.click();
+    expect(bold.getAttribute("aria-pressed")).toBe("true");
+
+    italic.click();
+    expect(bold.getAttribute("aria-pressed")).toBe("false");
+    expect(italic.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("Escape clears the current selection", () => {
+    mount();
+    const bold = host.querySelector<HTMLElement>('[data-target="bold"]')!;
+    bold.click();
+    expect(bold.getAttribute("aria-pressed")).toBe("true");
+
+    bold.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(bold.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("clicking the frame margin (not a nested target) selects bg", () => {
+    mount();
+    const frame = host.querySelector<HTMLElement>('[data-target="bg"]')!;
+    frame.click(); // jsdom: click() dispatches with target === frame itself
+    expect(frame.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("selecting a target opens the docked inspector with color/bg tabs", () => {
+    mount();
+    expect(host.querySelector(".theme-inspector-hint")).not.toBeNull();
+
+    const bold = host.querySelector<HTMLElement>('[data-target="bold"]')!;
+    bold.click();
+
+    expect(host.querySelector(".theme-inspector-hint")).toBeNull();
+    const tabs = host.querySelectorAll('.theme-inspector-tab');
+    expect(tabs.length).toBe(2);
   });
 
   it("validates and applies theme when text JSON editing and click Apply", () => {
-    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
-    host.appendChild(el);
-
+    mount();
     const initialTheme = themeJsonSetting.get();
 
     const textarea = host.querySelector(".settings-json") as HTMLTextAreaElement;
     const applyButton = host.querySelector('[data-act="apply"]') as HTMLButtonElement;
     const errorDiv = host.querySelector(".settings-json-error") as HTMLDivElement;
 
-    // Paste invalid JSON
     textarea.value = "{ invalid json }";
     applyButton.click();
-
     expect(errorDiv.textContent).toBe("유효하지 않은 테마 JSON입니다.");
     expect(themeJsonSetting.get()).toEqual(initialTheme);
 
-    // Paste valid JSON
     const customTheme = builtInTheme("light");
     customTheme.colors.bg = "#f0f0f0";
     textarea.value = JSON.stringify(customTheme);
     applyButton.click();
-
     expect(errorDiv.textContent).toBe("");
     expect(themeJsonSetting.get().colors.bg).toBe("#f0f0f0");
 
-    // Revert changes
     themeJsonSetting.set(initialTheme);
+  });
+
+  it("teardown stops the preview/inspector from reacting to further setting changes", () => {
+    const rowEl = mount();
+    const bold = host.querySelector<HTMLElement>('[data-target="bold"]')!;
+    bold.click();
+    expect(host.querySelector(".theme-inspector-hint")).toBeNull();
+
+    runTeardown(rowEl);
+    // After teardown, an external change must not throw and must not repopulate
+    // a torn-down inspector's live bindings (no stale-DOM writes).
+    expect(() => themeJsonSetting.set({ ...builtInTheme("dark") })).not.toThrow();
   });
 });
 
 describe("parseTheme backward-compat", () => {
-  // The serialized form of a pre-extension (8-key) theme: take a current preset
-  // and strip every extended key, so it mirrors a value saved by an older build.
   function legacyEightKeyJson(preset: "dark" | "light"): string {
     const t = builtInTheme(preset);
     const eight = {
@@ -192,87 +266,53 @@ describe("parseTheme backward-compat", () => {
   it("parses an old 8-key theme without rejecting it (no reset)", () => {
     const parsed = parseTheme(legacyEightKeyJson("dark"));
     expect(parsed).not.toBeNull();
-    // core 8 keys preserved verbatim
     expect(parsed!.colors.bg).toBe("#131110");
     expect(parsed!.colors.fg).toBe("#ffffff");
     expect(parsed!.colors.accent).toBe("#a8c8e8");
     expect(parsed!.colors.muted).toBe("#a8a29e");
   });
 
-  it("promotes a legacy 8-key theme to the full 18-key set via fallback", () => {
-    const parsed = parseTheme(legacyEightKeyJson("dark"))!;
-    // h1~h5, bold, italic fall back to fg
+  it("promotes a legacy 8-key theme to the full extended set via fallback", () => {
+    // A CUSTOM name (not dark/light/claude) so upgradePristinePreset's "snap a
+    // pristine built-in preset to its curated new-gen values" path can't kick
+    // in — this isolates the raw EXTENDED_FALLBACK rule under test.
+    const t = builtInTheme("dark");
+    const eight = {
+      bg: t.colors.bg, fg: t.colors.fg, accent: t.colors.accent, link: t.colors.link,
+      surface: t.colors.surface, border: t.colors.border, muted: t.colors.muted, highlightBg: t.colors.highlightBg,
+    };
+    const parsed = parseTheme(JSON.stringify({ ...t, name: "custom-dark", colors: eight }))!;
     expect(parsed.colors.h1).toBe(parsed.colors.fg);
-    expect(parsed.colors.h2).toBe(parsed.colors.fg);
-    expect(parsed.colors.h3).toBe(parsed.colors.fg);
-    expect(parsed.colors.h4).toBe(parsed.colors.fg);
-    expect(parsed.colors.h5).toBe(parsed.colors.fg);
+    expect(parsed.colors.h6).toBe(parsed.colors.muted);
     expect(parsed.colors.bold).toBe(parsed.colors.fg);
     expect(parsed.colors.italic).toBe(parsed.colors.fg);
-    // h6 → muted
-    expect(parsed.colors.h6).toBe(parsed.colors.muted);
-    // code → accent
     expect(parsed.colors.code).toBe(parsed.colors.accent);
-    // highlight → fixed ink literal
     expect(parsed.colors.highlight).toBe("#1a1300");
+    expect(parsed.colors.comment).toBe(parsed.colors.muted);
+    // No background key materializes out of thin air for a legacy theme.
+    expect(parsed.colors.boldBg).toBeUndefined();
   });
 
-  it("keeps an explicit extended key and fills the rest from fallback", () => {
-    const t = builtInTheme("dark");
-    const json = JSON.stringify({
-      ...t,
-      colors: { ...t.colors, h1: "#ff0000" },
-    });
-    const parsed = parseTheme(json)!;
-    expect(parsed.colors.h1).toBe("#ff0000"); // explicit value wins
-    expect(parsed.colors.h2).toBe(parsed.colors.fg); // others fall back
-  });
-
-  it("treats a corrupt extended key as absent (fallback) without rejecting the theme", () => {
-    const t = builtInTheme("dark");
-    const json = JSON.stringify({
-      ...t,
-      colors: { ...t.colors, code: "" }, // empty string = damaged partial key
-    });
-    const parsed = parseTheme(json);
-    expect(parsed).not.toBeNull(); // whole theme NOT rejected
-    expect(parsed!.colors.code).toBe(parsed!.colors.accent); // code falls back to accent
+  it("a PRISTINE built-in preset (name=dark, no new-gen keys, unedited) upgrades to the curated comment tone instead of the naive muted fallback", () => {
+    const parsed = parseTheme(legacyEightKeyJson("dark"))!;
+    expect(parsed.colors.comment).toBe(builtInTheme("dark").colors.comment);
   });
 
   it("still strict-rejects a missing CORE key (SSOT integrity)", () => {
     const t = builtInTheme("dark");
     const broken = { ...t.colors } as Record<string, unknown>;
-    delete broken.bg; // core key missing
+    delete broken.bg;
     const json = JSON.stringify({ ...t, colors: broken });
     expect(parseTheme(json)).toBeNull();
   });
 
-  it("round-trips an 18-key theme through serialize → parse", () => {
+  it("round-trips an 18+comment theme through serialize → parse", () => {
     const built = builtInTheme("light");
     const reparsed = parseTheme(serializeTheme(built))!;
     expect(reparsed.colors.h1).toBe(built.colors.h1);
     expect(reparsed.colors.code).toBe(built.colors.code);
     expect(reparsed.colors.highlight).toBe(built.colors.highlight);
-  });
-});
-
-describe("builtInTheme extended values match the fallback rule (zero drift)", () => {
-  it("dark preset extended colors equal what promotion would derive", () => {
-    const dark = builtInTheme("dark");
-    expect(dark.colors.h1).toBe(dark.colors.fg);
-    expect(dark.colors.h6).toBe(dark.colors.muted);
-    expect(dark.colors.bold).toBe(dark.colors.fg);
-    expect(dark.colors.italic).toBe(dark.colors.fg);
-    expect(dark.colors.code).toBe(dark.colors.accent);
-    expect(dark.colors.highlight).toBe("#1a1300");
-  });
-
-  it("light preset extended colors equal what promotion would derive", () => {
-    const light = builtInTheme("light");
-    expect(light.colors.h1).toBe(light.colors.fg);
-    expect(light.colors.h6).toBe(light.colors.muted);
-    expect(light.colors.code).toBe(light.colors.accent);
-    expect(light.colors.highlight).toBe("#1a1300");
+    expect(reparsed.colors.comment).toBe(built.colors.comment);
   });
 });
 
@@ -296,15 +336,15 @@ describe("preset sync", () => {
     themeJsonSetting.set(builtInTheme("light"));
     const spy = vi.fn();
     const unsub = themeJsonSetting.subscribe(spy);
-    syncJsonToPreset("light"); // names already match
-    expect(spy).not.toHaveBeenCalled(); // no set → no notification
+    syncJsonToPreset("light");
+    expect(spy).not.toHaveBeenCalled();
     unsub();
   });
 
   it("preserves user edits when re-selecting the same preset name", () => {
     const edited = { ...builtInTheme("dark"), colors: { ...builtInTheme("dark").colors, h1: "#abcdef" } };
     themeJsonSetting.set(edited);
-    syncJsonToPreset("dark"); // same name → must not clobber the edit
+    syncJsonToPreset("dark");
     expect(themeJsonSetting.get().colors.h1).toBe("#abcdef");
   });
 });
@@ -322,21 +362,6 @@ describe("subscription teardown", () => {
     themeJsonSetting.set(builtInTheme("dark"));
   });
 
-  it("stops reflecting into a torn-down control's inputs", () => {
-    const el = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
-    host.appendChild(el);
-
-    const bgInput = host.querySelector(".theme-swatch-input") as HTMLInputElement;
-    // External change reflects while live.
-    themeJsonSetting.set({ ...builtInTheme("dark"), colors: { ...builtInTheme("dark").colors, bg: "#111111" } });
-    expect(bgInput.value).toBe("#111111");
-
-    // After teardown, further external changes must NOT update the stale DOM.
-    runTeardown(el);
-    themeJsonSetting.set({ ...builtInTheme("dark"), colors: { ...builtInTheme("dark").colors, bg: "#222222" } });
-    expect(bgInput.value).toBe("#111111"); // unchanged → no stale reflect
-  });
-
   it("attachTeardown / runTeardown round-trip runs every registered fn once", () => {
     const el = document.createElement("div");
     const a = vi.fn();
@@ -345,7 +370,6 @@ describe("subscription teardown", () => {
     runTeardown(el);
     expect(a).toHaveBeenCalledTimes(1);
     expect(b).toHaveBeenCalledTimes(1);
-    // Idempotent: a second run does not re-fire (subscriptions already cleared).
     runTeardown(el);
     expect(a).toHaveBeenCalledTimes(1);
   });

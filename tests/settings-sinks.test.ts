@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { headingScales, headingScaleSink, cssVarSink, webFontSink, headingFontSink } from "../src/settings/sinks";
+import { headingScales, headingScaleSink, cssVarSink, webFontSink, headingFontSink, themeVarsSink } from "../src/settings/sinks";
 import { googleFontHref, effectiveHeadingFont } from "../src/settings/app";
+import { builtInTheme } from "../src/settings/theme-schema";
 
 describe("headingScales (heading typescale rule)", () => {
   it("returns six per-level scales", () => {
@@ -110,6 +111,32 @@ describe("webFontSink (single owner of the <head> link + --reading-font)", () =>
     webFontSink()({ family: "Roboto&evil", stack: "Z" });
     expect(link()).toBeNull(); // invalid family → no URL → no link
     expect(document.documentElement.style.getPropertyValue("--reading-font")).toBe("Z");
+  });
+});
+
+describe("themeVarsSink (2026-08: comment + 11 background vars land on documentElement)", () => {
+  const BG_VARS = [
+    "--bold-bg", "--italic-bg", "--code-bg", "--link-bg", "--comment-bg",
+    "--h1-bg", "--h2-bg", "--h3-bg", "--h4-bg", "--h5-bg", "--h6-bg",
+  ];
+
+  beforeEach(() => {
+    for (const v of [...BG_VARS, "--comment-color"]) document.documentElement.style.removeProperty(v);
+  });
+
+  it("applies --comment-color and all 11 background vars for a theme with no backgrounds set (all transparent, codeBg = surface-veil)", () => {
+    themeVarsSink()(builtInTheme("light"));
+    expect(document.documentElement.style.getPropertyValue("--comment-color")).toBe("#8f887e");
+    for (const v of BG_VARS) {
+      const expected = v === "--code-bg" ? "var(--surface-veil)" : "transparent";
+      expect(document.documentElement.style.getPropertyValue(v)).toBe(expected);
+    }
+  });
+
+  it("applies an explicit background value when the theme sets one", () => {
+    const light = builtInTheme("light");
+    themeVarsSink()({ ...light, colors: { ...light.colors, boldBg: "#ff00ff" } });
+    expect(document.documentElement.style.getPropertyValue("--bold-bg")).toBe("#ff00ff");
   });
 });
 

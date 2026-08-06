@@ -213,6 +213,117 @@ const viewerToggleState = {
 await page.click(".settings-close");
 await page.waitForTimeout(200);
 
+// ── Theme color editor (2026-08 redesign: _workspace/01_ui_design.md) ─────
+// The 18-swatch grid was replaced by a mini-frame live preview + docked
+// inspector. Assert (a) zero visual drift before any edit, (b) a palette
+// pick on a mini-frame target reaches --bold-color + localStorage, (c) a
+// background chip pick + "없음" round-trips cleanly on a REAL .cm-strong node
+// in the editor (not the settings-panel preview), (d) the box model is
+// unchanged after all of the above (design decision 3: no padding added —
+// background clones onto the glyph box via box-decoration-break), and (e)
+// preset re-selection still works untouched (regression gate).
+async function openThemeCategory() {
+  await page.click(".settings-btn");
+  await page.waitForTimeout(200);
+  const cats = await page.$$(".settings-cat");
+  for (const b of cats) {
+    const text = await b.textContent();
+    if (text?.trim() === "테마") {
+      await b.click();
+      break;
+    }
+  }
+  await page.waitForTimeout(200);
+}
+
+const themeEditorStates = [];
+await openThemeCategory();
+
+const zeroDrift = await page.evaluate(() => {
+  const strong = document.querySelector(".cm-content .cm-strong");
+  const code = document.querySelector(".cm-content .cm-inline-code");
+  return {
+    strongBg: strong ? getComputedStyle(strong).backgroundColor : null,
+    codeBg: code ? getComputedStyle(code).backgroundColor : null,
+    strongBox: strong ? { w: strong.offsetWidth, h: strong.offsetHeight } : null,
+  };
+});
+themeEditorStates.push({ label: "zero-drift-before-edit", ...zeroDrift });
+
+await page.evaluate(() => document.querySelector('.theme-target[data-target="bold"]').click());
+await page.waitForTimeout(100);
+await page.evaluate(() => document.querySelector('.theme-chip[aria-label="블루"]').click());
+await page.waitForTimeout(100);
+
+const afterBoldPick = await page.evaluate(() => ({
+  boldColorVar: getComputedStyle(document.documentElement).getPropertyValue("--bold-color").trim(),
+  lsHasBold: (localStorage.getItem("mermark.themeJson") ?? "").includes('"bold": "#1d6fb8"'),
+}));
+themeEditorStates.push({ label: "after-bold-color-pick", ...afterBoldPick });
+
+await page.evaluate(() => Array.from(document.querySelectorAll(".theme-inspector-tab"))[1].click()); // 배경색
+await page.waitForTimeout(100);
+await page.evaluate(() => document.querySelector('.theme-chip[aria-label="코랄"]').click());
+await page.waitForTimeout(100);
+const afterBgPick = await page.evaluate(() => {
+  const strong = document.querySelector(".cm-content .cm-strong");
+  return {
+    strongBg: strong ? getComputedStyle(strong).backgroundColor : null,
+    lsHasBoldBg: (localStorage.getItem("mermark.themeJson") ?? "").includes("boldBg"),
+  };
+});
+themeEditorStates.push({ label: "after-bold-bg-pick", ...afterBgPick });
+
+await page.evaluate(() => document.querySelector(".theme-chip-none").click());
+await page.waitForTimeout(100);
+const afterBgNone = await page.evaluate(() => {
+  const strong = document.querySelector(".cm-content .cm-strong");
+  return {
+    strongBg: strong ? getComputedStyle(strong).backgroundColor : null,
+    lsHasBoldBg: (localStorage.getItem("mermark.themeJson") ?? "").includes("boldBg"),
+  };
+});
+themeEditorStates.push({ label: "after-bold-bg-none", ...afterBgNone });
+
+const afterEditBox = await page.evaluate(() => {
+  const strong = document.querySelector(".cm-content .cm-strong");
+  return strong ? { w: strong.offsetWidth, h: strong.offsetHeight } : null;
+});
+themeEditorStates.push({ label: "layout-invariant", before: zeroDrift.strongBox, after: afterEditBox });
+
+await page.evaluate(() => document.querySelector('.theme-target[data-target="h1"]').focus());
+await page.keyboard.press("Enter");
+await page.waitForTimeout(100);
+const keyboardSelect = await page.evaluate(() => ({
+  pressed: document.querySelector('.theme-target[data-target="h1"]')?.getAttribute("aria-pressed"),
+}));
+themeEditorStates.push({ label: "keyboard-enter-select", ...keyboardSelect });
+
+// Revert the bold/boldBg edit so it doesn't bleed into the preset-reselect
+// scenario below or any later comparison.
+await page.evaluate(() => localStorage.removeItem("mermark.themeJson"));
+
+async function pickPreset(label) {
+  await page.evaluate((wantLabel) => {
+    const rows = Array.from(document.querySelectorAll(".settings-row"));
+    const row = rows.find((r) => r.querySelector(".settings-row-label")?.textContent?.trim() === "프리셋");
+    const select = row.querySelector("select");
+    const opt = Array.from(select.options).find((o) => o.textContent === wantLabel);
+    select.value = opt.value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }, label);
+  await page.waitForTimeout(300);
+}
+await pickPreset("클로드");
+await pickPreset("라이트");
+const presetRoundTrip = await page.evaluate(() => document.documentElement.dataset.theme ?? null);
+themeEditorStates.push({ label: "preset-reselect-roundtrip", dataTheme: presetRoundTrip });
+
+await page.click(".settings-close");
+await page.waitForTimeout(200);
+
+const themeEditorState = { states: themeEditorStates };
+
 // ── showHiddenFilesSetting (_workspace/01_hidden_toggle_design.md) ─────────
 // New "탐색기" category, 3-step round trip (same shape as the conceal/reveal
 // 3-step assertions elsewhere): default OFF (dotfiles absent) → ON (dotfiles
@@ -321,10 +432,10 @@ const hiddenToggleState = {
 
 writeFileSync(
   out,
-  JSON.stringify({ states, headingStates, viewerToggleState, hiddenToggleState, errors }, null, 2),
+  JSON.stringify({ states, headingStates, viewerToggleState, themeEditorState, hiddenToggleState, errors }, null, 2),
 );
 console.log(
-  JSON.stringify({ states, headingStates, viewerToggleState, hiddenToggleState, errors }, null, 2),
+  JSON.stringify({ states, headingStates, viewerToggleState, themeEditorState, hiddenToggleState, errors }, null, 2),
 );
 console.log("\nwrote", out);
 await browser.close();

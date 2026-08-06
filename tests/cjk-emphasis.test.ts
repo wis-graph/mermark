@@ -84,11 +84,12 @@ describe("scanDelimiterRuns", () => {
 });
 
 describe("runKind", () => {
-  it("length 1 -> em, length 2 -> strong, length >= 3 -> null (non-target)", () => {
+  it("length 1 -> em, length 2 -> strong, length 3 -> both, length >= 4 -> null (non-target)", () => {
     expect(runKind(1)).toBe("em");
     expect(runKind(2)).toBe("strong");
-    expect(runKind(3)).toBeNull();
+    expect(runKind(3)).toBe("both");
     expect(runKind(4)).toBeNull();
+    expect(runKind(5)).toBeNull();
   });
 });
 
@@ -144,12 +145,71 @@ describe("findCjkEmphasisRuns", () => {
     expect(findCjkEmphasisRuns("가*나 다*라")).toEqual([]);
   });
 
-  it("returns [] for a run of length >= 3 (closes the pre-existing mis-fire risk)", () => {
+  it("returns [] for 가***나***다 — intraword *** that the real parser already resolves (Emphasis>StrongEmphasis), not a rescue", () => {
+    // 2026-08-07 measured: real parser (baseParser+GFM) already nests
+    // Emphasis(1-8) > StrongEmphasis(2-7) for this input. runKind(3) is
+    // "both" now (not null), so this pair DOES enter the "both" candidate
+    // list — but std flanking resolves it (before/after are plain CJK
+    // letters, not punctuation, so the whole-run canOpen/canClose formula
+    // succeeds regardless of adjacency), so rescuedSolelyByCjkRelaxation is
+    // false and it's correctly left untouched.
     expect(findCjkEmphasisRuns("가***나***다")).toEqual([]);
   });
 
   it("does not scan a list bullet's leading * (structurally outside Paragraph)", () => {
     expect(findCjkEmphasisRuns("* 항목")).toEqual([]);
+  });
+
+  // --- *** (bold-italic) — 2026-08-07 실측 (probe against baseParser+GFM,
+  // recorded in _workspace/02_frontend_changes.md "재호출 2차"):
+  //
+  //   그는 ***매우 중요한*** 말을 했다        -> Emphasis>StrongEmphasis (std OK)
+  //   그는 ***매우 중요한***이라고 했다        -> Emphasis>StrongEmphasis (std OK,
+  //                                              because the char right before
+  //                                              the closing run is '한' — a
+  //                                              plain letter, not punctuation —
+  //                                              so canClose's OR-branch is
+  //                                              satisfied before the CJK char
+  //                                              after the run even matters)
+  //   ***"강조"***를                          -> NO node at all (std fails: the
+  //                                              char before the closing run
+  //                                              IS punctuation ("), so canClose
+  //                                              needs sAfter||pAfter and 를
+  //                                              satisfies neither under std)
+  //   가***나***다                            -> Emphasis>StrongEmphasis (std OK)
+  //
+  // Conclusion: the CJK-flanking bug only bites `***` in the same shape it
+  // already bites `*`/`**` — punctuation immediately before the closing run
+  // AND a CJK letter immediately after it. Plain CJK adjacency alone (no
+  // intervening punctuation) is NOT broken; the real parser's rule-of-3
+  // splitting already handles it. These next two lock the "already works,
+  // leave alone" half of that line before the rescue tests lock the other.
+
+  it("[***-실측] leaves the already-working latin-space case untouched: 그는 ***매우 중요한*** 말을 했다", () => {
+    expect(findCjkEmphasisRuns("그는 ***매우 중요한*** 말을 했다")).toEqual([]);
+  });
+
+  it("[***-실측] leaves the already-working CJK-adjacent case untouched (no intervening punctuation): 그는 ***매우 중요한***이라고 했다", () => {
+    expect(findCjkEmphasisRuns("그는 ***매우 중요한***이라고 했다")).toEqual([]);
+  });
+
+  it('[***-신규] rescues the CJK-flanking failure that mirrors the ** and * bugs: ***"강조"***를', () => {
+    const runs = findCjkEmphasisRuns('***"강조"***를');
+    expect(runs.length).toBe(1);
+    expect(runs[0].kind).toBe("both");
+    expect('***"강조"***를'.slice(runs[0].openEnd, runs[0].closeStart)).toBe('"강조"');
+  });
+
+  it("does not let em/strong/both candidates interfere across kinds in one paragraph", () => {
+    // 이탤릭(std, 그대로) + 볼드(std, 그대로) + 볼드이탤릭 rescue, 한 문장에.
+    const doc = '가*나 와 **다** 와 ***"라"***를 함께 본다';
+    const runs = findCjkEmphasisRuns(doc);
+    // 가*나: std already resolves it (intraword) — not a rescue.
+    // **다**: plain latin/CJK-letter neighbors — std already resolves — not a rescue.
+    // ***"라"***를: the only rescue — same shape as the case above.
+    expect(runs.length).toBe(1);
+    expect(runs[0].kind).toBe("both");
+    expect(doc.slice(runs[0].openEnd, runs[0].closeStart)).toBe('"라"');
   });
 
   // --- existing ** (strong) cases, preserved with an explicit kind assertion ---
@@ -519,6 +579,71 @@ describe("cjkEmphasis decoration integration", () => {
     (view as unknown as { measure(): void }).measure();
     expect(view.contentDOM.textContent).toContain('그*"강조"*를');
     expect(view.contentDOM.querySelector(".cm-comment .cm-em")).toBeNull();
+    view.destroy();
+  });
+
+  // --- 2026-08-07 재호출 2차: *** (bold-italic). 실측(위 findCjkEmphasisRuns
+  // describe의 "[***-실측]"/"[***-신규]" 주석)을 마운트 레벨에서도 잠근다.
+
+  it("[***-실측] leaves the already-working *** untouched at the DOM level (no cm-em/.cm-strong from this feature; the parser's own nodes render instead)", () => {
+    const doc = "첫줄\n\n그는 ***매우 중요한*** 말을 했다";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    // The real parser already made Emphasis>StrongEmphasis for this (see
+    // text-styles.ts), so text-styles renders it — cjkEmphasis contributes
+    // nothing here. Assert only what THIS feature promises: raw source
+    // intact (no marker deleted by a phantom rescue) and content preserved.
+    expect(view.contentDOM.textContent).not.toContain("***매우 중요한***");
+    expect(view.contentDOM.textContent).toContain("매우 중요한");
+    view.destroy();
+  });
+
+  it('[***-신규] rescues ***"강조"***를: both cm-em and cm-strong on the body, all six * markers concealed', () => {
+    const doc = '첫줄\n\n***"강조"***를 본다';
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const rescued = view.contentDOM.querySelector(".cm-em.cm-strong");
+    expect(rescued).not.toBeNull();
+    expect(rescued?.textContent).toBe('"강조"');
+    expect(view.contentDOM.textContent).not.toMatch(/\*/);
+    expect(view.contentDOM.textContent).toContain("강조");
+    expect(view.contentDOM.textContent).toContain("를");
+    view.destroy();
+  });
+
+  it('[***-신규] reveals all three-star markers on the cursor line, re-conceals off it', () => {
+    const doc = '첫줄\n\n***"강조"***를 본다';
+    const view = mount(host, doc);
+    const targetLine = doc.indexOf('"강조"');
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toMatch(/\*/);
+    view.dispatch({ selection: { anchor: targetLine } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain('***"강조"***를');
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toMatch(/\*/);
+    view.destroy();
+  });
+
+  it("[***-신규] does not interfere with a real em/strong elsewhere in the same paragraph", () => {
+    // *중요*/**다**: known-good std patterns (same shape as the existing
+    // "이것은 *중요*를 뜻한다" / "그건 **중요**를 뜻한다" tests above — std
+    // already resolves both, so the REAL parser makes Emphasis/StrongEmphasis
+    // here, not this feature).
+    const doc = '첫줄\n\n이것은 *중요*를 그리고 **다**도 그리고 ***"라"***도 함께 본다';
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    // *중요*/**다**: real parser's own Emphasis/StrongEmphasis — this feature
+    // must leave them alone, not double-apply.
+    expect(view.contentDOM.querySelectorAll(".cm-em:not(.cm-strong)").length).toBe(1); // *중요*
+    expect(view.contentDOM.querySelectorAll(".cm-strong:not(.cm-em)").length).toBe(1); // **다**
+    // ***"라"***: the one rescue, both classes on the same node.
+    expect(view.contentDOM.querySelectorAll(".cm-em.cm-strong").length).toBe(1);
     view.destroy();
   });
 

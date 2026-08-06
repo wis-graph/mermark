@@ -382,15 +382,51 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-editor .cm-content ::selection,
 .cm-editor .cm-line ::selection { background: var(--selection-bg); }
 /* ZOOM GUARD: these add/replace `color` ONLY (theme-editor per-element colors).
-   font-weight/font-style/letter-spacing/padding are untouched — metrics stay put. */
-.cm-strong { font-weight: 700; color: var(--bold-color, inherit); }
-.cm-em { font-style: italic; color: var(--italic-color, inherit); }
+   font-weight/font-style/letter-spacing/padding are untouched — metrics stay put.
+   BACKGROUND PAINT RULE (2026-08 theme redesign): an inline background is paint
+   only, never layout — no padding is added (padding would shift glyph metrics
+   and break the "시각적 무변경" invariant for every theme with no background
+   set). box-decoration-break: clone makes a soft-wrapped run paint as
+   independent rounded boxes per line-fragment instead of one box with square
+   ends bleeding across the wrap — the standard fix for backgrounds on wrapped
+   inline text. `--bold-bg`/`--italic-bg`/etc default to transparent via
+   theme-schema's resolveBackground, so an unconfigured theme is byte-identical
+   to before this feature. */
+.cm-strong {
+  font-weight: 700;
+  color: var(--bold-color, inherit);
+  background: var(--bold-bg, transparent);
+  border-radius: var(--radius-xs, 4px);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.cm-em {
+  font-style: italic;
+  color: var(--italic-color, inherit);
+  background: var(--italic-bg, transparent);
+  border-radius: var(--radius-xs, 4px);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
 .cm-strike { text-decoration: line-through; }
-.cm-inline-code { font-family: var(--font-mono); letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--surface-veil); color: var(--code-color, inherit); }
-/* <!-- comment --> stays visible (unconcealed) but muted, so it reads as an
-   aside rather than body text — --muted already carries this "quiet" meaning
-   for every other de-emphasized element (gutters, captions, placeholders). */
-.cm-comment { color: var(--muted); }
+/* --code-bg replaces the hardcoded --surface-veil: resolveBackground's
+   codeBg-only intrinsic default IS var(--surface-veil), so an unconfigured
+   theme renders this identical chip fill it always has — a value swap, not a
+   behavior change. */
+.cm-inline-code { font-family: var(--font-mono); letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--code-bg, var(--surface-veil)); color: var(--code-color, inherit); }
+/* <!-- comment --> stays visible (unconcealed) but quiet, so it reads as an
+   aside rather than body text. --comment-color is independent from --muted
+   (2026-08: "주석도 옅은색하라니까 검정색이랑 구분이 안되네" — muted was too dark
+   AND shared by unrelated UI chrome, so it couldn't be tuned for comments
+   alone); the fallback still defaults to --muted so an un-migrated theme is
+   zero-drift. */
+.cm-comment {
+  color: var(--comment-color, var(--muted));
+  background: var(--comment-bg, transparent);
+  border-radius: var(--radius-xs, 4px);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
 /* ==highlight== → a fluorescent <mark>. Pin a dark ink on the highlight so it
    stays legible on dark theme too, where --fg flips to white and white-on-yellow
    would wash out. --highlight-bg gives each theme its own fluorescent tone, and
@@ -578,14 +614,31 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 }
 .cm-youtube-facade:hover .cm-youtube-play { background: #f00; }
 .cm-youtube-iframe { width: 100%; height: 100%; border: 0; display: block; }
-.cm-wikilink-active { color: var(--link); cursor: pointer; text-decoration: none; }
+/* --link-bg applies only to the resolved (active) link state — missing/pending/
+   error are status feedback, not the "link" identity, so they stay bg-free. */
+.cm-wikilink-active {
+  color: var(--link);
+  cursor: pointer;
+  text-decoration: none;
+  background: var(--link-bg, transparent);
+  border-radius: var(--radius-xs, 4px);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
 .cm-wikilink-active:hover { text-decoration: underline; }
 .cm-wikilink-missing { color: var(--muted); text-decoration: line-through dotted; cursor: default; }
 .cm-wikilink-pending { color: var(--muted); }
 .cm-wikilink-error { color: #dc2626; text-decoration: underline wavy; }
 .cm-wikilink-external::after { content: "↗"; font-size: .8em; margin-left: .1em; opacity: .7; }
 
-.cm-link { color: var(--link); cursor: pointer; }
+.cm-link {
+  color: var(--link);
+  cursor: pointer;
+  background: var(--link-bg, transparent);
+  border-radius: var(--radius-xs, 4px);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
 .cm-link:hover { text-decoration: underline; }
 /* Shared external-open failure feedback (openExternal, open-external.ts) —
    same tone as .cm-wikilink-error, applied to any anchor that failed to open
@@ -643,12 +696,17 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    only `color: var(--hN-color, …)` is appended (theme-editor per-heading colors,
    falling back to the prior visual — --fg for h1~h5, --muted for h6 — so an
    un-promoted theme keeps the exact old look). */
-.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 2.0)); letter-spacing: var(--h1-tracking, 0); color: var(--h1-color, var(--fg)); }
-.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.6)); letter-spacing: var(--h2-tracking, 0); color: var(--h2-color, var(--fg)); }
-.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.32)); letter-spacing: var(--h3-tracking, 0); color: var(--h3-color, var(--fg)); }
-.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.15)); letter-spacing: var(--h4-tracking, 0); color: var(--h4-color, var(--fg)); }
-.cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); }
-.cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); }
+/* --hN-bg (2026-08): a full-width line background needs no box-decoration-break
+   trick (unlike the inline .cm-strong/.cm-em/etc above) — .cm-line is already a
+   block box, so painting its background changes zero layout on its own. Still no
+   padding: a padded heading line would shift the vertical rhythm the heading-
+   cluster rule above is tuned against. */
+.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 2.0)); letter-spacing: var(--h1-tracking, 0); color: var(--h1-color, var(--fg)); background: var(--h1-bg, transparent); }
+.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.6)); letter-spacing: var(--h2-tracking, 0); color: var(--h2-color, var(--fg)); background: var(--h2-bg, transparent); }
+.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.32)); letter-spacing: var(--h3-tracking, 0); color: var(--h3-color, var(--fg)); background: var(--h3-bg, transparent); }
+.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.15)); letter-spacing: var(--h4-tracking, 0); color: var(--h4-color, var(--fg)); background: var(--h4-bg, transparent); }
+.cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); background: var(--h5-bg, transparent); }
+.cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); background: var(--h6-bg, transparent); }
 
 /* Top title-bar — custom window chrome, scoped to .main-column (#app =
    column(.workspace = row(sidebar-aside*, sash, .main-column = column(
@@ -2110,102 +2168,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   align-items: stretch;
   gap: 1.2em;
   width: 100%;
-}
-
-/* 2-column card grid: core colors fill column 1 top-to-bottom, markdown column 2
-   (grid auto-flow column). Each card pairs a circular picker with its label. */
-.theme-swatch-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(9, auto);
-  gap: 0.9em 1.4em;
-  margin-bottom: 0.5em;
-  width: 100%;
-}
-
-.theme-swatch-card {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 0.7em;
-}
-
-/* Markdown (previewVar) cards drop the circular swatch (controls.ts's renderJson
-   — all 9 markdown circles rendered as the same ink-black dot, zero information
-   next to the card's own live text preview) and instead make the WHOLE card the
-   click target: `position: relative` gives the already-absolute `.theme-swatch-
-   input` (added as a direct child here, not inside `.theme-swatch-wrapper`) a
-   box to fill. Negative margin/matching padding keep the enlarged hit-area from
-   shifting the grid rhythm — visually the row looks identical to a plain flex
-   row, just with a bigger invisible click plate. */
-.theme-swatch-card.is-preview {
-  position: relative;
-  cursor: pointer;
-  border-radius: var(--radius-sm, 6px);
-  margin: -0.2em -0.3em;
-  padding: 0.2em 0.3em;
-  transition: background-color 0.12s ease;
-}
-.theme-swatch-card.is-preview:hover {
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
-}
-.theme-swatch-card.is-preview:focus-within {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.theme-swatch-wrapper {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  flex: none;
-  border-radius: 50%;
-}
-
-/* :focus-within surfaces keyboard focus on the visually-hidden color input so the
-   picker is tabbable/discoverable. */
-.theme-swatch-wrapper:focus-within {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.theme-swatch-color {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 8px color-mix(in srgb, #000 8%, transparent);
-  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.15s ease;
-  pointer-events: none;
-}
-
-.theme-swatch-wrapper:hover .theme-swatch-color {
-  transform: scale(1.08);
-  box-shadow: 0 4px 12px color-mix(in srgb, #000 16%, transparent);
-}
-
-.theme-swatch-input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-  border: none;
-  padding: 0;
-  margin: 0;
-}
-
-.theme-swatch-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--fg);
-  text-align: left;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .theme-advanced {

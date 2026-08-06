@@ -115,13 +115,24 @@ describe("in-line surface backgrounds stay selection-permeable (style contract)"
     expect(value).toContain("transparent");
   });
 
-  it.each([".cm-code-line", ".cm-callout", ".cm-inline-code"])(
+  it.each([".cm-code-line", ".cm-callout"])(
     "%s paints its background with var(--surface-veil), not opaque var(--surface)",
     (selector) => {
       const block = ruleBlock(selector);
       expect(block).toMatch(/background:\s*var\(--surface-veil\)/);
     },
   );
+
+  // .cm-inline-code (2026-08 theme redesign): --surface-veil moved from a literal
+  // value to the codeBg background key's INTRINSIC default (theme-schema's
+  // resolveBackground/BACKGROUND_INTRINSIC), so the rule now reads
+  // `var(--code-bg, var(--surface-veil))` — an unconfigured theme still resolves
+  // to the exact same translucent fill, just reached through the new background
+  // var instead of a hardcoded one.
+  it("cm-inline-code paints its background with var(--code-bg, var(--surface-veil)) (surface-veil is the intrinsic fallback)", () => {
+    const block = ruleBlock(".cm-inline-code");
+    expect(block).toMatch(/background:\s*var\(--code-bg,\s*var\(--surface-veil\)\)/);
+  });
 
   it.each([".cm-code-line", ".cm-callout", ".cm-inline-code"])(
     "%s's declaration block does not reintroduce the opaque var(--surface) background (regression guard)",

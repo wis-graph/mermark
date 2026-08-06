@@ -11,6 +11,8 @@ import { eventToChord, displayChord } from "../../shortcuts/keys";
 import { listViewers, type Viewer } from "../../chrome/viewer/registry";
 import { isViewerEnabled, toggleViewerDisabled } from "../app";
 import { copyTextToClipboard } from "../../clipboard";
+import { buildThemePreview } from "./theme-preview";
+import { buildColorInspector } from "./color-inspector";
 
 // Subscription cleanup: a control that calls setting.subscribe must hand back its
 // unsubscribe fns so the modal can tear them down on category swap / close,
@@ -175,112 +177,24 @@ function renderText(setting: Setting<string>, control: Extract<Control<string>, 
   return r;
 }
 
-/** The JSON control owns import (parse-on-적용) and export (copy/download). It is
- *  the only renderer with extra responsibility, all of it routed through the
- *  named theme rules (parseTheme/serializeTheme) — never an inline JSON.parse. A
- *  malformed paste shows an inline error and does NOT call set, so a corrupt
- *  import can't poison the SSOT. */
-// The 18 swatch cards, in render order: the 9 CORE colors first (column 1), then
-// the 9 MARKDOWN element colors (column 2). `key` is a Theme["colors"] field;
-// `label` is the spec's exact Korean text / markdown syntax shown on the card;
-// `previewVar` (markdown cards only) is the CSS var the inline preview's color is
-// bound to, so picking a color live-updates both the panel preview and the editor.
-type SwatchCard = { key: keyof Theme["colors"]; label: string; previewVar?: string };
-
-const CORE_CARDS: SwatchCard[] = [
-  { key: "bg", label: "에디터 배경색" },
-  { key: "fg", label: "기본 본문 글자색" },
-  { key: "surface", label: "카드 영역 배경색" },
-  { key: "border", label: "테두리선 색상" },
-  { key: "accent", label: "강조 요소 색상" },
-  { key: "link", label: "[[위키링크 (Link)]]" },
-  { key: "muted", label: "보조 텍스트 (Muted)" },
-  { key: "highlightBg", label: "==형광펜 배경색 (Highlight Bg)==" },
-  { key: "highlight", label: "==형광펜 글자색 (Highlight Text)==" },
-];
-
-const MARKDOWN_CARDS: SwatchCard[] = [
-  { key: "h1", label: "# 제목 1 (H1)", previewVar: "--h1-color" },
-  { key: "h2", label: "## 제목 2 (H2)", previewVar: "--h2-color" },
-  { key: "h3", label: "### 제목 3 (H3)", previewVar: "--h3-color" },
-  { key: "h4", label: "#### 제목 4 (H4)", previewVar: "--h4-color" },
-  { key: "h5", label: "##### 제목 5 (H5)", previewVar: "--h5-color" },
-  { key: "h6", label: "###### 제목 6 (H6)", previewVar: "--h6-color" },
-  { key: "bold", label: "**굵은 글자 (Bold)**", previewVar: "--bold-color" },
-  { key: "italic", label: "*기울임꼴 (Italic)*", previewVar: "--italic-color" },
-  { key: "code", label: "`인라인 코드 (Code)`", previewVar: "--code-color" },
-];
-
-const ALL_CARDS: SwatchCard[] = [...CORE_CARDS, ...MARKDOWN_CARDS];
-
+/** The JSON control owns import (parse-on-적용) and export (copy/download), plus
+ *  (2026-08 redesign) the live mini-frame preview + docked color inspector that
+ *  replaced the old 18-swatch grid (design: `_workspace/01_ui_design.md` 결정 1).
+ *  All color edits still route through the named theme rules
+ *  (parseTheme/serializeTheme for JSON, setting.set for the frame/inspector) —
+ *  never an inline JSON.parse. A malformed paste shows an inline error and does
+ *  NOT call set, so a corrupt import can't poison the SSOT. */
 function renderJson(setting: Setting<Theme>): HTMLElement {
   const { row: r, cell } = row("");
   r.classList.add("settings-row-json");
   r.classList.add("theme-editor");
 
-  // 1. Swatch Grid Container (2-column: core column then markdown column)
-  const grid = document.createElement("div");
-  grid.className = "theme-swatch-grid";
-
-  const colorInputs: Partial<Record<keyof Theme["colors"], HTMLInputElement>> = {};
-  const swatchColors: Partial<Record<keyof Theme["colors"], HTMLElement>> = {};
-
-  ALL_CARDS.forEach(({ key, label: cardLabel, previewVar }) => {
-    const card = document.createElement("div");
-    // Markdown cards (previewVar set) get `is-preview`: no circular swatch (see
-    // below) — the card itself becomes the click target, styles.css gives it
-    // the hover/focus affordance a bare label wouldn't have.
-    card.className = previewVar ? "theme-swatch-card is-preview" : "theme-swatch-card";
-
-    const input = document.createElement("input");
-    input.type = "color";
-    input.className = "theme-swatch-input";
-    input.title = cardLabel;
-
-    input.addEventListener("input", () => {
-      const activeTheme = setting.get();
-      const updatedTheme: Theme = {
-        ...activeTheme, // preserves `name` so editing never renames the preset
-        colors: {
-          ...activeTheme.colors,
-          [key]: input.value,
-        },
-      };
-      setting.set(updatedTheme);
-    });
-    colorInputs[key] = input;
-
-    const label = document.createElement("span");
-    label.className = "theme-swatch-label";
-    // Markdown cards show a LIVE preview element whose color inherits the CSS var
-    // (the single color source), so picking updates panel + editor together. Core
-    // cards have no inline preview — the swatch circle IS the preview.
-    if (previewVar) {
-      label.classList.add(`theme-preview-${String(key)}`);
-      label.style.color = `var(${previewVar})`;
-    }
-    label.textContent = cardLabel;
-
-    if (previewVar) {
-      // No circular swatch: it added zero information here (all 9 markdown
-      // circles rendered as the same ink-black dot, and the card already has
-      // a live text preview). The color input overlays the WHOLE card
-      // (styles.css's `.theme-swatch-card.is-preview .theme-swatch-input`,
-      // the same invisible-overlay technique `.theme-swatch-wrapper` used for
-      // just the circle, scaled up to the card) so clicking anywhere on the
-      // row opens the native picker.
-      card.append(input, label);
-    } else {
-      const wrapper = document.createElement("div");
-      wrapper.className = "theme-swatch-wrapper";
-      const swatch = document.createElement("div");
-      swatch.className = "theme-swatch-color";
-      wrapper.append(swatch, input);
-      swatchColors[key] = swatch;
-      card.append(wrapper, label);
-    }
-    grid.appendChild(card);
-  });
+  // The frame paints every target via var(--x) (themeVarsSink is the single
+  // writer of those vars), so it needs no subscription of its own — only the
+  // inspector needs to know WHICH target is selected right now.
+  let inspector: ReturnType<typeof buildColorInspector>;
+  const preview = buildThemePreview((t) => inspector.setTarget(t));
+  inspector = buildColorInspector(setting);
 
   // 2. Collapsible Advanced JSON Editor Accordion
   const details = document.createElement("details");
@@ -322,30 +236,21 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
 
   details.append(ta, error, actions);
 
-  // 3. Reflect changes and subscribe. The picker value + swatch fill come from the
-  // resolved 18-key theme (parseTheme/builtInTheme always fill extended keys; the
-  // `?? ""` guards a hand-built 8-key object so an unfilled key just renders blank
-  // rather than throwing). The markdown preview colors are NOT recomputed here —
-  // they inherit their CSS var, whose single writer is themeVarsSink.
+  // 3. Reflect the JSON textarea on every change. The frame + inspector reflect
+  // themselves (the frame via CSS vars, the inspector via its own subscription
+  // in color-inspector.ts) — this control only owns the textarea half.
   const reflect = (t: Theme) => {
-    ALL_CARDS.forEach(({ key }) => {
-      const colorVal = t.colors[key] ?? "";
-      const input = colorInputs[key];
-      const swatch = swatchColors[key];
-      if (input) input.value = toHex(colorVal);
-      if (swatch) swatch.style.backgroundColor = colorVal;
-    });
-
     ta.value = serializeTheme(t);
     error.textContent = "";
   };
 
   reflect(setting.get());
   // Collect the unsubscribe so the modal can tear this control down on swap/close
-  // (avoids stale reflect closures writing into detached DOM).
-  attachTeardown(r, [setting.subscribe(reflect)]);
+  // (avoids stale reflect closures writing into detached DOM, and leaks in the
+  // preview/inspector's own listeners).
+  attachTeardown(r, [setting.subscribe(reflect), preview.teardown, inspector.teardown]);
 
-  cell.append(grid, details);
+  cell.append(preview.el, inspector.el, details);
   return r;
 }
 
@@ -624,27 +529,3 @@ export const RENDER: {
   "viewer-toggles": (s) => renderViewerToggles(s as unknown as Setting<string[]>),
   info: () => renderInfo(),
 };
-
-/** Convert a CSS color string (hex, rgb, rgba) to '#rrggbb' hex format required by <input type="color">. */
-function toHex(color: string): string {
-  const trimmed = color.trim().toLowerCase();
-  if (trimmed.startsWith("#")) {
-    if (trimmed.length === 4) {
-      return "#" + trimmed[1] + trimmed[1] + trimmed[2] + trimmed[2] + trimmed[3] + trimmed[3];
-    }
-    if (trimmed.length >= 7) {
-      return trimmed.slice(0, 7);
-    }
-    return trimmed;
-  }
-  const match = trimmed.match(/\d+/g);
-  if (match && match.length >= 3) {
-    const r = Math.min(255, Math.max(0, parseInt(match[0], 10))).toString(16).padStart(2, "0");
-    const g = Math.min(255, Math.max(0, parseInt(match[1], 10))).toString(16).padStart(2, "0");
-    const b = Math.min(255, Math.max(0, parseInt(match[2], 10))).toString(16).padStart(2, "0");
-    return `#${r}${g}${b}`;
-  }
-  // Default fallback if color is transparent or named
-  if (trimmed === "transparent") return "#000000";
-  return "#000000";
-}

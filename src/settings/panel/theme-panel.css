@@ -1,0 +1,213 @@
+/* Theme color panel (mini app frame + docked inspector), 2026-08 redesign.
+   Placed here (colocated with theme-preview.ts/color-inspector.ts) rather
+   than in src/styles.css: fe-schema owns styles.css concurrently for the
+   `.cm-*` background-var consumption (theme-schema's decision 3), and this
+   component's CSS has nothing to do with the live editor's own rendering —
+   it only paints the settings-panel preview. Vite bundles a side-effect CSS
+   import from any module (main.ts already does this for styles.css/fonts.css),
+   so importing this from theme-preview.ts needs no build config change.
+   Vocabulary borrowed verbatim from styles.css: --radius-*, --surface/--border/
+   --accent/--muted/--fg/--bg, the color-mix() ring idiom .chrome-btn:focus-
+   visible already uses, and .settings-json-btn's pill-button shape. */
+
+/* The single persistent status line (2026-08 polish pass): shows the
+   hovered/focused/selected target's name here, NEVER as a floating chip
+   anchored to the target itself — a chip positioned "above the line" had
+   nothing to sit above for the topmost elements and clipped/overlapped
+   neighboring content. This one line can never collide with the document
+   below it, at any scroll position, for any target. */
+.theme-preview-hint {
+  margin: 0 0 .6em;
+  font-size: 12px;
+  color: var(--muted);
+  transition: color .1s ease;
+}
+.theme-preview-hint.is-active {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* The mini app frame: a shrunk mermark window. It is the "bg" click target
+   itself (role=button, design decision 7's one sanctioned non-<button>
+   target) — every OTHER target inside it is a real <button>. */
+.theme-frame {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  padding: 1.1em 1.2em .9em;
+  cursor: pointer;
+  outline: none;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--fg) 4%, transparent) inset;
+  transition: box-shadow .12s ease;
+}
+.theme-frame:hover { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
+.theme-frame:focus-visible,
+.theme-frame[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.theme-frame-toolbar { display: flex; justify-content: flex-end; margin-bottom: .7em; }
+.theme-frame-finder {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  padding: .3em .7em;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Every clickable sample-doc element. `data-label` is read by JS (pointer/
+   focus delegation in theme-preview.ts) into the single status line above
+   the frame — NOT painted as a per-target CSS callout (that overlapped
+   neighboring lines; see the status-line comment above). */
+.theme-target {
+  position: relative;
+  background: transparent;
+  border: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 1px 3px;
+  margin: -1px -3px;
+  border-radius: var(--radius-xs, 4px);
+  transition: box-shadow .12s ease;
+}
+.theme-target:hover { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent); }
+.theme-target:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.theme-target[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.theme-doc { text-align: left; }
+.theme-line { display: block; width: 100%; text-align: left; }
+.theme-h1 { font-size: 1.35em; font-weight: 700; margin-bottom: .4em; }
+.theme-h2 { font-size: 1.15em; font-weight: 700; margin-bottom: .5em; }
+
+.theme-scale-strip { font-size: .85em; margin-bottom: .8em; color: var(--muted); }
+.theme-scale { font-weight: 600; }
+.theme-scale-h3 { font-size: 1.2em; }
+.theme-scale-h4 { font-size: 1.1em; }
+.theme-scale-h5 { font-size: 1em; }
+.theme-scale-h6 { font-size: .9em; }
+
+.theme-p { font-size: .92em; line-height: 1.75; margin: 0 0 .85em; }
+.theme-code { font-family: var(--font-mono, ui-monospace, monospace); font-size: .9em; padding: .1em .3em; border-radius: var(--radius-xs, 4px); }
+/* The footnote ref is the `accent` target's anchor — visually small by
+   design (it's a superscript number in the real editor too), but its CLICK
+   AREA must not be. Extra padding/negative margin enlarges the hit box
+   without changing the glyph's rendered size OR the visible gap to its
+   neighbors (2026-08 polish pass, point 6) — the negative margin must match
+   the padding on EACH axis exactly (not just be "some negative value"), or
+   the difference shows up as a stray space around the glyph (a real bug the
+   2nd polish pass review caught: "둔다 [^1] ." reading like a typo). */
+.theme-footnote { font-size: .85em; vertical-align: super; padding: 4px 7px; margin: -4px -7px; }
+
+/* Decorative only, NOT a click target (2026-08 감사 반영, major #3 — see
+   theme-preview.ts's ThemeTarget doc comment for the full reasoning). Uses
+   `var(--block-edge)` DIRECTLY, matching the real editor's `.cm-blockquote`
+   byte-for-byte (styles.css:531 — border-left + `--block-fill` background),
+   since --block-edge has no Theme JSON key to wire a target to. The
+   sentence itself is never re-colored, so it reads at full --fg contrast
+   like real body text. */
+.theme-quote { border-left: 3px solid var(--block-edge); background: var(--block-fill); margin: 0 0 .85em; padding: .3em .8em; border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0; }
+.theme-quote-text { display: block; width: 100%; text-align: left; font-size: .85em; margin: 0; }
+
+.theme-comment-line { display: block; font-size: .82em; font-style: italic; margin-bottom: .6em; }
+/* THE `border` target's real anchor (moved here from the quote bar above —
+   2026-08 감사 반영, major #3): a bare full-width top border, matching the
+   real editor's `.cm-hr` exactly (styles.css:1738, which also just uses
+   `var(--border)` with no other decoration). `border-top` itself is set
+   inline by paintTarget (theme-preview.ts) — this rule only resets the
+   `.theme-target` base's padding/margin (1px 3px / -1px -3px), which would
+   otherwise misalign a full-width line, and gives the hit area some height
+   despite the visual line being 1px. */
+.theme-hr { display: block; width: 100%; height: 0; padding: 5px 0; margin: .35em 0 .55em; }
+.theme-status { display: block; width: 100%; text-align: left; font-size: .78em; }
+
+/* ── Docked color inspector ─────────────────────────────────────────── */
+
+.theme-inspector {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  padding: .9em 1.1em;
+  margin-top: .8em;
+}
+.theme-inspector-hint { margin: 0; font-size: 13px; color: var(--muted); }
+
+.theme-inspector-head { display: flex; align-items: center; gap: .5em; margin-bottom: .7em; }
+.theme-inspector-dot {
+  flex: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--fg) 15%, transparent);
+}
+.theme-inspector-dot.is-none {
+  background-image: linear-gradient(45deg, transparent 45%, #c94b4b 46%, #c94b4b 54%, transparent 55%);
+  border: 1px dashed var(--border);
+}
+.theme-inspector-label { flex: 1; font-size: 13px; font-weight: 600; }
+.theme-inspector-hex { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.theme-inspector-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: .7em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.theme-inspector-tab {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  border-radius: var(--radius-pill);
+  padding: .3em .8em;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.theme-inspector-tab[aria-selected="true"] { background: var(--accent); color: var(--bg); }
+
+.theme-inspector-palette { display: flex; gap: 6px; margin-bottom: .7em; }
+.theme-chip {
+  width: 26px; height: 26px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+}
+.theme-chip[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--accent);
+}
+.theme-chip-none {
+  border-style: dashed;
+  background-image:
+    linear-gradient(45deg, transparent 45%, #c94b4b 46%, #c94b4b 54%, transparent 55%),
+    repeating-linear-gradient(45deg, color-mix(in srgb, var(--fg) 6%, transparent) 0 5px, transparent 5px 10px);
+}
+
+.theme-inspector-sliders { display: flex; flex-direction: column; gap: .4em; margin-bottom: .7em; }
+.theme-inspector-slider-row { display: flex; align-items: center; gap: .6em; }
+.theme-inspector-slider-row span { flex: none; width: 4.2em; font-size: 11px; color: var(--muted); }
+.theme-inspector-slider-row input[type="range"] { flex: 1; }
+
+.theme-inspector-actions { display: flex; gap: .5em; }
+.theme-inspector-btn {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: .4em 1em;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.theme-inspector-btn:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+
+.theme-inspector-os-input { position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none; }

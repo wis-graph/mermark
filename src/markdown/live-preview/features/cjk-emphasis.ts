@@ -4,15 +4,19 @@ import type { SyntaxNode, Tree } from "@lezer/common";
 import { hide, type InlineFeature } from "../core";
 
 // ---------------------------------------------------------------------------
-// M7/M8 — CJK-friendly emphasis. @lezer/markdown's emphasis flanking
+// M7/M8/M9 — CJK-friendly emphasis. @lezer/markdown's emphasis flanking
 // (index.js DefaultInline.Emphasis) classifies CJK letters as plain
 // "letters" — neither Punctuation nor whitespace — so e.g.
 // `**"New Policy"**를` fails to close: the closing `**` is preceded by `"`
 // (punctuation) and followed by `를`, and standard flanking only allows that
 // when the char *after* the close is also punctuation/whitespace. The same
-// formula governs single `*` (italic) — `*"동물-되기와 …"*라` fails to close
-// for the identical reason. Overriding the parser is structurally blocked
-// (see _workspace/01_architect_design.md §1) — @lezer/markdown builds
+// formula governs single `*` (italic) — `*"동물-되기와 …"*라` — and a length-3
+// `***` (bold-italic) run — `***"강조"***를` — for the identical reason: each
+// is checked as ONE atomic run whose canOpen/canClose depends only on the
+// characters immediately outside the run's own boundary (never on chars
+// between sub-pieces of the run itself — see `runKind`'s doc comment).
+// Overriding the parser is structurally blocked (see
+// _workspace/01_architect_design.md §1) — @lezer/markdown builds
 // Emphasis/StrongEmphasis from a non-exported DelimiterType singleton and
 // DefaultInline.Emphasis can't be replaced via MarkdownConfig. So this
 // feature re-scans the *bare* Paragraph/Heading text the parser left
@@ -21,20 +25,22 @@ import { hide, type InlineFeature } from "../core";
 // `**중요**를`, which already succeeds because CJK letters aren't
 // whitespace under standard rules either).
 //
-// Scope: `*` (em) and `**` (strong) only. Delimiter runs of length >= 3
-// (`***`, and longer) are skipped outright — supporting them correctly would
-// require reproducing CommonMark's delimiter-splitting ("rule of 3"), which
-// this re-scan heuristic doesn't attempt (see design §4). `_`/`__` are also
-// out of scope: lezer's `_` path (next==95) carries extra intraword-ban
-// flanking conditions that `computeFlank` doesn't model — Korean prose and
-// this editor's markup shortcuts use `*`-family delimiters exclusively, so
+// Scope: `*` (em), `**` (strong), and `***` (bold-italic — added 2026-08-07,
+// see _workspace/02_frontend_changes.md "재호출 2차" for the probe that drew
+// this line) only. Delimiter runs of length >= 4 are skipped outright —
+// CommonMark itself doesn't clearly define emphasis for runs that long, and
+// this re-scan heuristic doesn't attempt it. `_`/`__` are also out of scope:
+// lezer's `_` path (next==95) carries extra intraword-ban flanking
+// conditions that `computeFlank` doesn't model — Korean prose and this
+// editor's markup shortcuts use `*`-family delimiters exclusively, so
 // there's no reported need. Any pair the *standard* (non-relaxed) formula
 // already resolves is left alone: the real parser already turned it into
-// Emphasis/StrongEmphasis, and `alreadyStyled` double-checks against the
-// syntax tree so this feature never double-applies. Nesting (an outer
-// rescued run wrapping an inner parser-made node, or vice versa) needs no
-// extra mechanism: CM6 mark decorations nest/overlap freely, and conceal
-// ranges for inner vs. outer markers are always disjoint (design §2).
+// Emphasis/StrongEmphasis(/nested-both for `***`), and `alreadyStyled`
+// double-checks against the syntax tree so this feature never
+// double-applies. Nesting (an outer rescued run wrapping an inner
+// parser-made node, or vice versa) needs no extra mechanism: CM6 mark
+// decorations nest/overlap freely, and conceal ranges for inner vs. outer
+// markers are always disjoint (design §2).
 // ---------------------------------------------------------------------------
 
 // Same construction lezer's internal (non-exported) `Punctuation` regex uses:
@@ -125,7 +131,7 @@ function isEscaped(text: string, idx: number): boolean {
   return backslashes % 2 === 1;
 }
 
-export type DelimiterKind = "em" | "strong";
+export type DelimiterKind = "em" | "strong" | "both";
 
 export interface DelimiterRun {
   start: number;
@@ -134,11 +140,22 @@ export interface DelimiterRun {
 }
 
 /** "A run's length decides what it could become" — 1 is an em candidate, 2 a
- *  strong candidate, anything else (0 delimiters, or `***`+) is out of scope
- *  (see module doc: rule-of-3 splitting isn't reproduced here). */
+ *  strong candidate, 3 a bold-italic ("both") candidate, anything longer
+ *  (`****`+) is out of scope. Note that "both" needs no rule-of-3
+ *  delimiter-*splitting* (matching CommonMark's own behavior for `*`/`**`:
+ *  design §1/§4) — this feature only ever asks "does the flanking formula,
+ *  applied ONCE to the whole 3-char run's outer boundary, pass?", exactly
+ *  the same question it asks for length-1/2 runs. That's also how the real
+ *  parser treats a `***…***` run when std flanking succeeds (2026-08-07
+ *  probe against baseParser+GFM, recorded in
+ *  _workspace/02_frontend_changes.md "재호출 2차"): it nests
+ *  Emphasis>StrongEmphasis via rule-of-3 *matching*, but canOpen/canClose for
+ *  the run's own boundary is still a single whole-run flanking check — the
+ *  same `computeFlank` this module already reproduces. */
 export function runKind(length: number): DelimiterKind | null {
   if (length === 1) return "em";
   if (length === 2) return "strong";
+  if (length === 3) return "both";
   return null;
 }
 
@@ -183,18 +200,22 @@ export function rescuedSolelyByCjkRelaxation(std: boolean, relaxed: boolean): bo
 }
 
 /** Left-to-right, non-nested pairing of same-`runKind` delimiter runs over
- *  bare node text. For each kind (em: length-1 runs, strong: length-2 runs)
- *  independently: skip a pair the *standard* formula already resolves (the
- *  parser already made it Emphasis/StrongEmphasis — nothing to rescue) and
- *  any pair neither formula resolves (not emphasis, CJK-relaxed or not).
- *  Only returns pairs that succeed *solely* because of CJK relaxation — the
- *  actual rescue set. Runs of length >= 3 (`runKind` returns null) are
- *  skipped entirely, so `가***나***다` — where the old marker-pair scan could
- *  mis-consume the run's first two stars as a `**` open — never produces a
- *  false rescue. Because em and strong runs are scanned from independent
- *  candidate lists, an outer `*…*` and an inner already-standard `**…**` (or
- *  vice versa) never contend for the same delimiter — nesting falls out of
- *  the length partition for free.
+ *  bare node text. For each kind (em: length-1, strong: length-2, both:
+ *  length-3 runs) independently: skip a pair the *standard* formula already
+ *  resolves (the parser already made it Emphasis/StrongEmphasis — nothing to
+ *  rescue) and any pair neither formula resolves (not emphasis, CJK-relaxed
+ *  or not). Only returns pairs that succeed *solely* because of CJK
+ *  relaxation — the actual rescue set. Runs of length >= 4 (`runKind` returns
+ *  null) are skipped entirely — CommonMark itself doesn't clearly define
+ *  emphasis for runs that long, and this re-scan heuristic doesn't attempt
+ *  it. Because em/strong/both runs are scanned from independent candidate
+ *  lists (partitioned purely by run length), an outer run and an inner
+ *  already-standard run of a DIFFERENT length never contend for the same
+ *  delimiter — nesting falls out of the length partition for free, and a
+ *  `***` run can never be mistaken for a `**`+`*` pair or vice versa (each
+ *  maximal run has exactly one fixed length, chosen by `scanDelimiterRuns`,
+ *  so `가***나***다` never risks the old bug of mis-consuming a run's first
+ *  two stars as a fake `**` open).
  *
  *  `isClaimedByOther(start)` — optional, defaults to "nothing is claimed" —
  *  drops a run from the candidate pool *before* pairing when it isn't. This
@@ -216,13 +237,13 @@ export function findCjkEmphasisRuns(
 ): CjkEmphasisRun[] {
   const runs = scanDelimiterRuns(text).filter((run) => !isClaimedByOther(run.start));
   const out: CjkEmphasisRun[] = [];
-  const byKind: Record<DelimiterKind, DelimiterRun[]> = { em: [], strong: [] };
+  const byKind: Record<DelimiterKind, DelimiterRun[]> = { em: [], strong: [], both: [] };
   for (const run of runs) {
     const kind = runKind(run.length);
     if (kind) byKind[kind].push(run);
   }
 
-  for (const kind of ["em", "strong"] as const) {
+  for (const kind of ["em", "strong", "both"] as const) {
     const candidates = byKind[kind];
     let idx = 0;
     while (idx < candidates.length - 1) {
@@ -327,7 +348,11 @@ const CLAIMED_NODES = [
   "SetextHeading2",
 ];
 
-const RESCUE_CLASS: Record<DelimiterKind, string> = { em: "cm-em", strong: "cm-strong" };
+const RESCUE_CLASS: Record<DelimiterKind, string> = {
+  em: "cm-em",
+  strong: "cm-strong",
+  both: "cm-em cm-strong",
+};
 
 export const cjkEmphasis: InlineFeature = {
   nodes: CLAIMED_NODES,

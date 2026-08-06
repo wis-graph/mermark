@@ -34,6 +34,26 @@ export interface Theme {
     italic?: string;
     code?: string;
     highlight?: string;
+    /** Aside/comment text tone, independent from --muted (2026-08 request: "주석도
+     *  옅은색하라니까 검정색이랑 구분이 안되네" — muted was too dark AND un-tunable
+     *  on its own). Optional for the same legacy-compat reason as the other extended
+     *  keys; EXTENDED_FALLBACK.comment derives it from muted when absent. */
+    comment?: string;
+    // Background keys (2026-08 request: "배경색상도 정의할 수 있으면 좋겟어"). Unlike
+    // the extended text-color keys above, these are optional on BOTH input AND
+    // output — `undefined` is a first-class "no background" state, not a value to
+    // promote/fill. See BACKGROUND_KEYS/resolveBackground for the full contract.
+    boldBg?: string;
+    italicBg?: string;
+    codeBg?: string;
+    linkBg?: string;
+    commentBg?: string;
+    h1Bg?: string;
+    h2Bg?: string;
+    h3Bg?: string;
+    h4Bg?: string;
+    h5Bg?: string;
+    h6Bg?: string;
   };
   /** --radius-md/lg/xl. (No --radius-sm: styles.css only fallback-references it.) */
   radii: { md: string; lg: string; xl: string };
@@ -70,8 +90,30 @@ export const EXTENDED_KEYS = [
   "italic",
   "code",
   "highlight",
+  "comment",
 ] as const;
 export type ExtendedKey = (typeof EXTENDED_KEYS)[number];
+
+/** The 11 BACKGROUND keys (2026-08 request). Distinct class from EXTENDED_KEYS:
+ *  extended keys are optional-in/always-filled-out (promote); background keys are
+ *  optional on BOTH sides — `undefined` ("no background") is a state that survives
+ *  parse→serialize round-trips, not a hole to patch. fg has no background key by
+ *  design (body background IS --bg; a separate fgBg would fork that concept into
+ *  two SSOT sources). */
+export const BACKGROUND_KEYS = [
+  "boldBg",
+  "italicBg",
+  "codeBg",
+  "linkBg",
+  "commentBg",
+  "h1Bg",
+  "h2Bg",
+  "h3Bg",
+  "h4Bg",
+  "h5Bg",
+  "h6Bg",
+] as const;
+export type BackgroundKey = (typeof BACKGROUND_KEYS)[number];
 
 /** The 8 core colors an extended key may derive its fallback from. */
 type CoreColors = Pick<Theme["colors"], (typeof COLOR_KEYS)[number]>;
@@ -93,7 +135,76 @@ const EXTENDED_FALLBACK: Record<ExtendedKey, (core: CoreColors) => string> = {
   italic: (c) => c.fg,
   code: (c) => c.accent,
   highlight: () => HIGHLIGHT_INK,
+  // Falls back to muted, not fg — comment is the SAME "quiet aside" role muted
+  // played before this key existed (styles.css .cm-comment used --muted verbatim),
+  // so an old theme with no comment key renders byte-identical to today.
+  comment: (c) => c.muted,
 };
+
+/** "배경 없음이 무엇으로 렌더되는가" — the ONE place that answers what an absent
+ *  background key paints as. codeBg intrinsically resolves to the existing inline-
+ *  code chip fill (--surface-veil) so "no background configured" reproduces the
+ *  CURRENT chip exactly, not a regression to no-fill; every other key's absence is
+ *  genuinely transparent (that element had no background before this feature).
+ *  Pure data, consumed only through resolveBackground. */
+const BACKGROUND_INTRINSIC: Record<BackgroundKey, string> = {
+  boldBg: "transparent",
+  italicBg: "transparent",
+  codeBg: "var(--surface-veil)",
+  linkBg: "transparent",
+  commentBg: "transparent",
+  h1Bg: "transparent",
+  h2Bg: "transparent",
+  h3Bg: "transparent",
+  h4Bg: "transparent",
+  h5Bg: "transparent",
+  h6Bg: "transparent",
+};
+
+/** "배경 없음이 무엇으로 렌더되는가" (pure query). `v` is the theme's stored value
+ *  for `key` (`undefined` when the user never set one); the CSS var themeToVars
+ *  emits always resolves through here so a "no background" theme is zero-drift
+ *  from the pre-background-feature visuals. */
+export function resolveBackground(key: BackgroundKey, v: string | undefined): string {
+  return v ?? BACKGROUND_INTRINSIC[key];
+}
+
+/** All new-generation color keys (comment + the 11 backgrounds) — used by
+ *  upgradePristinePreset to detect "this raw JSON already knows about the new
+ *  keys" (so it never re-runs the promotion, avoiding double-upgrade). */
+const NEW_GEN_KEYS: readonly string[] = ["comment", ...BACKGROUND_KEYS];
+
+/** The pre-2026-08 18 keys (core 8 + the original 10 extended, i.e. EXTENDED_KEYS
+ *  minus the newly-added `comment`). upgradePristinePreset compares exactly this
+ *  set against a built-in preset's current values to decide "untouched by the
+ *  user". */
+const LEGACY_EXTENDED_KEYS = EXTENDED_KEYS.filter((k) => k !== "comment");
+
+/** "손대지 않은 프리셋만 새 기본값(comment 등)으로 승격" — a saved theme is
+ *  upgraded to the fresh builtInTheme(name) IFF: (a) its name is a built-in preset
+ *  name, (b) the raw JSON it was parsed from mentions none of the new-generation
+ *  keys yet, and (c) EVERY field the promotion would overwrite — the legacy 18
+ *  core+extended colors, AND radii.md/lg/xl, AND font.sans — is byte-identical to
+ *  that preset's current builtInTheme (nothing the user edited, anywhere in the
+ *  theme). The name's promise is "untouched", not "untouched in colors only": a
+ *  saved theme whose radii/font were hand-edited via the JSON accordion (colors
+ *  left alone) must fail (c) too, or upgrading would silently discard that edit —
+ *  the 2026-08 audit's blocker #2. Any custom edit — even one changed character in
+ *  ANY of these fields, or a name the user renamed — takes the untouched branch
+ *  and is returned as-is, so a customized theme is never silently overwritten.
+ *  Idempotent: once a theme carries a new-gen key (e.g. from a prior upgrade), (b)
+ *  is false and it is returned unchanged — no double-upgrade. Pure query, called
+ *  once from parseTheme's tail. */
+export function upgradePristinePreset(t: Theme, rawColorKeys: readonly string[]): Theme {
+  if (t.name !== "dark" && t.name !== "light" && t.name !== "claude") return t;
+  if (rawColorKeys.some((k) => NEW_GEN_KEYS.includes(k))) return t;
+  const preset = builtInTheme(t.name);
+  const legacyColorKeys: readonly (keyof Theme["colors"])[] = [...COLOR_KEYS, ...LEGACY_EXTENDED_KEYS];
+  const colorsUnchanged = legacyColorKeys.every((k) => t.colors[k] === preset.colors[k]);
+  const radiiUnchanged = RADII_KEYS.every((k) => t.radii[k] === preset.radii[k]);
+  const fontUnchanged = t.font.sans === preset.font.sans;
+  return colorsUnchanged && radiiUnchanged && fontUnchanged ? preset : t;
+}
 
 /** Promote a 8-key core palette to the full 18-key set: keep any valid explicit
  *  extended value from `explicit`, fall back per EXTENDED_FALLBACK otherwise. A
@@ -161,12 +272,20 @@ export function parseTheme(raw: string | null): Theme | null {
     muted: c.muted as string,
     highlightBg: c.highlightBg as string,
   };
-  return {
+  // Background keys are never rejected/promoted — an absent or corrupt one is
+  // just left out of `colors` (undefined), which IS the "no background" state.
+  const backgrounds: Partial<Record<BackgroundKey, string>> = {};
+  for (const k of BACKGROUND_KEYS) if (isToken(c[k])) backgrounds[k] = c[k] as string;
+
+  const parsed: Theme = {
     name: t.name,
-    colors: { ...coreColors, ...promoteToExtended(coreColors, c) },
+    colors: { ...coreColors, ...promoteToExtended(coreColors, c), ...backgrounds },
     radii: { md: r.md as string, lg: r.lg as string, xl: r.xl as string },
     font: { sans: (font as { sans: string }).sans },
   };
+  // Object.keys(c) is the RAW colors object as parsed from JSON (pre-promotion) —
+  // exactly what upgradePristinePreset needs to detect "no new-gen key present".
+  return upgradePristinePreset(parsed, Object.keys(c));
 }
 
 /** Pretty-printed (2-space) JSON so the textarea is human-editable. Used as the
@@ -203,6 +322,23 @@ export function themeToVars(t: Theme): Record<string, string> {
     "--italic-color": ext.italic,
     "--code-color": ext.code,
     "--highlight-color": ext.highlight,
+    "--comment-color": ext.comment,
+    // Background vars are ALWAYS emitted (never conditional) — themeVarsSink
+    // overwrites the map but never deletes a stale key, so a conditional emit
+    // would let a previous theme's background var survive a switch to a theme
+    // with no background set. resolveBackground is the sole "no background"
+    // rule; it is not re-implemented here.
+    "--bold-bg": resolveBackground("boldBg", t.colors.boldBg),
+    "--italic-bg": resolveBackground("italicBg", t.colors.italicBg),
+    "--code-bg": resolveBackground("codeBg", t.colors.codeBg),
+    "--link-bg": resolveBackground("linkBg", t.colors.linkBg),
+    "--comment-bg": resolveBackground("commentBg", t.colors.commentBg),
+    "--h1-bg": resolveBackground("h1Bg", t.colors.h1Bg),
+    "--h2-bg": resolveBackground("h2Bg", t.colors.h2Bg),
+    "--h3-bg": resolveBackground("h3Bg", t.colors.h3Bg),
+    "--h4-bg": resolveBackground("h4Bg", t.colors.h4Bg),
+    "--h5-bg": resolveBackground("h5Bg", t.colors.h5Bg),
+    "--h6-bg": resolveBackground("h6Bg", t.colors.h6Bg),
     "--radius-md": t.radii.md,
     "--radius-lg": t.radii.lg,
     "--radius-xl": t.radii.xl,
@@ -246,6 +382,10 @@ export function builtInTheme(name: PresetName): Theme {
         italic: "#0c0a09",
         code: "#292524",
         highlight: "#1a1300",
+        // comment: 0.7 the darkness step of --muted (#777169) on this canvas, so it
+        // reads as clearly lighter than fg AND clearly distinguishable from muted —
+        // 3.2:1 on bg, 5.7:1 from fg (see _workspace/01_ui_design.md 결정 5).
+        comment: "#8f887e",
       },
       radii: { ...SHARED_RADII },
       font: { ...SHARED_FONT },
@@ -282,6 +422,9 @@ export function builtInTheme(name: PresetName): Theme {
         italic: "#3d3d3a",
         code: "#a9583e",
         highlight: "#141413",
+        // comment: 3.5:1 on the cream canvas, 5.1:1 from ink (결정 5) — warm-stone,
+        // consistent with the editorial palette's other muted tones.
+        comment: "#8c857a",
       },
       radii: { ...SHARED_RADII },
       font: { ...SHARED_FONT },
@@ -308,6 +451,9 @@ export function builtInTheme(name: PresetName): Theme {
       italic: "#ffffff",
       code: "#a8c8e8",
       highlight: "#1a1300",
+      // comment: 3.3:1 on the near-black canvas, 5.7:1 from --fg (결정 5) — one
+      // deliberate notch quieter than --muted's 7.5:1 so it reads as an aside.
+      comment: "#6b665f",
     },
     radii: { ...SHARED_RADII },
     font: { ...SHARED_FONT },
