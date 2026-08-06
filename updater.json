@@ -1,15 +1,11 @@
 {
-  "version": "0.9.24",
-  "notes": "### Added\n\n- **인용구에도 복사 버튼**: 인용구(`>`)에 마우스를 올리면 오른쪽 위에 복사 버튼이 뜬다. 복사하면 `>` 기호를 뗀 본문만 들어가서 다른 곳에 바로 붙여넣을 수 있다. 인용구 안에 인용구가 있으면 안쪽 것은 인용 표시를 그대로 남긴다. 콜아웃(`> [!NOTE]`)에서도 쓸 수 있고, 이때 `[!NOTE]` 머리 줄은 복사에서 빠진다.\n- **⌘+ 확대 한도를 300%까지**: 기존 200%로는 4K 화면에서 모자랐다.\n\n### Changed\n\n- **인용구·코드블럭 배경이 문서 배경과 구분된다**: 흰색 계열 테마에서 두 블록이 문서 바탕과 거의 같은 색이라 경계가 안 보였다(코드블럭은 오히려 문서보다 더 밝았다). 이제 은은하게 한 톤 다른 면으로 보인다. 어두운 테마의 기존 모습은 그대로다.\n\n### Fixed\n\n- **복사 버튼이 눌러도 아무 일이 없던 문제**: 코드블럭의 복사 버튼과 설정의 테마 JSON 복사가 앱에서 막히는 방식으로 클립보드를 쓰고 있어, 눌러도 조용히 실패했다. 이제 실제로 복사된다.",
-  "pub_date": "2026-08-05T09:28:03Z",
+  "version": "0.9.25",
+  "notes": "### Fixed\n\n- **한글 문장에서 기울임(이탤릭)이 안 먹던 문제**: `*\"동물-되기와 **같은 방식**\"*라`처럼 닫는 `*` 바로 뒤에 한글이 오면 기울임이 통째로 무시됐다(안쪽 볼드만 나오고 바깥 기울임은 안 나오는 증상). 볼드(`**`)는 이미 고쳐져 있었지만 기울임(`*`)은 빠져 있었다. 이제 볼드·기울임 모두, 서로 겹쳐 써도 제대로 나온다.\n- **마크다운 주석이 본문과 같은 색으로 보이던 문제**: `<!-- 주석 -->`이 이제 옅은 색으로 나와 본문과 구분된다. 주석 글자는 그대로 다 보인다.\n- 주석 안에 별표가 있으면 글자가 사라지던 문제(`<!-- 그*\"강조\"*를 -->`가 `<!-- 그\"강조\"를 -->`로 보임). 주석 안은 이제 쓴 그대로 나온다.\n- 같은 줄에 인라인 코드(`` ` ``)나 수식(`$`)이 있으면 그 뒤의 기울임·볼드가 렌더링되지 않던 문제.\n- `가***나***다`처럼 별 세 개를 쓴 곳에서 앞 두 별이 볼드로 잘못 잡히던 문제.",
+  "pub_date": "2026-08-06T19:44:21Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzY2SjljTXcrbU9HejFoYnd6RzJVMlowcHFYaER5b2VoTUNrdWo3L0RSU0lKQVVIVlRkT1pXd3B0SmdJWmlsQlVkVTdTdWw3ZiswZU5QRHNCVHJOUGdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1OTA5MDA1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClhHbDlFRGxJUkVlaktSVStTZWxBUHVzYjZabUhJcFN1MCtickxjL0Y1K2F3T0xqeXNjSXhTT3k5bWFYRTNpZGlHWFZJaW5kWGNOeWdXUW1Kc2lSUEJ3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.24/mermark.app.tar.gz"
-    },
-    "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzhEYnZjWHB0VlcrTERHdXkrcCs1TnorYThETGRTZmZHbFlxWVBBQXZEL2o3c01tZHJlb0x6ZkZTZklFSFVoZW5qZHRCaWk5dU1pekRFdk1BQVhjbUE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1OTIxOTk3CWZpbGU6bWVybWFya18wLjkuMjRfeDY0LXNldHVwLmV4ZQp1RExCTmttQXBGRXhENW4zQVlpSEtBWm56clI1RXZqdHNTb05uZVlsWHpHaWl5Q1AzUmFGTFloRUpraHYwNHRjWU85dmhPTGFxWVVqQU5yNDJJMGpEZz09Cg==",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.24/mermark_0.9.24_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3pKUmRSSE5nd3I5Ti93dnB3SlUrMlpHRTZHaFJxYk56RGd1U2pJYS9qNDUzNkN4N1VjR0dzMU1NQWJmM1VNaDZPT0ExRkIzTmdwaTM3WVMrdGd0UlFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MDQ1NDQzCWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ck5OMzQ1bUF6K0NUL3RLbnBjSTdpZEJLbWtGU1VPTVI4WVlHRXpPUjdCa2gydUcvY2JBV1RTSm1GaHFYWFNKL3QrNGJKMEFmclNZNytONG41Z2k5VEN3PT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.25/mermark.app.tar.gz"
     }
   }
 }
