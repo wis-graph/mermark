@@ -1,11 +1,11 @@
 {
-  "version": "0.9.27",
-  "notes": "### Added\n\n- **색을 정할 수 있는 서식이 늘었다**: 인용구(글자·배경·왼쪽 세로선), 코드블럭(글자·배경), 취소선(글자·배경), 그리고 `***볼드이탤릭***`이 자기 색을 갖는다. 정하지 않으면 지금까지와 똑같이 보이고, 정했을 때만 그 색이 쓰인다.\n- **인용구·코드블럭 배경에 \"자동\"이 생겼다**: 기본값은 자동이라 테마를 바꾸면 배경도 알아서 따라간다(어두운 테마에선 밝게, 밝은 테마에선 어둡게). 직접 색을 고르면 그 색으로 고정되고, 다시 \"자동\"을 누르면 원래대로 돌아온다.\n\n### Changed\n\n- **색 고르는 카드가 문서 위에 뜬다**: 문서 아래 붙어 있던 카드를 띄워서 미리보기 문서가 화면을 더 넓게 쓴다. 카드는 지금 고르고 있는 요소를 가리지 않는 위치로 알아서 비켜 뜬다.\n\n### Fixed\n\n- **미리보기에서 일반 텍스트가 클릭되지 않던 문제**: 본문 대부분이 눌리지 않아 기본 글자색을 바꿀 수 없었다. 이제 문서의 빈 곳을 포함해 어디를 눌러도 해당하는 색이 잡힌다.\n- **`***볼드이탤릭***` 색이 실제 문서에 적용되지 않던 문제**.",
-  "pub_date": "2026-08-07T10:22:56Z",
+  "version": "0.9.28",
+  "notes": "### Fixed\n\n- **색 편집 카드가 안 보이던 문제**: 설정 › 테마에서 요소를 클릭해도 색을 고르는 카드가 화면 밖에 있어서, 스크롤로 찾아내야 하거나 아예 못 찾는 경우가 많았다(실제 앱에서 특히 심했다). 이제 어디를 클릭하든 카드가 그 자리에서 바로 보인다 — 스크롤할 필요가 없다. 설정 창을 좁게 줄여도 카드가 창 밖으로 삐져나가지 않는다.",
+  "pub_date": "2026-08-07T11:11:01Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3liMVlGeWdKQkw0VEtCekJVMDJGRFJ1KzNZaHJzYmREMllWZ3NKUDRiU2VNaU9xRWwvMmdyR0dSUjM1UTdGY1IzVm1YL1FNN1R5eDByYUZxL3lRR2djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MDk4MTU3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClVabVlHUm4xYmRrYzVPOTBTRldhcjdyWUE0NGVlcUJDVlFUaWtRN2w5TXd3YzRrcnBFM09JdVJ1MUU3bFBXd2dScmZCUUlRL3hlU1Z1a3VjUFRIQkRBPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.27/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3duaUhTbkZEaXZ2Zjk5OTZ2WUR3N2JTMkJoUnVLZVlWcmplbXBycUpvOVNQZUdKTjRXQ2FMZm1pNkVZRTloNFVtdUw5YlFqZWovS21oNmtqb3dmU3dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MTAxMDQ1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkxoSFFtNDdOazQ0TWo1OS9WV0kwcUtGWUdMZThhWlQraWZ0SmNsbVZ3STJSZUFPK0VjeWd5OGE4UmpHL1c3NVNwTlJpaG9sR3BsRjQ5WmYvUXYrR0J3PT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.28/mermark.app.tar.gz"
     }
   }
 }
