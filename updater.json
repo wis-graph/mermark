@@ -1,11 +1,11 @@
 {
-  "version": "0.9.28",
-  "notes": "### Fixed\n\n- **색 편집 카드가 안 보이던 문제**: 설정 › 테마에서 요소를 클릭해도 색을 고르는 카드가 화면 밖에 있어서, 스크롤로 찾아내야 하거나 아예 못 찾는 경우가 많았다(실제 앱에서 특히 심했다). 이제 어디를 클릭하든 카드가 그 자리에서 바로 보인다 — 스크롤할 필요가 없다. 설정 창을 좁게 줄여도 카드가 창 밖으로 삐져나가지 않는다.",
-  "pub_date": "2026-08-07T11:11:01Z",
+  "version": "0.9.29",
+  "notes": "### Changed\n\n- **색 편집 카드를 같은 곳 다시 눌러 닫는다**: 배경을 클릭해 카드를 연 뒤 배경을 한 번 더 클릭하면 카드가 닫힌다. 키보드(Enter/Space)도 똑같이 동작한다.\n\n### Fixed\n\n- **Esc가 설정 창을 통째로 닫던 문제**: 색 편집 카드가 열려 있을 때 Esc를 누르면 카드만 닫히고 설정 창은 남는다. 카드가 닫힌 상태에서 눌러야 설정 창이 닫힌다.\n- **\"상세 조정… (OS 피커)\" 버튼이 아무 반응 없던 문제**: 이제 macOS 색상 창이 뜨고, 거기서 고른 색이 바로 반영된다.",
+  "pub_date": "2026-08-07T13:41:56Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3duaUhTbkZEaXZ2Zjk5OTZ2WUR3N2JTMkJoUnVLZVlWcmplbXBycUpvOVNQZUdKTjRXQ2FMZm1pNkVZRTloNFVtdUw5YlFqZWovS21oNmtqb3dmU3dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MTAxMDQ1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkxoSFFtNDdOazQ0TWo1OS9WV0kwcUtGWUdMZThhWlQraWZ0SmNsbVZ3STJSZUFPK0VjeWd5OGE4UmpHL1c3NVNwTlJpaG9sR3BsRjQ5WmYvUXYrR0J3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.28/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzZCZGZVb0tFMFlzR0sveENLek03cmd1ZzZSL2hOK1ozaGozcHZuRCtHMUlJOHV3d2sxS0JzQWlMQWJMOFYxbFkzejFYSVliZ3JFSlk2bG1sOFZJT1FVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MTEwMDk5CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ci9GWnpxM1VsVXJpMHIvSUR1UUJNU1V5RUYwUm9uUXg1aE9nOVJXVDNWc1Y3Y1kyV1pFcno0VHUzVkdzZExEMlR5Rlp0R3dMeHJKRDl0SXNnaWJFNkFBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.29/mermark.app.tar.gz"
     }
   }
 }
