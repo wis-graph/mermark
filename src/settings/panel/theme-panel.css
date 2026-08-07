@@ -80,16 +80,6 @@
   box-shadow: 0 0 0 2px var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
-/* round-2 design decision 7, invariant A: the floating inspector's zone
-   (bottom or top `--inspector-clearance` tall) must never land ON TOP OF a
-   selected target. `setTarget`'s scrollIntoView relies on this margin to
-   land the target clear of the card BEFORE pickInspectorEdge measures it. */
-.theme-target,
-.theme-frame {
-  scroll-margin-top: var(--inspector-clearance, 260px);
-  scroll-margin-bottom: var(--inspector-clearance, 260px);
-}
-
 /* round-2 결정 6, "그룹 호버": fg 런은 기본 링(:hover 위) 대신 점선 밑줄 +
    미세 배경 틴트로 그룹 정체성을 보여준다(theme-preview.ts의 setHoverGroup이
    같은 data-target의 모든 런에 이 클래스를 함께 건다) — 문단 전체가 아니라
@@ -204,36 +194,51 @@
 .theme-status { display: block; width: 100%; text-align: left; font-size: .78em; }
 
 /* ── Floating color inspector (round 2, design decision 7) ────────────
-   Round 1 docked this directly under the frame; round 2 floats it so the
-   document gets the full pane height when nothing is selected (the card
-   is `hidden` entirely then — see color-inspector.ts). `position: sticky`
-   inside the settings pane (the modal's own scroll container) + an edge
-   class (`edge-bottom` default, `edge-top` on flip) — never inline/fixed,
-   so it participates in the pane's own scroll instead of floating over
-   unrelated modal chrome. `align-self: flex-end` right-aligns it within
-   the row's column-flex layout (`.settings-row-json`'s `flex-direction:
-   column`) — same right-hugging placement the design's ASCII mockup shows.
-   Shadow/border/surface tokens are the SAME ones `.settings-modal` already
-   uses (no new visual language — design decision 7's "기존 모달 그림자
-   토큰 재사용" instruction). */
+   Round 1 docked this directly under the frame. Round 2 floated it with
+   `position: sticky` inside `.settings-pane` — but sticky moves WITH the
+   pane's scroll content, it doesn't pin to the viewport, so scrolling far
+   enough could push the card off-screen (실사용 피드백, 2026-08 폴리시 3차:
+   "스크롤 안 해도 보이게 하려고 띄운 건데 그걸 어기고 있다" — 불변식 C).
+   Round 3 makes it `position: fixed`: no ancestor between this element and
+   `.settings-pane` creates a new containing block (조사 확인됨), so `fixed`
+   always sits in real VIEWPORT coordinates — and `.settings-pane`'s own
+   `getBoundingClientRect()` is exactly "the rect currently visible on
+   screen" regardless of its internal scroll offset. `color-inspector.ts`'s
+   `pickCardPlacement` clamps the card's top/left into that rect, which is
+   what makes "no scroll needed after clicking" a structural guarantee
+   rather than a measured approximation. `top`/`left` are written inline by
+   `placeCard()` (setTarget-only — invariant B), never by CSS. Shadow/
+   border/surface tokens are the SAME ones `.settings-modal` already uses
+   (design decision 7's "기존 모달 그림자 토큰 재사용" instruction). */
 .theme-inspector {
-  position: sticky;
-  align-self: flex-end;
-  z-index: 5;
+  position: fixed;
+  /* `.settings-backdrop`(styles.css)가 `position: fixed; z-index: 1000`으로
+     자기 자신의 stacking context를 만들므로, 이 카드는 그 컨텍스트 안에서만
+     경쟁한다 — 형제인 모달 헤더·바디보다 위에 뜨면 충분하다(그 안엔
+     z-index를 쓰는 요소가 없다). */
+  z-index: 30;
   width: fit-content;
   /* 2026-08 폴리시 리뷰 2차(team-lead): 카드가 문서를 덮는 총량을 줄여라 —
      280px(1차 320px에서 축소) + 칩을 24px로 좁혀도 8칩 한 줄이 그대로
-     맞는다(8×24 + 7×5 갭 ≈ 227px + 좌우 패딩). */
-  max-width: min(280px, 100%);
+     맞는다(8×24 + 7×5 갭 ≈ 227px + 좌우 패딩). `position: fixed`에서는
+     `%`가 뷰포트를 기준으로 계산돼 패널보다 넓어질 수 있으므로(폴리시 3차)
+     `min(280px, 100%)`가 아니라 고정폭을 쓴다 — 실제 clamp는 JS가 한다.
+     `box-sizing: border-box`는 필수다 — `color-inspector.ts`의
+     `clampCardWidthToPane`이 패널이 좁을 때 이 `max-width`를 인라인으로
+     낮추는데, `el.offsetWidth`(그 계산이 기준으로 삼는 측정값)는 항상
+     padding·border를 포함한 OUTER 폭이다. content-box였다면 `max-width`가
+     content 폭만 제한해 padding(2×1em)+border(2×1px)만큼 실제 렌더 폭이
+     그 값을 넘어서고, JS가 계산한 clamp와 실제 렌더 폭의 단위가 어긋나
+     불변식 C가 좁은 패널에서 깨졌다(실측으로 발견: 패널 276px에서 카드가
+     286~298px로 여전히 넘침). */
+  box-sizing: border-box;
+  max-width: 280px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg, 12px);
   padding: .8em 1em;
-  margin-top: .8em;
   box-shadow: 0 12px 48px color-mix(in srgb, #000 24%, transparent);
 }
-.theme-inspector.edge-bottom { bottom: 12px; }
-.theme-inspector.edge-top { top: 12px; }
 
 .theme-inspector-head { display: flex; align-items: center; gap: .5em; margin-bottom: .7em; }
 .theme-inspector-close {

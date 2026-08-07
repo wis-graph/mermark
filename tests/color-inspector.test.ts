@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { buildColorInspector, presetDefaultFor, pickInspectorEdge } from "../src/settings/panel/color-inspector";
+import { buildColorInspector, presetDefaultFor, pickCardPlacement, clampCardWidthToPane } from "../src/settings/panel/color-inspector";
 import { themeJsonSetting } from "../src/settings/app";
 import { builtInTheme, serializeTheme } from "../src/settings/theme-schema";
 import { themeTarget } from "../src/settings/panel/theme-preview";
@@ -195,45 +195,46 @@ describe("Color inspector", () => {
     fakeTargetEl.remove();
   });
 
-  // 2026-08 폴리시 리뷰 2차(team-lead): fg처럼 여러 엘리먼트가 같은 target을
-  // 공유할 때, 클릭된 그 엘리먼트 하나의 rect만 보고 배치를 정하면 "같은
-  // 그룹의 다른 런"은 여전히 카드 밑에 파묻힐 수 있었다(캡처로 지적됨).
-  // computeEdge가 클릭된 엘리먼트가 아니라 같은 data-target을 가진 모든
-  // 엘리먼트의 UNION rect로 겹침을 판정하는지를, 두 엘리먼트에 서로 다른
-  // (모킹된) rect를 줘서 증명한다 — 클릭된 엘리먼트 자신은 하단 카드 존과
-  // 안 겹치는데도, "같은 그룹의 다른 엘리먼트"가 겹치면 edge가 top으로
-  // 플립돼야 한다(클릭된 엘리먼트의 rect만 봤다면 flip이 안 일어났을 것).
-  it("invariant A (정련): a group target's edge decision considers ALL same-target elements, not just the clicked one", () => {
+  // 2026-08 폴리시 3차(team-lead 실사용 정정): 불변식 C(스크롤 없이 카드가
+  // 항상 보임)가 최우선이다. `.settings-pane`의 rect는 그 컨테이너의 **내부
+  // 스크롤 위치와 무관하게** 항상 "지금 화면에 보이는 그 사각형"이므로, 클릭된
+  // 엘리먼트의 rect가 무엇이든(=문서를 어디까지 스크롤한 뒤 클릭했든) 카드는
+  // 항상 그 pane rect 안에 완전히 들어와야 한다 — 이게 실측이 아니라
+  // `position: fixed` + clamp의 조합에서 나오는 구조적 보장임을 증명한다.
+  it("invariant C: whatever the clicked element's rect is (any scroll position), the card's fixed top/left always lands fully inside the pane's visible rect", () => {
     const pane = document.createElement("div");
     pane.className = "settings-pane";
-    pane.getBoundingClientRect = () => ({ top: 0, bottom: 600, left: 0, right: 800, width: 800, height: 600, x: 0, y: 0, toJSON() {} });
+    const paneRect = { top: 0, bottom: 600, left: 0, right: 800, width: 800, height: 600, x: 0, y: 0, toJSON() {} };
+    pane.getBoundingClientRect = () => paneRect; // 스크롤과 무관하게 항상 이 값
     pane.appendChild(inspector.el);
     document.body.appendChild(pane);
-
-    // Sibling element sharing the SAME data-target as the clicked one — sits
-    // where the bottom card zone would land (top 450..500), while the
-    // CLICKED element itself is safely up top (top 10..40).
-    const siblingRun = document.createElement("span");
-    siblingRun.dataset.target = "fg";
-    siblingRun.getBoundingClientRect = () => ({ top: 450, bottom: 500, left: 0, right: 100, width: 100, height: 50, x: 0, y: 450, toJSON() {} });
-    document.body.appendChild(siblingRun);
-
-    const clickedRun = document.createElement("span");
-    clickedRun.dataset.target = "fg";
-    clickedRun.getBoundingClientRect = () => ({ top: 10, bottom: 40, left: 0, right: 100, width: 100, height: 30, x: 0, y: 10, toJSON() {} });
-    document.body.appendChild(clickedRun);
-    // el.offsetHeight is 0 in jsdom regardless — pickInspectorEdge's
-    // cardHeight param ends up 0, so the "bottom zone" is [paneRect.bottom -
-    // 0, paneRect.bottom] = [600, 600]. To exercise the flip deterministically
-    // in jsdom (no real layout), stub offsetHeight to a realistic card size.
+    Object.defineProperty(inspector.el, "offsetWidth", { value: 280, configurable: true });
     Object.defineProperty(inspector.el, "offsetHeight", { value: 200, configurable: true });
 
-    inspector.setTarget(themeTarget("fg")!, clickedRun);
-    expect(inspector.el.classList.contains("edge-top")).toBe(true); // flipped because of the SIBLING, not the clicked element
+    // 서로 다른 스크롤 위치에서 클릭했다고 가정한 3가지 anchor rect — pane
+    // rect는 위에서 고정했으므로, 이 rect들만 바뀌는 게 "스크롤 위치가 바뀐다"
+    // 는 상황을 흉내낸다.
+    const scenarios = [
+      { top: 10, bottom: 40, left: 0, right: 100 }, // 문서 맨 위에서 클릭
+      { top: 280, bottom: 320, left: 300, right: 400 }, // 문서 중간에서 클릭
+      { top: 580, bottom: 600, left: 700, right: 800 }, // 문서 맨 아래에서 클릭
+    ];
+    for (const anchorRect of scenarios) {
+      const clickedEl = document.createElement("span");
+      clickedEl.getBoundingClientRect = () => ({ ...anchorRect, width: anchorRect.right - anchorRect.left, height: anchorRect.bottom - anchorRect.top, x: anchorRect.left, y: anchorRect.top, toJSON() {} });
+      document.body.appendChild(clickedEl);
 
+      inspector.setTarget(themeTarget("fg")!, clickedEl);
+      const top = parseFloat(inspector.el.style.top);
+      const left = parseFloat(inspector.el.style.left);
+      expect(top).toBeGreaterThanOrEqual(paneRect.top + 12);
+      expect(top + 200).toBeLessThanOrEqual(paneRect.bottom - 12);
+      expect(left).toBeGreaterThanOrEqual(paneRect.left + 12);
+      expect(left + 280).toBeLessThanOrEqual(paneRect.right - 12);
+
+      clickedEl.remove();
+    }
     pane.remove();
-    siblingRun.remove();
-    clickedRun.remove();
   });
 
   it("프리셋 기본값으로 restores presetDefaultFor's value", () => {
@@ -278,47 +279,82 @@ describe("Color inspector", () => {
   });
 });
 
-// pickInspectorEdge: pure, jsdom-free (synthetic rects) — design decision 7's
-// invariant A's decision function. Default "bottom"; flips to "top" only when
-// the bottom card zone would actually overlap the target.
-// 2026-08 폴리시 리뷰 2차(team-lead): 하단 존을 "팬 바닥 − 카드높이"로만 계산
-// (안전 마진 없이)하면 실브라우저 실측에서 `codeBlock`(넓은 블록 타깃)이
-// 실제로는 카드에 덮이는데도 "안 덮임"으로 오판됐다 — sticky의 `bottom: 12px`
-// 오프셋 + 카드의 `margin-top: .8em`이 순수 산술 예측보다 카드를 더 높이
-// 밀어 올리기 때문(실측 오차 ~20px). `CARD_PLACEMENT_SAFETY_PX`(40)가 그
-// 오차를 흡수한다 — 아래 zone 경계는 이제 `pane.bottom - cardHeight - 40`.
-describe("pickInspectorEdge (design decision 7, invariant A)", () => {
-  const pane = { top: 0, bottom: 600 };
-  const cardHeight = 200; // bottom zone: y ∈ [360, 600] (200 + 40 안전마진)
+// pickCardPlacement: pure, jsdom-free (synthetic rects) — design decision 7의
+// 불변식 C > A > B 판정 함수(2026-08 폴리시 3차). 선호(A, 최선의 노력)는
+// anchor 아래 → anchor 위 → 그래도 안 맞으면 clamp 중앙 순으로 시도하지만,
+// **모든 경로의 최종 반환값은 항상 clamp 범위 안**이다(C, 협상 불가) —
+// 이전 세대의 `pickInspectorEdge`는 "안 겹침"을 근사(안전마진)로 보장했지만
+// 이 함수는 반환값 자체가 clamp의 결과라 근사가 필요 없다.
+describe("pickCardPlacement (design decision 7, invariant C > A > B)", () => {
+  const pane = { top: 0, bottom: 600, left: 0, right: 800 };
+  const cardWidth = 280;
+  const cardHeight = 200; // clamp top ∈ [12, 388], clamp left ∈ [12, 508]
 
-  it("defaults to bottom when the target is nowhere near the bottom zone", () => {
-    expect(pickInspectorEdge({ top: 50, bottom: 90 }, pane, cardHeight)).toBe("bottom");
+  it("선호(A): places the card just below the anchor when there's room", () => {
+    const p = pickCardPlacement({ top: 50, bottom: 90, left: 20, right: 120 }, pane, cardWidth, cardHeight);
+    expect(p.top).toBe(90 + 12);
+    expect(p.left).toBe(20);
   });
 
-  it("flips to top when the target overlaps the bottom card zone", () => {
-    expect(pickInspectorEdge({ top: 450, bottom: 500 }, pane, cardHeight)).toBe("top");
+  it("선호(A): flips above the anchor when there's no room below", () => {
+    const p = pickCardPlacement({ top: 550, bottom: 590, left: 20, right: 120 }, pane, cardWidth, cardHeight);
+    expect(p.top).toBe(550 - cardHeight - 12);
   });
 
-  it("boundary: a target ending exactly at the zone's top edge does not overlap", () => {
-    expect(pickInspectorEdge({ top: 310, bottom: 360 }, pane, cardHeight)).toBe("bottom");
+  it("불변식 C: an anchor spanning nearly the whole pane (전면 대상, fg/bg — 과거의 isFullSpanTarget 분기가 필요 없다) still lands the card fully inside the pane", () => {
+    const p = pickCardPlacement({ top: 0, bottom: 600, left: 0, right: 800 }, pane, cardWidth, cardHeight);
+    expect(p.top).toBeGreaterThanOrEqual(pane.top + 12);
+    expect(p.top + cardHeight).toBeLessThanOrEqual(pane.bottom - 12);
   });
 
-  it("boundary: a target starting exactly at the zone's top edge overlaps", () => {
-    expect(pickInspectorEdge({ top: 360, bottom: 380 }, pane, cardHeight)).toBe("top");
+  it("불변식 C: clamps left so the card never spills past the pane's horizontal edges", () => {
+    const pLeft = pickCardPlacement({ top: 50, bottom: 90, left: -50, right: 10 }, pane, cardWidth, cardHeight);
+    expect(pLeft.left).toBe(pane.left + 12);
+    const pRight = pickCardPlacement({ top: 50, bottom: 90, left: 700, right: 900 }, pane, cardWidth, cardHeight);
+    expect(pRight.left).toBe(pane.right - cardWidth - 12);
   });
 
-  it("a target pinned to the very bottom of the pane (round-1 blocker scenario: muted/status line) flips to top", () => {
-    expect(pickInspectorEdge({ top: 580, bottom: 600 }, pane, cardHeight)).toBe("top");
+  // 구조적 불변식 C의 직접 증명: anchor가 무엇이든(패널보다 훨씬 크거나,
+  // 음수 좌표거나) 반환값은 항상 clamp 범위 안에 있어야 한다 — 개별 시나리오가
+  // 아니라 "이 함수의 출력 공간 자체"에 대한 단언이다.
+  it("regression property: for ANY anchor rect, the placement is always fully inside the pane's clamp bounds (구조적 불변식 C)", () => {
+    const anchors = [
+      { top: 0, bottom: 30, left: 0, right: 100 },
+      { top: 300, bottom: 330, left: 400, right: 500 },
+      { top: 580, bottom: 600, left: 750, right: 850 },
+      { top: -100, bottom: 700, left: -50, right: 900 }, // pane보다 더 큰 극단값
+    ];
+    for (const a of anchors) {
+      const p = pickCardPlacement(a, pane, cardWidth, cardHeight);
+      expect(p.top).toBeGreaterThanOrEqual(pane.top + 12);
+      expect(p.top + cardHeight).toBeLessThanOrEqual(pane.bottom - 12 + 1e-9);
+      expect(p.left).toBeGreaterThanOrEqual(pane.left + 12);
+      expect(p.left + cardWidth).toBeLessThanOrEqual(pane.right - 12 + 1e-9);
+    }
+  });
+});
+
+// clampCardWidthToPane: 실브라우저 실측으로 발견된 회귀 — 패널이 카드의 CSS
+// 기본 최대폭(280px)보다 좁으면(예: 창을 아주 좁게 줄인 경우) top/left clamp
+// 만으로는 불변식 C를 못 지킨다. `pickCardPlacement`가 clamp에 쓰는 cardWidth
+// (= `el.offsetWidth`)는 카드가 실제로 이 함수로 줄어든 뒤의 값이어야 한다.
+describe("clampCardWidthToPane (invariant C, narrow-pane 회귀)", () => {
+  it("충분히 넉넉한 패널에서는 CSS 기본값(빈 문자열, 280px 그대로)으로 되돌린다", () => {
+    const card = document.createElement("div");
+    card.style.maxWidth = "999px"; // 이전 좁은 패널의 잔여값이 남아있다고 가정
+    clampCardWidthToPane(card, { left: 0, right: 800 }); // available = 800-24=776 > 280
+    expect(card.style.maxWidth).toBe("");
   });
 
-  it("a target at the very top of the pane (h1) stays bottom (never overlaps the bottom zone)", () => {
-    expect(pickInspectorEdge({ top: 0, bottom: 30 }, pane, cardHeight)).toBe("bottom");
+  it("패널이 280px보다 좁으면 카드의 max-width를 패널이 허용하는 폭으로 줄인다", () => {
+    const card = document.createElement("div");
+    clampCardWidthToPane(card, { left: 0, right: 276 }); // available = 276-24=252 < 280
+    expect(card.style.maxWidth).toBe("252px");
   });
 
-  // 실측으로 발견된 실제 버그의 회귀 테스트: 안전 마진 없이는 "안 겹침"으로
-  // 오판됐을 rect(naive zone=[400,600] 기준으론 bottom=390이라 안 겹침) —
-  // 안전 마진 적용 후 zone=[360,600]이라 390은 겹침으로 잡혀야 한다.
-  it("regression: a target that naive math would call safe, but the safety margin correctly flags as overlapping", () => {
-    expect(pickInspectorEdge({ top: 350, bottom: 390 }, pane, cardHeight)).toBe("top");
+  it("패널이 카드 여백(24px)보다도 좁은 극단값에서도 음수 폭을 만들지 않는다", () => {
+    const card = document.createElement("div");
+    clampCardWidthToPane(card, { left: 0, right: 10 }); // available = 10-24=-14
+    expect(card.style.maxWidth).toBe("0px");
   });
 });

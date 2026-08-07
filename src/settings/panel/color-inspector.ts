@@ -15,21 +15,55 @@
 // `reflectValues()`, never `render()`.
 //
 // PLACEMENT vs VALUE (round-2 design decision 7, invariant B): the card's
-// POSITION (`placeInspector`, sticky top/bottom) is decided ONLY from
-// `setTarget` — exactly like `render()`, position is a STRUCTURAL decision
-// (which element is selected), never touched by `reflectValues()`. This is
-// the same discipline that fixed blocker #1 applied to a new axis: if the
-// card repositioned on every slider `input` event, a drag would visually
-// jump/relayout under the pointer — the same failure CLASS as destroying the
-// slider element mid-drag, just at the "where does the card sit" layer
-// instead of "does the card exist" layer.
+// POSITION (`placeCard`) is decided ONLY from `setTarget` — exactly like
+// `render()`, position is a STRUCTURAL decision (which element is selected),
+// never touched by `reflectValues()`. This is the same discipline that fixed
+// blocker #1 applied to a new axis: if the card repositioned on every slider
+// `input` event, a drag would visually jump/relayout under the pointer — the
+// same failure CLASS as destroying the slider element mid-drag, just at the
+// "where does the card sit" layer instead of "does the card exist" layer.
+//
+// PLACEMENT PRIORITY, invariant C > A > B (2026-08 폴리시 3차, team-lead의
+// 실사용 정정 — 배포된 v0.9.27을 실제로 쓴 소감: "색상UI가 아래 있는데 스크롤
+// 안해도 보이게 하려고 띄운거였는데 그걸 어기고 있다"):
+//   - **C — 클릭 즉시, 카드 전체가 추가 스크롤 없이 화면에 보인다.** 협상
+//     불가, 최우선. 이전 세대(`edge-top`/`edge-bottom` + `position: sticky`)는
+//     카드를 **문서 흐름 안**에 뒀다 — sticky는 스크롤 컨테이너 내부에서
+//     스크롤을 따라 움직이는 것이지, 뷰포트에 고정되는 게 아니다. 그래서
+//     `.settings-pane`을 충분히 스크롤하면 카드가 실제로 화면 밖으로 밀려날
+//     수 있었다 — "띄운 게 아니라 아래 붙어 있는 것"이라는 지적이 정확히
+//     이거였다.
+//   - **해법**: 카드를 `position: fixed`로 바꾼다. `.theme-inspector`와
+//     `.settings-pane`(스크롤 컨테이너) 사이에 새 containing block을 만드는
+//     조상이 없다(조사 확인됨) — 그래서 `position: fixed`는 항상 진짜
+//     **브라우저 뷰포트** 좌표계에 앉는다. 그리고 스크롤 컨테이너 자신의
+//     `getBoundingClientRect()`는 그 컨테이너의 **내부 스크롤 위치와 무관하게
+//     항상 "지금 화면에 보이는 그 사각형"**을 돌려준다(스크롤 오프셋은
+//     콘텐츠를 컨테이너 안에서 미는 것일 뿐, 컨테이너 자신의 화면상 박스는
+//     안 움직인다). 그래서 카드를 `paneRect`(그 값) 안에 완전히 clamp하면,
+//     **어떤 스크롤 위치에서 클릭했든 카드는 항상 지금 보이는 화면 안**에
+//     있다 — 실측이 아니라 이 두 사실(fixed=뷰포트 좌표, paneRect=보이는
+//     영역)의 조합에서 구조적으로 나오는 보장이다. `pickCardPlacement`가
+//     그 clamp를 구현한다.
+//   - **A(선택 요소를 안 가림)는 C가 허용하는 범위 안에서만** 지킨다 — 클램프
+//     범위 안에서 클릭된 엘리먼트를 피하는 자리를 먼저 시도하고, 그 자리가
+//     클램프 밖으로 나가면 clamp가 이긴다(그래서 fg/bg처럼 클릭 지점이 팬
+//     전체에 가까운 "전면 대상"도 더 이상 별도 분기가 필요 없다 — 피할 자리가
+//     없으면 그냥 clamp 범위 안에 앉는다, 그게 곧 "클릭 지점 근처"다).
+//   - **B(드래그 중 위치 고정)는 그대로** — `placeCard`는 여전히 `setTarget`
+//     에서만 호출된다.
 import type { Setting } from "../store";
 import { absentKind, builtInTheme, isOptionalKey, type PresetName, type Theme } from "../theme-schema";
 import { hexToHsl, hslToHex } from "./color-math";
 import { hasBackgroundTab, type ThemeTarget } from "./theme-preview";
 
 type Tab = "color" | "bg";
-export type InspectorEdge = "top" | "bottom";
+/** 카드를 `position: fixed`로 앉힐 뷰포트 좌표 — `pickCardPlacement`의 반환
+ *  타입(불변식 C, 위 모듈 doc comment). */
+export interface CardPlacement {
+  top: number;
+  left: number;
+}
 
 // The curated 6: ink, stone, blue, coral, green, amber — one fixed set that
 // reads fine against all three built-in presets (design decision 6.1), not
@@ -114,34 +148,65 @@ function absentStateOf(theme: Theme, key: keyof Theme["colors"]): "none" | "auto
   return absentKind(key);
 }
 
-/** CSS의 `bottom: 12px`(sticky 오프셋) + `.theme-inspector`의 `margin-top:
- *  .8em`이 실제 렌더된 카드 rect를 "팬 바닥 − 카드높이"라는 순수 산술 예측보다
- *  더 높이(더 이른 y좌표) 밀어 올린다 — 2026-08 폴리시 리뷰 2차에서 실측으로
- *  드러난 사실: `codeBlock`처럼 넓은 블록 타깃에서 이 오차(~20px)가 "겹침
- *  없음"으로 오판되게 했다(카드가 실제로는 대상의 아래쪽 몇 픽셀을 덮었는데도
- *  edge가 "bottom"에 머묾). sticky 오프셋·마진·서브픽셀 라운딩을 낱낱이
- *  재현하는 대신, 그 오차를 전부 삼키고도 남을 **여유 마진**을 판정 쪽에서
- *  보수적으로 넣는다 — 이 값만큼 존을 일찍 시작해 "약간 덜 필요한데도 flip"
- *  쪽으로 치우치게 한다(불변식 A는 안전이 우선이라, 과잉 flip이 누락된
- *  overlap보다 훨씬 싸다). */
-const CARD_PLACEMENT_SAFETY_PX = 40;
+/** 카드와 패널 가장자리 사이에 남기는 최소 여백 — 이전 세대의 sticky
+ *  `bottom: 12px`/`top: 12px`와 **같은 값을 재사용**한 것(새 매직넘버가
+ *  아니다: 감사에서 지적받았던 `CARD_PLACEMENT_SAFETY_PX`의 전례를 피하려고
+ *  기존에 이미 근거가 있던 값을 그대로 가져왔다). */
+const CARD_EDGE_MARGIN_PX = 12;
 
-/** "카드가 선택 요소를 피해 앉는 자리" (순수 쿼리, design decision 7). 기본은
- *  "bottom"(팬 하단, sticky) — 대상의 rect가 그 하단 카드 존(팬 하단에서
- *  `cardHeight + CARD_PLACEMENT_SAFETY_PX`만큼)과 겹치면 "top"으로 플립한다.
- *  `targetRect`/`paneRect`는 DOMRect 모양의 순수 객체(jsdom 없이도 테스트
- *  가능 — 합성 rect를 그대로 먹인다). 호출자는 이 함수를 부르기 **전에** 대상을
- *  스크롤로 노출시켜야 한다(카드 존을 피해 착지하도록 CSS `scroll-margin`이
- *  이미 걸려 있다 — `theme-panel.css`의 `.theme-target, .theme-frame`).
- *  Pure query. */
-export function pickInspectorEdge(
-  targetRect: { top: number; bottom: number },
-  paneRect: { top: number; bottom: number },
+/** `theme-panel.css`의 `.theme-inspector { max-width: 280px }`와 반드시 같은
+ *  값 — `clampCardWidthToPane`이 "패널이 이 기본폭보다 좁은가"를 판정하는
+ *  기준선이다. */
+const CARD_CSS_MAX_WIDTH_PX = 280;
+
+/** 패널이 카드의 CSS 기본폭(280px)보다 좁으면, top/left clamp만으로는
+ *  불변식 C를 못 지킨다 — 카드 자체가 패널보다 넓으면 오른쪽이 반드시 넘친다
+ *  (실측으로 발견: 모달을 강제로 480px까지 좁혔을 때 패널 폭이 276px가 되며
+ *  카드 오른쪽이 34px 넘쳤다). 그래서 배치를 계산하기 **전에** 카드 자신의
+ *  렌더 폭을 패널이 허용하는 만큼으로 줄인다 — 패널이 넓으면(대부분의 실사용
+ *  창 크기) CSS 기본값으로 그냥 되돌린다. `computePlacement`가 `el.offsetWidth`
+ *  를 읽기 **전에** 호출해야 그 측정값이 줄어든 폭을 반영한다. Command/CQS:
+ *  void. */
+export function clampCardWidthToPane(cardEl: HTMLElement, paneRect: { left: number; right: number }): void {
+  const available = paneRect.right - paneRect.left - 2 * CARD_EDGE_MARGIN_PX;
+  cardEl.style.maxWidth = available < CARD_CSS_MAX_WIDTH_PX ? `${Math.max(available, 0)}px` : "";
+}
+
+/** "패널의 지금 보이는 영역 안에서, 카드가 앉을 자리" (순수 쿼리, design
+ *  decision 7 — 불변식 C > A > B, 2026-08 폴리시 3차). `paneRect`는 스크롤
+ *  컨테이너(`.settings-pane`) 자신의 rect다 — 그 컨테이너의 **내부 스크롤
+ *  위치와 무관하게** 늘 "지금 화면에 보이는 그 사각형"을 가리키므로(스크롤은
+ *  콘텐츠를 컨테이너 안에서 밀 뿐, 컨테이너 자신의 화면상 박스는 안 움직인다),
+ *  반환값을 `position: fixed`로 그대로 쓰면 **clamp 하나만으로 "카드가 항상
+ *  뷰포트 안에 있다"(불변식 C)가 구조적으로 보장**된다 — 실측으로 맞춰야 하는
+ *  근사가 아니다.
+ *
+ *  `anchorRect`는 카드가 "피하려고 시도할" 자리(클릭/선택된 엘리먼트의 rect) —
+ *  아래(anchor.bottom) → 위(anchor.top) 순으로 시도하고, 둘 다 clamp 범위
+ *  밖이면(대상이 패널 높이 전체에 가까운 "전면 대상"이라 피할 자리가 없는
+ *  경우 — 과거 세대의 `isFullSpanTarget` 분기가 여기로 흡수됐다: clamp가
+ *  이겨서 그냥 clamp 범위 안에 앉으므로 별도 분기가 필요 없다) clamp 범위의
+ *  중앙에 둔다. 어느 경로든 **마지막엔 항상 clamp가 이긴다** — 이게 A가 C보다
+ *  절대 우선하지 않는다는 뜻이다. Pure query. */
+export function pickCardPlacement(
+  anchorRect: { top: number; bottom: number; left: number; right: number },
+  paneRect: { top: number; bottom: number; left: number; right: number },
+  cardWidth: number,
   cardHeight: number,
-): InspectorEdge {
-  const bottomZoneTop = paneRect.bottom - cardHeight - CARD_PLACEMENT_SAFETY_PX;
-  const overlapsBottomZone = targetRect.bottom > bottomZoneTop && targetRect.top < paneRect.bottom;
-  return overlapsBottomZone ? "top" : "bottom";
+): CardPlacement {
+  const minTop = paneRect.top + CARD_EDGE_MARGIN_PX;
+  const maxTop = Math.max(minTop, paneRect.bottom - cardHeight - CARD_EDGE_MARGIN_PX);
+  const minLeft = paneRect.left + CARD_EDGE_MARGIN_PX;
+  const maxLeft = Math.max(minLeft, paneRect.right - cardWidth - CARD_EDGE_MARGIN_PX);
+
+  let top = anchorRect.bottom + CARD_EDGE_MARGIN_PX;
+  if (top > maxTop) top = anchorRect.top - cardHeight - CARD_EDGE_MARGIN_PX;
+  if (top < minTop || top > maxTop) top = (minTop + maxTop) / 2; // 피할 자리 없음 — clamp 중앙
+  top = Math.min(Math.max(top, minTop), maxTop);
+
+  const left = Math.min(Math.max(anchorRect.left, minLeft), maxLeft);
+
+  return { top, left };
 }
 
 export interface ColorInspector {
@@ -446,53 +511,26 @@ export function buildColorInspector(setting: Setting<Theme>, onClose: () => void
     reflectValues(); // populate the just-built controls with the current value
   }
 
-  /** Command/CQS: void. Sets which sticky edge (top/bottom) the card docks
-   *  to. Called ONLY from setTarget (see module doc comment, invariant B) —
+  /** Command/CQS: void. Writes the card's fixed-viewport top/left. Called
+   *  ONLY from setTarget (see module doc comment, invariant B) —
    *  reflectValues() must never call this. */
-  function placeInspector(edge: InspectorEdge): void {
-    el.classList.toggle("edge-top", edge === "top");
-    el.classList.toggle("edge-bottom", edge === "bottom");
+  function placeCard(p: CardPlacement): void {
+    el.style.top = `${p.top}px`;
+    el.style.left = `${p.left}px`;
   }
 
-  /** "이 타깃이 걸쳐 있는 진짜 범위" (순수 쿼리) — 대부분의 타깃은 엘리먼트
-   *  1개뿐이라 그 rect 그대로지만, `fg`처럼 문단 전체에 흩어진 런 여러 개가
-   *  같은 `data-target`을 공유하는 그룹 타깃은 클릭된 그 런 하나의 rect만
-   *  보고 배치를 정하면 **다른 런들은 여전히 카드 밑에 파묻힐 수 있다**
-   *  (2026-08 폴리시 리뷰 2차 지적 — h1/muted 같은 단일-엘리먼트 타깃 2건만
-   *  실측했었고, fg는 확인이 안 돼 있었다). 같은 `data-target`을 가진 모든
-   *  엘리먼트의 bounding union을 구해 그 전체 범위로 겹침을 판정한다 —
-   *  단일 엘리먼트 타깃은 union이 곧 그 엘리먼트 자신의 rect이므로 동작이
-   *  전혀 안 바뀐다. Pure query. */
-  function unionRectForTarget(id: string, fallback: HTMLElement): { top: number; bottom: number } {
-    const els = Array.from(document.querySelectorAll<HTMLElement>(`[data-target="${id}"]`));
-    if (els.length === 0) return fallback.getBoundingClientRect();
-    let top = Infinity;
-    let bottom = -Infinity;
-    for (const e of els) {
-      const r = e.getBoundingClientRect();
-      top = Math.min(top, r.top);
-      bottom = Math.max(bottom, r.bottom);
-    }
-    return { top, bottom };
-  }
-
-  /** "선택된 요소(그룹 전체)를 피해 앉을 자리" — targetEl을 스크롤로 노출시킨
-   *  뒤(카드 존을 피하도록 CSS scroll-margin이 이미 걸려 있다) `unionRectForTarget`
-   *  으로 구한 그룹 전체 범위를 카드 존과 대조해 edge를 정한다. **정련된
-   *  불변식 A**(2026-08 폴리시 리뷰 2차, `_workspace/01_ui2_design.md` 결정 7
-   *  갱신): "클릭된 그 엘리먼트는 항상 카드 밖에 있어야 한다"는 여전히
-   *  엄격하게 보장되지만(스크롤+scroll-margin), fg처럼 그룹이 팬 높이를 넘게
-   *  퍼져 있으면 **그룹 전체의 완전한 비-오버랩은 구조적으로 보장하지
-   *  않는다** — union 기준 판정은 "가능한 한 그룹과 안 겹치는 쪽"을 고르는
-   *  최선의 노력이지, 모든 런이 항상 다 보인다는 약속이 아니다. `targetEl`이
-   *  없으면(방어적 기본값) "bottom". jsdom에서는 rect가 전부 0이라 항상
-   *  "bottom"으로 안정적으로 떨어진다 — 실제 배치 검증은 실브라우저에서
-   *  한다. */
-  function computeEdge(targetEl: HTMLElement | null): InspectorEdge {
-    if (!targetEl || !target) return "bottom";
+  /** "지금 보이는 패널 영역 안에서, 선택된 엘리먼트를 피해 앉을 자리" —
+   *  `pickCardPlacement`(불변식 C > A > B, 위 모듈 doc comment)에 이 프레임의
+   *  스크롤 컨테이너(`.settings-pane`) rect와 카드의 실제 렌더 크기를 먹인다.
+   *  `targetEl`이 없으면(방어적 기본값) 패널 rect 자신을 anchor로 써 clamp
+   *  범위 중앙에 앉힌다. jsdom에서는 모든 rect가 0이라 top/left가 항상
+   *  안정적인 상수로 떨어진다 — 실제 배치 검증은 실브라우저에서 한다. */
+  function computePlacement(targetEl: HTMLElement | null): CardPlacement {
     const pane = el.closest<HTMLElement>(".settings-pane") ?? document.documentElement;
-    const groupRect = unionRectForTarget(target.id, targetEl);
-    return pickInspectorEdge(groupRect, pane.getBoundingClientRect(), el.offsetHeight);
+    const paneRect = pane.getBoundingClientRect();
+    const anchor = targetEl?.getBoundingClientRect() ?? paneRect;
+    clampCardWidthToPane(el, paneRect); // offsetWidth 측정 전에 — 줄어든 폭이 반영되게
+    return pickCardPlacement(anchor, paneRect, el.offsetWidth, el.offsetHeight);
   }
 
   function setTarget(t: ThemeTarget | null, targetEl?: HTMLElement): void {
@@ -504,19 +542,19 @@ export function buildColorInspector(setting: Setting<Theme>, onClose: () => void
       return;
     }
     el.hidden = false;
-    // Round 2 decision 7: scroll the SELECTED ELEMENT into view (not the
-    // inspector) — CSS scroll-margin on `.theme-target`/`.theme-frame`
-    // reserves the card's zone so the target doesn't land underneath it.
-    // Instant (not smooth) so the very next rect measurement below reflects
-    // the FINAL scrolled position, not a mid-animation one.
+    // 키보드 Tab 이동으로 화면 밖 타깃에 포커스가 갈 수 있으므로 그 엘리먼트를
+    // 보이게는 스크롤한다(접근성 목적일 뿐 — 카드가 뷰포트 안에 있다는
+    // 불변식 C는 이제 scrollIntoView와 무관하게 `position: fixed` + clamp로
+    // 구조적으로 보장되므로, "카드 존을 피해 스크롤"할 필요가 없어졌다).
+    // Instant(not smooth)로 다음 rect 측정이 최종 스크롤 위치를 보게 한다.
     targetEl?.scrollIntoView?.({ behavior: "auto", block: "nearest" });
-    placeInspector(computeEdge(targetEl ?? null));
+    placeCard(computePlacement(targetEl ?? null));
   }
 
   render();
   // The SOLE reaction to every color write (this inspector's own writes AND
   // any external one — JSON apply, preset switch): reflect values in place.
-  // Never render() or placeInspector() here — a write never changes which
+  // Never render() or placeCard() here — a write never changes which
   // controls exist, nor where the card sits.
   const unsubscribe = setting.subscribe(() => {
     reflectValues();
