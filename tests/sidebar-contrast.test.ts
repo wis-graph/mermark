@@ -256,13 +256,32 @@ describe("sidebar strong-contrast palette (style contract)", () => {
   // --bg 차이가 ~4%뿐이라 코드블럭이 문서 배경과 안 구분됨): .cm-codeblock은
   // --surface를 떠나 .cm-blockquote/.cm-callout-note/.cm-callout-quote와
   // --block-fill을 공유한다 — 네 셀렉터 모두 같은 "면" 계열로 읽혀야 한다.
-  it.each([".cm-codeblock", ".cm-blockquote", ".cm-callout-note", ".cm-callout-quote"])(
+  it.each([".cm-callout-note", ".cm-callout-quote"])(
     "%s paints the shared --block-fill (quote/code/note-callout are one surface family)",
     (selector) => {
       const block = ruleBlock(selector);
       expect(block).toMatch(/background:\s*var\(--block-fill\)/);
     },
   );
+
+  // .cm-codeblock/.cm-blockquote (2026-08 round 2: "인용 배경색이라던지, 코드블럭
+  // 이라던지" — quoteBg/codeBlockBg theme keys): --block-fill moved from a literal
+  // value to the codeBlockBg/quoteBg optional key's "auto" intrinsic default
+  // (theme-schema's OPTIONAL_INTRINSIC → resolveOptional), so these two rules now
+  // read `var(--codeblock-bg, var(--block-fill))` / `var(--quote-bg,
+  // var(--block-fill))` — an unconfigured theme still resolves to the exact same
+  // shared surface family, just reached through the new optional var instead of
+  // a hardcoded one. .cm-callout-note/-quote are untouched (round 2 explicitly
+  // excludes callouts from the new targets — 01_ui2_design.md 결정 1).
+  it(".cm-codeblock paints --codeblock-bg falling back to the shared --block-fill (surface family preserved)", () => {
+    const block = ruleBlock(".cm-codeblock");
+    expect(block).toMatch(/background:\s*var\(--codeblock-bg,\s*var\(--block-fill\)\)/);
+  });
+
+  it(".cm-blockquote paints --quote-bg falling back to the shared --block-fill (surface family preserved)", () => {
+    const block = ruleBlock(".cm-blockquote");
+    expect(block).toMatch(/background:\s*var\(--quote-bg,\s*var\(--block-fill\)\)/);
+  });
 
   // M6 design-polish pass (contract CHANGE, not a regression): 심리스 크롬 —
   // .title-bar/.status-bar now paint --bg (the same canvas color as the

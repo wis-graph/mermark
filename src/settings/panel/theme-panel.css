@@ -80,6 +80,42 @@
   box-shadow: 0 0 0 2px var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
+/* round-2 design decision 7, invariant A: the floating inspector's zone
+   (bottom or top `--inspector-clearance` tall) must never land ON TOP OF a
+   selected target. `setTarget`'s scrollIntoView relies on this margin to
+   land the target clear of the card BEFORE pickInspectorEdge measures it. */
+.theme-target,
+.theme-frame {
+  scroll-margin-top: var(--inspector-clearance, 260px);
+  scroll-margin-bottom: var(--inspector-clearance, 260px);
+}
+
+/* round-2 결정 6, "그룹 호버": fg 런은 기본 링(:hover 위) 대신 점선 밑줄 +
+   미세 배경 틴트로 그룹 정체성을 보여준다(theme-preview.ts의 setHoverGroup이
+   같은 data-target의 모든 런에 이 클래스를 함께 건다) — 문단 전체가 아니라
+   "이 조각들이 다 한 대상"임이 보이되, 소음이 되지 않게. */
+.theme-fg-run:hover { box-shadow: none; }
+.theme-fg-run.is-hover-group {
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  text-underline-offset: 2px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+/* 2026-08 폴리시 리뷰 2차 (team-lead): fg는 문단 전체에 흩어진 런 여러 개가
+   같은 타깃을 공유하므로, 단일 엘리먼트용 링(.theme-target[aria-pressed])을
+   런마다 그대로 적용하면 문단이 "조각난 상자 더미"로 보인다(캡처로 지적됨).
+   호버와 **같은 계열**(밑줄+틴트)을 선택 상태에서 더 진하게 쓴다 — 새 시각
+   언어를 만들지 않고, 링이라는 "다른 가족"을 다중 런에 강제하지 않는다.
+   단일 엘리먼트 타깃(h1·코드블럭 등)은 이 규칙과 무관하게 기존 링을 그대로
+   쓴다(선택자가 `.theme-fg-run`으로 국한). */
+.theme-fg-run[aria-pressed="true"] {
+  box-shadow: none;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  text-decoration: underline solid;
+  text-decoration-color: color-mix(in srgb, var(--accent) 85%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
 
 .theme-doc { text-align: left; }
 .theme-line { display: block; width: 100%; text-align: left; }
@@ -105,17 +141,57 @@
    2nd polish pass review caught: "둔다 [^1] ." reading like a typo). */
 .theme-footnote { font-size: .85em; vertical-align: super; padding: 4px 7px; margin: -4px -7px; }
 
-/* Decorative only, NOT a click target (2026-08 감사 반영, major #3 — see
-   theme-preview.ts's ThemeTarget doc comment for the full reasoning). Uses
-   `var(--block-edge)` DIRECTLY, matching the real editor's `.cm-blockquote`
-   byte-for-byte (styles.css:531 — border-left + `--block-fill` background),
-   since --block-edge has no Theme JSON key to wire a target to. The
-   sentence itself is never re-colored, so it reads at full --fg contrast
-   like real body text. */
-.theme-quote { border-left: 3px solid var(--block-edge); background: var(--block-fill); margin: 0 0 .85em; padding: .3em .8em; border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0; }
-.theme-quote-text { display: block; width: 100%; text-align: left; font-size: .85em; margin: 0; }
+/* round 2 (design decision 1 item 5 / 감사 major #3의 근본 해결): the left
+   bar is now its OWN real target (`quoteBar`), not decoration riding
+   `border` — the container itself carries NO border-left of its own
+   anymore (that visual role moved to `.theme-quote-bar`'s own background,
+   painted via paintTarget's "quote-bar" case). The container is a flex row
+   so the bar sits beside the text as two separately-clickable pieces
+   (design decision 6, device 2: "바는 인용구 컨테이너 좌측에 절대배치된
+   독립 버튼 ... 글자 버튼은 그 오른쪽에서 시작 — 수평으로 분리돼 겹침
+   없음"). The container's OWN background (`--quote-bg`, painted inline by
+   `paintQuoteContainerBg`) still supplies the "quote" target's bg-tab
+   chain, matching the real `.cm-blockquote`'s `--block-fill` byte-for-byte. */
+.theme-quote {
+  display: flex;
+  align-items: stretch;
+  gap: .55em;
+  margin: 0 0 .85em;
+  padding: .3em .8em .3em .3em;
+  border-radius: var(--radius-sm, 6px);
+}
+/* 12px 히트 폭(design decision 6 요구: "히트 폭 ≥ 12px") 이지만 시각적으로는
+   6px만 채워 보이도록 background-clip: content-box + 3px 수평 패딩을 쓴다 —
+   클릭 영역은 넓게, 눈에 보이는 바는 얇게 유지하는 절충. */
+.theme-quote-bar {
+  flex: none;
+  align-self: stretch;
+  width: 12px;
+  margin: 0;
+  padding: 0 3px;
+  background-clip: content-box;
+  border-radius: var(--radius-xs, 4px);
+}
+.theme-quote-text { flex: 1; display: block; text-align: left; font-size: .85em; margin: 0; padding: .1em 0; }
 
 .theme-comment-line { display: block; font-size: .82em; font-style: italic; margin-bottom: .6em; }
+
+/* round 2 — 코드블럭(codeBlock), 블록 전체가 버튼 1개(설계 결정 1: 내부
+   분할 없음). 실앱 `.cm-codeblock`과 같은 모노스페이스·패딩·라운드를 쓰되
+   펜스 마커는 표기하지 않는다(EDIT_MODE_SAMPLE_TEXT doc comment 예외 3). */
+.theme-codeblock {
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: pre;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: .8em;
+  line-height: 1.6;
+  padding: .7em .9em;
+  border-radius: var(--radius-md, 8px);
+  margin-bottom: .7em;
+}
+.theme-codeblock-line { display: block; }
 /* THE `border` target's real anchor (moved here from the quote bar above —
    2026-08 감사 반영, major #3): a bare full-width top border, matching the
    real editor's `.cm-hr` exactly (styles.css:1738, which also just uses
@@ -127,17 +203,59 @@
 .theme-hr { display: block; width: 100%; height: 0; padding: 5px 0; margin: .35em 0 .55em; }
 .theme-status { display: block; width: 100%; text-align: left; font-size: .78em; }
 
-/* ── Docked color inspector ─────────────────────────────────────────── */
-
+/* ── Floating color inspector (round 2, design decision 7) ────────────
+   Round 1 docked this directly under the frame; round 2 floats it so the
+   document gets the full pane height when nothing is selected (the card
+   is `hidden` entirely then — see color-inspector.ts). `position: sticky`
+   inside the settings pane (the modal's own scroll container) + an edge
+   class (`edge-bottom` default, `edge-top` on flip) — never inline/fixed,
+   so it participates in the pane's own scroll instead of floating over
+   unrelated modal chrome. `align-self: flex-end` right-aligns it within
+   the row's column-flex layout (`.settings-row-json`'s `flex-direction:
+   column`) — same right-hugging placement the design's ASCII mockup shows.
+   Shadow/border/surface tokens are the SAME ones `.settings-modal` already
+   uses (no new visual language — design decision 7's "기존 모달 그림자
+   토큰 재사용" instruction). */
 .theme-inspector {
+  position: sticky;
+  align-self: flex-end;
+  z-index: 5;
+  width: fit-content;
+  /* 2026-08 폴리시 리뷰 2차(team-lead): 카드가 문서를 덮는 총량을 줄여라 —
+     280px(1차 320px에서 축소) + 칩을 24px로 좁혀도 8칩 한 줄이 그대로
+     맞는다(8×24 + 7×5 갭 ≈ 227px + 좌우 패딩). */
+  max-width: min(280px, 100%);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg, 12px);
-  padding: .9em 1.1em;
+  padding: .8em 1em;
   margin-top: .8em;
+  box-shadow: 0 12px 48px color-mix(in srgb, #000 24%, transparent);
 }
-.theme-inspector-hint { margin: 0; font-size: 13px; color: var(--muted); }
+.theme-inspector.edge-bottom { bottom: 12px; }
+.theme-inspector.edge-top { top: 12px; }
 
 .theme-inspector-head { display: flex; align-items: center; gap: .5em; margin-bottom: .7em; }
+.theme-inspector-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.theme-inspector-close:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.theme-inspector-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent);
+}
 .theme-inspector-dot {
   flex: none;
   width: 14px; height: 14px;
@@ -146,6 +264,15 @@
 }
 .theme-inspector-dot.is-none {
   background-image: linear-gradient(45deg, transparent 45%, #c94b4b 46%, #c94b4b 54%, transparent 55%);
+  border: 1px dashed var(--border);
+}
+/* round 2 (design decision 2): "자동" ≠ "없음" — a derived/inherited value,
+   not transparency. The dot can't show the REAL derived color (its var is
+   `initial`, i.e. guaranteed-invalid — see theme-schema.ts's resolveOptional),
+   so it gets its OWN neutral pattern, visually distinct from the "없음"
+   diagonal-slash so the two states are never confused at a glance. */
+.theme-inspector-dot.is-auto {
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--fg) 18%, transparent) 0 3px, transparent 3px 6px);
   border: 1px dashed var(--border);
 }
 .theme-inspector-label { flex: 1; font-size: 13px; font-weight: 600; }
@@ -173,9 +300,9 @@
 }
 .theme-inspector-tab[aria-selected="true"] { background: var(--accent); color: var(--bg); }
 
-.theme-inspector-palette { display: flex; gap: 6px; margin-bottom: .7em; }
+.theme-inspector-palette { display: flex; gap: 5px; margin-bottom: .7em; flex-wrap: wrap; }
 .theme-chip {
-  width: 26px; height: 26px;
+  width: 24px; height: 24px;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
   border-radius: var(--radius-sm, 6px);
@@ -189,6 +316,23 @@
   background-image:
     linear-gradient(45deg, transparent 45%, #c94b4b 46%, #c94b4b 54%, transparent 55%),
     repeating-linear-gradient(45deg, color-mix(in srgb, var(--fg) 6%, transparent) 0 5px, transparent 5px 10px);
+}
+/* round 2 (design decision 2): a TEXT pill, deliberately a different SHAPE
+   from the "없음" slash-circle so the two absence-states read as visually
+   distinct at a glance, not just by their tooltip. */
+.theme-chip-auto {
+  width: auto;
+  height: 24px;
+  padding: 0 8px;
+  border-style: dashed;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .theme-inspector-sliders { display: flex; flex-direction: column; gap: .4em; margin-bottom: .7em; }

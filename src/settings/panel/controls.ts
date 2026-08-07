@@ -191,10 +191,23 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
 
   // The frame paints every target via var(--x) (themeVarsSink is the single
   // writer of those vars), so it needs no subscription of its own — only the
-  // inspector needs to know WHICH target is selected right now.
+  // inspector needs to know WHICH target is selected right now (and which
+  // element it came from, for the floating card's placement — design
+  // decision 7).
   let inspector: ReturnType<typeof buildColorInspector>;
-  const preview = buildThemePreview((t) => inspector.setTarget(t));
-  inspector = buildColorInspector(setting);
+  const preview = buildThemePreview((t, targetEl) => inspector.setTarget(t, targetEl));
+  inspector = buildColorInspector(setting, () => preview.clearSelection());
+
+  // Round-2 감사 Minor 해소(직전 라운드 지적): Escape가 preview 내부 포커스
+  // 에서만 잡히던 걸 preview+inspector 합성 컨테이너(이 row)로 승격한다 —
+  // 포커스가 플로팅 인스펙터 안(슬라이더·칩·✕ 버튼 등)에 있어도 Escape가
+  // 선택을 해제한다. preview 자신의 Escape 리스너(theme-preview.ts)는 그대로
+  // 둔다(단독 사용 시에도 동작해야 함) — 포커스가 preview 안이면 두 리스너가
+  // 둘 다 clearSelection을 부르지만 멱등이라 무해하다.
+  function onEscapeAnywhere(e: KeyboardEvent): void {
+    if (e.key === "Escape") preview.clearSelection();
+  }
+  r.addEventListener("keydown", onEscapeAnywhere);
 
   // 2. Collapsible Advanced JSON Editor Accordion
   const details = document.createElement("details");
@@ -248,7 +261,12 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
   // Collect the unsubscribe so the modal can tear this control down on swap/close
   // (avoids stale reflect closures writing into detached DOM, and leaks in the
   // preview/inspector's own listeners).
-  attachTeardown(r, [setting.subscribe(reflect), preview.teardown, inspector.teardown]);
+  attachTeardown(r, [
+    setting.subscribe(reflect),
+    preview.teardown,
+    inspector.teardown,
+    () => r.removeEventListener("keydown", onEscapeAnywhere),
+  ]);
 
   cell.append(preview.el, inspector.el, details);
   return r;

@@ -39,10 +39,20 @@ export interface Theme {
      *  on its own). Optional for the same legacy-compat reason as the other extended
      *  keys; EXTENDED_FALLBACK.comment derives it from muted when absent. */
     comment?: string;
-    // Background keys (2026-08 request: "배경색상도 정의할 수 있으면 좋겟어"). Unlike
-    // the extended text-color keys above, these are optional on BOTH input AND
-    // output — `undefined` is a first-class "no background" state, not a value to
-    // promote/fill. See BACKGROUND_KEYS/resolveBackground for the full contract.
+    // Optional keys (2026-08 request: "배경색상도 정의할 수 있으면 좋겟어", then
+    // 2026-08 round 2: "인용 배경색이라던지, 코드블럭이라던지, 빠진서식들이 더
+    // 필요하고, 볼드이탤릭은 별도의 색상으로"). Unlike the extended text-color keys
+    // above, these are optional on BOTH input AND output — `undefined` is a
+    // first-class state, not a value to promote/fill. Historically all 11 of the
+    // round-1 keys meant "no background" (transparent), so the class was named
+    // BACKGROUND_KEYS; round 2 adds keys whose absence means "follow the theme's
+    // derived/inherited value" (`initial`, not `transparent`) — boldItalic follows
+    // whichever of bold/italic is the innermost nested span (direction-dependent,
+    // see the boldItalic doc comment below), quote/codeBlock/strike inherit,
+    // quoteBg/quoteBar/codeBlockBg follow the --block-fill/--block-edge
+    // derivation. "background" no longer describes
+    // the whole class, so it's OPTIONAL_KEYS now; absentKind(key) tells you which
+    // of the two an absent key means. See OPTIONAL_KEYS/resolveOptional/absentKind.
     boldBg?: string;
     italicBg?: string;
     codeBg?: string;
@@ -54,6 +64,44 @@ export interface Theme {
     h4Bg?: string;
     h5Bg?: string;
     h6Bg?: string;
+    /** Bold+italic combined (`***x***`, or any bold nested in italic or vice
+     *  versa) text color. Absent → follows whichever of --bold-color/
+     *  --italic-color the CURRENTLY-RENDERED innermost span already used (real
+     *  DOM is two NESTED spans — `.cm-em`+`.cm-strong` never coexist on one
+     *  element — so there is no single fixed fallback; direction depends on
+     *  which marker the user nested innermost: `***x***`/`_**x**_`/`*__x__*`
+     *  nest strong-inside-em → bold wins, `**_x_**`/`__*x*__` nest
+     *  em-inside-strong → italic wins. See styles.css `.cm-em .cm-strong` /
+     *  `.cm-strong .cm-em` — the 2026-08 golden-master fix for the dead
+     *  `.cm-strong.cm-em` compound selector, `_workspace/03_qa2_report.md`). */
+    boldItalic?: string;
+    /** Bold+italic combined background. Absent → same direction-dependent
+     *  fallback as `boldItalic` (--bold-bg or --italic-bg, whichever the
+     *  innermost span already used). */
+    boldItalicBg?: string;
+    /** `~~strike~~` text color. Absent → inherits the surrounding color (a strike
+     *  can nest inside a heading/bold/quote; a fixed fallback would regress that
+     *  nesting — see styles.css `.cm-strike`). */
+    strike?: string;
+    /** `~~strike~~` background. Absent → transparent (no prior background existed
+     *  for strikethrough text, unlike codeBg's surface-veil precedent). */
+    strikeBg?: string;
+    /** Blockquote text color. Absent → inherits (same nesting reasoning as strike). */
+    quote?: string;
+    /** Blockquote background. Absent → follows the derived --block-fill (the
+     *  theme-direction-reversal token: dark lightens, light darkens). A fixed
+     *  fallback would freeze that direction — see resolveOptional/OPTIONAL_INTRINSIC. */
+    quoteBg?: string;
+    /** Blockquote left bar color. Absent → follows the derived --block-edge (the
+     *  2026-08 round-1 audit's Major #3 — the bar previously had no key of its own
+     *  and silently rode --border, a variable the real editor doesn't use for it). */
+    quoteBar?: string;
+    /** Fenced code BLOCK text color (distinct from `code`, which is inline code).
+     *  Absent → inherits. */
+    codeBlock?: string;
+    /** Fenced code BLOCK background. Absent → follows the derived --block-fill
+     *  (same direction-preserving reasoning as quoteBg). */
+    codeBlockBg?: string;
   };
   /** --radius-md/lg/xl. (No --radius-sm: styles.css only fallback-references it.) */
   radii: { md: string; lg: string; xl: string };
@@ -94,13 +142,17 @@ export const EXTENDED_KEYS = [
 ] as const;
 export type ExtendedKey = (typeof EXTENDED_KEYS)[number];
 
-/** The 11 BACKGROUND keys (2026-08 request). Distinct class from EXTENDED_KEYS:
- *  extended keys are optional-in/always-filled-out (promote); background keys are
- *  optional on BOTH sides — `undefined` ("no background") is a state that survives
- *  parse→serialize round-trips, not a hole to patch. fg has no background key by
- *  design (body background IS --bg; a separate fgBg would fork that concept into
- *  two SSOT sources). */
-export const BACKGROUND_KEYS = [
+/** The 20 OPTIONAL keys (2026-08 round 1: 11 background keys; round 2: +9 more —
+ *  boldItalic(Bg), strike(Bg), quote/quoteBg/quoteBar, codeBlock(Bg)). Distinct
+ *  class from EXTENDED_KEYS: extended keys are optional-in/always-filled-out
+ *  (promote); optional keys are optional on BOTH sides — `undefined` is a
+ *  first-class state that survives parse→serialize round-trips, not a hole to
+ *  patch. fg has no background key by design (body background IS --bg; a
+ *  separate fgBg would fork that concept into two SSOT sources). Renamed from
+ *  BACKGROUND_KEYS (round 2): the round-1 11 keys all meant "no background" on
+ *  absence, but boldItalic/strike/quote/codeBlock are TEXT colors that mean
+ *  "inherit/derive" on absence, not "no background" — see absentKind. */
+export const OPTIONAL_KEYS = [
   "boldBg",
   "italicBg",
   "codeBg",
@@ -112,8 +164,17 @@ export const BACKGROUND_KEYS = [
   "h4Bg",
   "h5Bg",
   "h6Bg",
+  "boldItalic",
+  "boldItalicBg",
+  "strike",
+  "strikeBg",
+  "quote",
+  "quoteBg",
+  "quoteBar",
+  "codeBlock",
+  "codeBlockBg",
 ] as const;
-export type BackgroundKey = (typeof BACKGROUND_KEYS)[number];
+export type OptionalKey = (typeof OPTIONAL_KEYS)[number];
 
 /** The 8 core colors an extended key may derive its fallback from. */
 type CoreColors = Pick<Theme["colors"], (typeof COLOR_KEYS)[number]>;
@@ -141,13 +202,25 @@ const EXTENDED_FALLBACK: Record<ExtendedKey, (core: CoreColors) => string> = {
   comment: (c) => c.muted,
 };
 
-/** "배경 없음이 무엇으로 렌더되는가" — the ONE place that answers what an absent
- *  background key paints as. codeBg intrinsically resolves to the existing inline-
- *  code chip fill (--surface-veil) so "no background configured" reproduces the
- *  CURRENT chip exactly, not a regression to no-fill; every other key's absence is
- *  genuinely transparent (that element had no background before this feature).
- *  Pure data, consumed only through resolveBackground. */
-const BACKGROUND_INTRINSIC: Record<BackgroundKey, string> = {
+/** "부재한 옵셔널 키가 무엇으로 방출되는가" — the ONE place that answers what an
+ *  absent optional key paints as. Two families:
+ *  - "none" family (round 1, 11 keys): genuinely transparent — that element had
+ *    no background before backgrounds existed. codeBg is the one exception
+ *    WITHIN this family: it resolves to the existing inline-code chip fill
+ *    (--surface-veil) so "no background configured" reproduces the CURRENT chip
+ *    exactly, not a regression to no-fill.
+ *  - "auto" family (round 2, 9 keys): the CSS-wide keyword `initial`, chosen
+ *    specifically because it makes the custom property guaranteed-invalid —
+ *    that makes the consuming `var(--x, <fallback>)` rule in styles.css fall
+ *    through to its fallback (the theme's derived/inherited value: --block-fill,
+ *    --italic-color, `inherit`, …). This is NOT re-deriving that fallback value
+ *    in TS (which would create a second source for --block-fill's color-mix
+ *    formula) — it only clears the override so CSS's own cascade decides.
+ *    strikeBg is the one exception WITHIN this family: it's a genuine "none"
+ *    (no prior strikethrough background existed), so it emits "transparent" like
+ *    the round-1 family despite being introduced in round 2.
+ *  Pure data, consumed only through resolveOptional/absentKind. */
+const OPTIONAL_INTRINSIC: Record<OptionalKey, string> = {
   boldBg: "transparent",
   italicBg: "transparent",
   codeBg: "var(--surface-veil)",
@@ -159,20 +232,53 @@ const BACKGROUND_INTRINSIC: Record<BackgroundKey, string> = {
   h4Bg: "transparent",
   h5Bg: "transparent",
   h6Bg: "transparent",
+  boldItalic: "initial",
+  boldItalicBg: "initial",
+  strike: "initial",
+  strikeBg: "transparent",
+  quote: "initial",
+  quoteBg: "initial",
+  quoteBar: "initial",
+  codeBlock: "initial",
+  codeBlockBg: "initial",
 };
 
-/** "배경 없음이 무엇으로 렌더되는가" (pure query). `v` is the theme's stored value
- *  for `key` (`undefined` when the user never set one); the CSS var themeToVars
- *  emits always resolves through here so a "no background" theme is zero-drift
- *  from the pre-background-feature visuals. */
-export function resolveBackground(key: BackgroundKey, v: string | undefined): string {
-  return v ?? BACKGROUND_INTRINSIC[key];
+/** "부재한 옵셔널 키가 무엇으로 방출되는가" (pure query, renamed from
+ *  resolveBackground — round 2 generalizes the class beyond backgrounds). `v` is
+ *  the theme's stored value for `key` (`undefined` when the user never set one);
+ *  the CSS var themeToVars emits always resolves through here so an unset key is
+ *  zero-drift from its pre-this-feature visuals. */
+export function resolveOptional(key: OptionalKey, v: string | undefined): string {
+  return v ?? OPTIONAL_INTRINSIC[key];
 }
 
-/** All new-generation color keys (comment + the 11 backgrounds) — used by
- *  upgradePristinePreset to detect "this raw JSON already knows about the new
- *  keys" (so it never re-runs the promotion, avoiding double-upgrade). */
-const NEW_GEN_KEYS: readonly string[] = ["comment", ...BACKGROUND_KEYS];
+/** "키 부재가 '없음'인가 '자동'인가" (pure query). Distinguishes the two families
+ *  documented on OPTIONAL_INTRINSIC: "none" (genuinely transparent — the
+ *  inspector shows a slash-circle "없음" chip) vs "auto" (follows a
+ *  derived/inherited value — the inspector shows a text-pill "자동" chip). The
+ *  test is structural (which intrinsic value the key resolves to), not a second
+ *  hand-maintained list, so it can never drift from OPTIONAL_INTRINSIC. */
+export function absentKind(key: OptionalKey): "none" | "auto" {
+  return OPTIONAL_INTRINSIC[key] === "transparent" ? "none" : "auto";
+}
+
+/** "이 키는 부재를 표현할 수 있는가" (pure query) — replaces the old hand-maintained
+ *  `bgOptional` flag on ThemeTarget (a second, driftable copy of this same fact).
+ *  A core key (e.g. `highlightBg`) is NOT optional — it's strict-required, so the
+ *  inspector shows no "없음"/"자동" chip for it at all. */
+export function isOptionalKey(k: string): k is OptionalKey {
+  return (OPTIONAL_KEYS as readonly string[]).includes(k);
+}
+
+/** All new-generation color keys (comment + all 20 OPTIONAL_KEYS, round 1's 11 +
+ *  round 2's 9) — used by upgradePristinePreset to detect "this raw JSON already
+ *  knows about the new keys" (so it never re-runs the promotion, avoiding
+ *  double-upgrade). Spreading OPTIONAL_KEYS means round 2's new keys are included
+ *  automatically — this is the "정확성 필수" guard the round-2 plan calls out: a
+ *  JSON with preset colors untouched + `quoteBg` set must NOT be misjudged
+ *  pristine (which would silently destroy quoteBg on the next parse, the same
+ *  failure class as the round-1 audit's blocker #2). */
+const NEW_GEN_KEYS: readonly string[] = ["comment", ...OPTIONAL_KEYS];
 
 /** The pre-2026-08 18 keys (core 8 + the original 10 extended, i.e. EXTENDED_KEYS
  *  minus the newly-added `comment`). upgradePristinePreset compares exactly this
@@ -272,14 +378,15 @@ export function parseTheme(raw: string | null): Theme | null {
     muted: c.muted as string,
     highlightBg: c.highlightBg as string,
   };
-  // Background keys are never rejected/promoted — an absent or corrupt one is
-  // just left out of `colors` (undefined), which IS the "no background" state.
-  const backgrounds: Partial<Record<BackgroundKey, string>> = {};
-  for (const k of BACKGROUND_KEYS) if (isToken(c[k])) backgrounds[k] = c[k] as string;
+  // Optional keys are never rejected/promoted — an absent or corrupt one is just
+  // left out of `colors` (undefined), which IS the "none"/"auto" state (see
+  // absentKind for which of the two a given key means).
+  const optional: Partial<Record<OptionalKey, string>> = {};
+  for (const k of OPTIONAL_KEYS) if (isToken(c[k])) optional[k] = c[k] as string;
 
   const parsed: Theme = {
     name: t.name,
-    colors: { ...coreColors, ...promoteToExtended(coreColors, c), ...backgrounds },
+    colors: { ...coreColors, ...promoteToExtended(coreColors, c), ...optional },
     radii: { md: r.md as string, lg: r.lg as string, xl: r.xl as string },
     font: { sans: (font as { sans: string }).sans },
   };
@@ -323,22 +430,33 @@ export function themeToVars(t: Theme): Record<string, string> {
     "--code-color": ext.code,
     "--highlight-color": ext.highlight,
     "--comment-color": ext.comment,
-    // Background vars are ALWAYS emitted (never conditional) — themeVarsSink
+    // Optional vars are ALWAYS emitted (never conditional) — themeVarsSink
     // overwrites the map but never deletes a stale key, so a conditional emit
-    // would let a previous theme's background var survive a switch to a theme
-    // with no background set. resolveBackground is the sole "no background"
-    // rule; it is not re-implemented here.
-    "--bold-bg": resolveBackground("boldBg", t.colors.boldBg),
-    "--italic-bg": resolveBackground("italicBg", t.colors.italicBg),
-    "--code-bg": resolveBackground("codeBg", t.colors.codeBg),
-    "--link-bg": resolveBackground("linkBg", t.colors.linkBg),
-    "--comment-bg": resolveBackground("commentBg", t.colors.commentBg),
-    "--h1-bg": resolveBackground("h1Bg", t.colors.h1Bg),
-    "--h2-bg": resolveBackground("h2Bg", t.colors.h2Bg),
-    "--h3-bg": resolveBackground("h3Bg", t.colors.h3Bg),
-    "--h4-bg": resolveBackground("h4Bg", t.colors.h4Bg),
-    "--h5-bg": resolveBackground("h5Bg", t.colors.h5Bg),
-    "--h6-bg": resolveBackground("h6Bg", t.colors.h6Bg),
+    // would let a previous theme's value survive a switch to a theme with the
+    // key unset. resolveOptional is the sole "what does absence mean" rule; it
+    // is not re-implemented here.
+    "--bold-bg": resolveOptional("boldBg", t.colors.boldBg),
+    "--italic-bg": resolveOptional("italicBg", t.colors.italicBg),
+    "--code-bg": resolveOptional("codeBg", t.colors.codeBg),
+    "--link-bg": resolveOptional("linkBg", t.colors.linkBg),
+    "--comment-bg": resolveOptional("commentBg", t.colors.commentBg),
+    "--h1-bg": resolveOptional("h1Bg", t.colors.h1Bg),
+    "--h2-bg": resolveOptional("h2Bg", t.colors.h2Bg),
+    "--h3-bg": resolveOptional("h3Bg", t.colors.h3Bg),
+    "--h4-bg": resolveOptional("h4Bg", t.colors.h4Bg),
+    "--h5-bg": resolveOptional("h5Bg", t.colors.h5Bg),
+    "--h6-bg": resolveOptional("h6Bg", t.colors.h6Bg),
+    // Round 2 (2026-08): 9 new vars, same always-emit rule. Absent → "initial"
+    // for every key EXCEPT strikeBg (→ "transparent") — see OPTIONAL_INTRINSIC.
+    "--bold-italic-color": resolveOptional("boldItalic", t.colors.boldItalic),
+    "--bold-italic-bg": resolveOptional("boldItalicBg", t.colors.boldItalicBg),
+    "--strike-color": resolveOptional("strike", t.colors.strike),
+    "--strike-bg": resolveOptional("strikeBg", t.colors.strikeBg),
+    "--quote-color": resolveOptional("quote", t.colors.quote),
+    "--quote-bg": resolveOptional("quoteBg", t.colors.quoteBg),
+    "--quote-bar": resolveOptional("quoteBar", t.colors.quoteBar),
+    "--codeblock-color": resolveOptional("codeBlock", t.colors.codeBlock),
+    "--codeblock-bg": resolveOptional("codeBlockBg", t.colors.codeBlockBg),
     "--radius-md": t.radii.md,
     "--radius-lg": t.radii.lg,
     "--radius-xl": t.radii.xl,

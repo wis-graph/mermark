@@ -299,6 +299,329 @@ const keyboardSelect = await page.evaluate(() => ({
 }));
 themeEditorStates.push({ label: "keyboard-enter-select", ...keyboardSelect });
 
+// NOTE: Escape here would bubble past .theme-preview all the way to the
+// settings MODAL's own Escape-closes-modal listener (modal.ts:169) and close
+// the whole panel — the inspector's own ✕ button clears selection without
+// that side effect.
+await page.evaluate(() => document.querySelector(".theme-inspector-close")?.click());
+await page.waitForTimeout(100);
+
+// ── Round 2 (_workspace/01_ui2_design.md, 갈래 C) ───────────────────────────
+// 9 new keys (boldItalic/Bg, strike/Bg, quote/Bg/quoteBar, codeBlock/Bg),
+// plain-fg-click fix (결정 6), floating inspector (결정 7). Measured against
+// the REAL editor (.cm-content), not the settings-panel preview — the
+// preview mirrors these vars but the actual regression surface is styles.css.
+
+// CM6 virtualizes off-screen content — x.md's fenced code block sits well
+// below the fold, so `.cm-codeblock` doesn't exist in the DOM at all until
+// scrolled into view (discovered empirically: an unscrolled query silently
+// returned 0 matches, which is a harness gap, not a product bug). Can't
+// scrollIntoView a line that isn't rendered yet (chicken/egg with
+// virtualization) — step the scroller down numerically until the widget
+// materializes, once, before any measurement below.
+for (let step = 0; step < 12; step++) {
+  const found = await page.evaluate((px) => {
+    const s = document.querySelector(".cm-scroller");
+    if (s) s.scrollTop = px;
+    return document.querySelectorAll(".cm-content .cm-codeblock").length > 0;
+  }, step * 250);
+  await page.waitForTimeout(150);
+  if (found) break;
+}
+
+// 1. Zero-drift: every new key unset across all 3 presets.
+//
+// boldItalic FINDING (실측, not assumed): `***bold italic***` in the real
+// editor renders as a SINGLE `<span class="cm-strong">bold italic</span>` —
+// no nested `.cm-em` at all (confirmed via outerHTML dump). styles.css's
+// `.cm-strong.cm-em` compound selector (design decision 0's "italic wins"
+// rule) therefore NEVER matches any real element — it is unreachable dead
+// CSS today, and setting the `boldItalic`/`boldItalicBg` keys has ZERO
+// observable effect on the real editor (verified: picking a curated color
+// left the real `bold italic` span's color unchanged, still the plain
+// --bold-color). This is a real product gap, not a test artifact — flagged
+// below (`boldItalicWiredToRealEditor`) rather than worked around.
+// Two SEPARATE scroll positions, not one — the "인라인 스타일"/"인용구" section
+// and the fenced code block are far enough apart in x.md that CM6's virtualize
+// buffer can't keep both mounted at once (discovered empirically: measuring
+// both after scrolling down for the codeblock silently returned null for the
+// upper-section fields on one preset run). Reading them in two passes avoids
+// depending on a single scrollTop where every selector happens to coexist.
+async function measureRealEditorNewKeys() {
+  await page.evaluate(() => {
+    const s = document.querySelector(".cm-scroller");
+    if (s) s.scrollTop = 0;
+  });
+  await page.waitForTimeout(100);
+  const top = await page.evaluate(() => {
+    const bq = document.querySelector(".cm-content .cm-blockquote");
+    const strike = document.querySelector(".cm-content .cm-strike");
+    const boldItalicCompound = document.querySelector(".cm-content .cm-strong.cm-em");
+    const boldItalicStrongOnly = Array.from(document.querySelectorAll(".cm-content .cm-strong")).find((e) =>
+      e.textContent?.includes("bold italic"),
+    );
+    return {
+      quoteBg: bq ? getComputedStyle(bq).backgroundColor : null,
+      quoteBarColor: bq ? getComputedStyle(bq).borderLeftColor : null,
+      strikeColor: strike ? getComputedStyle(strike).color : null,
+      boldItalicCompoundSelectorMatches: !!boldItalicCompound, // expected false — see finding above
+      boldItalicColor: boldItalicStrongOnly ? getComputedStyle(boldItalicStrongOnly).color : null,
+    };
+  });
+
+  for (let step = 0; step < 12; step++) {
+    const found = await page.evaluate((px) => {
+      const s = document.querySelector(".cm-scroller");
+      if (s) s.scrollTop = px;
+      return document.querySelectorAll(".cm-content .cm-codeblock").length > 0;
+    }, step * 250);
+    if (found) break;
+    await page.waitForTimeout(80);
+  }
+  const codeBlockBg = await page.evaluate(() => {
+    const cb = document.querySelector(".cm-content .cm-codeblock");
+    return cb ? getComputedStyle(cb).backgroundColor : null;
+  });
+  return { ...top, codeBlockBg };
+}
+await pickPreset("라이트");
+const zeroDriftLight = await measureRealEditorNewKeys();
+themeEditorStates.push({ label: "zero-drift-new-keys-light", ...zeroDriftLight });
+
+await pickPreset("다크");
+const zeroDriftDark = await measureRealEditorNewKeys();
+themeEditorStates.push({ label: "zero-drift-new-keys-dark", ...zeroDriftDark });
+
+await pickPreset("클로드");
+const zeroDriftClaude = await measureRealEditorNewKeys();
+themeEditorStates.push({
+  label: "zero-drift-new-keys-claude",
+  ...zeroDriftClaude,
+  // 결정 0's claimed lock (#3d3d3a = italic) does NOT hold against the real
+  // DOM (see the finding above the measure function) — the real element
+  // only carries `.cm-strong`, so it renders --bold-color (#252523), not
+  // --italic-color. Both booleans are recorded so a future fix flips the
+  // first to true without this scenario silently going stale.
+  boldItalicLocksToItalicPerDesignDoc: zeroDriftClaude.boldItalicColor === "rgb(61, 61, 58)", // #3d3d3a (decision 0's claim)
+  boldItalicActuallyRendersAsBold: zeroDriftClaude.boldItalicColor === "rgb(37, 37, 35)", // #252523 (measured reality)
+});
+
+// 1b. Explicit confirmation of the finding above: pick a distinct color for
+// `boldItalic` and check whether the real "bold italic" span's color moves
+// AT ALL. Expected (per the DOM finding): false — the compound selector
+// never matches, so this write only affects the settings-panel preview, not
+// the real editor.
+await pickPreset("라이트");
+await page.evaluate(() => document.querySelector('.theme-target[data-target="boldItalic"]').click());
+await page.waitForTimeout(100);
+await page.evaluate(() => document.querySelector('.theme-chip[aria-label="그린"]').click());
+await page.waitForTimeout(150);
+const boldItalicWiring = await page.evaluate(() => {
+  const strongOnly = Array.from(document.querySelectorAll(".cm-content .cm-strong")).find((e) =>
+    e.textContent?.includes("bold italic"),
+  );
+  return { colorAfterGreenPick: strongOnly ? getComputedStyle(strongOnly).color : null };
+});
+await page.evaluate(() => document.querySelector(".theme-inspector-close")?.click());
+themeEditorStates.push({
+  label: "boldItalic-real-editor-wiring",
+  ...boldItalicWiring,
+  colorBeforePick: zeroDriftLight.boldItalicColor,
+  boldItalicWiredToRealEditor: boldItalicWiring.colorAfterGreenPick !== zeroDriftLight.boldItalicColor,
+});
+await page.evaluate(() => localStorage.removeItem("mermark.themeJson"));
+await pickPreset("라이트"); // re-apply a clean preset (removeItem alone leaves the in-memory setting stale)
+
+// 2. Auto-direction-preserving: quoteBg/codeBlockBg are still UNSET here (no
+// edit yet), so dark<->light must show the DERIVED (--block-fill) value
+// flipping direction, not a frozen color — proves the CSS fallback chain
+// (not a TS-side snapshot) is what's live.
+await pickPreset("다크");
+const derivedDark = await measureRealEditorNewKeys();
+await pickPreset("라이트");
+const derivedLight = await measureRealEditorNewKeys();
+themeEditorStates.push({
+  label: "auto-direction-preserved",
+  derivedDarkQuoteBg: derivedDark.quoteBg,
+  derivedLightQuoteBg: derivedLight.quoteBg,
+  flips: derivedDark.quoteBg !== derivedLight.quoteBg,
+});
+
+// 3. Explicit color wins, then auto chip reverts to the derived value —
+// the "거짓 앵커 방지" gate (an unwired var would never move the real editor).
+await page.evaluate(() => document.querySelector('.theme-target[data-target="quote"]').click());
+await page.waitForTimeout(100);
+await page.evaluate(() => document.querySelector('.theme-chip[aria-label="블루"]').click());
+await page.waitForTimeout(100);
+const quoteBgExplicit = await page.evaluate(() => {
+  const bq = document.querySelector(".cm-content .cm-blockquote");
+  return bq ? getComputedStyle(bq).backgroundColor : null;
+});
+await page.evaluate(() => Array.from(document.querySelectorAll(".theme-inspector-tab"))[1].click()); // 배경색 탭
+await page.waitForTimeout(100);
+await page.evaluate(() => document.querySelector('.theme-chip[aria-label="블루"]').click());
+await page.waitForTimeout(100);
+const quoteBgExplicitReal = await page.evaluate(() => {
+  const bq = document.querySelector(".cm-content .cm-blockquote");
+  return bq ? getComputedStyle(bq).backgroundColor : null;
+});
+await page.evaluate(() => document.querySelector(".theme-chip-auto").click());
+await page.waitForTimeout(100);
+const quoteBgAutoReverted = await page.evaluate(() => {
+  const bq = document.querySelector(".cm-content .cm-blockquote");
+  return bq ? getComputedStyle(bq).backgroundColor : null;
+});
+themeEditorStates.push({
+  label: "explicit-wins-then-auto-reverts",
+  quoteBgExplicitFirstTabIgnored: quoteBgExplicit, // color tab pick shouldn't move bg — sanity
+  quoteBgExplicit: quoteBgExplicitReal,
+  quoteBgAutoReverted,
+  explicitMatchesBlue: quoteBgExplicitReal === "rgb(29, 111, 184)",
+  revertMatchesDerivedLight: quoteBgAutoReverted === derivedLight.quoteBg,
+});
+
+// 4. `initial` emission: with the key unset, the CSS var itself is empty
+// (guaranteed-invalid), and the CONSUMING rule's fallback is what paints —
+// proves resolveOptional's "initial" contract end to end, not just the
+// resolved computed color.
+await page.evaluate(() => document.querySelector(".theme-chip-auto")?.click()); // ensure unset (idempotent if already)
+await page.waitForTimeout(100);
+const initialEmission = await page.evaluate(() => ({
+  quoteBgVarRaw: getComputedStyle(document.documentElement).getPropertyValue("--quote-bg").trim(),
+  quoteBgComputed: (() => {
+    const bq = document.querySelector(".cm-content .cm-blockquote");
+    return bq ? getComputedStyle(bq).backgroundColor : null;
+  })(),
+}));
+themeEditorStates.push({
+  label: "initial-emission",
+  ...initialEmission,
+  varIsEmptyOrInitial: initialEmission.quoteBgVarRaw === "" || initialEmission.quoteBgVarRaw === "initial",
+  fallbackPainted: initialEmission.quoteBgComputed !== null && initialEmission.quoteBgComputed !== "rgba(0, 0, 0, 0)",
+});
+await page.evaluate(() => document.querySelector('.theme-inspector-close')?.click());
+await page.waitForTimeout(100);
+
+// 6. 평문 클릭 (결정 6): 문단 중간 평문 좌표 실클릭 → fg, 스케일 스트립 구분자
+// 좌표 실클릭 → bg (가드 삭제 검증 — 예전엔 무반응이던 죽은 영역).
+const fgRunBox = await page.evaluate(() => {
+  const runs = Array.from(document.querySelectorAll(".theme-fg-run"));
+  const run = runs.find((r) => r.textContent?.includes("싸고"));
+  if (!run) return null;
+  const r = run.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+});
+let plainClickFg = { found: false };
+if (fgRunBox) {
+  await page.mouse.click(fgRunBox.x, fgRunBox.y);
+  await page.waitForTimeout(150);
+  plainClickFg = {
+    found: true,
+    inspectorLabel: await page.evaluate(() => document.querySelector(".theme-inspector-label")?.textContent ?? null),
+  };
+}
+themeEditorStates.push({ label: "plain-text-click-selects-fg", ...plainClickFg });
+
+await page.evaluate(() => document.querySelector('.theme-inspector-close')?.click());
+await page.waitForTimeout(100);
+
+const scaleGapBox = await page.evaluate(() => {
+  const h3 = document.querySelector('.theme-target[data-target="h3"]');
+  const h4 = document.querySelector('.theme-target[data-target="h4"]');
+  if (!h3 || !h4) return null;
+  const r3 = h3.getBoundingClientRect();
+  const r4 = h4.getBoundingClientRect();
+  return { x: (r3.right + r4.left) / 2, y: (r3.top + r3.bottom) / 2 };
+});
+let plainClickGapToBg = { found: false };
+if (scaleGapBox) {
+  await page.mouse.click(scaleGapBox.x, scaleGapBox.y);
+  await page.waitForTimeout(150);
+  plainClickGapToBg = {
+    found: true,
+    inspectorLabel: await page.evaluate(() => document.querySelector(".theme-inspector-label")?.textContent ?? null),
+  };
+}
+themeEditorStates.push({ label: "scale-strip-gap-click-selects-bg", ...plainClickGapToBg });
+
+await page.evaluate(() => document.querySelector('.theme-inspector-close')?.click());
+await page.waitForTimeout(100);
+
+// 7. 플로팅 카드 가시성 (결정 7, 불변식 A): 가장자리 대상 3종 선택 시 카드
+// rect ∩ 대상 rect = ∅. muted(하단) 선택 상태에서 슬라이더 실드래그 — 카드
+// 위치/rect 불변(불변식 B, 감사 blocker #1 재현 절차 재사용).
+async function selectAndCheckNoOverlap(id) {
+  await page.evaluate((id) => document.querySelector(`.theme-target[data-target="${id}"]`).click(), id);
+  await page.waitForTimeout(150);
+  return page.evaluate((id) => {
+    const card = document.querySelector(".theme-inspector");
+    const els = Array.from(document.querySelectorAll(`[data-target="${id}"]`));
+    if (!card || els.length === 0) return { found: false };
+    const cardRect = card.getBoundingClientRect();
+    const overlapsAny = els.some((el) => {
+      const r = el.getBoundingClientRect();
+      return !(cardRect.bottom <= r.top || cardRect.top >= r.bottom);
+    });
+    return { found: true, cardHidden: card.hidden, overlapsAny };
+  }, id);
+}
+for (const id of ["h1", "muted", "quote"]) {
+  const res = await selectAndCheckNoOverlap(id);
+  themeEditorStates.push({ label: `floating-card-no-overlap-${id}`, ...res });
+}
+
+// Re-select muted explicitly (the loop above ends on "quote") — drag its H
+// slider through a full multi-step gesture and confirm the card's edge
+// class + rect never move mid-drag (same repro shape as the round-1 audit's
+// blocker #1, applied to card PLACEMENT instead of slider identity).
+await page.evaluate(() => document.querySelector('.theme-target[data-target="muted"]').click());
+await page.waitForTimeout(150);
+const mutedDragCheck = await (async () => {
+  const slider = await page.$(".theme-inspector-sliders input[type=range]");
+  if (!slider) return { found: false };
+  const box = await slider.boundingBox();
+  const cardBefore = await page.evaluate(() => {
+    const c = document.querySelector(".theme-inspector");
+    const r = c.getBoundingClientRect();
+    return { top: r.top, left: r.left, edgeTop: c.classList.contains("edge-top"), edgeBottom: c.classList.contains("edge-bottom") };
+  });
+  const steps = [];
+  await page.mouse.move(box.x + 2, box.y + box.height / 2);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) {
+    const x = box.x + (box.width * i) / 9;
+    await page.mouse.move(x, box.y + box.height / 2, { steps: 3 });
+    const snap = await page.evaluate(() => {
+      const c = document.querySelector(".theme-inspector");
+      const r = c.getBoundingClientRect();
+      const s = document.querySelector(".theme-inspector-sliders input[type=range]");
+      return { top: r.top, left: r.left, value: s?.value, sliderConnected: s?.isConnected };
+    });
+    steps.push(snap);
+  }
+  await page.mouse.up();
+  const cardAfter = { top: steps[steps.length - 1].top, left: steps[steps.length - 1].left };
+  return {
+    found: true,
+    cardBefore,
+    cardNeverMoved: steps.every((s) => s.top === cardBefore.top && s.left === cardBefore.left),
+    sliderAlwaysConnected: steps.every((s) => s.sliderConnected),
+    values: steps.map((s) => s.value),
+    cardAfter,
+  };
+})();
+themeEditorStates.push({ label: "floating-card-stable-during-drag-muted", ...mutedDragCheck });
+
+await page.evaluate(() => document.querySelector('.theme-inspector-close')?.click());
+await page.waitForTimeout(100);
+
+// Revert every round-2 edit (quoteBg blue pick etc.) so it doesn't bleed into
+// the preset-reselect scenario below.
+await page.evaluate(() => localStorage.removeItem("mermark.themeJson"));
+await page.reload({ waitUntil: "networkidle" });
+await page.waitForTimeout(500);
+await openThemeCategory();
+
 // Revert the bold/boldBg edit so it doesn't bleed into the preset-reselect
 // scenario below or any later comparison.
 await page.evaluate(() => localStorage.removeItem("mermark.themeJson"));

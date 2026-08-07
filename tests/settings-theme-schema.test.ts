@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
+  absentKind,
   builtInTheme,
+  isOptionalKey,
   parseTheme,
   promoteToExtended,
-  resolveBackground,
+  resolveOptional,
   serializeTheme,
   themeToVars,
   upgradePristinePreset,
@@ -147,6 +149,17 @@ describe("themeToVars maps every field to the right CSS var", () => {
       "--h4-bg": "transparent",
       "--h5-bg": "transparent",
       "--h6-bg": "transparent",
+      // round 2 (2026-08): 9 new vars, always emitted. "initial" for every key
+      // except --strike-bg (→ "transparent") — see OPTIONAL_INTRINSIC.
+      "--bold-italic-color": "initial",
+      "--bold-italic-bg": "initial",
+      "--strike-color": "initial",
+      "--strike-bg": "transparent",
+      "--quote-color": "initial",
+      "--quote-bg": "initial",
+      "--quote-bar": "initial",
+      "--codeblock-color": "initial",
+      "--codeblock-bg": "initial",
       "--radius-md": "8px",
       "--radius-lg": "12px",
       "--radius-xl": "16px",
@@ -172,17 +185,25 @@ describe("themeToVars maps every field to the right CSS var", () => {
     expect(vars["--italic-bg"]).toBe("transparent"); // untouched keys stay intrinsic
   });
 
-  it("always emits all 11 background vars, never conditionally (stale-var guard)", () => {
+  it("always emits all 20 optional vars, never conditionally (stale-var guard)", () => {
     const withNone = themeToVars(validTheme);
     const withOne = themeToVars({ ...validTheme, colors: { ...validTheme.colors, h1Bg: "#123" } });
-    // Every background key present in BOTH outputs — switching themes can never
-    // leave a background var missing from the map (themeVarsSink only overwrites).
+    // Every optional key present in BOTH outputs — switching themes can never
+    // leave a var missing from the map (themeVarsSink only overwrites).
     for (const key of ["--bold-bg", "--italic-bg", "--code-bg", "--link-bg", "--comment-bg",
-      "--h1-bg", "--h2-bg", "--h3-bg", "--h4-bg", "--h5-bg", "--h6-bg"]) {
+      "--h1-bg", "--h2-bg", "--h3-bg", "--h4-bg", "--h5-bg", "--h6-bg",
+      "--bold-italic-color", "--bold-italic-bg", "--strike-color", "--strike-bg",
+      "--quote-color", "--quote-bg", "--quote-bar", "--codeblock-color", "--codeblock-bg"]) {
       expect(withNone).toHaveProperty(key);
       expect(withOne).toHaveProperty(key);
     }
     expect(withOne["--h1-bg"]).toBe("#123");
+  });
+
+  it("emits an explicit round-2 value verbatim (quoteBg) instead of the 'auto' intrinsic", () => {
+    const vars = themeToVars({ ...validTheme, colors: { ...validTheme.colors, quoteBg: "#ff00ff" } });
+    expect(vars["--quote-bg"]).toBe("#ff00ff");
+    expect(vars["--quote-bar"]).toBe("initial"); // untouched optional keys stay intrinsic
   });
 
   it("does not introduce --radius-sm (styles.css never defines it)", () => {
@@ -190,20 +211,71 @@ describe("themeToVars maps every field to the right CSS var", () => {
   });
 });
 
-describe("resolveBackground: 배경 없음이 무엇으로 렌더되는가", () => {
+describe("resolveOptional: 부재한 옵셔널 키가 무엇으로 방출되는가 (renamed from resolveBackground)", () => {
   it("codeBg resolves to the surface-veil chip fill when unset (zero-drift for the existing inline-code chip)", () => {
-    expect(resolveBackground("codeBg", undefined)).toBe("var(--surface-veil)");
+    expect(resolveOptional("codeBg", undefined)).toBe("var(--surface-veil)");
   });
 
-  it("every other background key resolves to transparent when unset", () => {
+  it("every round-1 background key except codeBg resolves to transparent when unset", () => {
     for (const key of ["boldBg", "italicBg", "linkBg", "commentBg", "h1Bg", "h2Bg", "h3Bg", "h4Bg", "h5Bg", "h6Bg"] as const) {
-      expect(resolveBackground(key, undefined)).toBe("transparent");
+      expect(resolveOptional(key, undefined)).toBe("transparent");
     }
   });
 
+  it("round-2 keys resolve to 'initial' when unset, except strikeBg (→ transparent)", () => {
+    for (const key of ["boldItalic", "boldItalicBg", "strike", "quote", "quoteBg", "quoteBar", "codeBlock", "codeBlockBg"] as const) {
+      expect(resolveOptional(key, undefined)).toBe("initial");
+    }
+    expect(resolveOptional("strikeBg", undefined)).toBe("transparent");
+  });
+
   it("an explicit value always wins over the intrinsic default", () => {
-    expect(resolveBackground("codeBg", "#abcdef")).toBe("#abcdef");
-    expect(resolveBackground("boldBg", "#abcdef")).toBe("#abcdef");
+    expect(resolveOptional("codeBg", "#abcdef")).toBe("#abcdef");
+    expect(resolveOptional("boldBg", "#abcdef")).toBe("#abcdef");
+    expect(resolveOptional("quoteBg", "#abcdef")).toBe("#abcdef");
+  });
+});
+
+describe("absentKind: 키 부재가 '없음'인가 '자동'인가", () => {
+  it("round-1 background keys are all 'none' (transparent = genuinely absent)", () => {
+    for (const key of ["boldBg", "italicBg", "linkBg", "commentBg", "h1Bg", "h2Bg", "h3Bg", "h4Bg", "h5Bg", "h6Bg", "strikeBg"] as const) {
+      expect(absentKind(key)).toBe("none");
+    }
+  });
+
+  it("codeBg is 'auto' (label correction: it visibly shows the surface-veil chip fill, not truly absent)", () => {
+    expect(absentKind("codeBg")).toBe("auto");
+  });
+
+  it("round-2 derived/inherited keys are all 'auto'", () => {
+    for (const key of ["boldItalic", "boldItalicBg", "strike", "quote", "quoteBg", "quoteBar", "codeBlock", "codeBlockBg"] as const) {
+      expect(absentKind(key)).toBe("auto");
+    }
+  });
+});
+
+describe("isOptionalKey: replaces the hand-maintained bgOptional flag", () => {
+  it("every OPTIONAL_KEYS entry is optional", () => {
+    const OPTIONAL_KEYS_FOR_TEST = [
+      "boldBg", "italicBg", "codeBg", "linkBg", "commentBg",
+      "h1Bg", "h2Bg", "h3Bg", "h4Bg", "h5Bg", "h6Bg",
+      "boldItalic", "boldItalicBg", "strike", "strikeBg",
+      "quote", "quoteBg", "quoteBar", "codeBlock", "codeBlockBg",
+    ] as const;
+    for (const key of OPTIONAL_KEYS_FOR_TEST) expect(isOptionalKey(key)).toBe(true);
+  });
+
+  it("a core (strict-required) key is NOT optional — e.g. highlightBg", () => {
+    expect(isOptionalKey("highlightBg")).toBe(false);
+  });
+
+  it("an always-filled extended key is NOT optional — e.g. bold, comment", () => {
+    expect(isOptionalKey("bold")).toBe(false);
+    expect(isOptionalKey("comment")).toBe(false);
+  });
+
+  it("an unknown string is not optional", () => {
+    expect(isOptionalKey("notARealKey")).toBe(false);
   });
 });
 
@@ -498,5 +570,68 @@ describe("background keys: parse/serialize round-trip and the 'absence = no back
     const t: Theme = { ...validTheme, colors: { ...validTheme.colors, boldBg: "#ff00ff" } };
     const text = serializeTheme(t);
     expect(JSON.parse(text).colors.boldBg).toBe("#ff00ff");
+  });
+});
+
+// 2026-08 round 2 (01_ui2_plan.md 갈래 A1): the 9 new keys share the exact same
+// "absent = undefined, never rejects, never promotes" contract as round 1's 11 —
+// these tests exercise the round-2-specific keys through that same contract.
+describe("round-2 optional keys (boldItalic/strike/quote/codeBlock family): parse/serialize round-trip", () => {
+  it("parseTheme leaves an old JSON with none of the 9 new keys entirely undefined", () => {
+    const legacy = builtInTheme("dark");
+    const parsed = parseTheme(JSON.stringify(legacy))!;
+    for (const key of ["boldItalic", "boldItalicBg", "strike", "strikeBg", "quote", "quoteBg", "quoteBar", "codeBlock", "codeBlockBg"] as const) {
+      expect(parsed.colors[key]).toBeUndefined();
+    }
+  });
+
+  it("parseTheme preserves an explicit quoteBg value", () => {
+    const legacy = builtInTheme("dark");
+    const withQuoteBg = { ...legacy, colors: { ...legacy.colors, quoteBg: "#123456" } };
+    const parsed = parseTheme(JSON.stringify(withQuoteBg))!;
+    expect(parsed.colors.quoteBg).toBe("#123456");
+  });
+
+  it("parseTheme treats an empty-string quoteBar value as absent (never rejects the whole theme)", () => {
+    const legacy = builtInTheme("dark");
+    const broken = { ...legacy, colors: { ...legacy.colors, quoteBar: "" } };
+    const parsed = parseTheme(JSON.stringify(broken));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.colors.quoteBar).toBeUndefined();
+  });
+
+  it("serializeTheme drops an absent round-2 key entirely, keeps an explicit one", () => {
+    const withoutIt: Theme = { ...validTheme, colors: { ...validTheme.colors } };
+    expect(JSON.parse(serializeTheme(withoutIt)).colors).not.toHaveProperty("codeBlockBg");
+
+    const withIt: Theme = { ...validTheme, colors: { ...validTheme.colors, codeBlockBg: "#ff00ff" } };
+    expect(JSON.parse(serializeTheme(withIt)).colors.codeBlockBg).toBe("#ff00ff");
+  });
+
+  // The round-1 audit's blocker #2 failure class, reincarnated for round 2: a
+  // theme whose colors/radii/font are ALL byte-identical to the light preset
+  // (so upgradePristinePreset's other checks pass) but which sets quoteBg must
+  // NOT be judged pristine — otherwise the very next parse silently destroys
+  // quoteBg by replacing the whole colors object with the fresh preset's (which
+  // has no quoteBg). NEW_GEN_KEYS spreading OPTIONAL_KEYS (rather than being a
+  // hand-maintained list) is what makes this pass automatically.
+  it("a light-preset JSON with only quoteBg set is NOT misjudged pristine — quoteBg survives (round-2 blocker-#2 regression)", () => {
+    const legacy = builtInTheme("light");
+    const withQuoteBg = { ...legacy, colors: { ...legacy.colors, quoteBg: "#654321" } };
+    const parsed = parseTheme(JSON.stringify(withQuoteBg));
+    expect(parsed!.colors.quoteBg).toBe("#654321"); // NOT destroyed by a false-pristine upgrade
+    expect(parsed!.name).toBe("light");
+  });
+
+  it("NEW_GEN_KEYS includes every round-2 key (structural check via upgradePristinePreset behavior)", () => {
+    // Indirect but precise: if any round-2 key were missing from NEW_GEN_KEYS,
+    // a raw JSON carrying ONLY that key (colors otherwise untouched from the
+    // preset) would be misjudged pristine and upgraded, silently dropping it.
+    const legacy = builtInTheme("light");
+    for (const key of ["boldItalic", "boldItalicBg", "strike", "strikeBg", "quote", "quoteBg", "quoteBar", "codeBlock", "codeBlockBg"] as const) {
+      const withKey = { ...legacy, colors: { ...legacy.colors, [key]: "#abcdef" } };
+      const parsed = parseTheme(JSON.stringify(withKey));
+      expect(parsed!.colors[key], `${key} was destroyed by a false-pristine upgrade`).toBe("#abcdef");
+    }
   });
 });

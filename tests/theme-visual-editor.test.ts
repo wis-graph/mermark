@@ -1,8 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { RENDER, attachTeardown, runTeardown } from "../src/settings/panel/controls";
 import { themeJsonSetting, syncJsonToPreset } from "../src/settings/app";
-import { builtInTheme, parseTheme, serializeTheme } from "../src/settings/theme-schema";
+import { builtInTheme, parseTheme, serializeTheme, themeToVars } from "../src/settings/theme-schema";
 import { THEME_TARGETS } from "../src/settings/panel/theme-preview";
+
+// 2026-08 round-1 audit Minor recommendation, implemented in round 2 (fe-schema,
+// 01_ui2_plan.md 갈래 A1 item 6): every THEME_TARGETS colorVar/bgVar must be a
+// real key themeToVars emits — a typo'd var name silently under-paints (the
+// button references a CSS var nothing ever writes). This is a coverage GATE
+// against THAT class of bug, not a duplicate of theme-preview.ts's own table —
+// it doesn't hand-list target ids, so it automatically extends to whatever
+// THEME_TARGETS grows to (18 today, 24 once round-2's 5 new targets land).
+describe("THEME_TARGETS var coverage (typo/drift gate)", () => {
+  it("every colorVar and bgVar in THEME_TARGETS is a key themeToVars actually emits", () => {
+    const emitted = new Set(Object.keys(themeToVars(builtInTheme("light"))));
+    for (const t of THEME_TARGETS) {
+      expect(emitted.has(t.colorVar), `${t.id}.colorVar "${t.colorVar}" is not emitted by themeToVars`).toBe(true);
+      if (t.bgVar) {
+        expect(emitted.has(t.bgVar), `${t.id}.bgVar "${t.bgVar}" is not emitted by themeToVars`).toBe(true);
+      }
+    }
+  });
+});
 
 // 2026-08 redesign (design: _workspace/01_ui_design.md 결정 1): the 18-swatch
 // grid is gone, replaced by a mini app frame (every target is a real click
@@ -43,11 +62,33 @@ describe("Theme mini-frame preview", () => {
       const buttons = host.querySelectorAll(`[data-target="${t.id}"]`);
       expect(buttons.length, `target ${t.id} missing`).toBeGreaterThan(0);
     }
-    // 18 distinct targets: 8 core-style (bg/surface/border/accent/muted/fg,
-    // link, highlight) — wait, precisely: bg,surface,border,accent,muted,fg
-    // (6 chrome/core) + link,bold,italic,code,highlight,comment (6 paired
-    // text elements) + h1..h6 (6 headings) = 18.
-    expect(THEME_TARGETS.length).toBe(18);
+    // round 1: 18 (6 chrome/core + link/bold/italic/code/highlight/comment +
+    // h1..h6). round 2 adds 5 new CLICK TARGETS (boldItalic/strike/quote/
+    // quoteBar/codeBlock — 9 new schema keys, but boldItalic+boldItalicBg
+    // share one target, same for strike/quote/codeBlock, and quoteBar has no
+    // bg pair) = 18 + 5 = 23.
+    expect(THEME_TARGETS.length).toBe(23);
+  });
+
+  // design plan B1.2: round-2's new rows sit at the array positions the plan
+  // specifies relative to their neighbors — boldItalic/strike right after
+  // italic (matching 문단 1's DOM order), quote/quoteBar/codeBlock right
+  // before comment (matching the document's natural quote→code→comment
+  // flow). This isn't "table order == full DOM order" (round-1's core rows
+  // are grouped by concept, not position) — just these 5 new insertions.
+  it("round-2 targets are inserted where the plan specifies (relative to italic/comment)", () => {
+    const idx = (id: string) => THEME_TARGETS.findIndex((t) => t.id === id);
+    const italicIdx = idx("italic");
+    expect(idx("boldItalic")).toBe(italicIdx + 1);
+    expect(idx("strike")).toBe(italicIdx + 2);
+
+    const commentIdx = idx("comment");
+    expect(idx("quote")).toBeLessThan(commentIdx);
+    expect(idx("quoteBar")).toBeLessThan(commentIdx);
+    expect(idx("codeBlock")).toBeLessThan(commentIdx);
+    expect(idx("quote")).toBe(commentIdx - 3);
+    expect(idx("quoteBar")).toBe(commentIdx - 2);
+    expect(idx("codeBlock")).toBe(commentIdx - 1);
   });
 
   it("renders the chrome anchors called out by the design (bg/surface/border/accent/muted)", () => {
@@ -101,6 +142,25 @@ describe("Theme mini-frame preview", () => {
     expect(docText).toContain("`JX-2041`"); // 인라인 코드 백틱
     expect(docText).toContain("[^1]"); // 각주 참조의 raw 문법
     expect(docText).toContain("<!-- 지난 여행에서는 우산을 두 번 잃어버렸다 -->"); // HTML 주석(원래도 안 감춰짐)
+    // round 2 추가
+    expect(docText).toContain("***사흘째만은***"); // 볼드+이탤릭 마커
+    expect(docText).toContain("~~완벽한 동선~~"); // 취소선 마커
+  });
+
+  // design decision 4의 명시적 예외 2건(EDIT_MODE_SAMPLE_TEXT의 doc comment):
+  // 인용구는 `>` 마커를 안 쓰고, 코드블럭은 펜스(```)를 안 쓴다 — 실앱 편집
+  // 모드에서 둘 다 conceal/atomic-widget이라 마커 없는 모습이 실물과 일치.
+  it("quote and code-block samples have NO markers (design's explicit exceptions)", () => {
+    mount();
+    // Scoped to the quote text specifically — the comment line legitimately
+    // contains ">" (as the closing "-->" of "<!-- ... -->"), so a doc-wide
+    // scan for ">" would false-positive on that unrelated element.
+    const quoteText = host.querySelector(".theme-quote-text")!.textContent!;
+    expect(quoteText.startsWith(">")).toBe(false);
+    const docText = host.querySelector(".theme-doc")!.textContent!;
+    expect(docText).not.toContain("```"); // no fence marker
+    expect(docText).toContain("짐을 줄이는 가장 확실한 방법은 가방을 작게 사는 것이다.");
+    expect(docText).toContain('const bag = pack("가볍게");');
   });
 
   // 2026-08 폴리시 리뷰 2차 추가 지적: "**가볍게**싸고"(닫는 마커-다음 글자
@@ -131,19 +191,94 @@ describe("Theme mini-frame preview", () => {
     expect(hr.style.color).toBe("");
   });
 
-  // 2026-08 감사 반영(major #3): the quote bar is decorative-only now (uses
-  // --block-edge, matching the real `.cm-blockquote` — see the ThemeTarget
-  // doc comment in theme-preview.ts) — it must NOT be a click target, or the
-  // "click here, that changes there" promise breaks again the same way.
-  it("the blockquote bar is decorative only — not a click target, no data-target", () => {
+  // design decision 5's "미리보기가 칠할 체인" column, checked byte-for-byte —
+  // a mismatch here is the exact bug class round 1's audit caught (border
+  // anchored to the wrong var). These strings must equal what the real
+  // editor's styles.css rule for the same element resolves.
+  it("round-2 targets paint the EXACT fallback chain design decision 5 specifies", () => {
     mount();
+    const boldItalic = host.querySelector<HTMLElement>('[data-target="boldItalic"]')!;
+    // 감사 반영 2차(fe-schema): `.cm-strong.cm-em`은 죽은 셀렉터였다 — 실제
+    // 중첩은 마커 순서에 따라 방향이 갈린다. 미리보기 샘플("***사흘째만은***")은
+    // 트리플스타 → 볼드가 이기는 방향(`.cm-em .cm-strong`)이므로 그 체인을
+    // 미러링한다 — tests/theme-css-fallback-parity.test.ts가 이걸 styles.css와
+    // 직접 대조해 크로스파일로 잠근다.
+    expect(boldItalic.style.color).toBe("var(--bold-italic-color, var(--bold-color, inherit))");
+    expect(boldItalic.style.background).toBe("var(--bold-italic-bg, var(--bold-bg, transparent))");
+
+    const strike = host.querySelector<HTMLElement>('[data-target="strike"]')!;
+    expect(strike.style.color).toBe("var(--strike-color, inherit)");
+    expect(strike.style.background).toBe("var(--strike-bg, transparent)");
+
+    // .theme-quote-text (not [data-target="quote"] — the <blockquote>
+    // CONTAINER carries that same data-target too, and querySelector would
+    // match it first in document order since it's the ancestor).
+    const quoteText = host.querySelector<HTMLElement>(".theme-quote-text")!;
+    expect(quoteText.style.color).toBe("var(--quote-color, inherit)");
+    // quote's background lives on the CONTAINER, not this button (paint
+    // "quote-text" only ever touches color) — the button itself must NOT
+    // carry a background style, or it'd double-paint over the container.
+    expect(quoteText.style.background).toBe("");
+
+    const container = host.querySelector<HTMLElement>(".theme-quote")!;
+    expect(container.style.background).toBe("var(--quote-bg, var(--block-fill))");
+
+    const quoteBar = host.querySelector<HTMLElement>('[data-target="quoteBar"]')!;
+    expect(quoteBar.style.backgroundColor).toBe("var(--quote-bar, var(--block-edge))");
+
+    const codeBlock = host.querySelector<HTMLElement>('[data-target="codeBlock"]')!;
+    expect(codeBlock.style.color).toBe("var(--codeblock-color, inherit)");
+    expect(codeBlock.style.background).toBe("var(--codeblock-bg, var(--block-fill))");
+  });
+
+  // round 2 (design decision 1, item 5 / 감사 major #3의 근본 해결): the
+  // blockquote's left bar now has its OWN key (`quoteBar`) instead of riding
+  // `border` — round 1's fix only demoted it to decoration; round 2 gives it
+  // a real target so "클릭한 그 자리가 바뀐다" holds for it too.
+  it("quote bar and quote text are separate real targets; the container itself owns 'quote' for padding clicks", () => {
+    mount();
+    const quoteBar = host.querySelector<HTMLElement>('[data-target="quoteBar"]')!;
+    expect(quoteBar.tagName).toBe("BUTTON");
+    expect(quoteBar.classList.contains("theme-quote-bar")).toBe(true);
+
     const quoteText = host.querySelector(".theme-quote-text")!;
-    expect(quoteText.tagName).not.toBe("BUTTON");
-    expect(quoteText.hasAttribute("data-target")).toBe(false);
-    // .closest(".theme-target") — NOT the raw [data-target] attribute selector,
-    // which would also match the ANCESTOR .theme-frame (the "bg" canvas target
-    // every element in the mini frame is nested under by design).
-    expect(quoteText.closest(".theme-target")).toBeNull();
+    expect(quoteText.tagName).toBe("BUTTON");
+    expect(quoteText.getAttribute("data-target")).toBe("quote");
+
+    // The <blockquote> container carries data-target="quote" itself (not a
+    // button) so a click on its padding — outside both inner buttons —
+    // resolves to "quote" via closest(), not a false fall-through to "bg".
+    const container = host.querySelector(".theme-quote")!;
+    expect(container.tagName).toBe("BLOCKQUOTE");
+    expect(container.getAttribute("data-target")).toBe("quote");
+    expect(container.tagName).not.toBe("BUTTON");
+  });
+
+  it("clicking the quote bar selects quoteBar (innermost wins over the container's quote)", () => {
+    mount();
+    const quoteBar = host.querySelector<HTMLElement>('[data-target="quoteBar"]')!;
+    quoteBar.click();
+    expect(quoteBar.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("clicking the quote container padding (not bar/text) selects quote, not bg", () => {
+    mount();
+    const container = host.querySelector<HTMLElement>(".theme-quote")!;
+    container.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(container.getAttribute("data-target")).toBe("quote");
+    // reflectSelection compares dataset.target against the selected id on
+    // every .theme-target — the container isn't one, so assert via the
+    // paired quote-text button's aria-pressed instead (same target id).
+    const quoteText = host.querySelector<HTMLElement>(".theme-quote-text")!;
+    expect(quoteText.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("codeBlock is one button covering the whole block (no internal split)", () => {
+    mount();
+    const block = host.querySelector<HTMLElement>('[data-target="codeBlock"]')!;
+    expect(block.tagName).toBe("BUTTON");
+    expect(block.textContent).toContain('const bag = pack("가볍게");');
+    expect(block.textContent).toContain("bag.weigh();");
   });
 
   // The hr is the ONLY thing painted with --border now; nothing else in the
@@ -199,15 +334,74 @@ describe("Theme mini-frame preview", () => {
     expect(frame.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("selecting a target opens the docked inspector with color/bg tabs", () => {
+  // round-2 감사 반영, 결정 6: "일반 텍스트 색상도 선택이 안된다" — round 1의
+  // 결함은 문단당 두 글자("짐은")만 fg였고, 나머지 평문은 죽은 영역이었다.
+  // 이 그룹이 그 결함과 재발 방지 게이트를 담는다.
+  describe("결정 6 — 평문 fg 전체 타깃화 + 죽은 영역 소거", () => {
+    it("clicking ANY plain-text run in a paragraph selects fg, not just the first two syllables", () => {
+      mount();
+      // "잡는다." 뒤의 non-button fg run (문단 1의 두 번째 fg 조각).
+      const runs = host.querySelectorAll<HTMLElement>('[data-target="fg"]');
+      expect(runs.length).toBeGreaterThan(1); // more than the one focusable run
+      const nonButtonRun = Array.from(runs).find((r) => r.tagName !== "BUTTON")!;
+      expect(nonButtonRun).toBeTruthy();
+      nonButtonRun.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      const focusableFgRun = Array.from(runs).find((r) => r.tagName === "BUTTON")!;
+      expect(focusableFgRun.getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("exactly one fg run per paragraph is a real <button> (one Tab stop per paragraph)", () => {
+      mount();
+      const paragraphs = host.querySelectorAll(".theme-p");
+      expect(paragraphs.length).toBe(2);
+      for (const p of Array.from(paragraphs)) {
+        const fgButtons = p.querySelectorAll('button[data-target="fg"]');
+        expect(fgButtons.length).toBe(1);
+      }
+    });
+
+    it("no paragraph has a bare (unwrapped) non-whitespace text node — every run is under [data-target]", () => {
+      mount();
+      for (const p of Array.from(host.querySelectorAll(".theme-p"))) {
+        for (const node of Array.from(p.childNodes)) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            expect(node.textContent!.trim(), `bare text node "${node.textContent}" in a paragraph`).toBe("");
+          }
+        }
+      }
+    });
+
+    it("unclaimed clicks inside the frame (scale-strip separator, doc gaps) fall through to bg", () => {
+      mount();
+      const strip = host.querySelector<HTMLElement>(".theme-scale-strip")!;
+      // The " · " separators are bare text nodes directly in the strip, not
+      // wrapped — clicking the strip container itself (no nearer [data-target]
+      // in between) is the jsdom-reachable proxy for "clicked a separator".
+      strip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      const frame = host.querySelector<HTMLElement>('[data-target="bg"]')!;
+      expect(frame.getAttribute("aria-pressed")).toBe("true");
+
+      frame.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+      const doc = host.querySelector<HTMLElement>(".theme-doc")!;
+      doc.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(frame.getAttribute("aria-pressed")).toBe("true");
+    });
+  });
+
+  // round 2 decision 7: the card is hidden entirely (no DOM at all, not even
+  // a "collapsed hint" row) while nothing is selected, and becomes visible
+  // on selection — the document uses the full pane height when unselected.
+  it("selecting a target un-hides the floating inspector with color/bg tabs", () => {
     mount();
-    expect(host.querySelector(".theme-inspector-hint")).not.toBeNull();
+    const inspector = host.querySelector<HTMLElement>(".theme-inspector")!;
+    expect(inspector.hidden).toBe(true);
 
     const bold = host.querySelector<HTMLElement>('[data-target="bold"]')!;
     bold.click();
 
-    expect(host.querySelector(".theme-inspector-hint")).toBeNull();
-    const tabs = host.querySelectorAll('.theme-inspector-tab');
+    expect(inspector.hidden).toBe(false);
+    const tabs = host.querySelectorAll(".theme-inspector-tab");
     expect(tabs.length).toBe(2);
   });
 
@@ -238,7 +432,7 @@ describe("Theme mini-frame preview", () => {
     const rowEl = mount();
     const bold = host.querySelector<HTMLElement>('[data-target="bold"]')!;
     bold.click();
-    expect(host.querySelector(".theme-inspector-hint")).toBeNull();
+    expect(host.querySelector(".theme-inspector")!.hasAttribute("hidden")).toBe(false);
 
     runTeardown(rowEl);
     // After teardown, an external change must not throw and must not repopulate

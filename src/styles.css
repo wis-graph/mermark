@@ -408,7 +408,57 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
-.cm-strike { text-decoration: line-through; }
+/* boldItalic (2026-08 round 2: "볼드이탤릭은 별도의 색상으로") — 2026-08 golden-master
+   fix (`_workspace/03_qa2_report.md`): `.cm-strong.cm-em` (a single element
+   carrying BOTH classes) is DEAD CSS. It never matches, because the parser
+   never produces such an element: `Emphasis` and `StrongEmphasis` are always
+   ONE NESTED INSIDE THE OTHER (never a single node satisfying both), so
+   text-styles.ts's per-node mark decorations render as two NESTED <span>s, not
+   one span with two classes — confirmed directly via mountEditor DOM inspection
+   for every marker combination (`***x***`, `**_x_**`, `_**x**_`, `*__x__*`,
+   `__*x*__`). Critically, NESTING DIRECTION IS BIDIRECTIONAL — it depends on
+   which marker the user typed OUTERMOST, not on any fixed rule:
+     ***x***, _**x**_, *__x__*  → <em><strong>x</strong></em>  (strong innermost)
+     **_x_**, __*x*__           → <strong><em>x</em></strong>  (em innermost)
+   01_ui2_design.md 결정 0's premise ("두 single-class 규칙이 캐스케이드로
+   경쟁해 .cm-em이 이긴다") was wrong on TWO counts: no such competing pair of
+   equal-specificity rules on one element ever exists, and the real winner is
+   whichever class sits on the INNERMOST span — an element's own explicit color
+   always overrides an ancestor's merely-inherited one, regardless of any
+   cascade weight. So today's actual (pre-boldItalic-key) rendering is: bold
+   wins for ***x***/_**x**_/*__x__*, ITALIC wins for **_x_**/__*x*__ — the exact
+   opposite of what 결정 0 claimed for the triple-star case, and genuinely
+   direction-dependent, not a single fixed answer. The fix targets BOTH real
+   nesting shapes with descendant selectors (matches the actual DOM), and each
+   direction's fallback preserves ITS OWN current innermost-wins color — zero
+   visual drift for either direction when boldItalic is unset. */
+.cm-em .cm-strong, .cm-strong .cm-em {
+  border-radius: var(--radius-xs, 4px);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.cm-em .cm-strong {
+  color: var(--bold-italic-color, var(--bold-color, inherit));
+  background: var(--bold-italic-bg, var(--bold-bg, transparent));
+}
+.cm-strong .cm-em {
+  color: var(--bold-italic-color, var(--italic-color, inherit));
+  background: var(--bold-italic-bg, var(--italic-bg, transparent));
+}
+/* --strike-color/--strike-bg default to "initial" (round 2's "auto" family —
+   see theme-schema's OPTIONAL_INTRINSIC), so an unconfigured theme falls through
+   to `inherit`/`transparent` here — byte-identical to the pre-existing
+   `text-decoration: line-through` alone. `inherit` (not a fixed --fg) is
+   deliberate: a strike can nest inside a heading/bold/quote, and a fixed
+   fallback would make "~~done~~" inside an h1 lose the h1's own color. */
+.cm-strike {
+  text-decoration: line-through;
+  color: var(--strike-color, inherit);
+  background: var(--strike-bg, transparent);
+  border-radius: var(--radius-xs, 4px);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
 /* --code-bg replaces the hardcoded --surface-veil: resolveBackground's
    codeBg-only intrinsic default IS var(--surface-veil), so an unconfigured
    theme renders this identical chip fill it always has — a value swap, not a
@@ -440,7 +490,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    use, but an unbroken run with no wrap opportunity at all, e.g. a giant
    base64 blob under overflow-wrap corner cases, still gets a scrollbar
    instead of blowing out the column). */
-.cm-codeblock { display: block; margin: 0; position: relative; background: var(--block-fill); border: 1px solid var(--block-edge); border-radius: var(--radius-md); padding: .7em .9em; overflow-x: auto; font-size: var(--block-font-size); line-height: 1.5; }
+/* --codeblock-bg/--codeblock-color (2026-08 round 2: "코드블럭이라던지, 빠진서식들이
+   더 필요하고"): absent → "initial" (round 2's "auto" family), falling through to
+   the derived --block-fill / inherit — the SAME direction-reversal token
+   .cm-callout-note/.cm-callout-quote still use directly, so an unconfigured
+   theme keeps the dark-lightens/light-darkens behavior byte-identical. The
+   border stays on --block-edge UNCONDITIONALLY (no key of its own — 01_ui2_design
+   결정 1: a 1px line has too little visual weight to be worth a 21st target). */
+.cm-codeblock { display: block; margin: 0; position: relative; background: var(--codeblock-bg, var(--block-fill)); color: var(--codeblock-color, inherit); border: 1px solid var(--block-edge); border-radius: var(--radius-md); padding: .7em .9em; overflow-x: auto; font-size: var(--block-font-size); line-height: 1.5; }
 /* `pre-wrap` preserves whitespace/indentation (like `pre`) but wraps at normal
    break points; `overflow-wrap: anywhere` further breaks inside unbroken
    tokens (long URLs, hashes) so long lines wrap inside the block instead of
@@ -528,7 +585,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* position: relative on both: the quote-copy button (an absolutely
    positioned child) anchors to whichever of these two the caller pushes it
    into. */
-.cm-blockquote { position: relative; border-left: 3px solid var(--block-edge); background: var(--block-fill); padding-left: .75em; }
+/* --quote-color/--quote-bg/--quote-bar (2026-08 round 2: "인용 배경색이라던지…").
+   All three absent → "initial" (round 2's "auto" family), falling through to the
+   SAME derived tokens (--block-edge/--block-fill) this rule always used, plus
+   `inherit` for text — an unconfigured theme is byte-identical to before this
+   feature. `quoteBar` closes the round-1 audit's Major #3: the left bar
+   previously had no key of its own and silently rode --block-edge with no way
+   to edit it independently; it now has one while keeping the same fallback. */
+.cm-blockquote { position: relative; border-left: 3px solid var(--quote-bar, var(--block-edge)); background: var(--quote-bg, var(--block-fill)); color: var(--quote-color, inherit); padding-left: .75em; }
 .cm-callout { position: relative; background: var(--surface-veil); border-left: 3px solid var(--accent); padding-left: .75em; }
 .cm-callout-head { font-weight: 700; padding-right: 2.2em; } /* clears the copy button on the head line */
 /* Quote copy button: sized for a text line (not a full code-block chrome),
