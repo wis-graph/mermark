@@ -177,6 +177,27 @@ function renderText(setting: Setting<string>, control: Extract<Control<string>, 
   return r;
 }
 
+// Escape는 기본적으로 설정 모달을 닫는다(modal.ts, document-level capture
+// 리스너) — 하지만 테마 패널처럼 "선택된 대상이 있으면 그것부터 지운다"는
+// 중첩 해제(nested dismiss)가 필요한 콘텐츠가 있다. modal.ts는 카테고리별
+// 콘텐츠의 존재를 몰라야 하는 범용 모달이므로, 지금 마운트된 콘텐츠가 이
+// 한 슬롯에 "내가 처리할지"를 등록해 두고 modal.ts가 닫기 **전에** 딱 한 번
+// 물어본다. 2026-08 폴리시 5차(team-lead 지적, 사용자 보고: "esc 누르면
+// 설정 자체가 사라져서 그건 별로고") — 이전엔 preview/이 row 양쪽에 각자
+// bubble-phase Escape 리스너가 있었는데, modal.ts의 document-capture
+// 리스너가 항상 먼저 실행돼 무조건 모달을 닫아버렸다(bubble 리스너가
+// 나중에 뭘 하든 이미 늦음) — "이벤트 전파를 어디서 멈출지"가 흩어져 있던
+// 결과다. 이 슬롯이 그 결정을 한 곳(modal의 capture 리스너 직전)으로 모은다.
+let activeEscapeConsumer: (() => boolean) | null = null;
+
+/** modal.ts가 Escape를 받았을 때 모달을 닫기 **전에** 호출한다. 현재
+ *  마운트된 콘텐츠가 처리할 중첩 상태(테마 패널의 선택된 색 대상 등)가
+ *  있으면 그걸 지우고 `true`(소비했음 — 모달은 안 닫는다)를, 없으면
+ *  `false`(모달이 평소처럼 닫는다)를 반환한다. */
+export function tryDismissNested(): boolean {
+  return activeEscapeConsumer?.() ?? false;
+}
+
 /** The JSON control owns import (parse-on-적용) and export (copy/download), plus
  *  (2026-08 redesign) the live mini-frame preview + docked color inspector that
  *  replaced the old 18-swatch grid (design: `_workspace/01_ui_design.md` 결정 1).
@@ -198,16 +219,18 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
   const preview = buildThemePreview((t, targetEl) => inspector.setTarget(t, targetEl));
   inspector = buildColorInspector(setting, () => preview.clearSelection());
 
-  // Round-2 감사 Minor 해소(직전 라운드 지적): Escape가 preview 내부 포커스
-  // 에서만 잡히던 걸 preview+inspector 합성 컨테이너(이 row)로 승격한다 —
-  // 포커스가 플로팅 인스펙터 안(슬라이더·칩·✕ 버튼 등)에 있어도 Escape가
-  // 선택을 해제한다. preview 자신의 Escape 리스너(theme-preview.ts)는 그대로
-  // 둔다(단독 사용 시에도 동작해야 함) — 포커스가 preview 안이면 두 리스너가
-  // 둘 다 clearSelection을 부르지만 멱등이라 무해하다.
-  function onEscapeAnywhere(e: KeyboardEvent): void {
-    if (e.key === "Escape") preview.clearSelection();
-  }
-  r.addEventListener("keydown", onEscapeAnywhere);
+  // 2026-08 폴리시 5차: Escape의 "모달을 닫을지, 선택만 지울지" 판단은
+  // modal.ts가 `tryDismissNested()`로 여기 등록한 콜백을 통해 결정한다(위
+  // 모듈 doc comment) — 이 row가 마운트돼 있는 동안만 등록하고, 카테고리가
+  // 바뀌거나(teardown) 이 row가 사라지면 즉시 해제한다. preview 자신의
+  // Escape 리스너(theme-preview.ts)는 그대로 둔다(단독 사용 시에도 동작해야
+  // 함) — 포커스가 preview 안이면 그 리스너도 같이 clearSelection을 부르지만
+  // 멱등이라 무해하다.
+  activeEscapeConsumer = () => {
+    if (preview.getSelected() === null) return false; // 지울 선택이 없음 — 모달이 평소처럼 닫힌다
+    preview.clearSelection();
+    return true;
+  };
 
   // 2. Collapsible Advanced JSON Editor Accordion
   const details = document.createElement("details");
@@ -265,7 +288,9 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
     setting.subscribe(reflect),
     preview.teardown,
     inspector.teardown,
-    () => r.removeEventListener("keydown", onEscapeAnywhere),
+    () => {
+      activeEscapeConsumer = null;
+    },
   ]);
 
   cell.append(preview.el, inspector.el, details);

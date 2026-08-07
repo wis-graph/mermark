@@ -4,7 +4,7 @@
 // The panel iterates groups() from the registry, so adding a setting never
 // touches this file.
 import { groups, type Group } from "../registry";
-import { RENDER, runTeardown } from "./controls";
+import { RENDER, runTeardown, tryDismissNested } from "./controls";
 import type { Setting, Control } from "../store";
 import { icon } from "../../icons";
 import { renderVersionPane } from "./version-pane";
@@ -165,9 +165,22 @@ function buildModal(): SettingsModal {
   if (gs[0]) selectCategory(gs[0]);
 
   let lastFocused: Element | null = null;
+  // 2026-08 폴리시 5차(team-lead, 사용자 보고: "esc 누르면 설정 자체가 사라져서
+  // 그건 별로고"): 이 리스너는 `document`에 **capture: true**로 걸려 있어(아래
+  // addEventListener 참고) 모달 내부 어디에 포커스가 있든, 어떤 다른(bubble
+  // phase) Escape 리스너보다 항상 먼저 실행된다 — 그리고 지금까지는 무조건
+  // `api.close()`를 불렀다. 테마 패널처럼 "선택된 대상이 있으면 그것부터
+  // 지운다"는 중첩 해제가 필요한 콘텐츠가 있어도, 그 bubble 리스너들이 뭘
+  // 하든 이미 모달이 닫힌 뒤라 소용없었다 — nested dismiss가 원천적으로
+  // 불가능한 구조였다(이벤트 전파 순서상 capture가 항상 이긴다).
+  // `tryDismissNested()`가 그 갭을 메운다: 모달을 닫기 **전에** 현재 마운트된
+  // 콘텐츠에게 "네가 먼저 처리할 중첩 상태가 있냐"고 물어보고, 있으면(true)
+  // 모달은 그대로 두고 여기서 끝낸다 — modal.ts는 테마 패널의 존재를 몰라도
+  // 된다(controls.ts가 등록한 콜백 하나를 통해서만 접촉한다).
   const onKeydown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
+      if (tryDismissNested()) return;
       api.close();
     } else if (e.key === "Tab") {
       trapFocus(modal, e);

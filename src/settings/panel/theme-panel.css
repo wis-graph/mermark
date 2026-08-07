@@ -359,4 +359,16 @@
 }
 .theme-inspector-btn:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
 
-.theme-inspector-os-input { position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none; }
+/* 2026-08 폴리시 5차(실앱 결함 — "상세 조정 버튼이 반응 없음"): 0×0 크기는
+   대부분의 경우 무해하지만, 색 피커 같은 네이티브 UI를 여는 입력에는
+   위험하다 — 일부 엔진(WKWebView 포함)은 "실제로 렌더링된" 엘리먼트에만
+   `.click()`/`showPicker()`의 네이티브 트리거를 허용하고, 0×0은 그 판정을
+   더 쉽게 실패시킨다. `.chrome-btn-label`(위, styles.css:922)이 이미 쓰는
+   clip-rect 관용구를 그대로 가져온다 — 1px×1px + clip으로 시각적으로는
+   안 보이지만 "렌더링된" 상태는 유지한다. 카드 레이아웃에는 영향 없다
+   (position: absolute로 문서 흐름 밖). */
+.theme-inspector-os-input {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  pointer-events: none;
+}

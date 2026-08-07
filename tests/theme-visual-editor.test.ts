@@ -334,6 +334,82 @@ describe("Theme mini-frame preview", () => {
     expect(frame.getAttribute("aria-pressed")).toBe("true");
   });
 
+  // 2026-08 폴리시 4차 (사용자 요청): "배경 클릭하면 배경변경 UI 활성화되잖아,
+  // 그거 다시 한번 클릭하면 비활성화 토글돼야 할거같은데?" — 같은 대상을
+  // 다시 누르면 선택이 해제된다. 다른 대상 클릭은 여전히 전환(위 테스트가
+  // 이미 잠금).
+  describe("폴리시 4차 — 재클릭 토글", () => {
+    it("재클릭(같은 타깃)은 선택을 해제한다", () => {
+      mount();
+      const bold = host.querySelector<HTMLElement>('[data-target="bold"]')!;
+      bold.click();
+      expect(bold.getAttribute("aria-pressed")).toBe("true");
+
+      bold.click(); // 재클릭 — 토글 해제
+      expect(bold.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("bg(프레임 여백) 재클릭도 토글 해제된다 — 사용자가 든 예시", () => {
+      mount();
+      const frame = host.querySelector<HTMLElement>('[data-target="bg"]')!;
+      frame.click();
+      expect(frame.getAttribute("aria-pressed")).toBe("true");
+
+      frame.click();
+      expect(frame.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("그룹 타깃(fg)은 첫 런과 다른 런을 눌러도 재클릭으로 친다 — 같은 data-target이므로 해제된다", () => {
+      mount();
+      const runs = host.querySelectorAll<HTMLElement>('[data-target="fg"]');
+      const focusableFgRun = Array.from(runs).find((r) => r.tagName === "BUTTON")!;
+      const otherFgRun = Array.from(runs).find((r) => r !== focusableFgRun)!;
+
+      focusableFgRun.click();
+      expect(focusableFgRun.getAttribute("aria-pressed")).toBe("true");
+
+      otherFgRun.dispatchEvent(new MouseEvent("click", { bubbles: true })); // 다른 런, 같은 타깃
+      expect(focusableFgRun.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("다른 대상 클릭은 토글이 아니라 전환이다 — 재클릭 로직이 전환 경로를 건드리지 않았는지 확인", () => {
+      mount();
+      const bold = host.querySelector<HTMLElement>('[data-target="bold"]')!;
+      const italic = host.querySelector<HTMLElement>('[data-target="italic"]')!;
+      bold.click();
+      italic.click();
+      expect(bold.getAttribute("aria-pressed")).toBe("false");
+      expect(italic.getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("키보드로도 동일하다 — bg에 Enter를 두 번 누르면 토글 해제된다(role=button 수동 처리 경로)", () => {
+      mount();
+      const frame = host.querySelector<HTMLElement>('[data-target="bg"]')!;
+      frame.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(frame.getAttribute("aria-pressed")).toBe("true");
+
+      frame.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(frame.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    // "카드 자신을 클릭한 건 재클릭이 아니다" — 인스펙터 카드는 미리보기
+    // wrap의 자식이 아니라 형제(controls.ts의 `cell.append(preview.el,
+    // inspector.el, details)`)라서, 카드 내부 클릭은 애초에 preview의 click
+    // 위임(`wrap.addEventListener`)에 잡히지 않는다. select()의 토글 로직과
+    // 무관하게 이 전제가 실제 합성 DOM에서 여전히 성립하는지 직접 확인한다.
+    it("카드 내부(색상 칩) 클릭은 선택을 유지한다 — 카드는 wrap의 자식이 아니다", () => {
+      mount();
+      const bold = host.querySelector<HTMLElement>('[data-target="bold"]')!;
+      bold.click();
+      expect(bold.getAttribute("aria-pressed")).toBe("true");
+
+      const chip = host.querySelector<HTMLElement>(".theme-inspector-palette .theme-chip")!;
+      expect(chip).toBeTruthy();
+      chip.click();
+      expect(bold.getAttribute("aria-pressed")).toBe("true"); // 카드 클릭으로 해제되면 안 됨
+    });
+  });
+
   // round-2 감사 반영, 결정 6: "일반 텍스트 색상도 선택이 안된다" — round 1의
   // 결함은 문단당 두 글자("짐은")만 fg였고, 나머지 평문은 죽은 영역이었다.
   // 이 그룹이 그 결함과 재발 방지 게이트를 담는다.

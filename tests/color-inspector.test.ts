@@ -277,6 +277,69 @@ describe("Color inspector", () => {
     const textInputs = host.querySelectorAll('input[type="text"]');
     expect(textInputs.length).toBe(0);
   });
+
+  // 2026-08 폴리시 5차 (실앱 결함: "상세조정 os 피커 동작을 안 하네") — 원인은
+  // `osInput.hidden = true`(display:none)였다: display:none 엘리먼트는
+  // 스펙상 "being rendered"가 아니라서 `.click()`이 네이티브 피커를 못 연다
+  // (WKWebView가 스펙대로 막고, Chromium은 관대해서 재현이 안 됐다). 고침은
+  // display:none을 없애고(`.chrome-btn-label`의 clip-rect 관용구로 교체 —
+  // `theme-panel.css`), `showPicker()`를 우선 시도하도록 바꾼 것.
+  describe("OS 피커 (design decision 6의 '상세 조정' 탈출구)", () => {
+    function osButton(): HTMLButtonElement {
+      return Array.from(host.querySelectorAll<HTMLButtonElement>(".theme-inspector-btn")).find(
+        (b) => b.textContent === "상세 조정… (OS 피커)",
+      )!;
+    }
+    function osInput(): HTMLInputElement {
+      return host.querySelector<HTMLInputElement>(".theme-inspector-os-input")!;
+    }
+
+    it("숨김에 display:none(hidden 속성)을 쓰지 않는다 — WKWebView에서 네이티브 피커가 안 열리는 원인이었다", () => {
+      inspector.setTarget(themeTarget("bold")!);
+      expect(osInput().hidden).toBe(false);
+    });
+
+    it("showPicker가 없는 환경(jsdom 포함, 구버전 WebKit과 동일 조건)에서는 .click()으로 폴백한다", () => {
+      inspector.setTarget(themeTarget("bold")!);
+      const input = osInput();
+      expect(typeof input.showPicker).not.toBe("function"); // jsdom은 showPicker를 구현 안 함 — 폴백 경로가 실제로 exercise됨을 보장
+      const clickSpy = vi.fn();
+      input.click = clickSpy;
+      osButton().click();
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("showPicker가 있으면 그걸 우선 호출하고 .click()은 안 쓴다", () => {
+      inspector.setTarget(themeTarget("bold")!);
+      const input = osInput();
+      const showPickerSpy = vi.fn();
+      const clickSpy = vi.fn();
+      input.showPicker = showPickerSpy;
+      input.click = clickSpy;
+      osButton().click();
+      expect(showPickerSpy).toHaveBeenCalledTimes(1);
+      expect(clickSpy).not.toHaveBeenCalled();
+    });
+
+    it("OS 입력의 input 이벤트가 실제로 글자색 키에 반영·저장된다", () => {
+      inspector.setTarget(themeTarget("bold")!); // 글자색 탭이 기본
+      osButton().click(); // osPickerKey를 "bold"로 armed
+      const input = osInput();
+      input.value = "#1a2b3c";
+      input.dispatchEvent(new Event("input"));
+      expect(themeJsonSetting.get().colors.bold).toBe("#1a2b3c");
+    });
+
+    it("배경색 탭에서도 동일하게 반영된다 (activeKey가 탭에 따라 다른 키를 반환)", () => {
+      inspector.setTarget(themeTarget("bold")!);
+      (host.querySelectorAll<HTMLElement>(".theme-inspector-tab")[1]!).click(); // 배경색 탭
+      osButton().click(); // osPickerKey를 "boldBg"로 armed
+      const input = osInput();
+      input.value = "#4a5b6c";
+      input.dispatchEvent(new Event("input"));
+      expect(themeJsonSetting.get().colors.boldBg).toBe("#4a5b6c");
+    });
+  });
 });
 
 // pickCardPlacement: pure, jsdom-free (synthetic rects) — design decision 7의

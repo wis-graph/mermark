@@ -500,7 +500,22 @@ export function buildThemePreview(onSelect: (t: ThemeTarget | null, el?: HTMLEle
     wrap.querySelectorAll(`[data-target="${id}"]`).forEach((el) => el.classList.add("is-hover-group"));
   }
 
+  /** "이미 선택된 그 대상을 다시 눌렀나" (순수 쿼리) — 클릭/Enter·Space로 같은
+   *  `id`가 다시 들어오면 토글 해제한다(2026-08 폴리시 4차, 사용자 요청: "다시
+   *  한번 클릭하면 비활성화 토글돼야 할거같은데?"). `id` 기준으로만 판정하므로
+   *  fg처럼 여러 런이 한 `data-target`을 공유하는 그룹 타깃은 **어느 런을
+   *  다시 눌러도** 재클릭으로 친다 — "같은 대상을 다시 가리켰다"는 의미가
+   *  런 하나가 아니라 타깃 전체에 있으므로, 처음 고른 런과 다른 런을 눌러도
+   *  같은 결과(해제)여야 자연스럽다. */
+  function isReselect(id: string): boolean {
+    return selected?.id === id;
+  }
+
   function select(id: string, sourceEl?: HTMLElement): void {
+    if (isReselect(id)) {
+      clearSelection(); // 토글: Escape·✕ 버튼과 같은 종착점
+      return;
+    }
     const t = themeTarget(id);
     if (!t) return;
     selected = t;

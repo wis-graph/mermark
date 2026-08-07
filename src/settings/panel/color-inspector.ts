@@ -250,10 +250,17 @@ export function buildColorInspector(setting: Setting<Theme>, onClose: () => void
   let sliderS: HTMLInputElement | null = null;
   let sliderL: HTMLInputElement | null = null;
 
+  // "숨김"이지만 `hidden`(= display:none)은 절대 안 쓴다 — display:none인
+  // 엘리먼트는 스펙상 "being rendered"가 아니라서 `.click()`/`showPicker()`가
+  // 네이티브 색 피커를 못 띄운다. Chromium은 관대하게 열어주지만 WKWebView는
+  // 스펙대로 막는다(실앱 실측: "상세 조정 버튼이 아무 반응이 없다" — 결함
+  // 재현 확인, `_workspace/02_panel2_changes.md` "OS 피커" 절). `.chrome-btn-label`
+  // 이 이미 쓰는 clip-rect 관용구(styles.css:922)로 바꾼다 — 새 방식을
+  // 발명하지 않는다. 그 클래스는 시각적으로만 숨기고 엘리먼트는 "렌더링된"
+  // 상태로 남긴다.
   const osInput = document.createElement("input");
   osInput.type = "color";
   osInput.className = "theme-inspector-os-input";
-  osInput.hidden = true;
   const onOsInput = () => {
     if (osPickerKey) writeColor(osPickerKey, osInput.value);
   };
@@ -303,12 +310,25 @@ export function buildColorInspector(setting: Setting<Theme>, onClose: () => void
     else writeColor(key, dflt);
   }
 
+  /** "이 입력의 네이티브 UI를 여는 방법" (순수 쿼리 아님 — 부수효과가 목적인
+   *  커맨드지만, 표준 API를 우선하고 없으면 폴백한다는 판단 자체를 이름으로
+   *  약속한다). `showPicker()`는 표준(2023+ 대부분 엔진 지원)이고 의도가
+   *  명시적이라 우선한다 — 지원 안 하는 구버전 WebKit을 위해 `.click()`
+   *  폴백을 남긴다(과거엔 이것만 있었고, display:none 시절에는 그마저도
+   *  안 열렸다 — 위 osInput 선언부 주석 참조). 둘 다 사용자 제스처
+   *  컨텍스트(버튼 클릭 핸들러) 안에서 호출되므로 브라우저의 gesture 요구
+   *  조건은 이미 충족된다. */
+  function openNativeColorPicker(input: HTMLInputElement): void {
+    if (typeof input.showPicker === "function") input.showPicker();
+    else input.click();
+  }
+
   function openOsPicker(): void {
     const key = activeKey();
     if (!key) return;
     osPickerKey = key;
     osInput.value = toDisplayHex(currentBaselineHex(key));
-    osInput.click();
+    openNativeColorPicker(osInput);
   }
 
   /** Update every live control to match the CURRENT setting value, without
