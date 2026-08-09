@@ -244,6 +244,46 @@ pub fn path_exists(path: String) -> bool {
     normalized.is_file()
 }
 
+#[tauri::command]
+pub fn directory_exists(path: String) -> bool {
+    expand_home(&path).is_dir()
+}
+
+#[tauri::command]
+pub fn canonicalize_path(path: String) -> Result<String, String> {
+    std::fs::canonicalize(expand_home(&path))
+        .map(|canonical| canonical.to_string_lossy().into_owned())
+        .map_err(|error| format!("cannot canonicalize vault path {path}: {error}"))
+}
+
+#[cfg(test)]
+mod workspace_directory_exists_tests {
+    use super::directory_exists;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn directory_exists_accepts_directories_but_not_files_or_missing_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "mermark_directory_exists_{}_{}",
+            std::process::id(),
+            TEST_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let directory = root.join("vault");
+        let file = root.join("note.md");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&file, "# note").unwrap();
+
+        assert!(directory_exists(directory.to_string_lossy().into_owned()));
+        assert!(!directory_exists(file.to_string_lossy().into_owned()));
+        assert!(!directory_exists(root.join("missing").to_string_lossy().into_owned()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 /// Open another file in a brand-new window (used by wikilink clicks).
 #[tauri::command]
 pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {

@@ -2,7 +2,6 @@
 // disk AND the local buffer has unsaved work, so neither side can be adopted
 // silently. Two explicit choices — keep local (overwrite disk) or use external
 // (reload from disk) — map straight onto the editor controller's existing
-// methods (forceSave / reloadFromFile). Merge is out of scope by design.
 //
 // Built lazily (only when a conflict actually occurs —平소 0 비용), mounted as a
 // body-level sibling of the editor host (outside CodeMirror: pushes no Specs,
@@ -19,6 +18,7 @@ export interface ConflictModalOptions {
   onKeepLocal: () => void;
   /** Discard my edits, load the disk version (→ controller.reloadFromFile). */
   onUseExternal: () => void;
+  onMerge: () => void;
   /** Dismiss without choosing — the conflict stays unresolved (autosave paused). */
   onDismiss?: () => void;
 }
@@ -51,21 +51,24 @@ function renderDiffTable(rows: DiffRow[]): HTMLElement {
 /** Keep Tab focus inside the modal (wrap at the ends) — same rule as the settings
  *  modal's trapFocus, replicated here so the conflict modal stays decoupled from
  *  the settings registry. */
-function trapFocus(modal: HTMLElement, e: KeyboardEvent): void {
+function trapFocus(modal: HTMLElement, e: KeyboardEvent): boolean {
   const focusable = modal.querySelectorAll<HTMLElement>(
     'button, select, textarea, input, a[href], [tabindex]:not([tabindex="-1"])',
   );
-  if (focusable.length === 0) return;
+  if (focusable.length === 0) return false;
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
   const active = document.activeElement;
   if (e.shiftKey && active === first) {
     e.preventDefault();
     last.focus();
+    return true;
   } else if (!e.shiftKey && active === last) {
     e.preventDefault();
     first.focus();
+    return true;
   }
+  return false;
 }
 
 /** Open the conflict modal. Returns a handle whose close() restores the page.
@@ -105,7 +108,11 @@ export function openConflictModal(opts: ConflictModalOptions): ConflictModalHand
   keepLocal.type = "button";
   keepLocal.className = "conflict-btn conflict-keep-local";
   keepLocal.textContent = "로컬 유지 (내 편집으로 덮어쓰기)";
-  actions.append(useExternal, keepLocal);
+  const merge = document.createElement("button");
+  merge.type = "button";
+  merge.className = "conflict-btn conflict-merge";
+  merge.textContent = "병합 (두 버전 표시)";
+  actions.append(useExternal, keepLocal, merge);
 
   modal.append(header, diff, actions);
   backdrop.appendChild(modal);
@@ -135,6 +142,7 @@ export function openConflictModal(opts: ConflictModalOptions): ConflictModalHand
   const onKeydown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
+      e.stopImmediatePropagation();
       dismiss();
     } else if (e.key === "Tab") {
       trapFocus(modal, e);
@@ -143,6 +151,7 @@ export function openConflictModal(opts: ConflictModalOptions): ConflictModalHand
 
   useExternal.addEventListener("click", () => choose(opts.onUseExternal));
   keepLocal.addEventListener("click", () => choose(opts.onKeepLocal));
+  merge.addEventListener("click", () => choose(opts.onMerge));
   backdrop.addEventListener("mousedown", (e) => {
     if (e.target === backdrop) dismiss(); // backdrop click dismisses; inside doesn't
   });

@@ -47,7 +47,7 @@ export const themeSetting = registerSetting<Theme>({
  *  a corrupt saved/pasted value → null → default. */
 export const themeJsonSetting = registerSetting<ThemeJson>({
   key: "mermark.themeJson",
-  default: builtInTheme(systemTheme()),
+  default: builtInTheme(themeSetting.get()),
   parse: parseTheme,
   serialize: serializeTheme,
   // "테마 색상" (not "테마 JSON"): the panel row IS the swatch grid — raw JSON

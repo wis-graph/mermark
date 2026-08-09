@@ -489,6 +489,62 @@ describe("explorer: root path stays canonical", () => {
   });
 });
 
+describe("explorer: permanent vault root", () => {
+  it("does not render or route parent navigation when the root is locked to a vault", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({
+      listDir,
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      isRootLocked: () => true,
+    });
+
+    expect(panel.aside.querySelector(".explorer-up")).toBeNull();
+    panel.jumpToRoot("/root/..");
+    await flush();
+
+    expect(panel.currentRootPath()).toBe("/root");
+    expect(listDir).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders and routes parent navigation for a temporary vault", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({
+      listDir,
+      getBaseDir: () => "/root/child",
+      onOpenFile: vi.fn(),
+      isRootLocked: () => false,
+    });
+
+    const up = panel.aside.querySelector(".explorer-up");
+    expect(up).not.toBeNull();
+    clickItem(up as HTMLElement);
+    await flush();
+
+    expect(panel.currentRootPath()).toBe("/root");
+    expect(listDir).toHaveBeenLastCalledWith("/root");
+  });
+
+  it("keeps the vault root after selecting a child document", async () => {
+    const listDir = vi.fn(fakeTree());
+    const onOpenFile = vi.fn();
+    const panel = await openPanel({
+      listDir,
+      getBaseDir: () => "/root",
+      onOpenFile,
+      isRootLocked: () => true,
+    });
+
+    const child = panel.aside.querySelector<HTMLElement>('[data-path="/root/a.md"]');
+    expect(child).not.toBeNull();
+    child?.click();
+    await flush();
+
+    expect(onOpenFile).toHaveBeenCalledWith("/root/a.md");
+    expect(panel.currentRootPath()).toBe("/root");
+  });
+});
+
 // currentRootPath — the ⌘⇧F file-finder panel's root SSOT (see
 // _workspace/01_architect_design.md §루트 SSOT): a pure query exposing the
 // SAME `currentRoot` renderTree canonicalizes, not a second copy of it.

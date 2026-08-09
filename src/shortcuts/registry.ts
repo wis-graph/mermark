@@ -175,6 +175,7 @@ export function installDispatcher(): void {
     "keydown",
     (e) => {
       if (suppressed) return;
+      if (e.target instanceof Element && e.target.closest('[role="dialog"], [aria-modal="true"]')) return;
       const chord = eventToChord(e);
       if (!chord) return;
       if (dispatchChord(chord)) {

@@ -83,9 +83,20 @@ import {
 } from "./document/history/nav-history";
 import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./document/file-watch";
 import { openConflictModal } from "./document/conflict/conflict-modal";
+import { createConflictRecovery, sameConflictIdentity, type ConflictIdentity } from "./document/conflict/conflict-recovery";
 import { openImageViewer } from "./chrome/viewer/image-viewer";
 import { isRemoteSrc } from "./markdown/image";
 import { setImageOpenHandler } from "./markdown/image-open";
+import { WorkspaceStore } from "./workspace/workspace-state";
+import { routeCliFile, routeCliFileResolved } from "./workspace/cli-routing";
+import {
+  defaultFavoriteInitializationKey,
+  favoriteFoldersStorageKey,
+  migrateFavoriteFoldersToVaults,
+  shouldMigrateLegacyFavorites,
+} from "./workspace/favorite-vault-migration";
+import { createWorkspaceSidebar } from "./workspace/workspace-sidebar";
+import { selectVaultView, VaultTabStore } from "./workspace/vault-tabs";
 import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
 import { registerSqliteViewer } from "./chrome/viewer/sqlite-viewer";
@@ -177,6 +188,7 @@ async function initDefaultFavorites() {
       if (home) list.push(normalizePath(home));
       if (docs) list.push(normalizePath(docs));
       favoriteFoldersSetting.set(list);
+      localStorage.setItem(defaultFavoriteInitializationKey, "1");
     } catch (err) {
       console.error("Failed to init default favorites:", err);
     }
@@ -185,6 +197,10 @@ async function initDefaultFavorites() {
 
 async function boot() {
   void unwatchFile();
+  const migrateLegacyFavorites = shouldMigrateLegacyFavorites(
+    localStorage.getItem(favoriteFoldersStorageKey) !== null,
+    localStorage.getItem(defaultFavoriteInitializationKey) === "1",
+  );
   await initDefaultFavorites();
   // Theme is the SSOT; bind the DOM sink first so the dataset is set before the
   // editor mounts (mermaid reads it on its lazy initial load) — and so it also
@@ -236,7 +252,61 @@ async function boot() {
   const applyHeadingFont = headingFontSink();
   headingFontSetting.bind((v) => applyHeadingFont(effectiveHeadingFont(v)));
   const root = document.querySelector<HTMLDivElement>("#app")!;
-  const file = new URLSearchParams(location.search).get("file");
+  const requestedFile = new URLSearchParams(location.search).get("file");
+  const workspaceStore = new WorkspaceStore();
+  if (migrateLegacyFavorites) {
+    try {
+      await migrateFavoriteFoldersToVaults(
+        workspaceStore,
+        favoriteFoldersSetting.get(),
+        async (path) => invoke<boolean>("directory_exists", { path }),
+        async (path) => {
+          try {
+            const resolved: unknown = await invoke("canonicalize_path", { path });
+            return typeof resolved === "string" ? resolved : null;
+          } catch (error) {
+            if (error instanceof Error || typeof error === "string") return null;
+            throw error;
+          }
+        },
+      );
+    } catch (error) {
+      if (error instanceof Error || typeof error === "string") console.error("Failed to migrate favorite folders:", error);
+      else throw error;
+    }
+  }
+  const cliRoute = requestedFile ? await routeCliFileResolved(workspaceStore, requestedFile, async (path) => {
+    try {
+      const resolved: unknown = await invoke("canonicalize_path", { path });
+      return typeof resolved === "string" ? resolved : path;
+    } catch (error) {
+      if (error instanceof Error || typeof error === "string") return path;
+      throw error;
+    }
+  }) : undefined;
+  const file = cliRoute?.path ?? requestedFile;
+  const vaultTabs = new VaultTabStore();
+  const conflictRecovery = createConflictRecovery();
+  let routedVault = cliRoute?.vault;
+  const currentVault = () => routedVault ?? workspaceStore.get().vaults.find((vault) => vault.vaultId === workspaceStore.get().workspaces.find((workspace) => workspace.workspaceId === workspaceStore.get().currentWorkspaceId)?.currentVaultId);
+  const routeDocumentPath = (path: string) => {
+    const current = routedVault;
+    if (current?.persistenceKind === "temporary" && normalizePath(current.rootPath) === normalizePath(path)) return current;
+    const route = routeCliFile(workspaceStore, path);
+    routedVault = route.vault;
+    return route.vault;
+  };
+  const currentConflictIdentity = (): ConflictIdentity | null => {
+    const vault = currentVault();
+    if (!vault || !currentFile) return null;
+    const tabs = vaultTabs.get(vault.vaultId);
+    const tabId = tabs.tabs.find((tab) => tab.path === normalizePath(currentFile))?.tabId;
+    return tabId ? { vaultId: vault.vaultId, tabId, documentId: `document-${normalizePath(currentFile)}` } : null;
+  };
+  const selectedVault = currentVault();
+  const restoredTabs = selectedVault?.persistenceKind === "permanent" ? vaultTabs.get(selectedVault.vaultId) : null;
+  const restoredTab = restoredTabs?.tabs.find((tab) => tab.tabId === restoredTabs.activeTabId)?.path ?? null;
+  const initialFile = file || restoredTab || "";
 
   // #app is a flex column holding ONE child, .workspace, which is now a flex
   // ROW spanning the full window height: the sidebar rail (left, full-height —
@@ -287,8 +357,8 @@ async function boot() {
   // file / baseDir is live. All window-global sinks and listeners read this
   // mutable cell; openInWindow re-points it. No second copy of "which file".
   let current: EditorController;
-  let currentFile = file ?? "";
-  let currentBaseDir = file ? dirOf(file) : "";
+  let currentFile = initialFile ?? "";
+  let currentBaseDir = initialFile ? dirOf(initialFile) : "";
   // Document navigation history (⌘[/⌘]) — ephemeral in-memory session state, NOT
   // a setting: starts empty; the first openInWindow records the launch file.
   // Distinct from the recent MRU list (recentDocsSetting) — see nav-history.ts.
@@ -297,6 +367,11 @@ async function boot() {
   // listener, pending session timer). teardownCurrent runs them before swap.
   let detachScroll: (() => void) | undefined;
   let cancelSessionTimer: (() => void) | undefined;
+  let openConflict: { close(): void } | null = null;
+  const closeConflict = (): void => {
+    openConflict?.close();
+    openConflict = null;
+  };
 
   // ── Open-by-path title-bar chrome (M2: moved from the footer). The button
   //    toggles the title-bar itself into a path input; onOpen resolves the typed
@@ -308,7 +383,7 @@ async function boot() {
     onOpen: async (raw) => {
       const target = resolveOpenPath(raw, currentBaseDir);
       if (!target) throw new Error("경로를 입력하세요");
-      if (!file) {
+      if (!currentFile) {
         location.href = `index.html?file=${encodeURIComponent(target)}`;
         return;
       }
@@ -361,11 +436,6 @@ async function boot() {
     onReorder: (abs, to) => favoriteFoldersSetting.set(reorderFavorite(favoriteFoldersSetting.get(), abs, to)),
   });
 
-  /** "Star = membership toggle" — the ONE domain rule for what a folder-row
-   *  star click / Space keypress does. Named so it isn't an inline
-   *  isFavorite-then-branch at each call site (star click AND Space both
-   *  route through this), and so main stays the single favoriteFoldersSetting
-   *  writer for the add/remove-via-star path. Command (void). */
   function toggleFavorite(abs: string): void {
     const list = favoriteFoldersSetting.get();
     favoriteFoldersSetting.set(isFavorite(list, abs) ? removeFavorite(list, abs) : pushFavorite(list, abs));
@@ -504,9 +574,9 @@ async function boot() {
   const explorer = createExplorerPanel({
     listDir: (p) =>
       invoke<DirEntry[]>("list_dir", { path: p, showHidden: showHiddenFilesSetting.get() === "on" }),
-    getBaseDir: () => currentBaseDir,
+    getBaseDir: () => currentVault()?.explorerRoot ?? currentBaseDir,
     onOpenFile: async (absPath) => {
-      if (!file) {
+      if (!currentFile) {
         location.href = `index.html?file=${encodeURIComponent(absPath)}`;
       } else {
         const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
@@ -526,11 +596,69 @@ async function boot() {
     },
     onOpen: () => closeOtherSidebarPanels("explorer"),
     onRootChange: (root) => breadcrumb.render(root),
+    isRootLocked: () => currentVault()?.persistenceKind === "permanent",
     isFavorite: (p) => isFavorite(favoriteFoldersSetting.get(), p),
     onToggleFavorite: toggleFavorite,
     favoritesSlot: favoritesSection.el,
     focusFavorites: favoritesSection.focusFirst,
   });
+
+  const openDocument = async (absPath: string): Promise<void> => {
+    const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
+    await commitBeforeSwitch();
+    openInWindow(absPath, fresh);
+  };
+  const openDocumentSafely = (absPath: string): void => {
+    void openDocument(absPath).catch((error: unknown) => {
+      window.alert(`문서를 열 수 없습니다: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  };
+
+  const welcomePane = createWelcomePane({
+    getFavorites: () => favoriteFoldersSetting.get(),
+    getRecent: () => recentDocsSetting.get(),
+    onJumpFolder: (folder) => explorer.jumpToRoot(folder),
+    onOpenFile: openDocumentSafely,
+    onOpenFolder: () => explorer.button.click(),
+    openFolderChord: (() => {
+      const bound = effectiveBinding("explorer.toggle");
+      return bound ? displayChord(bound) : null;
+    })(),
+  });
+
+  const renderWelcomeForVault = (): void => {
+    closeOpenViewer();
+    closeConflict();
+    teardownCurrent();
+    currentFile = "";
+    currentBaseDir = "";
+    host.classList.add("welcome-host");
+    host.append(welcomePane);
+  };
+
+  const workspaceSidebar = createWorkspaceSidebar({
+    store: workspaceStore,
+    canonicalizePath: (path) => invoke<string>("canonicalize_path", { path }),
+    onOpen: () => closeOtherSidebarPanels("workspace"),
+    onSelectVault: (vault) => {
+      const previousVaultId = currentVault()?.vaultId;
+      routedVault = vault;
+      const selection = selectVaultView(vaultTabs.get(vault.vaultId));
+      if (selection.kind === "document") {
+        if (previousVaultId !== vault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path);
+        else explorer.jumpToRoot(vault.rootPath);
+      } else {
+        renderWelcomeForVault();
+        explorer.jumpToRoot(vault.rootPath);
+      }
+    },
+    onSelectTab: (vault, tab) => {
+      routedVault = vault;
+      openDocumentSafely(tab.path);
+    },
+    getTabs: (vaultId) => vaultTabs.get(vaultId),
+  });
+  vaultTabs.subscribe(() => workspaceSidebar.refresh());
 
   // ── Recent documents LEFT SIDEBAR. Same toggle shape as explorer/outline; the
   //    list is read from recentDocsSetting (SSOT — the panel never writes it)
@@ -540,7 +668,7 @@ async function boot() {
   const recent = createRecentPanel({
     getRecent: () => recentDocsSetting.get(),
     onOpenFile: async (absPath) => {
-      if (!file) {
+      if (!currentFile) {
         location.href = `index.html?file=${encodeURIComponent(absPath)}`;
       } else {
         try {
@@ -570,7 +698,7 @@ async function boot() {
       invoke<ScanResult>("list_files_recursive", { root, showHidden: showHiddenFilesSetting.get() === "on" }),
     getRoot: () => explorer.currentRootPath() ?? currentBaseDir,
     onOpenFile: async (absPath) => {
-      if (!file) {
+      if (!currentFile) {
         location.href = `index.html?file=${encodeURIComponent(absPath)}`;
       } else {
         const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
@@ -632,6 +760,7 @@ async function boot() {
   // registered panel joins automatically, the bug R9 exists to fix). aside
   // DOM order among them is still arbitrary (mutual exclusion means it's
   // never seen simultaneously), same as before R9.
+  registerSidebarPanel({ id: "workspace", button: workspaceSidebar.button, aside: workspaceSidebar.aside, close: workspaceSidebar.close });
   registerSidebarPanel({ id: "explorer", button: explorer.button, aside: explorer.aside, close: explorer.close });
   registerSidebarPanel({ id: "recent", button: recent.button, aside: recent.aside, close: recent.close });
   registerSidebarPanel({ id: "outline", button: outline.button, aside: outline.aside, close: outline.close });
@@ -718,17 +847,18 @@ async function boot() {
    *  stop its autosave (beginClose), detach its scroll listener + session timer,
    *  then drop its CM DOM. Leaves host empty for the next mount. */
   function teardownCurrent(): void {
-    if (!current) return;
-    saveSessionState(true);
-    current.beginClose();
-    detachScroll?.();
-    detachScroll = undefined;
-    cancelSessionTimer?.();
-    cancelSessionTimer = undefined;
-    // Stop watching the outgoing file: the watcher is a single slot, so a stale
-    // watch would deliver file-changed events for the wrong file after a switch.
-    // openInWindow re-arms the watch for the new file below.
-    void unwatchFile();
+    if (current) {
+      saveSessionState(true);
+      current.beginClose();
+      detachScroll?.();
+      detachScroll = undefined;
+      cancelSessionTimer?.();
+      cancelSessionTimer = undefined;
+      // Stop watching the outgoing file: the watcher is a single slot, so a stale
+      // watch would deliver file-changed events for the wrong file after a switch.
+      // openInWindow re-arms the watch for the new file below.
+      void unwatchFile();
+    }
     host.replaceChildren();
   }
 
@@ -742,10 +872,14 @@ async function boot() {
     fresh: { text: string; mtime: number },
     opts: { viaHistory?: boolean } = {},
   ): void {
+    closeConflict();
     closeOpenViewer(); // opening a document closes any open viewer (design §A rule 1)
     teardownCurrent();
+    host.classList.remove("welcome-host");
     currentFile = file;
     currentBaseDir = dirOf(file);
+    const selectedVault = routeDocumentPath(file);
+    if (selectedVault) vaultTabs.open(selectedVault.vaultId, file, selectedVault.persistenceKind === "permanent" ? "permanent" : "session");
     const { text, mtime } = fresh;
 
     current = mountEditor(host, text, currentBaseDir, file, {
@@ -896,22 +1030,47 @@ async function boot() {
    *  the conflict modal lets the user pick — keep local (forceSave = clobber +
    *  rebaseline) or use external (reloadFromFile). Named so the "auto-reload vs
    *  conflict" decision isn't an inline if at the listener site. Command: void. */
-  let openConflict: { close(): void } | null = null;
   function resolveExternalChange(text: string, mtime: number): void {
     if (!current) return;
     if (decideExternalChange(current.hasUnsaved()) === "reload") {
       current.reloadFromFile(text, mtime);
       return;
     }
-    // Don't stack modals if a second change arrives while one is open.
-    openConflict?.close();
+    const editor = current;
+    const file = currentFile;
+    const identity = currentConflictIdentity();
+    if (!identity) return;
+    const isLive = (): boolean => current === editor && currentFile === file && sameConflictIdentity(currentConflictIdentity() ?? identity, identity);
+    const rejectStaleAction = (): boolean => {
+      if (isLive()) return false;
+      closeConflict();
+      return true;
+    };
+    conflictRecovery.detect(identity, current.view.state.doc.toString(), text);
+    if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
+      (window as unknown as { __mermarkConflictRecovery?: unknown }).__mermarkConflictRecovery = conflictRecovery;
+    closeConflict();
     openConflict = openConflictModal({
-      local: current.view.state.doc.toString(),
+      local: editor.view.state.doc.toString(),
       external: text,
-      onKeepLocal: () => current.forceSave(),
-      onUseExternal: () => current.reloadFromFile(text, mtime),
+      onKeepLocal: () => {
+        if (rejectStaleAction()) return;
+        conflictRecovery.keepMine(identity);
+        editor.forceSave();
+      },
+      onUseExternal: () => {
+        if (rejectStaleAction()) return;
+        const result = conflictRecovery.applyExternal(identity);
+        editor.reloadFromFile(result.resultContent ?? text, mtime);
+      },
+      onMerge: () => {
+        if (rejectStaleAction()) return;
+        const result = conflictRecovery.merge(identity);
+        editor.reloadFromFile(result.resultContent ?? text, mtime);
+        editor.forceSave();
+      },
       onDismiss: () => {
-        openConflict = null;
+        closeConflict();
       },
     });
   }
@@ -1108,33 +1267,17 @@ async function boot() {
     void ensureCheckedOnce();
   }, 2000);
 
-  if (!file) {
+  if (!initialFile) {
     host.classList.add("welcome-host");
-    host.append(
-      createWelcomePane({
-        getFavorites: () => favoriteFoldersSetting.get(),
-        getRecent: () => recentDocsSetting.get(),
-        onJumpFolder: (folder) => explorer.jumpToRoot(folder),
-        onOpenFile: (doc) => {
-          location.href = `index.html?file=${encodeURIComponent(doc)}`;
-        },
-        // Reuses the existing explorer-toggle flow — no native folder picker,
-        // no new Tauri command (IPC-surface constraint, design decision ③).
-        onOpenFolder: () => explorer.button.click(),
-        openFolderChord: (() => {
-          const bound = effectiveBinding("explorer.toggle");
-          return bound ? displayChord(bound) : null;
-        })(),
-      }),
-    );
+    host.append(welcomePane);
     return;
   }
 
   // First load: read + mount. A read failure here means the launch file is
   // gone — show the error in place of the editor (the bar stays).
   try {
-    const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: file });
-    openInWindow(file, fresh);
+    const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: initialFile });
+    openInWindow(initialFile, fresh);
   } catch (e) {
     host.textContent = `Failed to open: ${String(e)}`;
   }

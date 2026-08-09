@@ -999,6 +999,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .conflict-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
 .conflict-use-external { color: #d97706; border-color: color-mix(in srgb, #d97706 55%, transparent); }
 .conflict-use-external:hover { background: #d97706; color: #fff; border-color: #d97706; }
+.conflict-merge { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.conflict-merge:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 
 /* Viewer shell chrome (full-pane rewrite, _workspace/01_architect_design.md,
    2026-07-18 — supersedes R11's body-level backdrop/modal): the IN-CONTENT
@@ -1501,6 +1503,24 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   user-select: none;
 }
 .sidebar-aside[hidden] { display: none; }
+
+.workspace-header { display: flex; align-items: center; gap: .45em; }
+.workspace-title { flex: 1; }
+.workspace-id, .workspace-empty { padding: .35em .75em; color: var(--sidebar-muted); font-size: calc(11em / 13); }
+.workspace-vault-list { display: flex; flex-direction: column; padding: .25em .4em; }
+.workspace-vault-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: .15em; min-width: 0; }
+.workspace-vault-select { display: flex; flex: 1; min-width: 0; flex-wrap: wrap; align-items: center; gap: .45em; border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; padding: .45em .4em; text-align: left; cursor: pointer; }
+.workspace-vault-select[aria-current="true"] { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); box-shadow: inset 2px 0 var(--sidebar-accent); }
+.workspace-vault-select:hover, .workspace-vault-action:hover, .workspace-action:hover { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
+.workspace-vault-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.workspace-vault-path { flex-basis: 100%; min-width: 0; padding-left: 1.85em; overflow-wrap: anywhere; color: var(--sidebar-muted); font-size: calc(11em / 13); }
+.workspace-vault-tabs { display: flex; flex-basis: 100%; order: 2; gap: .25em; min-width: 0; padding: 0 .4em .35em 2.35em; overflow: hidden; }
+.workspace-vault-tab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; font-size: calc(10em / 13); padding: 0; cursor: pointer; }
+.workspace-vault-tab[data-active="true"] { color: var(--sidebar-fg); font-weight: 600; }
+.workspace-vault-action, .workspace-action { display: inline-flex; align-items: center; justify-content: center; gap: .35em; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; }
+.workspace-vault-action { width: 2em; }
+.workspace-actions { border-top: 1px solid var(--sidebar-border); padding: .45em .65em; }
+.workspace-action { padding: .3em .45em; color: var(--sidebar-fg); }
 
 /* Full-height rail's window-chrome band (title-bar.ts createSidebarTopStrip) —
    same 36px height as .title-bar. sticky + an opaque --sidebar-bg: the

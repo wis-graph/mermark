@@ -154,6 +154,7 @@ export interface ExplorerHandlers {
    *  can never drift from the tree it's supposed to describe. Optional —
    *  omitted in unit tests / standalone use. */
   onRootChange?(root: string): void;
+  isRootLocked?(): boolean;
   /** Is `path` currently a favorite? A closure over favoriteFoldersSetting so
    *  every folder row always renders the live state (SSOT — the same closure
    *  shape as getBaseDir/getFavorites elsewhere). Optional — GATES star
@@ -220,6 +221,7 @@ export function createExplorerPanel({
   onOpenFileNewWindow,
   onOpen,
   onRootChange,
+  isRootLocked,
   isFavorite,
   onToggleFavorite,
   favoritesSlot,
@@ -472,31 +474,33 @@ export function createExplorerPanel({
     onRootChange?.(rootPath);
     tree.replaceChildren();
     focused = null;
-    const up = create("div", "explorer-item explorer-up");
-    up.setAttribute("role", "treeitem");
-    up.setAttribute("aria-level", "1");
-    up.tabIndex = -1;
-    up.dataset.level = "1";
-    up.style.setProperty("--level", "1");
-    // lexical `..` instruction — renderTree canonicalizes before store/display/
-    // listDir, so this literal `/..` is a one-shot command ("go up from THIS
-    // canonical root"), never a stored value: the very next renderTree call
-    // (via changeRoot) resolves it back to canonical, so it can't accumulate.
-    up.dataset.path = `${rootPath}/..`;
-    // No chevron spacer here (unlike file rows, explorer-panel:299): `..` is a
-    // NAVIGATION row, not a tree node — its glyph sits flush left in the
-    // chevron column, aligned with the folder chevrons above/below it. A
-    // hidden spacer made it the only left-indented row in the tree (2026-07-11
-    // design pass).
-    const upGlyph = create("span", "explorer-glyph");
-    upGlyph.append(icon("corner-left-up"));
-    const upName = create("span", "explorer-name");
-    upName.textContent = "..";
-    const upLabel = create("div", "explorer-label");
-    upLabel.append(upGlyph, upName);
-    up.append(upLabel);
-    up.title = "상위 폴더로 (클릭 / Enter)";
-    tree.append(up);
+    if (!isRootLocked?.()) {
+      const up = create("div", "explorer-item explorer-up");
+      up.setAttribute("role", "treeitem");
+      up.setAttribute("aria-level", "1");
+      up.tabIndex = -1;
+      up.dataset.level = "1";
+      up.style.setProperty("--level", "1");
+      // lexical `..` instruction — renderTree canonicalizes before store/display/
+      // listDir, so this literal `/..` is a one-shot command ("go up from THIS
+      // canonical root"), never a stored value: the very next renderTree call
+      // (via changeRoot) resolves it back to canonical, so it can't accumulate.
+      up.dataset.path = `${rootPath}/..`;
+      // No chevron spacer here (unlike file rows, explorer-panel:299): `..` is a
+      // NAVIGATION row, not a tree node — its glyph sits flush left in the
+      // chevron column, aligned with the folder chevrons above/below it. A
+      // hidden spacer made it the only left-indented row in the tree (2026-07-11
+      // design pass).
+      const upGlyph = create("span", "explorer-glyph");
+      upGlyph.append(icon("corner-left-up"));
+      const upName = create("span", "explorer-name");
+      upName.textContent = "..";
+      const upLabel = create("div", "explorer-label");
+      upLabel.append(upGlyph, upName);
+      up.append(upLabel);
+      up.title = "상위 폴더로 (클릭 / Enter)";
+      tree.append(up);
+    }
 
     const entries = await readChildren(rootPath);
     for (const e of entries) tree.append(makeEntry(e, 1));
@@ -529,6 +533,7 @@ export function createExplorerPanel({
    *  exactly like a plain one. Command (void). */
   const activateItem = (item: HTMLElement, newWindow = false): void => {
     if (item.classList.contains("explorer-up")) {
+      if (isRootLocked?.()) return;
       if (item.dataset.path) changeRoot(item.dataset.path);
       return;
     }
@@ -600,6 +605,7 @@ export function createExplorerPanel({
    *  shares only the shell-reveal half via `revealShell`, then calls
    *  `changeRoot` (cache clear + renderTree) like `..` does. Command (void). */
   const jumpToRoot = (absPath: string): void => {
+    if (isRootLocked?.() && normalizePath(absPath) !== normalizePath(getBaseDir())) return;
     if (aside.hidden) revealShell();
     changeRoot(absPath);
   };

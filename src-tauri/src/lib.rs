@@ -261,6 +261,8 @@ pub fn run() {
             commands::write_file,
             commands::open_path,
             commands::path_exists,
+            commands::directory_exists,
+            commands::canonicalize_path,
             commands::create_markdown_file,
             commands::bundle_doc,
             commands::list_link_targets,
