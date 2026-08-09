@@ -1,11 +1,11 @@
 {
-  "version": "0.9.30",
-  "notes": "### Added\n\n- **워크스페이스와 볼트**: 왼쪽 사이드바의 워크스페이스 패널에서 폴더를 영구 볼트로 등록하고 전환할 수 있다. 각 볼트는 자기 탐색기 루트와 열린 탭을 가진다.\n- **볼트별 탭 복원**: 영구 볼트에서 열었던 문서와 마지막 탭은 앱을 다시 열어도 복원된다. 임시 볼트의 탭은 이번 실행 동안만 유지된다.\n- **명령줄 파일 열기 라우팅**: `mermark 파일.md`로 연 파일은 해당 경로를 포함하는 등록 볼트로 자동 연결되고 탭에 기록된다.\n- **외부 변경 병합 선택지**: 저장하지 않은 편집이 있는 문서를 밖에서 바꿨을 때, 로컬 유지·외부 내용 채택뿐 아니라 두 내용을 병합해 확인할 수 있다.\n\n### Changed\n\n- **즐겨찾기 폴더를 볼트로 옮긴다**: 기존 즐겨찾기 폴더는 한 번만 영구 볼트로 옮겨진다. 사용자가 제거한 볼트는 다음 실행 때 다시 생기지 않는다.\n- **테마 설정의 기본값**: 저장된 전역 테마를 기준으로 색상 테마의 기본값을 만들어, 앱을 다시 열어도 선택한 테마가 일관되게 이어진다.\n\n### Fixed\n\n- **빈 볼트 전환 시 이전 문서가 남던 문제**: 복원할 탭이 없는 볼트로 바꾸면 이전 볼트의 문서를 계속 보여주지 않고 시작 화면으로 돌아간다.\n- **충돌 창의 키보드 조작**: Tab으로 버튼 사이를 이동하고 Enter·Space로 선택할 수 있다. 충돌 창이 떠 있는 동안에는 문서 단축키가 뒤로 새지 않는다.\n- **일시적인 파일 접근 오류로 즐겨찾기 마이그레이션이 영구 누락되던 문제**.",
-  "pub_date": "2026-08-09T22:17:47Z",
+  "version": "0.9.29",
+  "notes": "### Changed\n\n- **색 편집 카드를 같은 곳 다시 눌러 닫는다**: 배경을 클릭해 카드를 연 뒤 배경을 한 번 더 클릭하면 카드가 닫힌다. 키보드(Enter/Space)도 똑같이 동작한다.\n\n### Fixed\n\n- **Esc가 설정 창을 통째로 닫던 문제**: 색 편집 카드가 열려 있을 때 Esc를 누르면 카드만 닫히고 설정 창은 남는다. 카드가 닫힌 상태에서 눌러야 설정 창이 닫힌다.\n- **\"상세 조정… (OS 피커)\" 버튼이 아무 반응 없던 문제**: 이제 macOS 색상 창이 뜨고, 거기서 고른 색이 바로 반영된다.",
+  "pub_date": "2026-08-07T13:41:56Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzhRZ1BPUFRDb20zaWV1amc3dkRUQzhkRW9wNURIb1Fnc2ZNREV6OWNITEMwZWxnakJQdTdZbEpxZmZHRHcrdmJQV1hXeHIxRGNseG5MQnBiMjRyTEFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MzEzODQ3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkMxSGFweGloVDF3L004MTJLbjFodmlxeFNNZTRna2hwYXAreWpkOXR3SjVDeFpYTEtiZWdpcmZUdXE4b0VHdE9YNVlFNFREUjA5VFNxakZFTUxzdkFnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.30/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzZCZGZVb0tFMFlzR0sveENLek03cmd1ZzZSL2hOK1ozaGozcHZuRCtHMUlJOHV3d2sxS0JzQWlMQWJMOFYxbFkzejFYSVliZ3JFSlk2bG1sOFZJT1FVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MTEwMDk5CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ci9GWnpxM1VsVXJpMHIvSUR1UUJNU1V5RUYwUm9uUXg1aE9nOVJXVDNWc1Y3Y1kyV1pFcno0VHUzVkdzZExEMlR5Rlp0R3dMeHJKRDl0SXNnaWJFNkFBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.9.29/mermark.app.tar.gz"
     }
   }
 }
