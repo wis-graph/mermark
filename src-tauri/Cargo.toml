@@ -1,6 +1,6 @@
 [package]
 name = "mermark"
-version = "0.9.24"
+version = "0.9.30"
 description = "Mermaid + Markdown viewer"
 authors = ["you"]
 edition = "2021"
@@ -82,4 +82,3 @@ arboard = { version = "3", default-features = false }
 # to the major version `rhwp` already pulls — adds zero new crates, only a
 # direct name for one already-compiled version.
 zip = "8"
-
