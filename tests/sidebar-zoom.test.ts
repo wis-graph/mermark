@@ -48,7 +48,7 @@ describe("sidebar font-size zoom integration (style contract)", () => {
   // automatically covered (design decision 1's "실행 가능한 이름": the
   // sweep IS the named rule, not a comment). The `.sidebar-aside` root is the
   // one declared exception (T1 owns its exact calc shape).
-  const SIDEBAR_PREFIX_RE = /(^|[\s,>~+])\.(sidebar-|outline-|explorer-|recent-|favorites-|path-label)/;
+  const SIDEBAR_PREFIX_RE = /(^|[\s,>~+])\.(sidebar-|outline-|explorer-|recent-|path-label)/;
 
   function sweepRuleBlocks(): Array<{ selector: string; block: string }> {
     const rules: Array<{ selector: string; block: string }> = [];
@@ -112,58 +112,14 @@ describe("sidebar font-size zoom integration (style contract)", () => {
     expect(sizeDecl(block, "height")).toBe("calc(16em / 13)");
   });
 
-  it("T3 (G4): .explorer-star box is a 20/13 em fraction", () => {
-    const block = ruleBlock(".explorer-star");
-    expect(sizeDecl(block, "width")).toBe("calc(20em / 13)");
-    expect(sizeDecl(block, "height")).toBe("calc(20em / 13)");
-  });
-
-  it("T3 (G5): .explorer-star .icon is 1em x 1em", () => {
-    const block = ruleBlock(".explorer-star .icon");
-    expect(sizeDecl(block, "width")).toBe("1em");
-    expect(sizeDecl(block, "height")).toBe("1em");
-  });
-
-  // Audit 04 (2026-07-11, 🔴 2): this glyph sits inside .favorites-header
-  // .sidebar-header, whose OWN font-size is calc(11em / 13) — an 11px-base,
-  // not the 13px root base. A bare 1em here resolved against that 11px
-  // base (13->11px shrink at scale=1, still scaling but from the wrong
-  // floor). calc(13em / 11) recovers the 13px-base size against the 11px
-  // parent (13/11 * 11 = 13).
-  it("T3 (G6): .favorites-header-glyph .icon is a 13/11 em fraction (11px-base parent)", () => {
-    const block = ruleBlock(".favorites-header-glyph .icon");
-    expect(sizeDecl(block, "width")).toBe("calc(13em / 11)");
-    expect(sizeDecl(block, "height")).toBe("calc(13em / 11)");
-  });
-
-  it("T3 (G7): .favorites-remove box is an 18/13 em fraction", () => {
-    const block = ruleBlock(".favorites-remove");
-    expect(sizeDecl(block, "width")).toBe("calc(18em / 13)");
-    expect(sizeDecl(block, "height")).toBe("calc(18em / 13)");
-  });
-
-  it("T3 (G8): .favorites-remove .icon is a 12/13 em fraction", () => {
-    const block = ruleBlock(".favorites-remove .icon");
-    expect(sizeDecl(block, "width")).toBe("calc(12em / 13)");
-    expect(sizeDecl(block, "height")).toBe("calc(12em / 13)");
-  });
-
-  it("T3 (G9): .favorites-item reserves 2em on the right for the absolutely-positioned remove button", () => {
-    const block = ruleBlock(".favorites-item");
-    expect(block).toMatch(/padding:\s*4px\s+2em\s+4px\s+8px/);
-  });
-
   // T4: fallback arithmetic — every em fraction above, evaluated at scale=1
   // (--font-scale unset defaults to 1, and the 13px root base is unchanged),
   // must reproduce the ORIGINAL px value exactly. Proves scale=1 pixel
   // parity by arithmetic rather than a live DOM measurement (that's the CDP
   // golden's job — this is the fast, deterministic half of the same claim).
   const EM_FRACTION_CASES: Array<[numerator: number, denominator: number, expectedPx: number]> = [
-    [11, 13, 11], // .sidebar-header / .path-label
-    [12, 13, 12], // .favorites-remove .icon
-    [16, 13, 16], // .explorer-chevron / .explorer-glyph
-    [18, 13, 18], // .favorites-remove
-    [20, 13, 20], // .explorer-star
+    [11, 13, 11],
+    [16, 13, 16],
   ];
 
   it.each(EM_FRACTION_CASES)("T4: calc(%dem / %d) at 13px base reproduces %dpx", (numerator, denominator, expectedPx) => {
@@ -173,8 +129,7 @@ describe("sidebar font-size zoom integration (style contract)", () => {
 
   it("T4: bare 1em / 2em fallback to 13px / 26px (13px-base identity)", () => {
     const BASE_PX = 13;
-    expect(1 * BASE_PX).toBe(13); // .outline-item / .recent-name / .favorites-name
-    expect(2 * BASE_PX).toBe(26); // .favorites-item right padding (G9)
+    expect(1 * BASE_PX).toBe(13); // .outline-item / .recent-name
   });
 
   // Audit 04 (🔴 2): T4's fixed-13-base cases above can't catch a wrong BASE
@@ -187,18 +142,4 @@ describe("sidebar font-size zoom integration (style contract)", () => {
     expect(px).toBeCloseTo(13, 10);
   });
 
-  // Audit 04 (🔴 1, low-priority follow-up): the four <button>-hosted glyphs
-  // (G4/G5/G7/G8) sit inside .explorer-star / .favorites-remove, and a
-  // <button>'s UA stylesheet gives it its OWN font-size (~13.33px on macOS
-  // Chrome, NOT --font-scale-aware) unless the rule explicitly re-inherits.
-  // Without `font: inherit`, every em fraction above resolves against that
-  // fixed UA size instead of the 13px sidebar root, so the glyph silently
-  // ignores ⌘± zoom. This sweeps every sidebar <button> rule (the ones that
-  // size a glyph in em) for that declaration, the way T2 sweeps font-size.
-  const SIDEBAR_BUTTON_GLYPH_HOSTS = [".explorer-star", ".favorites-remove"];
-
-  it.each(SIDEBAR_BUTTON_GLYPH_HOSTS)("T5: %s (a <button>) declares font: inherit so its em glyphs track the sidebar root", (selector) => {
-    const block = ruleBlock(selector);
-    expect(block).toMatch(/font:\s*inherit\s*;/);
-  });
 });

@@ -10,8 +10,6 @@
 // used to render but never join mutual exclusion).
 //
 // SCOPE: this registry owns only the common contract {id, button, aside,
-// close}. Panel-specific methods (jumpToRoot, refresh, refreshFavoriteStars,
-// revealFavorites, resetToBaseDir, listener, ...) are NOT here — main.ts
 // keeps wiring those directly from each panel's own return value. Rolling
 // them into this registry would make it a God object that has to know every
 // panel's private API (_workspace/00_request.md's explicit constraint).

@@ -94,17 +94,9 @@ describe("shortcut registry", () => {
     expect(effectiveBinding("history.forward")).toBe("Mod+]");
   });
 
-  it("favorites.toggle ships with ⌘⇧B (paired with explorer.toggle's ⌘B)", () => {
-    bindKeybindings(keybindSetting("kb.favorites"));
-    expect(effectiveBinding("favorites.toggle")).toBe("Mod+Shift+B");
-  });
-
-  it("dispatchChord runs the handler bound to favorites.toggle's default chord", () => {
-    bindKeybindings(keybindSetting("kb.favoritesDispatch"));
-    const fn = vi.fn();
-    registerHandler("favorites.toggle", fn);
-    expect(dispatchChord("Mod+Shift+B")).toBe(true);
-    expect(fn).toHaveBeenCalledOnce();
+  it("does not expose a favorite shortcut action", () => {
+    expect(allActions().some((action) => action.id === "favorites.toggle")).toBe(false);
+    expect(effectiveBinding("favorites.toggle")).toBeNull();
   });
 
   // Search catalog rows (⌘F document search, ⌘⇧F file finder) — new default

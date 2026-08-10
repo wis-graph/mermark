@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { routeCliFile, routeCliFileResolved } from "../src/workspace/cli-routing";
-import { WorkspaceStore } from "../src/workspace/workspace-state";
+import { GLOBAL_VAULT_ID, WorkspaceStore } from "../src/workspace/workspace-state";
 
 describe("routeCliFile", () => {
   beforeEach(() => localStorage.clear());
@@ -25,9 +25,12 @@ describe("routeCliFile", () => {
 
     const result = routeCliFile(store, "/work/notes-archive/draft.md");
 
-    expect(result.kind).toBe("temporary");
+    expect(result.kind).toBe("global");
     expect(result.path).toBe("/work/notes-archive/draft.md");
-    expect(result.vault.persistenceKind).toBe("temporary");
+    expect(result.vault.vaultId).toBe(GLOBAL_VAULT_ID);
+    expect(store.get().workspaces[0]?.currentVaultId).toBe(GLOBAL_VAULT_ID);
+    expect(store.get().vaults).toHaveLength(1);
+    expect(store.get().vaults[0]?.vaultId).not.toBe(GLOBAL_VAULT_ID);
     expect(localStorage.getItem("mermark.workspaceState")).not.toContain(result.vault.vaultId);
   });
 
@@ -70,7 +73,7 @@ describe("routeCliFile", () => {
       throw new Error("missing path");
     });
 
-    expect(result.kind).toBe("temporary");
+    expect(result.kind).toBe("global");
     expect(result.path).toBe("/missing/draft.md");
   });
 
@@ -81,7 +84,7 @@ describe("routeCliFile", () => {
       throw "path does not exist";
     });
 
-    expect(result.kind).toBe("temporary");
+    expect(result.kind).toBe("global");
     expect(result.path).toBe("/missing/draft.md");
   });
 });

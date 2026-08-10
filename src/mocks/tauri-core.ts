@@ -603,6 +603,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       return true as T;
     case "directory_exists":
       return true as T;
+    case "canonicalize_path":
+      return normalizeMockPath(String(a.path ?? "")) as T;
     case "open_path": {
       // Mirrors the real `open_path(path) -> Result<(), String>`: spawns the
       // file in a brand-new window (wikilink clicks, explorer ⌘/Ctrl+click,

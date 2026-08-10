@@ -8,9 +8,7 @@ export function dirOf(path: string): string {
 /** The file name at the end of a path (posix or windows separators) — the
  *  sibling of `dirOf`: both share the same `Math.max(lastIndexOf("/"),
  *  lastIndexOf("\\"))` separator rule, so they can never disagree on where a
- *  path splits into directory vs filename. Promoted here (2026-07-03 intent
- *  review #2) from byte-identical private copies that had drifted into
- *  favorites-panel.ts and recent-panel.ts. */
+ *  path splits into directory vs filename. */
 export function basename(path: string): string {
   const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return sep >= 0 ? path.slice(sep + 1) : path;

@@ -30,8 +30,6 @@ describe("sidebar strong-contrast palette (style contract)", () => {
   // Pulls the declaration block of the FIRST rule whose selector text appears
   // in the sheet, up to the first `{...}` that follows it. Relaxed vs a
   // strict "selector immediately followed by {": several sidebar selectors
-  // are one arm of a comma-separated group (e.g. `.explorer-star.is-favorite,
-  // \n.explorer-label:hover .explorer-star.is-favorite,\n...`), so anything
   // that isn't a brace is allowed between the selector text and the first
   // `{` (tests/editor-selection.test.ts's ruleBlock convention, extended for
   // grouped selectors per _workspace/01_architect_plan.md T1).
@@ -44,8 +42,6 @@ describe("sidebar strong-contrast palette (style contract)", () => {
     const strict = css.match(new RegExp(escaped + "\\s*\\{([^}]*)\\}"));
     if (strict) return strict[1];
     // Grouped-selector fallback: this selector is one arm of a comma-
-    // separated group (e.g. `.explorer-star.is-favorite,\n.explorer-label:hover
-    // .explorer-star.is-favorite,\n...`), so allow anything that isn't a
     // brace between the selector text and the first `{` (tests/editor-
     // selection.test.ts's ruleBlock convention, extended per
     // _workspace/01_architect_plan.md T1).
@@ -155,11 +151,6 @@ describe("sidebar strong-contrast palette (style contract)", () => {
     ".explorer-chevron",
     ".explorer-glyph",
     ".explorer-dir > .explorer-label > .explorer-glyph",
-    ".explorer-star",
-    ".explorer-label:hover .explorer-star",
-    ".explorer-star:hover",
-    ".explorer-star.is-favorite",
-    ".explorer-star:focus-visible",
     ".explorer-file.is-nonmd > .explorer-label",
     ".recent-empty",
     ".recent-item",
@@ -167,15 +158,6 @@ describe("sidebar strong-contrast palette (style contract)", () => {
     ".recent-item:active",
     ".recent-item:focus-visible",
     ".path-label",
-    ".explorer-favorites",
-    ".favorites-header-glyph",
-    ".favorites-empty",
-    ".favorites-item",
-    ".favorites-item:hover",
-    ".favorites-item:active",
-    ".favorites-item:focus-visible",
-    ".favorites-remove",
-    ".favorites-remove:hover",
     // M6 (_workspace/01_architect_design.md rehome + design-polish pass):
     // the left command group's buttons repaint in --sidebar-* tokens when
     // they rehome into a rail's .sidebar-top-strip; the combined

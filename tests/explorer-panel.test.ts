@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createExplorerPanel, type DirEntry, type ExplorerHandlers } from "../src/sidebar/explorer/explorer-panel";
+import { WorkspaceStore } from "../src/workspace/workspace-state";
 
 // ---------------------------------------------------------------------------
 // Explorer LEFT SIDEBAR — a lazy folder tree built from an INJECTED listDir()
@@ -507,7 +508,7 @@ describe("explorer: permanent vault root", () => {
     expect(listDir).toHaveBeenCalledTimes(1);
   });
 
-  it("renders and routes parent navigation for a temporary vault", async () => {
+  it("renders and routes parent navigation for the global vault", async () => {
     const listDir = vi.fn(fakeTree());
     const panel = await openPanel({
       listDir,
@@ -542,6 +543,121 @@ describe("explorer: permanent vault root", () => {
 
     expect(onOpenFile).toHaveBeenCalledWith("/root/a.md");
     expect(panel.currentRootPath()).toBe("/root");
+  });
+});
+
+describe("explorer: per-folder permanent-vault toggle", () => {
+  it("renders a folder toggle without a header add-vault action", async () => {
+    const onToggleVault = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      onToggleVault,
+      isVaultRegistered: async () => false,
+    });
+
+    expect(panel.aside.querySelector(".explorer-add-vault")).toBeNull();
+    expect(panel.aside.querySelector(".explorer-header")?.textContent).toBe("탐색기");
+    const toggle = panel.aside.querySelector<HTMLButtonElement>(".explorer-vault-toggle");
+    expect(toggle).not.toBeNull();
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle?.querySelector(".icon-bookmark")).toBeTruthy();
+  });
+
+  it("toggles the canonical folder and does not activate the folder row", async () => {
+    const onToggleVault = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      onToggleVault,
+      isVaultRegistered: async () => false,
+    });
+
+    const folder = panel.aside.querySelector<HTMLElement>('[data-path="/root/sub"]');
+    const toggle = folder?.querySelector<HTMLButtonElement>(".explorer-vault-toggle");
+    toggle?.click();
+
+    expect(onToggleVault).toHaveBeenCalledWith("/root/sub");
+    expect(folder?.getAttribute("aria-expanded")).toBe("false");
+    expect(folder?.dataset.loaded).toBeUndefined();
+  });
+
+  it("reflects registered state and refreshes it without moving the tree", async () => {
+    const registered = new Set(["/root/sub"]);
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      onToggleVault: vi.fn(),
+      isVaultRegistered: async (path) => registered.has(path),
+    });
+
+    const toggle = panel.aside.querySelector<HTMLButtonElement>('[data-path="/root/sub"] .explorer-vault-toggle');
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle?.querySelector(".icon-bookmark-filled")).toBeTruthy();
+    expect(panel.currentRootPath()).toBe("/root");
+
+    registered.clear();
+    await panel.refreshVaultToggles();
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle?.querySelector(".icon-bookmark")).toBeTruthy();
+    expect(panel.currentRootPath()).toBe("/root");
+  });
+
+  it("awaits filesystem identity for alias state and canonical toggle action", async () => {
+    const registered = new Set(["/real/sub"]);
+    const canonicalize = async (path: string): Promise<string> => path.replace("/alias", "/real");
+    const onToggleVault = (path: string): void => {
+      void canonicalize(path).then((canonical) => {
+        if (!registered.delete(canonical)) registered.add(canonical);
+      });
+    };
+    const panel = await openPanel({
+      listDir: vi.fn(async (path: string) => path === "/alias" ? [dir("sub", "/alias/sub")] : []),
+      getBaseDir: () => "/alias",
+      onOpenFile: vi.fn(),
+      onToggleVault,
+      isVaultRegistered: async (path) => registered.has(await canonicalize(path)),
+    });
+
+    const toggle = panel.aside.querySelector<HTMLButtonElement>('[data-path="/alias/sub"] .explorer-vault-toggle');
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+
+    toggle?.click();
+    await flush();
+    await panel.refreshVaultToggles();
+
+    expect(registered.has("/real/sub")).toBe(false);
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("refreshes folder toggles after an external workspace-store mutation", async () => {
+    localStorage.removeItem("mermark.workspaceState");
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/root/sub");
+    let panel: ReturnType<typeof createExplorerPanel> | undefined;
+    const unsubscribe = store.subscribe(() => { void panel?.refreshVaultToggles(); });
+    try {
+      panel = await openPanel({
+        listDir: vi.fn(fakeTree()),
+        getBaseDir: () => "/root",
+        onOpenFile: vi.fn(),
+        onToggleVault: vi.fn(),
+        isVaultRegistered: async (path) => store.get().vaults.some((item) => item.rootPath === path),
+      });
+      const toggle = panel.aside.querySelector<HTMLButtonElement>('[data-path="/root/sub"] .explorer-vault-toggle');
+      expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+
+      store.unregisterVault(vault.vaultId);
+      await flush();
+
+      expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+    } finally {
+      unsubscribe();
+      localStorage.removeItem("mermark.workspaceState");
+    }
   });
 });
 
@@ -938,53 +1054,6 @@ describe("explorer: sidebar shell interface (7)", () => {
     expect(panel.button.querySelector(".icon-panel-left-close")).toBeNull();
   });
 
-  it("favoritesSlot is appended below the tree at creation", async () => {
-    const slot = document.createElement("div");
-    slot.className = "explorer-favorites-test-slot";
-    const panel = createExplorerPanel({
-      listDir: vi.fn(fakeTree()),
-      getBaseDir: () => "/root",
-      onOpenFile: vi.fn(),
-      favoritesSlot: slot,
-    });
-    host.append(panel.button, panel.aside);
-    expect(panel.aside.contains(slot)).toBe(true);
-    // it must come AFTER the tree (split-pane: tree on top, favorites below).
-    const tree = treeOf(panel.aside);
-    expect(tree.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it("revealFavorites opens the explorer, scrolls the slot into view, and DELEGATES landing to the injected focusFavorites (no reimplemented focus logic)", async () => {
-    const slot = document.createElement("div");
-    slot.className = "explorer-favorites-test-slot";
-    slot.scrollIntoView = vi.fn();
-    const focusFavorites = vi.fn();
-    const panel = createExplorerPanel({
-      listDir: vi.fn(fakeTree()),
-      getBaseDir: () => "/root",
-      onOpenFile: vi.fn(),
-      favoritesSlot: slot,
-      focusFavorites,
-    });
-    host.append(panel.button, panel.aside);
-    expect(panel.aside.hidden).toBe(true);
-
-    panel.revealFavorites();
-    await flush();
-
-    expect(panel.aside.hidden).toBe(false); // opened as a side effect
-    expect(slot.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
-    expect(focusFavorites).toHaveBeenCalledOnce(); // landing rule delegated, not re-derived
-  });
-
-  it("revealFavorites is a no-op on the scroll/focus half when favoritesSlot/focusFavorites weren't injected", async () => {
-    const panel = createExplorerPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
-    host.append(panel.button, panel.aside);
-    expect(() => panel.revealFavorites()).not.toThrow();
-    await flush();
-    expect(panel.aside.hidden).toBe(false); // still opens the shell
-  });
-
   it("resetToBaseDir rebuilds when open, no-ops when hidden", async () => {
     let base = "/root";
     const listDir = vi.fn(fakeTree());
@@ -1068,134 +1137,7 @@ describe("explorer: refreshListing (showHiddenFiles setting sink)", () => {
   });
 });
 
-// M5: folder-row favorite star (design 분기5, plan Phase B) -------------------
-// Gated on BOTH isFavorite + onToggleFavorite being injected. Renders on
-// .explorer-dir rows only (never .explorer-file/.explorer-up), tabindex=-1
-// (out of roving-tabindex), star click pre-empts folder activation (early
-// return), Space toggles the star on a focused folder, and
-// refreshFavoriteStars() re-syncs every row from a fresh isFavorite() read.
-describe("explorer: folder-row favorite star (M5)", () => {
-  it("renders .explorer-star on folder rows only (not files, not `..`) when both handlers are injected", async () => {
-    const panel = createExplorerPanel({
-      listDir: vi.fn(fakeTree()),
-      getBaseDir: () => "/root",
-      onOpenFile: vi.fn(),
-      isFavorite: () => false,
-      onToggleFavorite: vi.fn(),
-    });
-    host.append(panel.button, panel.aside);
-    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await flush();
-
-    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
-    expect(sub.querySelector(":scope > .explorer-label > .explorer-star")).toBeTruthy();
-
-    const md = items(panel.aside).find((e) => nameOf(e) === "a.md") as HTMLElement;
-    expect(md.querySelector(".explorer-star")).toBeNull();
-
-    const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
-    expect(up.querySelector(".explorer-star")).toBeNull();
-  });
-
-  it("star carries tabindex=-1 (out of the roving-tabindex race) and aria-pressed reflects isFavorite", async () => {
-    const favorites = new Set(["/root/sub"]);
-    const panel = createExplorerPanel({
-      listDir: vi.fn(fakeTree()),
-      getBaseDir: () => "/root",
-      onOpenFile: vi.fn(),
-      isFavorite: (p) => favorites.has(p),
-      onToggleFavorite: vi.fn(),
-    });
-    host.append(panel.button, panel.aside);
-    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await flush();
-
-    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
-    const star = sub.querySelector(".explorer-star") as HTMLButtonElement;
-    expect(star.tabIndex).toBe(-1);
-    expect(star.getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("no handlers injected → no star anywhere, roving-tabindex count unchanged (regression guard)", async () => {
-    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
-    expect(panel.aside.querySelector(".explorer-star")).toBeNull();
-    expect(items(panel.aside).filter((e) => e.tabIndex === 0)).toHaveLength(1);
-  });
-
-  it("clicking the star calls onToggleFavorite(path) once and does NOT toggle the folder open (early return)", async () => {
-    const onToggleFavorite = vi.fn();
-    const panel = createExplorerPanel({
-      listDir: vi.fn(fakeTree()),
-      getBaseDir: () => "/root",
-      onOpenFile: vi.fn(),
-      isFavorite: () => false,
-      onToggleFavorite,
-    });
-    host.append(panel.button, panel.aside);
-    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await flush();
-
-    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
-    const star = sub.querySelector(".explorer-star") as HTMLButtonElement;
-    star.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-
-    expect(onToggleFavorite).toHaveBeenCalledWith("/root/sub");
-    expect(onToggleFavorite).toHaveBeenCalledTimes(1);
-    expect(sub.getAttribute("aria-expanded")).toBe("false"); // folder did NOT open
-    expect(sub.dataset.loaded).toBeUndefined(); // children were never loaded
-  });
-
-  it("Space toggles the focused folder's star; no-op on files/`..`", async () => {
-    const onToggleFavorite = vi.fn();
-    const panel = createExplorerPanel({
-      listDir: vi.fn(fakeTree()),
-      getBaseDir: () => "/root",
-      onOpenFile: vi.fn(),
-      isFavorite: () => false,
-      onToggleFavorite,
-    });
-    host.append(panel.button, panel.aside);
-    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await flush();
-
-    // initial focus is `..` — Space there is a no-op.
-    treeOf(panel.aside).dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
-    expect(onToggleFavorite).not.toHaveBeenCalled();
-
-    press(panel.aside, "ArrowDown"); // focus "sub" (a folder)
-    treeOf(panel.aside).dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
-    expect(onToggleFavorite).toHaveBeenCalledWith("/root/sub");
-    expect(onToggleFavorite).toHaveBeenCalledTimes(1);
-
-    press(panel.aside, "ArrowDown"); // focus "a.md" (a file)
-    treeOf(panel.aside).dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
-    expect(onToggleFavorite).toHaveBeenCalledTimes(1); // still 1 — file Space is a no-op
-  });
-
-  it("refreshFavoriteStars() re-syncs aria-pressed/.is-favorite from a fresh isFavorite() read", async () => {
-    const favorites = new Set<string>();
-    const panel = createExplorerPanel({
-      listDir: vi.fn(fakeTree()),
-      getBaseDir: () => "/root",
-      onOpenFile: vi.fn(),
-      isFavorite: (p) => favorites.has(p),
-      onToggleFavorite: vi.fn(),
-    });
-    host.append(panel.button, panel.aside);
-    panel.button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await flush();
-
-    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
-    const star = sub.querySelector(".explorer-star") as HTMLButtonElement;
-    expect(star.getAttribute("aria-pressed")).toBe("false");
-    expect(star.classList.contains("is-favorite")).toBe(false);
-
-    favorites.add("/root/sub");
-    panel.refreshFavoriteStars();
-    expect(star.getAttribute("aria-pressed")).toBe("true");
-    expect(star.classList.contains("is-favorite")).toBe(true);
-  });
-
+describe("explorer: viewer openability refresh", () => {
   // refreshOpenability() — the viewer-toggle mid-session bug guard. `.is-nonmd`
   // is baked in at row-creation time (K's tests above), so a live toggle of the
   // injected canOpenWithViewer answer needs an explicit refresh to reach

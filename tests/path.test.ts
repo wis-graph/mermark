@@ -80,10 +80,6 @@ describe("dirOf", () => {
   });
 });
 
-// `dirOf`'s sibling — promoted 2026-07-03 (intent review #2) from byte-
-// identical private copies in favorites-panel.ts and recent-panel.ts. Same
-// separator rule as `dirOf`, so the two must never disagree on where a path
-// splits into directory vs filename.
 describe("basename", () => {
   it("returns the file name of an absolute posix path", () => {
     expect(basename("/Users/x/notes/foo.md")).toBe("foo.md");

@@ -1,14 +1,5 @@
 // ---------------------------------------------------------------------------
 // Shared "left-truncating path" DOM builder — renders a path so its
-// RIGHTMOST (most identifying) segment stays visible when the containing
-// row clips text with an ellipsis. Used by both the favorites section
-// (favorites-panel.ts) and the recent-documents panel (recent-panel.ts).
-//
-// Consolidated 2026-07-03 (docs/reviews/intent-review-2026-07-03.md #1) from
-// two byte-identical DOM-construction copies (M4 favorites-panel.ts, cloned
-// into recent-panel.ts at M6 — the CSS comment there admitted the clone).
-// Both callers now build this DOM through `truncatedPathLabel` instead of
-// inlining `<span class="…-path"><bdi>…</bdi></span>` themselves.
 //
 // The trick is CSS-only (styles.css `.path-label`): `direction: rtl` flips
 // WHERE the ellipsis clips (the start, not the end) while `text-align:
@@ -37,8 +28,8 @@ export function truncatedPathLabel(path: string): HTMLElement {
 
 /** Whether a path's label row would duplicate the name headline right above
  *  it: true when the path has NO directory component, so its basename IS the
- *  whole path (e.g. a bare "x.md" opened from the CLI, or a favorited folder
- *  passed in already-bare). Callers gate their truncatedPathLabel() append on
+ *  whole path (e.g. a bare "x.md" opened from the CLI). Callers gate their
+ *  truncatedPathLabel() append on
  *  `!redundantPathLabel(path)` instead of always rendering a second line that
  *  repeats the name verbatim. Pure query. */
 export function redundantPathLabel(path: string): boolean {

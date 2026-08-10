@@ -95,9 +95,6 @@ export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandl
     for (const path of recent) {
       const item = create("button", "recent-item");
       item.dataset.path = path;
-      // Name line: leading document glyph + name — the favorites card shape
-      // (favorites-panel.ts), muted like the explorer's file glyphs (the
-      // folder=accent / file=muted vocabulary).
       const nameRow = create("span", "recent-name-row");
       const glyph = create("span", "recent-glyph");
       glyph.append(icon("file-text"));
@@ -105,8 +102,6 @@ export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandl
       name.textContent = basename(path);
       nameRow.append(glyph, name);
       item.append(nameRow);
-      // Left-truncating path label (shared with favorites-panel.ts — see
-      // chrome/path-label.ts for the rtl+<bdi> DOM/CSS rule this builds).
       // Skipped when the path has no directory component (e.g. a bare
       // "x.md") — it would just repeat the name line verbatim.
       if (!redundantPathLabel(path)) item.append(truncatedPathLabel(path));

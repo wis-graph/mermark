@@ -7,9 +7,6 @@ import { createTitleBar, arrangeTitleBar, createLeftCommandGroup, createTitleSlo
 // its internal order lives in exactly one place, not duplicated in an
 // arrangeTitleBar parts list. Left→right is leftGroup · [drag spacer] · mode ·
 // theme · settings, with the win/linux window-controls cluster ALWAYS last
-// (OS convention). M5: the 즐겨찾기 title-bar button is gone (favorites is now
-// a permanently hosted section inside the explorer's own aside, not an
-// independent mutually-exclusive view — see favorites/favorites-panel.ts).
 // R9: createLeftCommandGroup now wraps only `openPath` — the 탐색기·최근·
 //목차 buttons are inserted by sidebar/registry.ts's registerSidebarPanel/
 // installSidebarPanels at runtime, in registration order, just before

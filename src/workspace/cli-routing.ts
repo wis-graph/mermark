@@ -1,6 +1,6 @@
-import { canonicalRootPath, type Vault, type WorkspaceState, WorkspaceStore } from "./workspace-state";
+import { canonicalRootPath, type PermanentVault, type Vault, type WorkspaceState, WorkspaceStore } from "./workspace-state";
 
-export type CliRouteKind = "permanent" | "temporary";
+export type CliRouteKind = "permanent" | "global";
 
 export interface CliRoute {
   readonly kind: CliRouteKind;
@@ -20,7 +20,7 @@ const permanentVaultForPath = (state: WorkspaceState, path: string): Vault | und
   const workspace = currentWorkspace(state);
   if (!workspace) return undefined;
   return state.vaults
-    .filter((vault) => vault.workspaceId === workspace.workspaceId && vault.persistenceKind === "permanent")
+    .filter((vault): vault is PermanentVault => vault.workspaceId === workspace.workspaceId && vault.persistenceKind === "permanent")
     .filter((vault) => isWithinRoot(path, vault.rootPath))
     .sort((left, right) => right.rootPath.length - left.rootPath.length)[0];
 };
@@ -37,7 +37,8 @@ const routeCanonicalPath = (store: WorkspaceStore, path: string): CliRoute => {
     const vault = store.selectVault(permanent.vaultId);
     return { kind: "permanent", path: canonical, vault };
   }
-  return { kind: "temporary", path: canonical, vault: store.createTemporaryVault(canonical) };
+  const vault = store.selectVault(store.getGlobalVault().vaultId);
+  return { kind: "global", path: canonical, vault };
 };
 
 export const routeCliFileResolved = async (store: WorkspaceStore, rawPath: string, resolvePath: (path: string) => Promise<string>): Promise<CliRoute> => {

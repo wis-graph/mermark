@@ -1,4 +1,4 @@
-import { canonicalRootPath } from "./workspace-state";
+import { canonicalRootPath, GLOBAL_VAULT_ID } from "./workspace-state";
 
 export type TabPersistenceScope = "permanent" | "session";
 export type VaultTab = { readonly tabId: string; readonly path: string };
@@ -21,6 +21,7 @@ export class VaultTabStore {
   get(vaultId: string): VaultTabs {
     const session = this.sessions.get(vaultId);
     if (session) return session;
+    if (vaultId === GLOBAL_VAULT_ID) return { vaultId, tabs: [], activeTabId: null };
     const raw = localStorage.getItem(storageKey(vaultId));
     if (!raw) return { vaultId, tabs: [], activeTabId: null };
     try {
@@ -38,9 +39,37 @@ export class VaultTabStore {
     const existing = current.tabs.find((tab) => tab.path === canonical);
     const tab = existing ?? { tabId: `${vaultId}-tab-${encodeURIComponent(canonical)}`, path: canonical };
     const next: VaultTabs = { vaultId, tabs: existing ? current.tabs : [...current.tabs, tab], activeTabId: tab.tabId };
-    this.sessions.set(vaultId, next);
-    if (scope === "permanent") localStorage.setItem(storageKey(vaultId), JSON.stringify(next));
-    for (const listener of this.listeners) listener(next);
+    this.commit(next, scope);
     return tab;
+  }
+
+  select(vaultId: string, tabId: string, scope: TabPersistenceScope): VaultTabs {
+    const current = this.get(vaultId);
+    if (!current.tabs.some((tab) => tab.tabId === tabId) || current.activeTabId === tabId) return current;
+    const next: VaultTabs = { ...current, activeTabId: tabId };
+    this.commit(next, scope);
+    return next;
+  }
+
+  close(vaultId: string, tabId: string, scope: TabPersistenceScope): VaultTabs {
+    const current = this.get(vaultId);
+    const tabs = current.tabs.filter((tab) => tab.tabId !== tabId);
+    if (tabs.length === current.tabs.length) return current;
+    const activeTabId = current.activeTabId === tabId ? tabs[tabs.length - 1]?.tabId ?? null : current.activeTabId;
+    const next: VaultTabs = { vaultId, tabs, activeTabId };
+    this.commit(next, scope);
+    return next;
+  }
+
+  discard(vaultId: string): void {
+    this.sessions.delete(vaultId);
+    localStorage.removeItem(storageKey(vaultId));
+  }
+
+  private commit(next: VaultTabs, scope: TabPersistenceScope): void {
+    this.sessions.set(next.vaultId, next);
+    if (next.vaultId === GLOBAL_VAULT_ID || scope === "session") localStorage.removeItem(storageKey(next.vaultId));
+    else localStorage.setItem(storageKey(next.vaultId), JSON.stringify(next));
+    for (const listener of this.listeners) listener(next);
   }
 }

@@ -534,7 +534,7 @@ export function isViewerEnabled(disabled: readonly string[], id: string): boolea
 
 /** Toggle one viewer id's membership in the disabled-set. Pure query — returns
  *  a NEW array, never mutates `disabled` (same shape as main.ts's
- *  toggleFavorite); the panel control is the one place that feeds the result
+ *  toggleViewerDisabled); the panel control is the one place that feeds the result
  *  into disabledViewersSetting.set(...). */
 export function toggleViewerDisabled(disabled: readonly string[], id: string): string[] {
   return disabled.includes(id) ? disabled.filter((x) => x !== id) : [...disabled, id];
@@ -547,7 +547,7 @@ export function toggleViewerDisabled(disabled: readonly string[], id: string): s
  *  guarantee). A disabled viewer's file type falls back to the existing
  *  open_path/OS-default path — no new fallback is introduced (design §2).
  *  Persisted as a JSON array of viewer ids, same corrupt/non-array → []
- *  guard as recentDocsSetting/favoriteFoldersSetting. Rendered by the
+ *  guard as recentDocsSetting. Rendered by the
  *  viewer-toggles control (settings/panel/controls.ts), which enumerates
  *  `listViewers()` — so a newly registered viewer can never go missing from
  *  this row (design §회귀 게이트). */
@@ -608,7 +608,7 @@ export const recentDocsSetting = defineSetting<string[]>({
  *  value in the saved map, so ONE corrupt/malformed record is dropped
  *  without discarding every other book's saved position (a stricter "reject
  *  the whole blob on any bad record" would lose more than it protects —
- *  recentDocs/favoriteFolders reject whole-array on ANY bad element only
+ *  recentDocs rejects the whole array on ANY bad element only
  *  because THEIR records are single primitives with nothing else worth
  *  saving alongside a bad one; a position map's records are independent
  *  books). Pure query. */
@@ -629,7 +629,7 @@ function isEpubReadingPosition(v: unknown): v is EpubReadingPosition {
  *  otherwise `"path:<absolute path>"`. SSOT-only (no panel row, no off
  *  switch — `_workspace/01_architect_design_epub_position.md` §7: a
  *  harmless convenience feature with an already-natural escape hatch,
- *  same posture as recentDocsSetting/favoriteFoldersSetting having none).
+ *  same posture as recentDocsSetting having none).
  *  SINGLE WRITER: `chrome/viewer/epub-viewer.ts`'s debounced scroll-save
  *  command (via `upsertPosition`); SINGLE READER: the same file's open()
  *  restore path (`.get()`). Persisted as a JSON object in localStorage —
@@ -654,30 +654,6 @@ export const epubPositionsSetting = defineSetting<Record<string, EpubReadingPosi
       if (isEpubReadingPosition(v)) out[k] = v;
     }
     return out;
-  },
-  serialize: (v) => JSON.stringify(v),
-});
-
-// ── 즐겨찾기 폴더 (Favorite folders) — SSOT-only, no panel ui ──────────────────
-
-/** User-curated folder shortcuts, insertion order (NOT most-recent-first —
- *  see favorite-folders.ts for the full contrast with recentDocsSetting's MRU
- *  rules). SSOT-only (no panel row): the title-bar favorites panel subscribes
- *  to render, and main is the single writer (via pushFavorite/removeFavorite).
- *  Persisted as a JSON array in localStorage — same shape/guard as
- *  recentDocsSetting, WKWebView keeps it across restarts, no backend command
- *  needed. Corrupt value / non-array → [] (empty list). */
-export const favoriteFoldersSetting = defineSetting<string[]>({
-  key: "mermark.favoriteFolders",
-  default: [],
-  parse: (raw) => {
-    if (raw == null) return null;
-    try {
-      const a = JSON.parse(raw);
-      return Array.isArray(a) ? a.filter((x) => typeof x === "string") : null;
-    } catch {
-      return null;
-    }
   },
   serialize: (v) => JSON.stringify(v),
 });

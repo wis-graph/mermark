@@ -1059,8 +1059,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
       <button>s) and any extension's own <button> that sizes TEXT in em
       (e.g. `.excel-viewer-tab`) MUST declare `font: inherit` explicitly — a
       <button> gets its own UA font-size (~13.33px, NOT --font-scale-aware)
-      unless the rule re-inherits. Exactly the trap `.explorer-star`/
-      `.favorites-remove` already fell into (SIDEBAR ZOOM RULE exception 1)
+      unless the rule re-inherits. Keep sidebar controls on the same scale
+      as their containing rail.
       — do not re-fall into it here.
    2. `.viewer-panel-close` is deliberately EXEMPT from the em-fraction rule
       itself (kept at a fixed 28×28px / 15px glyph) — it is WINDOW CHROME
@@ -1466,20 +1466,20 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 
    SIDEBAR ZOOM RULE (_workspace/01_architect_design.md 확정 1~4): --font-scale
    multiplication happens in EXACTLY ONE place — this root's font-size calc.
-   Every sidebar-scoped descendant below (explorer/outline/recent/favorites,
+   Every sidebar-scoped descendant below (explorer/outline/recent,
    including glyphs/hit-targets) declares its size as a 13px-BASE EM FRACTION
    (e.g. 11px child -> calc(11em / 13)), never a fresh px literal and never its
    own * var(--font-scale, ...) multiplication — that would compound the zoom.
    This holds because no intermediate layer (.explorer-label/.recent-item/
-   .favorites-item/.explorer-tree/.outline-tree etc.) declares its own
+   .explorer-tree/.outline-tree etc.) declares its own
    font-size — em always resolves against THIS root's 13px * scale, one
    level, no compounding. Guard: tests/sidebar-zoom.test.ts (T1 asserts this
    exact calc form; T2 sweeps every sidebar-, outline-, explorer-, recent-,
-   favorites- prefixed rule and path-label in the sheet for a stray px
+   path-label rule in the sheet for a stray px
    font-size).
 
    TWO EXCEPTIONS found by audit 04 (2026-07-11), both now fixed:
-   1. Any sidebar glyph living in a <button> (.explorer-star, .favorites-remove)
+   1. Any sidebar glyph living in a <button>
       MUST declare `font: inherit` explicitly. A <button> is exempted from
       normal inheritance by the UA stylesheet, which gives it its own
       font-size (~13.33px on macOS Chrome, NOT --font-scale-aware) — so a
@@ -1487,7 +1487,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
       root's 13px*scale, and silently ignores zoom.
    2. .sidebar-header is NOT a leaf — it declares its own font-size
       (calc(11em / 13), an 11px-base) and hosts a glyph child
-      (.favorites-header-glyph .icon). Any em inside .sidebar-header's
+      Any em inside .sidebar-header's
       subtree resolves against the 11px base, not the 13px root base — use
       calc(13em / 11) there to recover a 13px-base size (see that rule). */
 .sidebar-aside {
@@ -1506,17 +1506,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 
 .workspace-header { display: flex; align-items: center; gap: .45em; }
 .workspace-title { flex: 1; }
-.workspace-id, .workspace-empty { padding: .35em .75em; color: var(--sidebar-muted); font-size: calc(11em / 13); }
+.workspace-empty { padding: .35em .75em; color: var(--sidebar-muted); font-size: calc(11em / 13); }
 .workspace-vault-list { display: flex; flex-direction: column; padding: .25em .4em; }
+.workspace-vault-group { display: flex; flex-direction: column; gap: .1em; }
+.workspace-vault-group + .workspace-vault-group { margin-top: .55em; }
 .workspace-vault-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: .15em; min-width: 0; }
-.workspace-vault-select { display: flex; flex: 1; min-width: 0; flex-wrap: wrap; align-items: center; gap: .45em; border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; padding: .45em .4em; text-align: left; cursor: pointer; }
+.workspace-vault-select { display: flex; flex: 1; min-width: 0; align-items: center; gap: .45em; border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; padding: .45em .4em; text-align: left; cursor: pointer; }
 .workspace-vault-select[aria-current="true"] { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); box-shadow: inset 2px 0 var(--sidebar-accent); }
 .workspace-vault-select:hover, .workspace-vault-action:hover, .workspace-action:hover { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
 .workspace-vault-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.workspace-vault-path { flex-basis: 100%; min-width: 0; padding-left: 1.85em; overflow-wrap: anywhere; color: var(--sidebar-muted); font-size: calc(11em / 13); }
-.workspace-vault-tabs { display: flex; flex-basis: 100%; order: 2; gap: .25em; min-width: 0; padding: 0 .4em .35em 2.35em; overflow: hidden; }
-.workspace-vault-tab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; font-size: calc(10em / 13); padding: 0; cursor: pointer; }
+.workspace-vault-tabs { display: flex; flex-direction: column; flex-basis: 100%; order: 2; gap: .1em; min-width: 0; padding: 0 .4em .35em 2.35em; }
+.workspace-vault-tab-row { display: flex; align-items: center; min-width: 0; gap: .2em; }
+.workspace-vault-tab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; font-size: calc(10em / 13); padding: .15em .25em; text-align: left; cursor: pointer; }
 .workspace-vault-tab[data-active="true"] { color: var(--sidebar-fg); font-weight: 600; }
+.workspace-vault-tab:hover, .workspace-vault-tab:focus-visible, .workspace-vault-tab-close:hover, .workspace-vault-tab-close:focus-visible { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
+.workspace-vault-tab-close { flex: none; width: 1.7em; height: 1.7em; border: 0; background: transparent; color: var(--sidebar-muted); padding: .2em; cursor: pointer; }
 .workspace-vault-action, .workspace-action { display: inline-flex; align-items: center; justify-content: center; gap: .35em; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; }
 .workspace-vault-action { width: 2em; }
 .workspace-actions { border-top: 1px solid var(--sidebar-border); padding: .45em .65em; }
@@ -1616,7 +1620,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    aria-label carry the full absolute path).
 
    M5 split-pane: .explorer-aside now stacks TWO independently-scrolling
-   regions — the tree (flex:1, grows to fill) and the hosted favorites
+   regions — the tree (flex:1, grows to fill) and the other sidebar panels
    section (flex:none, capped + its own scroll) — instead of the whole aside
    scrolling as one unit. Scoped to .explorer-aside ONLY, so the shared
    .sidebar-aside (outline/recent, which still scroll as a single region) is
@@ -1694,34 +1698,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    --sidebar-muted. Sidebar var only (no hard-coded hex, no global --accent),
    so all three themes track their own --sidebar-accent. */
 .explorer-dir > .explorer-label > .explorer-glyph { color: var(--sidebar-accent); }
-.explorer-name { overflow: hidden; text-overflow: ellipsis; }
+.explorer-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .explorer-up > .explorer-label { font-weight: 600; }
-/* Folder-row favorite star (M5, design 분기2/6/제약). tabindex=-1 (out of the
-   roving-tabindex race — see explorer-panel.ts). Faint at rest (dimmer than
-   --muted via color-mix so an un-favorited tree stays visually quiet), a
-   solid --fg on hover/focus-visible (the "look, you can star this" affordance),
-   and a filled --accent once favorited — regardless of hover, so a favorited
-   folder is always identifiable at a glance. Theme vars only (no hardcoded
-   hex): dark/light/claude all derive their own faint/hover/filled shades. */
-.explorer-star {
-  flex: none; margin-left: auto; display: flex; align-items: center; justify-content: center;
-  width: calc(20em / 13); height: calc(20em / 13); padding: 0;
-  background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: color-mix(in srgb, var(--sidebar-muted) 45%, transparent);
-  cursor: pointer; font: inherit;
-  transition: color .12s ease, background-color .12s ease;
+.explorer-vault-toggle {
+  flex: none; margin-inline-start: auto; width: calc(20em / 13); height: calc(20em / 13);
+  padding: 0; border: 0; border-radius: var(--radius-sm, 6px); background: transparent;
+  color: var(--sidebar-muted); font: inherit; cursor: pointer;
 }
-.explorer-label:hover .explorer-star { color: var(--sidebar-fg); }
-.explorer-star:hover { background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); color: var(--sidebar-fg); }
-.explorer-star.is-favorite,
-.explorer-label:hover .explorer-star.is-favorite,
-.explorer-star.is-favorite:hover { color: var(--sidebar-accent); }
-/* Favorited = FILLED bookmark (the glyph is Lucide `bookmark` now — see
-   icons.ts): fill flips the same stroke silhouette to solid, a cleaner
-   on-state than color alone at 16px. */
-.explorer-star.is-favorite .icon { fill: currentColor; }
-.explorer-star:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
-.explorer-star .icon { width: 1em; height: 1em; }
+.explorer-vault-toggle:hover, .explorer-vault-toggle:focus-visible { color: var(--sidebar-fg); background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); }
+.explorer-vault-toggle.is-registered { color: var(--sidebar-accent); }
+.explorer-vault-toggle:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
 /* Non-markdown files: visible for context, but greyed + inert (mermark opens
    markdown only — a click is a no-op, not a broken read_file view). */
 .explorer-file.is-nonmd > .explorer-label { color: var(--sidebar-muted); cursor: default; }
@@ -2337,19 +2323,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .recent-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
 .recent-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
 .recent-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
-/* Name line: document glyph + name — the favorites card shape (see
-   .favorites-name-row below), file glyphs muted per the explorer vocabulary
-   (folder=accent, file=muted). */
 .recent-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .recent-glyph { flex: none; display: inline-flex; width: calc(14em / 13); height: calc(14em / 13); color: var(--sidebar-muted); }
 .recent-glyph .icon { width: 100%; height: 100%; }
 .recent-name { flex: 1 1 auto; min-width: 0; font-size: 1em; font-weight: 500; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recent-item .path-label { padding-left: calc(14em / 13 + 6px); }
 /* Shared LEFT-truncating path label (src/chrome/path-label.ts's
-   truncatedPathLabel) — used by both this panel and the favorites section
-   below, so the rule lives in one place instead of two duplicated blocks
-   (consolidated 2026-07-03, see docs/reviews/intent-review-2026-07-03.md #1;
-   was .recent-path + .favorites-path, byte-identical). direction:rtl flips
+   truncatedPathLabel). direction:rtl flips
    WHERE the ellipsis clips (the start, not the end) while text-align:left
    keeps the text visually left-anchored; the <bdi> isolates the path's own
    LTR segment order from the rtl trick, so "…/work/projects" reads normally
@@ -2361,88 +2341,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .path-label > bdi { direction: ltr; unicode-bidi: isolate; }
-
-/* Favorites BOTTOM SECTION (M5, design 분기1/2/7) — hosted INSIDE
-   .explorer-aside, below .explorer-tree (see explorer-panel.ts's
-   favoritesSlot). No longer a sibling .sidebar-aside (M4): it's a
-   permanently-visible <section>, capped + independently scrolling. Theme
-   tokens only (no hardcoded hex) — the star/x icons inherit currentColor.
-
-   header ★-add REMOVED (M5): adding a favorite is now the folder-row star's
-   job (.explorer-star above) — the header's star is a decorative glyph only. */
-.explorer-favorites {
-  flex: none; max-height: 40vh; overflow-y: auto;
-  margin-top: 4px; border-top: 1px solid var(--sidebar-border); padding-top: 4px;
-  display: flex; flex-direction: column;
-}
-.favorites-header {
-  display: flex; align-items: center; gap: 6px;
-}
-.favorites-header-glyph { flex: none; display: inline-flex; color: var(--sidebar-muted); }
-/* G6 fix (audit 04, 🔴 2): this glyph lives inside .favorites-header.sidebar-header
-   (favorites-panel.ts:89~94), and .sidebar-header declares font-size: calc(11em / 13)
-   -- an 11px-BASE em, not the 13px root base. So a plain 1em here resolved to
-   11px*scale (a silent 13->11px shrink at scale=1), not the intended 13px*scale.
-   calc(13em / 11) restores the 13px-base size against this 11px-base parent. */
-.favorites-header-glyph .icon { width: calc(13em / 11); height: calc(13em / 11); }
-.favorites-header-label { flex: 1 1 auto; }
-.favorites-list { display: flex; flex-direction: column; padding: 2px 6px 8px; }
-.favorites-empty { padding: 2px 12px 8px; font-size: calc(11em / 13); color: var(--sidebar-muted); }
-.favorites-empty[hidden] { display: none; }
-.favorites-item {
-  position: relative; display: flex; flex-direction: column; gap: 2px; width: 100%;
-  text-align: left; background: transparent; border: none;
-  border-radius: var(--radius-sm, 6px);
-  color: var(--sidebar-fg); font: inherit; padding: 4px 2em 4px 8px; cursor: pointer;
-  overflow: hidden; transition: background-color .12s ease;
-}
-.favorites-item:hover { background: color-mix(in srgb, var(--sidebar-fg) 7%, transparent); }
-.favorites-item:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
-.favorites-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
-/* Name line: folder glyph + name. The glyph carries the sidebar accent (the
-   explorer tree's "openable container" signal, same vocabulary); the path
-   caption below indents to the name's left edge so the two lines read as one
-   card, not two strays. */
-.favorites-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.favorites-glyph { flex: none; display: inline-flex; width: calc(14em / 13); height: calc(14em / 13); color: var(--sidebar-accent); }
-.favorites-glyph .icon { width: 100%; height: 100%; }
-.favorites-name { flex: 1 1 auto; min-width: 0; font-size: 1em; font-weight: 500; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.favorites-item .path-label { padding-left: calc(14em / 13 + 6px); }
-/* Left-truncating path label: see .path-label above (shared with the
-   recent panel's former .recent-path rule; favorites-panel.ts builds it via
-   chrome/path-label.ts's truncatedPathLabel). */
-.favorites-remove {
-  position: absolute; top: 50%; transform: translateY(-50%); right: 6px;
-  display: flex; align-items: center; justify-content: center;
-  width: calc(18em / 13); height: calc(18em / 13); padding: 0;
-  background: transparent; border: none; border-radius: var(--radius-sm, 6px);
-  color: var(--sidebar-muted); cursor: pointer; opacity: 0; font: inherit;
-  transition: opacity .12s ease, background-color .12s ease, color .12s ease;
-}
-.favorites-item:hover .favorites-remove,
-.favorites-item:focus-within .favorites-remove { opacity: 1; }
-.favorites-remove:hover { background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); color: var(--sidebar-fg); }
-.favorites-remove .icon { width: calc(12em / 13); height: calc(12em / 13); }
-
-/* Drag-to-reorder feedback (2026-07-12 design-polish batch ①). The sidebar
-   sits outside the editor's measured reading column, so these are plain px
-   (no zoom-guard em requirement — same reasoning as .workspace-sash). The
-   item being dragged just dims; the drop target gets a 2px accent line at
-   the edge the item would land on (before = above, after = below the last
-   item), reusing --accent/--border rather than introducing new tokens. */
-.favorites-item.favorites-drag-source { opacity: .4; }
-.favorites-item.favorites-drop-before::before,
-.favorites-item.favorites-drop-after::after {
-  content: "";
-  position: absolute;
-  left: 4px;
-  right: 4px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--accent);
-}
-.favorites-item.favorites-drop-before::before { top: -1px; }
-.favorites-item.favorites-drop-after::after { bottom: -1px; }
 
 /* Keybind settings control (단축키 category). One row per rebindable action:
    label · current chord · 재정의 (capture) · 기본값 (reset), with 전체 리셋 on
@@ -2624,8 +2522,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   text-align: center;
 }
 
-/* Blank-slate hero (2026-07-12 design-polish pass, tour-11): when both
-   favorites and recent docs are empty (welcome-pane.ts's isBlankSlate /
+/* Blank-slate hero (2026-07-12 design-polish pass, tour-11): when recent docs
+   are empty (welcome-pane.ts's isBlankSlate /
    reflectBlankSlate), the two empty-state sections would otherwise repeat
    "nothing here" three times over (CTA + two dashed empty cards). Instead
    collapse to a single centered hero: word-mark + CTA, no empty cards. Any

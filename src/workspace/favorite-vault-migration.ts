@@ -4,10 +4,25 @@ import type { Vault, WorkspaceStore } from "./workspace-state";
 export const favoriteVaultMigrationKey = "mermark.favoriteFoldersVaultMigration.v1";
 export const favoriteVaultMigrationStateKey = "mermark.favoriteFoldersVaultMigration.state.v1";
 export const favoriteFoldersStorageKey = "mermark.favoriteFolders";
-export const defaultFavoriteInitializationKey = "mermark.favoriteFolders.defaults.v1";
 
-export const shouldMigrateLegacyFavorites = (hasStoredFavorites: boolean, defaultsInitialized: boolean): boolean =>
-  hasStoredFavorites && !defaultsInitialized;
+export const shouldMigrateLegacyFavorites = (hasStoredFavorites: boolean, migrationCompleted: boolean): boolean =>
+  hasStoredFavorites && !migrationCompleted;
+
+export const readLegacyFavoriteFolders = (): readonly string[] => {
+  const raw = localStorage.getItem(favoriteFoldersStorageKey);
+  if (raw === null) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+  } catch (error) {
+    if (error instanceof SyntaxError) return [];
+    throw error;
+  }
+};
+
+const clearLegacyFavoriteFolders = (): void => {
+  localStorage.removeItem(favoriteFoldersStorageKey);
+};
 
 export interface FavoriteVaultMigrationState {
   readonly migrationVersion: 1;
@@ -24,6 +39,15 @@ export interface FavoriteVaultMigrationResult {
 
 type PathExists = (canonicalPath: string) => Promise<boolean>;
 type CanonicalizePath = (path: string) => Promise<string | null>;
+type CanonicalizeInvocation = (path: string) => Promise<unknown>;
+
+export const canonicalizeLegacyFavoriteFolder = async (
+  invokeCanonicalize: CanonicalizeInvocation,
+  path: string,
+): Promise<string | null> => {
+  const resolved = await invokeCanonicalize(path);
+  return typeof resolved === "string" ? resolved : null;
+};
 
 const parentSegments = (path: string): readonly string[] => {
   const segments: string[] = [];
@@ -83,7 +107,13 @@ const readMigrationState = (): FavoriteVaultMigrationState => {
 
 const saveMigrationState = (state: FavoriteVaultMigrationState): void => {
   localStorage.setItem(favoriteVaultMigrationStateKey, JSON.stringify(state));
-  localStorage.setItem(favoriteVaultMigrationKey, "1");
+  if (state.completed) localStorage.setItem(favoriteVaultMigrationKey, "1");
+  else localStorage.removeItem(favoriteVaultMigrationKey);
+};
+
+const saveLegacyFavoriteFolders = (folders: readonly string[]): void => {
+  if (folders.length === 0) localStorage.removeItem(favoriteFoldersStorageKey);
+  else localStorage.setItem(favoriteFoldersStorageKey, JSON.stringify(folders));
 };
 
 export async function migrateFavoriteFoldersToVaults(
@@ -93,12 +123,17 @@ export async function migrateFavoriteFoldersToVaults(
   canonicalize: CanonicalizePath = async (path) => normalizePath(path),
 ): Promise<FavoriteVaultMigrationResult> {
   const migrationState = readMigrationState();
-  const canonicalFolders: string[] = [];
-  const existingFolders: string[] = [];
-  const skipped = [...migrationState.excludedPaths];
+  const skipped = new Set(migrationState.excludedPaths);
   const mergedPaths = new Set(migrationState.mergedPaths);
   const mapping = { ...migrationState.canonicalPathToVaultId };
+  const unresolvedFolders: string[] = [];
   let transientFailure = false;
+  const current = store.get();
+  const workspace = current.workspaces.find((item) => item.workspaceId === current.currentWorkspaceId);
+  const workspaceVaults = current.vaults.filter((vault) => vault.workspaceId === current.currentWorkspaceId);
+  const usedNames = new Set(workspaceVaults.map((vault) => vault.displayName));
+  const migrated: Vault[] = [];
+
   for (const rawFolder of favoriteFolders) {
     let folder: string | null;
     try {
@@ -106,64 +141,65 @@ export async function migrateFavoriteFoldersToVaults(
     } catch (error) {
       if (error instanceof Error || typeof error === "string") {
         transientFailure = true;
-        folder = null;
+        unresolvedFolders.push(rawFolder);
+        continue;
       }
       else throw error;
     }
     if (folder === null) {
-      skipped.push(normalizePath(rawFolder));
+      skipped.add(normalizePath(rawFolder));
       continue;
     }
     const canonical = normalizePath(folder);
-    if (canonicalFolders.includes(canonical)) {
+    if (Object.prototype.hasOwnProperty.call(mapping, canonical)) {
       mergedPaths.add(canonical);
       continue;
     }
-    canonicalFolders.push(canonical);
+    let exists: boolean;
     try {
-      if (await pathExists(canonical)) existingFolders.push(canonical);
-      else skipped.push(canonical);
+      exists = await pathExists(canonical);
     } catch (error) {
       if (error instanceof Error || typeof error === "string") {
         transientFailure = true;
-        skipped.push(canonical);
+        unresolvedFolders.push(rawFolder);
+        continue;
       }
       else throw error;
     }
-  }
-
-  const current = store.get();
-  const workspace = current.workspaces.find((item) => item.workspaceId === current.currentWorkspaceId);
-  const workspaceVaults = current.vaults.filter((vault) => vault.workspaceId === current.currentWorkspaceId);
-  const knownRoots = new Set(workspaceVaults.map((vault) => vault.rootPath));
-  const usedNames = new Set(workspaceVaults.map((vault) => vault.displayName));
-  const migrated: Vault[] = [];
-
-  for (const folder of existingFolders) {
-    const existing = workspaceVaults.find((vault) => vault.rootPath === folder);
+    if (!exists) {
+      skipped.add(canonical);
+      continue;
+    }
+    const existing = store.get().vaults.find(
+      (vault) => vault.workspaceId === current.currentWorkspaceId && vault.persistenceKind === "permanent" && normalizePath(vault.rootPath) === canonical,
+    );
     if (existing) {
-      mapping[folder] = existing.vaultId;
-      mergedPaths.add(folder);
+      mapping[canonical] = existing.vaultId;
+      mergedPaths.add(canonical);
       continue;
     }
     if (migrationState.completed) continue;
-    if (!workspace) break;
-    const displayName = uniqueDisplayName(folder, usedNames);
-    const vault = store.registerVault(folder, displayName);
+    if (!workspace) {
+      transientFailure = true;
+      unresolvedFolders.push(rawFolder);
+      continue;
+    }
+    const displayName = uniqueDisplayName(canonical, usedNames);
+    const vault = store.registerVault(canonical, displayName);
     migrated.push(vault);
-    mapping[folder] = vault.vaultId;
-    knownRoots.add(folder);
+    mapping[canonical] = vault.vaultId;
     usedNames.add(displayName);
   }
 
-  if (!transientFailure) {
-    saveMigrationState({
-      migrationVersion: 1,
-      completed: true,
-      canonicalPathToVaultId: mapping,
-      excludedPaths: [...new Set(skipped)],
-      mergedPaths: [...mergedPaths],
-    });
-  }
-  return { migrated, skipped };
+  const completed = !transientFailure;
+  saveMigrationState({
+    migrationVersion: 1,
+    completed,
+    canonicalPathToVaultId: mapping,
+    excludedPaths: [...skipped],
+    mergedPaths: [...mergedPaths],
+  });
+  if (completed) clearLegacyFavoriteFolders();
+  else saveLegacyFavoriteFolders(unresolvedFolders);
+  return { migrated, skipped: [...skipped] };
 }

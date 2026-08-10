@@ -63,6 +63,8 @@ const PATHS = {
     '<path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
   // x — close / callout: failure
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  bookmark: '<path d="M19 21 12 17l-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+  "bookmark-filled": '<path fill="currentColor" stroke="none" d="M7 3a2 2 0 0 0-2 2v16l7-4 7 4V5a2 2 0 0 0-2-2z"/>',
   // minus — viewer zoom out (title-bar viewer controls)
   minus: '<path d="M5 12h14"/>',
   // plus — viewer zoom in (title-bar viewer controls)
@@ -159,13 +161,6 @@ const PATHS = {
     '<rect width="18" height="18" x="3" y="3" rx="2"/>' +
     '<path d="M9 3v18"/>' +
     '<path d="m16 15-3-3 3-3"/>',
-  // bookmark — favorites (star's replacement: quieter silhouette at 16px; the
-  // active state fills it via CSS `fill: currentColor`, which a many-pointed
-  // star can't do legibly at this size)
-  bookmark: '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>',
-  // star — favorites
-  star:
-    '<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.685 21.28a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.45 9.865a.53.53 0 0 1 .294-.904l5.16-.755a2.122 2.122 0 0 0 1.598-1.16z"/>',
   // quote — callout: quote
   quote:
     '<path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/>' +

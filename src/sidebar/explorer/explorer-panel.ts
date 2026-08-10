@@ -61,12 +61,6 @@ export interface ExplorerPanel {
   /** Hide the sidebar. Idempotent — used by the mutual-exclusion coordinator to
    *  close this when the other left sidebar opens. Command (void). */
   close(): void;
-  /** Re-sync every rendered folder row's star (aria-pressed + fill class) from
-   *  the live `isFavorite` closure. Pure DOM refresh, no document/state
-   *  mutation — the favoriteFoldersSetting subscribe sink (main.ts) calls
-   *  this alongside the favorites section's own refresh(), so both views of
-   *  the SAME setting update from one observation point. Command (void). */
-  refreshFavoriteStars(): void;
   /** Re-evaluate every rendered FILE row's `.is-nonmd` gate from the live
    *  `isOpenableEntry` rule (canOpenWithViewer's current answer), without a
    *  renderTree (expansion/scroll/selection all survive). The viewer-toggle
@@ -76,13 +70,13 @@ export interface ExplorerPanel {
    *  an already-rendered row either permanently inert (re-enable case) or,
    *  worse, still "openable" after being disabled, which fell through
    *  activateItem's viewer branch (now false) into `onOpenFile` and opened a
-   *  non-markdown file AS markdown. Same shape as `refreshFavoriteStars` —
+   *  non-markdown file AS markdown. This is a pure DOM refresh sink for
    *  a pure DOM refresh sink for a setting the explorer doesn't own, called
    *  from main.ts's disabledViewersSetting.subscribe. Command (void). */
   refreshOpenability(): void;
   /** Re-read the whole tree at the CURRENT root after a listing-POLICY change
    *  (showHiddenFilesSetting): cache clear + renderTree. Contrast
-   *  refreshOpenability/refreshFavoriteStars — those are pure DOM refreshes,
+   *  refreshOpenability is a pure DOM refresh,
    *  sufficient when only a rendered ROW's state changes; here the listing
    *  CONTENT itself changes (dotfiles appear/disappear), so every cached
    *  `childrenCache` entry is stale by definition and must be dropped, not
@@ -91,14 +85,10 @@ export interface ExplorerPanel {
    *  user navigated to. A hidden panel is a no-op (open() rebuilds fresh
    *  anyway, same guard as resetToBaseDir). Command (void). */
   refreshListing(): void;
-  /** ⌘⇧B's handler (M5 재배선, design 분기3): open the explorer if it's
-   *  closed, then scroll the hosted favorites section into view and DELEGATE
-   *  keyboard landing to the injected `focusFavorites` (the section's own
-   *  `focusFirst` — first item, or the section itself if empty). Named
-   *  `reveal` (not `toggle`) because the action id `favorites.toggle` is a
-   *  legacy storage key only — this function's NAME must match what it
-   *  actually does. Command (void). */
-  revealFavorites(): void;
+  /** Re-sync each rendered folder's permanent-vault toggle after workspace state
+   *  changes. Filesystem identity is asynchronous; this only updates the
+   *  controls and leaves the Explorer root put. */
+  refreshVaultToggles(): Promise<void>;
   /** The tree's current root (post-normalization), or `null` before the
    *  first `renderTree` — the SSOT the ⌘⇧F file-finder panel reads instead
    *  of duplicating "which folder is the tree showing" as a second piece of
@@ -122,7 +112,6 @@ export interface ExplorerHandlers {
   onOpenFile(absPath: string): void;
   /** Is a viewer registered for this filename (R11, _workspace/01_r11.md §4)?
    *  Pure query. Optional — GATES non-markdown entries the same way
-   *  isFavorite/onToggleFavorite gate the favorite star: only when BOTH this
    *  and `onOpenWithViewer` are injected does a claimed row lose `.is-nonmd`
    *  and become clickable/Enterable (see isOpenableEntry). Callers that omit
    *  it (existing tests, standalone use) keep the pre-R11 behavior exactly —
@@ -154,35 +143,15 @@ export interface ExplorerHandlers {
    *  can never drift from the tree it's supposed to describe. Optional —
    *  omitted in unit tests / standalone use. */
   onRootChange?(root: string): void;
+  /** Toggle the clicked folder's permanent-vault registration. The main layer
+   *  owns canonicalization and persistence; this panel only reports the row's
+   *  path. */
+  onToggleVault?(root: string): void;
+  /** Filesystem-canonical query used to render each folder toggle's current
+   *  state. The Promise is required because lexical normalization cannot
+   *  resolve symlink/alias identity. */
+  isVaultRegistered?(root: string): Promise<boolean>;
   isRootLocked?(): boolean;
-  /** Is `path` currently a favorite? A closure over favoriteFoldersSetting so
-   *  every folder row always renders the live state (SSOT — the same closure
-   *  shape as getBaseDir/getFavorites elsewhere). Optional — GATES star
-   *  rendering: a folder row only gets a `.explorer-star` when BOTH
-   *  `isFavorite` and `onToggleFavorite` are injected (M5 분기5 "핸들러
-   *  gating"), so existing callers that omit them keep the pre-M5 DOM shape
-   *  exactly (no star, no roving-tabindex-count regression). */
-  isFavorite?(path: string): boolean;
-  /** Toggle `path`'s favorite membership (star click / Space on a focused
-   *  folder). Injected so main stays the single favoriteFoldersSetting
-   *  writer (pushFavorite/removeFavorite) — this panel never imports the
-   *  favorites domain. Optional, see `isFavorite` gating above. */
-  onToggleFavorite?(path: string): void;
-  /** An opaque DOM node (the favorites section's `.el`) explorer hosts BELOW
-   *  its tree, inside the same `.explorer-aside` (M5 split-pane, design 분기
-   *  1). Explorer never imports the favorites domain — it only appends this
-   *  node, exactly like listDir/onOpenFile keep it backend-independent.
-   *  Optional — omitted in unit tests that don't exercise the slot. */
-  favoritesSlot?: HTMLElement;
-  /** The favorites section's own keyboard-landing command (its
-   *  `focusFirst`): focus the first `.favorites-item`, or the section itself
-   *  when the list is empty. Injected alongside `favoritesSlot` so
-   *  `revealFavorites` DELEGATES to it instead of re-deriving the same rule
-   *  from the opaque slot node — explorer stays domain-blind (it calls the
-   *  callback, it doesn't know what "first favorite" means) while the
-   *  landing rule itself has exactly one owner (favorites-panel.ts).
-   *  Optional — omitted in unit tests that don't exercise the slot. */
-  focusFavorites?(): void;
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
@@ -200,16 +169,13 @@ function renderFolderGlyph(node: HTMLElement, expanded: boolean): void {
   if (glyph) glyph.replaceChildren(icon(iconNameForEntry("", true, expanded)));
 }
 
-/** Sync a folder row's star BUTTON (not the row) to favorited state:
- *  aria-pressed + aria-label + the `.is-favorite` fill class. Command (void).
- *  Called both at row creation (makeEntry) and by refreshFavoriteStars(), so
- *  the two paths can never drift — a single rule for "what a star looks like
- *  when favorited". Takes the star element directly (not the row) so it works
- *  before the row is attached to the tree (makeEntry builds off-DOM). */
-function renderFavoriteStar(star: HTMLButtonElement, isFav: boolean): void {
-  star.setAttribute("aria-pressed", String(isFav));
-  star.setAttribute("aria-label", isFav ? "즐겨찾기 해제" : "즐겨찾기");
-  star.classList.toggle("is-favorite", isFav);
+/** Sync a folder's permanent-vault toggle without changing the tree row. */
+function renderVaultToggle(toggle: HTMLButtonElement, registered: boolean): void {
+  toggle.replaceChildren(icon(registered ? "bookmark-filled" : "bookmark"));
+  toggle.setAttribute("aria-pressed", String(registered));
+  toggle.setAttribute("aria-label", registered ? "영구 볼트 해제" : "영구 볼트 등록");
+  toggle.title = registered ? "영구 볼트 해제" : "영구 볼트 등록";
+  toggle.classList.toggle("is-registered", registered);
 }
 
 export function createExplorerPanel({
@@ -221,17 +187,15 @@ export function createExplorerPanel({
   onOpenFileNewWindow,
   onOpen,
   onRootChange,
+  onToggleVault,
+  isVaultRegistered,
   isRootLocked,
-  isFavorite,
-  onToggleFavorite,
-  favoritesSlot,
-  focusFavorites,
 }: ExplorerHandlers): ExplorerPanel {
   /** "Does clicking/Entering this row open something?" — isEditableTextFile's
    *  reach extended by the gated viewer case: a non-editable row is only
    *  openable when BOTH canOpenWithViewer/onOpenWithViewer were injected AND
-   *  the injected query claims this filename (isFavorite/onToggleFavorite
-   *  gating shape), so callers that omit them keep every non-editable row
+   *  the injected query claims this filename, so callers that omit them keep
+   *  every non-editable row
    *  inert exactly as before. Drives BOTH the `.is-nonmd` dim (makeEntry) and
    *  the activation branch (activateItem) from one rule. Pure query. */
   const isOpenableEntry = (name: string): boolean =>
@@ -256,12 +220,6 @@ export function createExplorerPanel({
   tree.setAttribute("role", "tree");
   tree.setAttribute("aria-label", "파일 탐색기");
   aside.append(header, tree);
-  // M5 split-pane (design 분기1/7): the favorites section is an opaque node
-  // hosted BELOW the tree, inside the SAME .explorer-aside — explorer never
-  // imports the favorites domain, it only appends what main handed it. Mounted
-  // once at creation (not per-open) so a closed→open toggle never re-parents it.
-  if (favoritesSlot) aside.append(favoritesSlot);
-
   // Per-root cache: a folder's children are read once and reused on re-expand
   // (no re-call). Cleared on root change / panel reopen — MVP has no fs-watch
   // invalidation (lazy read-only tree, "look around this doc lightly").
@@ -273,6 +231,15 @@ export function createExplorerPanel({
    *  never a stale or pre-normalized value. `refreshListing` reads this to
    *  rebuild in place instead of falling back to getBaseDir(). */
   let currentRoot: string | null = null;
+
+  const refreshVaultToggles = async (): Promise<void> => {
+    if (!isVaultRegistered) return;
+    for (const row of tree.querySelectorAll<HTMLElement>(".explorer-dir")) {
+      const toggle = row.querySelector<HTMLButtonElement>(":scope > .explorer-label > .explorer-vault-toggle");
+      const path = row.dataset.path;
+      if (toggle && path) renderVaultToggle(toggle, await isVaultRegistered(path));
+    }
+  };
 
   /** The focus cursor (roving tabindex owner). Distinct from selection: arrows
    *  move this, but only Enter/click activates. Reset on every renderTree. */
@@ -355,7 +322,7 @@ export function createExplorerPanel({
    *  children group; files get a spacer (chevron alignment) and are greyed +
    *  inert when non-markdown. `level` (1-based) drives aria-level + the CSS
    *  indent var, so indentation always matches the announced depth. */
-  const makeEntry = (e: DirEntry, level: number): HTMLElement => {
+  const makeEntry = async (e: DirEntry, level: number): Promise<HTMLElement> => {
     const kind = e.is_dir ? "explorer-dir" : "explorer-file";
     const item = create("div", `explorer-item ${kind}`);
     item.setAttribute("role", "treeitem");
@@ -379,20 +346,12 @@ export function createExplorerPanel({
     // block BELOW the label — not as a flex sibling to its RIGHT (the 527faf6 bug).
     const label = create("div", "explorer-label");
     label.append(chevron, glyph, name);
-    // Folder-row favorite star (M5 분기5): GATED — only rendered when BOTH
-    // isFavorite and onToggleFavorite are injected, so callers that omit them
-    // (existing tests, standalone use) keep the exact pre-M5 DOM shape (no
-    // star anywhere, roving-tabindex count unchanged). Files and `..` never
-    // get one (confirmed UX: only folders are favoritable). tabindex=-1 keeps
-    // it OUT of the roving-tabindex race — the tree's "exactly one tabindex=0"
-    // invariant only ever counts .explorer-item nodes, never this button.
-    if (e.is_dir && isFavorite && onToggleFavorite) {
-      const star = create("button", "explorer-star") as HTMLButtonElement;
-      star.type = "button";
-      star.tabIndex = -1;
-      star.append(icon("bookmark"));
-      renderFavoriteStar(star, isFavorite(e.path));
-      label.append(star);
+    if (e.is_dir && onToggleVault && isVaultRegistered) {
+      const toggle = create("button", "explorer-vault-toggle");
+      toggle.type = "button";
+      toggle.tabIndex = -1;
+      renderVaultToggle(toggle, await isVaultRegistered(e.path));
+      label.append(toggle);
     }
     item.append(label);
 
@@ -420,7 +379,7 @@ export function createExplorerPanel({
     if (!path) return;
     const level = Number(node.dataset.level ?? "1") + 1;
     const entries = await readChildren(path);
-    for (const child of entries) kids.append(makeEntry(child, level));
+    for (const child of entries) kids.append(await makeEntry(child, level));
   };
 
   /** Hide a folder's children (DOM + cache preserved for instant re-expand).
@@ -503,7 +462,7 @@ export function createExplorerPanel({
     }
 
     const entries = await readChildren(rootPath);
-    for (const e of entries) tree.append(makeEntry(e, 1));
+    for (const e of entries) tree.append(await makeEntry(e, 1));
 
     const first = visibleItems()[0];
     if (first) focusItem(first, false);
@@ -610,27 +569,13 @@ export function createExplorerPanel({
     changeRoot(absPath);
   };
 
-  /** Re-read isFavorite(path) for every rendered folder row and re-sync its
-   *  star. Pure DOM refresh (no renderTree, no cache clear) — cheap enough to
-   *  call on every favoriteFoldersSetting change (main.ts's single subscribe
-   *  sink), and correct because a folder row keeps its `data-path` for the
-   *  lifetime of its DOM (renderTree/expandFolder never mutate it in place).
-   *  No-op when isFavorite wasn't injected (nothing to sync). Command (void). */
-  const refreshFavoriteStars = (): void => {
-    if (!isFavorite) return;
-    for (const row of tree.querySelectorAll<HTMLElement>(".explorer-dir")) {
-      const star = row.querySelector(":scope > .explorer-label > .explorer-star") as HTMLButtonElement | null;
-      if (star && row.dataset.path) renderFavoriteStar(star, isFavorite(row.dataset.path));
-    }
-  };
-
   /** Re-toggle `.is-nonmd` on every rendered `.explorer-file` row from the
    *  CURRENT `isOpenableEntry` answer — see the interface doc comment for
    *  why this exists. Scoped to `.explorer-file` only (never `.explorer-dir`/
    *  `.explorer-up`, which have no `.is-nonmd` concept). A row's
    *  `dataset.path` is stable for the lifetime of its DOM (renderTree/
    *  expandFolder never mutate it in place — same guarantee
-   *  refreshFavoriteStars already relies on for `.explorer-dir` rows), so
+   *  the rendered row relies on, so
    *  `basename` recovers the filename `isOpenableEntry` needs without
    *  re-reading the tree. Command (void). */
   const refreshOpenability = (): void => {
@@ -643,7 +588,7 @@ export function createExplorerPanel({
 
   /** Re-read the CURRENT root after a listing-policy change (showHiddenFiles):
    *  cache clear + renderTree. See the interface doc comment for why this
-   *  differs from refreshOpenability/refreshFavoriteStars (content vs. row
+   *  differs from refreshOpenability (content vs. row
    *  state) and from resetToBaseDir (root preserved vs. reset). `aside.hidden`
    *  guard matches resetToBaseDir's — a closed panel has nothing to redraw,
    *  and open() rebuilds fresh from getBaseDir() on its own anyway. Command
@@ -654,50 +599,23 @@ export function createExplorerPanel({
     void renderTree(currentRoot ?? getBaseDir());
   };
 
-  /** ⌘⇧B's handler: reveal the explorer (open it if closed — reusing the
-   *  SAME shell-reveal command jumpToRoot uses, so "open" logic lives in one
-   *  place), then land the user in the hosted favorites section: scroll it
-   *  into view and DELEGATE the "first item, or the section itself" landing
-   *  rule to the injected `focusFavorites` (the favorites section's own
-   *  `focusFirst`) — explorer never re-derives that rule from the opaque
-   *  slot node, so it has exactly one owner (favorites-panel.ts). No-op on
-   *  the scroll/focus half if no favoritesSlot/focusFavorites was injected
-   *  (standalone/test use). Command (void). */
-  const revealFavorites = (): void => {
-    if (aside.hidden) open();
-    if (!favoritesSlot) return;
-    favoritesSlot.scrollIntoView({ block: "nearest" });
-    focusFavorites?.();
-  };
-
   button.addEventListener("click", () => {
     if (aside.hidden) open();
     else close();
   });
 
-  /** The folder row's star button containing the click's target, or null if
-   *  the click landed outside any star. Named as a finder (not `is*`) because
-   *  it returns the element itself, not a boolean — callers truthy-check the
-   *  result. Used so the "star pre-empts folder activation" rule is a single
-   *  guard checked FIRST in the delegated click listener (favorites-remove
-   *  uses the same check-first-then-early-return shape) — not a second
-   *  handler bolted onto the row (M5 design 분기5: no per-widget click
-   *  handlers). Pure query. */
-  const findStarButton = (target: HTMLElement): HTMLElement | null => target.closest(".explorer-star");
+  const toggleFocusedVault = (item: HTMLElement): void => {
+    if (!onToggleVault || !item.classList.contains("explorer-dir")) return;
+    if (item.dataset.path) onToggleVault(item.dataset.path);
+  };
 
-  // Click landing — one delegated listener (outline/mermaid single-path shape):
-  // clicking an item moves the focus cursor there AND activates it (folder →
-  // toggle, file → open, `..` → up). No hover, no dblclick — every action is
-  // click- or keyboard-reachable. The star is checked FIRST and early-returns
-  // (M5): a star click toggles the favorite and must NEVER also open/collapse
-  // the folder underneath it.
   tree.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
-    const star = findStarButton(target);
-    if (star) {
-      const row = star.closest(".explorer-item") as HTMLElement | null;
-      if (row?.dataset.path) onToggleFavorite?.(row.dataset.path);
-      return; // early-return: activateItem never runs, the folder doesn't toggle
+    const toggle = target.closest(".explorer-vault-toggle");
+    if (toggle) {
+      const row = toggle.closest(".explorer-item") as HTMLElement | null;
+      if (row?.dataset.path) onToggleVault?.(row.dataset.path);
+      return;
     }
     const item = target.closest(".explorer-item") as HTMLElement | null;
     if (!item) return;
@@ -705,30 +623,14 @@ export function createExplorerPanel({
     activateItem(item, e.metaKey || e.ctrlKey);
   });
 
-  /** Space-key rule (WCAG 2.1.1): TOGGLE the FOCUSED folder's favorite
-   *  membership (add if absent, remove if present — same as a star click).
-   *  Named with the toggle verb (not "star"/"add") because the operation is
-   *  a toggle, not an addition. The star button itself is tabindex=-1 (out
-   *  of the roving-tabindex race), so keyboard users need a path through the
-   *  tree's own keydown — this is it. No-op on files/`..`/when the handler
-   *  isn't injected. Command (void). */
-  const toggleFocusedFolderFavorite = (item: HTMLElement): void => {
-    if (!onToggleFavorite || !item.classList.contains("explorer-dir")) return;
-    if (item.dataset.path) onToggleFavorite(item.dataset.path);
-  };
-
   // Keyboard — one delegated keydown on the tree (roving tabindex). Each key maps
   // to a named rule; the tree is a single tab stop and arrows move WITHIN it.
   tree.addEventListener("keydown", (e) => {
     const item = focused;
     if (!item) return;
-    // Space is checked via e.code (physical key), matching the shortcuts
-    // registry's chord-matching convention, so it fires under non-Latin
-    // keyboard layouts too. Space is unused elsewhere in this tree, so this
-    // is a pure addition — no existing binding collides.
     if (e.code === "Space") {
       e.preventDefault();
-      toggleFocusedFolderFavorite(item);
+      toggleFocusedVault(item);
       return;
     }
     switch (e.key) {
@@ -769,10 +671,9 @@ export function createExplorerPanel({
     resetToBaseDir,
     jumpToRoot,
     close,
-    refreshFavoriteStars,
     refreshOpenability,
     refreshListing,
-    revealFavorites,
+    refreshVaultToggles,
     currentRootPath: () => currentRoot,
   };
 }

@@ -23,6 +23,7 @@ _workspace*/
 
 # Agent / orchestration scratch (not product source)
 .omc/
+.omo/
 .agents/
 .test/
 scratchpad/

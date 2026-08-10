@@ -53,13 +53,6 @@ export interface TitleBar {
  *  it), then a drag spacer, then the `mode`/`theme`/`settings` right
  *  cluster.
  *
- *  M5: `favorites` REMOVED. Favorites is no longer an independent toggle
- *  view (see favorites/favorites-panel.ts header) — it's a permanently
- *  hosted section inside the explorer's own aside, so there's no button for
- *  arrangeTitleBar to place any more. The `favorites.toggle` action (⌘⇧B)
- *  still exists (see shortcuts/actions.ts) but now reveals the explorer +
- *  scrolls to that section instead of toggling a title-bar button.
- *
  *  M6: `explorer`/`recent`/`outline`/`openPath` REMOVED from this shape —
  *  they're `leftGroup`'s job now (createLeftCommandGroup), because the group
  *  rehomes as ONE element (rehomeLeftCommandGroup) and a 4-part shape here

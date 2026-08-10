@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { homeDir, documentDir } from "@tauri-apps/api/path";
 import { dirOf, resolveOpenPath, normalizePath, basename } from "./document/path";
 import { createOpenPathPrompt } from "./document/open-file/path-prompt";
 import { EditorState } from "@codemirror/state";
@@ -39,7 +38,6 @@ import {
   vimModeSetting,
   keybindingsSetting,
   recentDocsSetting,
-  favoriteFoldersSetting,
   sidebarWidthSetting,
   disabledViewersSetting,
   isViewerEnabled,
@@ -69,9 +67,7 @@ import { createRecentPanel } from "./sidebar/recent/recent-panel";
 import { createSearchPanel, type ScanResult } from "./sidebar/search/search-panel";
 import { openFindPanel, enterEditModeForReplace } from "./markdown/find";
 import { pushRecent, pruneMissing } from "./sidebar/recent/recent-docs";
-import { createFavoritesSection } from "./sidebar/favorites/favorites-panel";
 import { createWelcomePane } from "./chrome/welcome/welcome-pane";
-import { pushFavorite, removeFavorite, isFavorite, reorderFavorite } from "./sidebar/favorites/favorite-folders";
 import {
   makeHistory,
   pushHistory,
@@ -87,12 +83,15 @@ import { createConflictRecovery, sameConflictIdentity, type ConflictIdentity } f
 import { openImageViewer } from "./chrome/viewer/image-viewer";
 import { isRemoteSrc } from "./markdown/image";
 import { setImageOpenHandler } from "./markdown/image-open";
-import { WorkspaceStore } from "./workspace/workspace-state";
+import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore, type Vault } from "./workspace/workspace-state";
 import { routeCliFile, routeCliFileResolved } from "./workspace/cli-routing";
+import { createDocumentReloadUrl, readDocumentReloadHandoff } from "./workspace/reload-handoff";
 import {
-  defaultFavoriteInitializationKey,
   favoriteFoldersStorageKey,
+  favoriteVaultMigrationKey,
+  canonicalizeLegacyFavoriteFolder,
   migrateFavoriteFoldersToVaults,
+  readLegacyFavoriteFolders,
   shouldMigrateLegacyFavorites,
 } from "./workspace/favorite-vault-migration";
 import { createWorkspaceSidebar } from "./workspace/workspace-sidebar";
@@ -115,6 +114,12 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
   if (cls) e.className = cls;
   return e;
 };
+
+const SAFE_EXPLORER_BASE_PATH = "/";
+
+export function shouldPreserveGlobalExplorerRoot(vault: Pick<Vault, "persistenceKind"> | undefined): boolean {
+  return vault?.persistenceKind === "global";
+}
 
 /** Set a chrome button (title-bar or footer) to a Lucide icon + (optional) label,
  *  replacing whatever it held. The shadcn/Raycast button shape: a 16px monochrome
@@ -178,30 +183,12 @@ function makeModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode) =>
   return { btn, render };
 }
 
-async function initDefaultFavorites() {
-  const current = favoriteFoldersSetting.get();
-  if (current.length === 0 && localStorage.getItem("mermark.favoriteFolders") === null) {
-    try {
-      const home = await homeDir();
-      const docs = await documentDir();
-      const list: string[] = [];
-      if (home) list.push(normalizePath(home));
-      if (docs) list.push(normalizePath(docs));
-      favoriteFoldersSetting.set(list);
-      localStorage.setItem(defaultFavoriteInitializationKey, "1");
-    } catch (err) {
-      console.error("Failed to init default favorites:", err);
-    }
-  }
-}
-
 async function boot() {
   void unwatchFile();
   const migrateLegacyFavorites = shouldMigrateLegacyFavorites(
     localStorage.getItem(favoriteFoldersStorageKey) !== null,
-    localStorage.getItem(defaultFavoriteInitializationKey) === "1",
+    localStorage.getItem(favoriteVaultMigrationKey) === "1",
   );
-  await initDefaultFavorites();
   // Theme is the SSOT; bind the DOM sink first so the dataset is set before the
   // editor mounts (mermaid reads it on its lazy initial load) — and so it also
   // applies on the no-file / error screens below.
@@ -252,30 +239,24 @@ async function boot() {
   const applyHeadingFont = headingFontSink();
   headingFontSetting.bind((v) => applyHeadingFont(effectiveHeadingFont(v)));
   const root = document.querySelector<HTMLDivElement>("#app")!;
-  const requestedFile = new URLSearchParams(location.search).get("file");
+  const reloadHandoff = readDocumentReloadHandoff(location.search);
+  const requestedFile = reloadHandoff.file;
   const workspaceStore = new WorkspaceStore();
   if (migrateLegacyFavorites) {
     try {
       await migrateFavoriteFoldersToVaults(
         workspaceStore,
-        favoriteFoldersSetting.get(),
+        readLegacyFavoriteFolders(),
         async (path) => invoke<boolean>("directory_exists", { path }),
-        async (path) => {
-          try {
-            const resolved: unknown = await invoke("canonicalize_path", { path });
-            return typeof resolved === "string" ? resolved : null;
-          } catch (error) {
-            if (error instanceof Error || typeof error === "string") return null;
-            throw error;
-          }
-        },
+        (path) => canonicalizeLegacyFavoriteFolder((candidate) => invoke("canonicalize_path", { path: candidate }), path),
       );
     } catch (error) {
       if (error instanceof Error || typeof error === "string") console.error("Failed to migrate favorite folders:", error);
       else throw error;
     }
   }
-  const cliRoute = requestedFile ? await routeCliFileResolved(workspaceStore, requestedFile, async (path) => {
+  if (reloadHandoff.globalExplorerRoot !== null) workspaceStore.selectVault(GLOBAL_VAULT_ID);
+  const cliRoute = requestedFile && reloadHandoff.globalExplorerRoot === null ? await routeCliFileResolved(workspaceStore, requestedFile, async (path) => {
     try {
       const resolved: unknown = await invoke("canonicalize_path", { path });
       return typeof resolved === "string" ? resolved : path;
@@ -287,11 +268,17 @@ async function boot() {
   const file = cliRoute?.path ?? requestedFile;
   const vaultTabs = new VaultTabStore();
   const conflictRecovery = createConflictRecovery();
-  let routedVault = cliRoute?.vault;
-  const currentVault = () => routedVault ?? workspaceStore.get().vaults.find((vault) => vault.vaultId === workspaceStore.get().workspaces.find((workspace) => workspace.workspaceId === workspaceStore.get().currentWorkspaceId)?.currentVaultId);
+  let routedVault = reloadHandoff.globalExplorerRoot !== null ? workspaceStore.getGlobalVault() : cliRoute?.vault;
+  const selectedWorkspaceVault = (): Vault | undefined => {
+    const workspace = workspaceStore.get().workspaces.find((item) => item.workspaceId === workspaceStore.get().currentWorkspaceId);
+    return workspace?.currentVaultId ? workspaceStore.getVault(workspace.currentVaultId) : undefined;
+  };
+  const currentVault = () => {
+    return routedVault ?? selectedWorkspaceVault();
+  };
   const routeDocumentPath = (path: string) => {
     const current = routedVault;
-    if (current?.persistenceKind === "temporary" && normalizePath(current.rootPath) === normalizePath(path)) return current;
+    if (current?.persistenceKind === "global") return current;
     const route = routeCliFile(workspaceStore, path);
     routedVault = route.vault;
     return route.vault;
@@ -358,7 +345,13 @@ async function boot() {
   // mutable cell; openInWindow re-points it. No second copy of "which file".
   let current: EditorController;
   let currentFile = initialFile ?? "";
-  let currentBaseDir = initialFile ? dirOf(initialFile) : "";
+  let currentBaseDir = initialFile ? dirOf(initialFile) || SAFE_EXPLORER_BASE_PATH : SAFE_EXPLORER_BASE_PATH;
+  let currentExplorerFolder = reloadHandoff.globalExplorerRoot ?? currentBaseDir;
+  const explorerRootForCurrentSelection = (): string => {
+    const selected = selectedWorkspaceVault();
+    return shouldPreserveGlobalExplorerRoot(selected) ? currentExplorerFolder : currentVault()?.explorerRoot ?? currentBaseDir;
+  };
+  const explorerRootForVault = (vault: Vault): string => vault.persistenceKind === "global" ? currentExplorerFolder : vault.rootPath;
   // Document navigation history (⌘[/⌘]) — ephemeral in-memory session state, NOT
   // a setting: starts empty; the first openInWindow records the launch file.
   // Distinct from the recent MRU list (recentDocsSetting) — see nav-history.ts.
@@ -384,7 +377,7 @@ async function boot() {
       const target = resolveOpenPath(raw, currentBaseDir);
       if (!target) throw new Error("경로를 입력하세요");
       if (!currentFile) {
-        location.href = `index.html?file=${encodeURIComponent(target)}`;
+        location.href = createDocumentReloadUrl(target, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
         return;
       }
       // read_file first: if it fails (missing/unreadable) we throw BEFORE any
@@ -420,26 +413,6 @@ async function boot() {
     getView: () => current?.view ?? dummyView,
     onOpen: () => closeOtherSidebarPanels("outline"),
   });
-
-  // ── Favorites BOTTOM SECTION (M5, hosted inside the explorer's aside — see
-  //    favorites/favorites-panel.ts header). Declared BEFORE explorer so its
-  //    `.el` can be handed to createExplorerPanel({ favoritesSlot }) below —
-  //    the section is a pure sink of favoriteFoldersSetting (getFavorites)
-  //    and only emits events; main is the single writer (toggleFavorite /
-  //    onRemove). No getCurrentFolder/onAdd any more — adding a favorite is
-  //    now the folder-row star's job (onToggleFavorite, wired into explorer
-  //    below). ─────────────────────────────────────────────────────────────
-  const favoritesSection = createFavoritesSection({
-    getFavorites: () => favoriteFoldersSetting.get(),
-    onJump: (abs) => explorer.jumpToRoot(abs),
-    onRemove: (abs) => favoriteFoldersSetting.set(removeFavorite(favoriteFoldersSetting.get(), abs)),
-    onReorder: (abs, to) => favoriteFoldersSetting.set(reorderFavorite(favoriteFoldersSetting.get(), abs, to)),
-  });
-
-  function toggleFavorite(abs: string): void {
-    const list = favoriteFoldersSetting.get();
-    favoriteFoldersSetting.set(isFavorite(list, abs) ? removeFavorite(list, abs) : pushFavorite(list, abs));
-  }
 
   // Viewer don't-stack slot (R11, _workspace/01_r11.md §5) — shared by every
   // registered viewer (image, and now extensions like Excel), same shape as
@@ -554,30 +527,13 @@ async function boot() {
     viewerSlot.closeAll();
   }
 
-  // ── File explorer LEFT SIDEBAR. A lazy tree rooted at the live document's
-  //    folder: click reads children (list_dir), `..` single-clicks/Enters
-  //    upward, a markdown file click/Enter reuses main's open path (read_file →
-  //    commit → mount) with zero new open code. Injected handlers keep it
-  //    backend-independent and reuse commitBeforeSwitch/openInWindow.
-  //    M5: also hosts the favorites section below its tree (favoritesSlot) and
-  //    renders/toggles each folder row's favorite star (isFavorite/
-  //    onToggleFavorite) — explorer never imports the favorites domain itself,
-  //    it only receives a DOM node + two closures (same injection shape as
-  //    listDir/onOpenFile). canOpenWithViewer/onOpenWithViewer (R11) open a
-  //    registered viewer (image, or any extension) — unlike onOpenFile it
-  //    never branches on `!file`: the viewer is a body-level overlay, not a
-  //    document swap, so it works the same whether or not a markdown document
-  //    is open (welcome screen included). Explorer itself never imports the
-  //    viewer registry (design §4 — dependency direction stays main.ts-only).
-  //    onOpenFileNewWindow (⌘/Ctrl+click, ⌘+Enter) reuses open_path — the same
-  //    IPC command wikilink clicks already use to spawn a new document window.
   const explorer = createExplorerPanel({
     listDir: (p) =>
       invoke<DirEntry[]>("list_dir", { path: p, showHidden: showHiddenFilesSetting.get() === "on" }),
-    getBaseDir: () => currentVault()?.explorerRoot ?? currentBaseDir,
+    getBaseDir: explorerRootForCurrentSelection,
     onOpenFile: async (absPath) => {
       if (!currentFile) {
-        location.href = `index.html?file=${encodeURIComponent(absPath)}`;
+        location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
       } else {
         const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
         await commitBeforeSwitch();
@@ -595,12 +551,13 @@ async function boot() {
       });
     },
     onOpen: () => closeOtherSidebarPanels("explorer"),
-    onRootChange: (root) => breadcrumb.render(root),
+    onRootChange: (root) => {
+      if (currentVault()?.persistenceKind === "global") currentExplorerFolder = root;
+      breadcrumb.render(root);
+    },
+    onToggleVault: (root) => toggleExplorerVault(root),
+    isVaultRegistered: (root) => isVaultRegistered(root),
     isRootLocked: () => currentVault()?.persistenceKind === "permanent",
-    isFavorite: (p) => isFavorite(favoriteFoldersSetting.get(), p),
-    onToggleFavorite: toggleFavorite,
-    favoritesSlot: favoritesSection.el,
-    focusFavorites: favoritesSection.focusFirst,
   });
 
   const openDocument = async (absPath: string): Promise<void> => {
@@ -615,9 +572,7 @@ async function boot() {
   };
 
   const welcomePane = createWelcomePane({
-    getFavorites: () => favoriteFoldersSetting.get(),
     getRecent: () => recentDocsSetting.get(),
-    onJumpFolder: (folder) => explorer.jumpToRoot(folder),
     onOpenFile: openDocumentSafely,
     onOpenFolder: () => explorer.button.click(),
     openFolderChord: (() => {
@@ -631,33 +586,93 @@ async function boot() {
     closeConflict();
     teardownCurrent();
     currentFile = "";
-    currentBaseDir = "";
+    const vault = currentVault();
+    currentBaseDir = vault?.persistenceKind === "permanent" ? vault.rootPath : currentExplorerFolder;
     host.classList.add("welcome-host");
     host.append(welcomePane);
   };
 
+  const canonicalizeVaultPath = async (root: string): Promise<string> => {
+    const resolved: unknown = await invoke("canonicalize_path", { path: root });
+    if (typeof resolved !== "string") {
+      throw new WorkspaceStateError("invalid-path", "폴더 경로를 정규화할 수 없습니다");
+    }
+    return normalizePath(resolved);
+  };
+
+  const isVaultRegistered = async (root: string): Promise<boolean> => {
+    const canonical = await canonicalizeVaultPath(root);
+    return workspaceStore.get().vaults.some((vault) => vault.rootPath === canonical);
+  };
+
+  const toggleExplorerVault = (root: string): void => {
+    void (async (): Promise<void> => {
+      try {
+        const canonical = await canonicalizeVaultPath(root);
+        const existing = workspaceStore.get().vaults.find((vault) => vault.rootPath === canonical);
+        if (existing) {
+          const wasCurrent = currentVault()?.vaultId === existing.vaultId;
+          workspaceStore.unregisterVault(existing.vaultId);
+          if (wasCurrent) routedVault = undefined;
+        } else {
+          const wasGlobal = currentVault()?.persistenceKind === "global";
+          const registered = workspaceStore.registerCanonicalVault(canonical);
+          if (wasGlobal) {
+            workspaceStore.selectVault(GLOBAL_VAULT_ID);
+            routedVault = workspaceStore.getGlobalVault();
+          } else {
+            routedVault = registered;
+          }
+        }
+      } catch (error) {
+        if (error instanceof WorkspaceStateError || error instanceof Error || typeof error === "string") {
+          window.alert(error instanceof Error ? error.message : error);
+          return;
+        }
+        throw error;
+      }
+    })();
+  };
+
   const workspaceSidebar = createWorkspaceSidebar({
     store: workspaceStore,
-    canonicalizePath: (path) => invoke<string>("canonicalize_path", { path }),
     onOpen: () => closeOtherSidebarPanels("workspace"),
     onSelectVault: (vault) => {
+      const selectedVault = workspaceStore.selectVault(vault.vaultId);
       const previousVaultId = currentVault()?.vaultId;
-      routedVault = vault;
-      const selection = selectVaultView(vaultTabs.get(vault.vaultId));
+      routedVault = selectedVault;
+      const selection = selectVaultView(vaultTabs.get(selectedVault.vaultId));
       if (selection.kind === "document") {
-        if (previousVaultId !== vault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path);
-        else explorer.jumpToRoot(vault.rootPath);
+        if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path);
+        else explorer.jumpToRoot(explorerRootForVault(selectedVault));
       } else {
         renderWelcomeForVault();
-        explorer.jumpToRoot(vault.rootPath);
+        explorer.jumpToRoot(explorerRootForVault(selectedVault));
       }
     },
     onSelectTab: (vault, tab) => {
-      routedVault = vault;
+      const selectedVault = workspaceStore.selectVault(vault.vaultId);
+      routedVault = selectedVault;
+      vaultTabs.select(selectedVault.vaultId, tab.tabId, selectedVault.persistenceKind === "permanent" ? "permanent" : "session");
       openDocumentSafely(tab.path);
+    },
+    onCloseTab: (vault, tab) => {
+      const currentTabs = vaultTabs.get(vault.vaultId);
+      const wasActive = currentTabs.activeTabId === tab.tabId;
+      const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, vault.persistenceKind === "permanent" ? "permanent" : "session");
+      if (!wasActive || currentVault()?.vaultId !== vault.vaultId) return;
+      const selection = selectVaultView(nextTabs);
+      if (selection.kind === "document") {
+        routedVault = vault;
+        openDocumentSafely(selection.tab.path);
+      } else {
+        routedVault = vault;
+        renderWelcomeForVault();
+      }
     },
     getTabs: (vaultId) => vaultTabs.get(vaultId),
   });
+  workspaceStore.subscribe(() => { void explorer.refreshVaultToggles(); });
   vaultTabs.subscribe(() => workspaceSidebar.refresh());
 
   // ── Recent documents LEFT SIDEBAR. Same toggle shape as explorer/outline; the
@@ -669,7 +684,7 @@ async function boot() {
     getRecent: () => recentDocsSetting.get(),
     onOpenFile: async (absPath) => {
       if (!currentFile) {
-        location.href = `index.html?file=${encodeURIComponent(absPath)}`;
+        location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
       } else {
         try {
           const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
@@ -699,7 +714,7 @@ async function boot() {
     getRoot: () => explorer.currentRootPath() ?? currentBaseDir,
     onOpenFile: async (absPath) => {
       if (!currentFile) {
-        location.href = `index.html?file=${encodeURIComponent(absPath)}`;
+        location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
       } else {
         const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
         await commitBeforeSwitch();
@@ -717,10 +732,8 @@ async function boot() {
 
   // Title-bar order (single contract, arrangeTitleBar owns it): leftGroup
   // (탐색기 · 최근 · 목차 · 경로열기) · [drag spacer] · 모드 · 테마 · ⚙,
-  // window-controls always last (win/linux). M5: 즐겨찾기 button REMOVED (see
-  // title-bar.ts) — the ⌘⇧B action now reveals the explorer's hosted
-  // favorites section instead (registerHandler("favorites.toggle", ...)
-  // below). createSettingsButton only builds the button + lazy modal wiring —
+  // window-controls always last (win/linux). createSettingsButton only builds
+  // the button + lazy modal wiring —
   // position is this call's job, not modal.ts's (M2 decision). R9: leftGroup
   // now starts with only openPath — registerSidebarPanel below inserts the
   // three panel toggle buttons before it, in registration order, so the
@@ -779,15 +792,6 @@ async function boot() {
   // The recent panel is a sink of recentDocsSetting: re-render on every change
   // (no-op while closed). Single subscription — no hand fan-out.
   recentDocsSetting.subscribe(() => recent.refresh());
-  // Favorites now has TWO views of the same setting (M5 split-pane: the
-  // section list AND every folder row's star) — still ONE subscription
-  // point, which fans out to both refreshes. That's the SSOT contract: a
-  // single observation point driving multiple sinks is not hand fan-out,
-  // it's what "single writer, single sink" looks like with two consumers.
-  favoriteFoldersSetting.subscribe(() => {
-    favoritesSection.refresh();
-    explorer.refreshFavoriteStars();
-  });
   // A viewer toggle (settings panel) changes what `canOpenWithViewer` answers
   // for already-rendered rows, but explorer bakes `.is-nonmd` in at render
   // time and never re-asks on click (explorer-panel.ts's activateItem short-
@@ -797,7 +801,6 @@ async function boot() {
   // subscribe (not bind): the initial renderTree already saw the setting's
   // boot value, so a bind here would just re-run the same refresh redundantly
   // on every mount. Explorer owns no state here — this is a pure DOM sink,
-  // same shape as the favoriteFoldersSetting subscription just above.
   disabledViewersSetting.subscribe(() => explorer.refreshOpenability());
   // showHiddenFiles changes the listing CONTENT (dotfiles appear/disappear),
   // not just a rendered row's state — refreshListing clears childrenCache and
@@ -870,15 +873,16 @@ async function boot() {
   function openInWindow(
     file: string,
     fresh: { text: string; mtime: number },
-    opts: { viaHistory?: boolean } = {},
+    opts: { readonly viaHistory?: boolean } = {},
   ): void {
+    const preserveExplorerRoot = shouldPreserveGlobalExplorerRoot(selectedWorkspaceVault());
+    const selectedVault = routeDocumentPath(file);
     closeConflict();
     closeOpenViewer(); // opening a document closes any open viewer (design §A rule 1)
     teardownCurrent();
     host.classList.remove("welcome-host");
     currentFile = file;
-    currentBaseDir = dirOf(file);
-    const selectedVault = routeDocumentPath(file);
+    currentBaseDir = dirOf(file) || SAFE_EXPLORER_BASE_PATH;
     if (selectedVault) vaultTabs.open(selectedVault.vaultId, file, selectedVault.persistenceKind === "permanent" ? "permanent" : "session");
     const { text, mtime } = fresh;
 
@@ -948,13 +952,13 @@ async function boot() {
     outline.refresh();
     // The explorer's root is the live document's folder — reseed it on a switch
     // (ephemeral root, not a setting). A no-op when the panel is closed.
-    explorer.resetToBaseDir();
+    if (!preserveExplorerRoot) explorer.resetToBaseDir();
     // Seed the footer breadcrumb for THIS switch too: resetToBaseDir is a no-op
     // while the explorer panel is closed (so onRootChange won't fire), and the
     // breadcrumb must still track the live document's folder even with the
     // panel shut. Idempotent with onRootChange when the panel IS open (both
     // land on the same currentBaseDir — a harmless double render).
-    breadcrumb.render(currentBaseDir);
+    breadcrumb.render(preserveExplorerRoot ? currentExplorerFolder : currentBaseDir);
 
     // Record this document as most-recent — the SINGLE write point for the recent
     // list (dedup → front → cap via pushRecent). The recent panel re-renders from
@@ -1146,12 +1150,6 @@ async function boot() {
   registerHandler("explorer.toggle", () => explorer.button.click());
   registerHandler("recent.toggle", () => recent.button.click());
   registerHandler("outline.toggle", () => outline.button.click());
-  // M5: ⌘⇧B no longer toggles a title-bar button (removed) — it reveals the
-  // explorer's hosted favorites section (open the explorer if closed, scroll
-  // + focus the section). The action id/binding are legacy-frozen (storage
-  // key); only the handler's behavior changed, which is why the name here is
-  // `revealFavorites`, not `toggle`.
-  registerHandler("favorites.toggle", () => explorer.revealFavorites());
   registerHandler("history.back", goBack);
   registerHandler("history.forward", goForward);
   registerHandler("openPath.toggle", () => prompt.button.click());

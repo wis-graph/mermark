@@ -1236,14 +1236,14 @@ result.g16.scrollPreserved = g16AfterEsc.scrollTop === g16Before.scrollTop;
 // `.welcome-host{display:flex}` — `.welcome-host` IS `.editor-host` itself,
 // main.ts's boot() does `host.classList.add("welcome-host")` on the SAME
 // element, never a child — so this is a genuine live-cascade proof, not a
-// second element). Boot with NO file; the explorer's default root at boot is
-// NOT `/mock/vault` (home/documents dir, main.ts), so a favorite-folder seed
-// + the welcome pane's OWN "즐겨찾기" row click (welcome-pane.ts's
-// onJumpFolder → explorer.jumpToRoot, a real product code path, not a test
-// hack) is how a real user would reach it from a bare welcome screen too.
-await page.evaluate(() => localStorage.setItem("mermark.favoriteFolders", JSON.stringify(["/mock/vault"])));
+// second element). Boot with no file via the supported Global Vault handoff,
+// whose persisted explorer root is `/mock/vault`; opening Explorer then takes
+// the same product route to the fixture row without relying on removed
+// Favorites UI.
 const welcomeUrl = new URL(url);
 welcomeUrl.searchParams.delete("file");
+welcomeUrl.searchParams.set("vault", "global");
+welcomeUrl.searchParams.set("root", "/mock/vault");
 await page.goto(welcomeUrl.toString(), { waitUntil: "networkidle", timeout: 15000 });
 await page.waitForSelector(".welcome-host", { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(400);
@@ -1257,7 +1257,7 @@ const welcomeHostBox = () =>
   });
 result.g16.welcomeHostVisibleBeforeOpen = (await welcomeHostBox())?.width > 0;
 
-await page.locator(".welcome-folder-row", { hasText: "vault" }).click();
+await page.click(".explorer-btn");
 await page.waitForTimeout(250);
 await rowFor("/mock/vault/pic.png").click();
 await page.waitForTimeout(300);
@@ -1272,9 +1272,7 @@ result.g16.editorHostHiddenAfterWelcomeClose = await page
   .evaluate((elx) => elx.hidden);
 result.g16.welcomeHostVisibleAfterClose = (await welcomeHostBox())?.width > 0;
 
-// Clean up the favorite seed + return to the normal fixture doc for the
-// remaining scenarios.
-await page.evaluate(() => localStorage.removeItem("mermark.favoriteFolders"));
+// Return to the normal fixture document for the remaining scenarios.
 await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
 await page.waitForTimeout(500);
 await assertPageRendered(page, { context: "viewer-golden(G16 restore)" });

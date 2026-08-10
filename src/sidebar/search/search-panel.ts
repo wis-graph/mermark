@@ -48,7 +48,7 @@ export interface SearchPanel {
   close(): void;
   /** ⌘⇧F's handler: open the panel if it's closed (which triggers exactly
    *  one scan — see the interface doc on `scan`) and focus the query input.
-   *  Named `reveal` (not `toggle`) to match `revealFavorites` — the action
+   *  Named `reveal` (not `toggle`) to match the panel reveal convention — the action
    *  id `search.files` is a storage key only, this name is the actual
    *  contract. Command (void). */
   revealSearch(): void;
@@ -197,7 +197,6 @@ export function createSearchPanel({
     // Optional call (not just optional chaining on the element): jsdom's
     // Element doesn't implement scrollIntoView at all (unlike a real
     // browser), so this guards test environments the same way explorer's
-    // favorites drag code already treats DOM measurement as best-effort.
     list[highlighted]?.scrollIntoView?.({ block: "nearest" });
   };
 

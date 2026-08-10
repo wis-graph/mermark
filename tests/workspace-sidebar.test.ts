@@ -1,24 +1,34 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWorkspaceSidebar } from "../src/workspace/workspace-sidebar";
-import { WorkspaceStore } from "../src/workspace/workspace-state";
+import { GLOBAL_VAULT_ID, WorkspaceStore } from "../src/workspace/workspace-state";
 import type { VaultTabs } from "../src/workspace/vault-tabs";
 
 describe("workspace sidebar", () => {
   beforeEach(() => localStorage.clear());
 
-  it("replaces favorites presentation with selectable, renameable, removable vault rows", () => {
+  it("renders vault rows without global registration or rename controls", () => {
     const store = new WorkspaceStore();
     const onSelectVault = vi.fn();
-    const sidebar = createWorkspaceSidebar({ store, onSelectVault, promptForPath: () => "/notes/project", promptForName: () => "Renamed" });
+    const vault = store.registerVault("/notes/project", "Project");
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault });
     document.body.append(sidebar.aside, sidebar.button);
 
-    sidebar.aside.querySelector<HTMLButtonElement>(".workspace-action")?.click();
-    expect(sidebar.aside.querySelectorAll(".workspace-vault-row")).toHaveLength(1);
-    expect(sidebar.aside.querySelector(".workspace-vault-path")?.textContent).toBe("/notes/project");
-    sidebar.aside.querySelector<HTMLButtonElement>(".workspace-vault-select")?.click();
-    expect(onSelectVault).toHaveBeenCalledWith(expect.objectContaining({ rootPath: "/notes/project" }));
-    sidebar.aside.querySelector<HTMLButtonElement>(".workspace-vault-action")?.click();
-    expect(sidebar.aside.querySelector(".workspace-vault-name")?.textContent).toBe("Renamed");
+    expect(sidebar.aside.querySelectorAll(".workspace-vault-row")).toHaveLength(2);
+    expect(sidebar.aside.querySelector(".workspace-id")).toBeNull();
+    expect(sidebar.aside.querySelector(".workspace-vault-group-label")).toBeNull();
+    expect(sidebar.aside.querySelectorAll("[role=heading]")).toHaveLength(0);
+    expect(sidebar.aside.querySelector(`[data-vault-id="${GLOBAL_VAULT_ID}"]`)).toBeTruthy();
+    expect(sidebar.aside.textContent).toContain("글로벌 볼트");
+    expect(sidebar.aside.querySelector(`[data-vault-id="${GLOBAL_VAULT_ID}"]`)?.compareDocumentPosition(sidebar.aside.querySelector(`[data-vault-id="${vault.vaultId}"]`) as Node) && Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sidebar.aside.querySelector(".workspace-vault-path")).toBeNull();
+    const permanentRow = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"]`);
+    expect(permanentRow?.querySelector<HTMLButtonElement>(".workspace-vault-select")?.title).toBe("/notes/project");
+    permanentRow?.querySelector<HTMLButtonElement>(".workspace-vault-select")?.click();
+    expect(onSelectVault).toHaveBeenCalledWith(vault);
+    expect(sidebar.aside.querySelector(".workspace-action")).toBeNull();
+    expect(sidebar.aside.querySelector(".icon-square-pen")).toBeNull();
+    expect(sidebar.aside.textContent).not.toContain("볼트 등록");
+    expect(sidebar.aside.textContent).not.toContain("이름 변경");
   });
 
   it("renders the selected vault tabs and marks the active tab", () => {
@@ -30,6 +40,12 @@ describe("workspace sidebar", () => {
 
     expect(sidebar.aside.querySelector(".workspace-vault-tab")?.textContent).toBe("readme.md");
     expect(sidebar.aside.querySelector(".workspace-vault-tab")?.getAttribute("data-active")).toBe("true");
+    expect(sidebar.aside.querySelector(".workspace-vault-tabs-label")).toBeNull();
+    expect(sidebar.aside.querySelector(".workspace-vault-tabs")?.getAttribute("role")).toBe("group");
+    const permanentRow = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"]`);
+    expect(permanentRow?.querySelector(".workspace-vault-tabs")?.getAttribute("aria-label")).toBe("Project 탭");
+    expect(permanentRow?.querySelector(".workspace-vault-tab")?.getAttribute("role")).toBeNull();
+    expect(permanentRow?.querySelector(".workspace-vault-tab")?.getAttribute("aria-current")).toBe("page");
   });
 
   it("opens a clicked vault tab through the injected document handler", () => {
@@ -40,9 +56,55 @@ describe("workspace sidebar", () => {
     const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), getTabs: () => tabs, onSelectTab });
     document.body.append(sidebar.aside);
 
-    sidebar.aside.querySelector<HTMLButtonElement>(".workspace-vault-tab")?.click();
+    sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"]`)?.querySelector<HTMLButtonElement>(".workspace-vault-tab")?.click();
 
     expect(onSelectTab).toHaveBeenCalledWith(vault, tabs.tabs[0]);
+    expect(store.get().workspaces[0]?.currentVaultId).toBe(vault.vaultId);
+  });
+
+  it("does not render temporary/session groups or per-document vault rows", () => {
+    const store = new WorkspaceStore();
+    store.registerVault("/notes/project", "Project");
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+    document.body.append(sidebar.aside);
+
+    expect(sidebar.aside.querySelector(".workspace-vault-group--temporary")).toBeNull();
+    expect(sidebar.aside.textContent).not.toContain("이번 세션");
+  });
+
+  it("exposes an accessible close action for each tab and delegates closing", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const tab = { tabId: "tab-1", path: "/notes/readme.md" };
+    const onCloseTab = vi.fn();
+    const sidebar = createWorkspaceSidebar({
+      store,
+      onSelectVault: vi.fn(),
+      getTabs: () => ({ vaultId: vault.vaultId, tabs: [tab], activeTabId: tab.tabId }),
+      onCloseTab,
+    });
+    document.body.append(sidebar.aside);
+
+    const close = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"]`)?.querySelector<HTMLButtonElement>(".workspace-vault-tab-close");
+    close?.click();
+
+    expect(close?.getAttribute("aria-label")).toBe("readme.md 탭 닫기");
+    expect(onCloseTab).toHaveBeenCalledWith(vault, tab);
+  });
+
+  it("unregisters a permanent vault immediately without a browser confirmation dialog", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+    document.body.append(sidebar.aside);
+
+    expect(sidebar.aside.querySelector(`[data-vault-id="${vault.vaultId}"] .icon-bookmark-filled`)).toBeTruthy();
+    sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-action`)?.click();
+
+    expect(store.get().vaults).toEqual([]);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(sidebar.aside.querySelector(`[data-vault-id="${vault.vaultId}"]`)).toBeNull();
   });
 
   it("closes competing panels when workspace opens", () => {

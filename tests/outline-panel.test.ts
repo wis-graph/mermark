@@ -86,18 +86,18 @@ describe("outline panel: EPUB toc override (setOverride, design §5)", () => {
 });
 
 describe("outline panel: toggle icon + disclosure ARIA (N)", () => {
-  it("closed → list-tree identity icon, aria-expanded=false, aria-controls set", () => {
+  it("closed → list identity icon, aria-expanded=false, aria-controls set", () => {
     const p = createOutlinePanel({ getView: () => fakeView("# a") });
-    expect(p.button.querySelector(".icon-list-tree")).toBeTruthy();
+    expect(p.button.querySelector(".icon-list")).toBeTruthy();
     expect(p.button.getAttribute("aria-expanded")).toBe("false");
     expect(p.button.getAttribute("aria-controls")).toBe("outline-aside");
     expect(p.button.querySelector(".chrome-btn-label")?.textContent).toBe("목차");
   });
 
-  it("opening keeps the SAME list-tree icon (no swap), aria-expanded=true, label preserved", () => {
+  it("opening keeps the SAME list icon (no swap), aria-expanded=true, label preserved", () => {
     const p = createOutlinePanel({ getView: () => fakeView("# a") });
     p.button.click();
-    expect(p.button.querySelector(".icon-list-tree")).toBeTruthy();
+    expect(p.button.querySelector(".icon-list")).toBeTruthy();
     expect(p.button.getAttribute("aria-expanded")).toBe("true");
     expect(p.button.querySelector(".chrome-btn-label")?.textContent).toBe("목차");
   });

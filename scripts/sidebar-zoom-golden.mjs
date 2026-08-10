@@ -55,12 +55,10 @@ await page.setViewportSize({ width: 1200, height: 900 });
 
 /** Open the EXPLORER aside via its footer button (not the outline — audit 04
  *  🔴 1 found that the original outline-only path never exercised the 4
- *  <button>-hosted glyphs, `.explorer-star`/`.favorites-remove`, because
- *  neither mounts inside the outline aside. The explorer aside shares the
- *  same `.sidebar-aside`/`.sidebar-header` shell classes, so switching to it
- *  keeps the shell/header measurements identical while also giving us the
- *  folder-row star and the favorites section (hosted inside the SAME
- *  `.explorer-aside`, see explorer-panel.ts's favoritesSlot). */
+ *  <button>-hosted `.explorer-star` glyph, because it does not mount inside
+ *  the outline aside. The explorer aside shares the same `.sidebar-aside` /
+ *  `.sidebar-header` shell classes, so switching to it keeps the shell/header
+ *  measurements identical while also giving us the permanent-vault toggle. */
 async function openExplorer() {
   await page.evaluate(() => {
     const btn = document.querySelector(".explorer-btn");
@@ -82,11 +80,10 @@ async function openExplorer() {
  *  SAME --font-scale together), .explorer-chevron (span glyph, the control
  *  group that always tracked zoom correctly), and — audit 04 🔴 1's permanent
  *  regression guard — the two <button>-hosted glyphs that silently ignored
- *  zoom before `font: inherit` was added: `.explorer-star`/its `.icon`, and
- *  `.favorites-remove`/its `.icon`. The url points at /mock/vault/index.md
- *  (a dir with a real "notes" child in the mock's list_dir TREE) and
- *  localStorage seeds one favorite folder before navigation, so both
- *  elements are guaranteed to be mounted, not best-effort. */
+ *  zoom before `font: inherit` was added: `.explorer-star`. The url points at
+ *  /mock/vault/index.md (a dir with a real "notes" child in the mock's
+ *  list_dir TREE), so the permanent-vault toggle is guaranteed to be mounted,
+ *  not best-effort. */
 async function readZoomState(label) {
   const raw = await page.evaluate(() => {
     const aside = document.querySelector(".explorer-aside");
@@ -99,9 +96,6 @@ async function readZoomState(label) {
     const cmLine = document.querySelector(".cm-line:not(.cm-heading)");
     const chevron = document.querySelector(".explorer-chevron");
     const star = document.querySelector(".explorer-star");
-    const starIcon = document.querySelector(".explorer-star .icon");
-    const remove = document.querySelector(".favorites-remove");
-    const removeIcon = document.querySelector(".favorites-remove .icon");
     return {
       fontScaleVar: getComputedStyle(document.documentElement).getPropertyValue("--font-scale").trim(),
       shellFontSize: aside ? getComputedStyle(aside).fontSize : null,
@@ -113,13 +107,9 @@ async function readZoomState(label) {
       // number scale=1 and scale=1.5. After the fix they must equal the
       // .explorer-chevron/.sidebar-aside pattern: scale with --font-scale.
       explorerStarWidth: star ? getComputedStyle(star).width : null,
-      explorerStarIconWidth: starIcon ? getComputedStyle(starIcon).width : null,
-      favoritesRemoveWidth: remove ? getComputedStyle(remove).width : null,
-      favoritesRemoveIconWidth: removeIcon ? getComputedStyle(removeIcon).width : null,
       asideFound: !!aside,
       asideHidden: aside ? aside.hidden : null,
       starFound: !!star,
-      removeFound: !!remove,
     };
   });
   const shotPath = `${shotBase}.${label}.png`;
@@ -138,14 +128,8 @@ function within(actual, expected, tolerance = 0.1) {
 }
 
 // --- Scenario 1: scale=1 (no --font-scale set / applied at default) ---
-// Also seeds ONE favorite folder (the real persisted SSOT path — same
-// favoriteFoldersSetting.parse JSON shape the app itself writes via
-// pushFavorite/removeFavorite — not a live-DOM click) so `.favorites-remove`
-// is GUARANTEED mounted below, not a best-effort null (audit 04 🔴 1: the
-// original golden never exercised this element at all).
 await page.evaluate(() => {
   localStorage.clear();
-  localStorage.setItem("mermark.favoriteFolders", JSON.stringify(["/mock/vault/notes"]));
 });
 await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
 const hasHarness = await page.evaluate(() => !!window.__mermark);
@@ -215,7 +199,6 @@ const after = await readZoomState("scale-1.5");
 // into a subsequent golden run (sidebar-contrast-golden.mjs's convention). ---
 await page.evaluate(() => {
   localStorage.removeItem("mermark.fontScale");
-  localStorage.removeItem("mermark.favoriteFolders");
 });
 await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
 await page.waitForFunction(() => !!window.__mermark, { timeout: 8000 });
@@ -230,20 +213,13 @@ const afterHeader = px(after.headerFontSize);
 const afterCmLine = px(after.cmLineFontSize);
 const teardownShell = px(teardown.shellFontSize);
 
-// audit 04 🔴 1 permanent regression guard: .explorer-star / .favorites-remove
-// (and their .icon children) MUST scale with --font-scale exactly like
-// .explorer-chevron/.sidebar-aside do. Before the `font: inherit` fix these
-// were UA-button-font fixed values — IDENTICAL at scale=1 and scale=1.5
-// (20.5/13.328/18.453/12.297px both times) — so the strongest single proof
-// this golden can carry is "before != after" alongside the exact px math.
+// Audit 04's permanent regression guard: `.explorer-star` MUST scale with
+// --font-scale exactly like `.explorer-chevron` / `.sidebar-aside` do. Before
+// the `font: inherit` fix it was a UA-button-font fixed value — identical at
+// scale=1 and scale=1.5 — so the strongest single proof this golden can carry
+// is "before != after" alongside the exact px math.
 const beforeStar = px(before.explorerStarWidth);
-const beforeStarIcon = px(before.explorerStarIconWidth);
 const afterStar = px(after.explorerStarWidth);
-const afterStarIcon = px(after.explorerStarIconWidth);
-const beforeRemove = px(before.favoritesRemoveWidth);
-const beforeRemoveIcon = px(before.favoritesRemoveIconWidth);
-const afterRemove = px(after.favoritesRemoveWidth);
-const afterRemoveIcon = px(after.favoritesRemoveIconWidth);
 
 const result = {
   before,
@@ -261,22 +237,15 @@ const result = {
   afterCmLineIs24px: within(afterCmLine, 24),
   // teardown: removing the key restores default (1.0) -> shell back to 13px.
   teardownRestoredTo13px: within(teardownShell, 13, 0.05),
-  // G4/G5/G7/G8 mounted at all (audit 04's original gap: never queried).
-  glyphsMounted: !!before.starFound && !!before.removeFound && !!after.starFound && !!after.removeFound,
+  // The permanent-vault toggle is mounted at both scales.
+  explorerStarMounted: !!before.starFound && !!after.starFound,
   // scale=1 pixel identity (unchanged post-fix — the design's other invariant).
   beforeExplorerStarIs20px: within(beforeStar, 20, 0.1),
-  beforeExplorerStarIconIs13px: within(beforeStarIcon, 13, 0.1),
-  beforeFavoritesRemoveIs18px: within(beforeRemove, 18, 0.1),
-  beforeFavoritesRemoveIconIs12px: within(beforeRemoveIcon, 12, 0.1),
-  // scale=1.5: 20/18/13/12 * 1.5 = 30/27/19.5/18 — the fix's whole point.
+  // scale=1.5: 20 * 1.5 = 30 — the fix's whole point.
   afterExplorerStarIs30px: within(afterStar, 30, 0.15),
-  afterExplorerStarIconIs19_5px: within(afterStarIcon, 19.5, 0.15),
-  afterFavoritesRemoveIs27px: within(afterRemove, 27, 0.15),
-  afterFavoritesRemoveIconIs18px: within(afterRemoveIcon, 18, 0.15),
-  // The regression this golden exists to catch: before the fix these 4 were
-  // IDENTICAL at both scales (UA button font, --font-scale-blind).
+  // The regression this golden exists to catch: before the fix these values
+  // were identical at both scales (UA button font, --font-scale-blind).
   explorerStarRespondsToZoom: beforeStar != null && afterStar != null && beforeStar !== afterStar,
-  favoritesRemoveRespondsToZoom: beforeRemove != null && afterRemove != null && beforeRemove !== afterRemove,
   errors,
 };
 result.allPass =
@@ -286,17 +255,10 @@ result.allPass =
   result.afterHeaderIs16_5px &&
   result.afterCmLineIs24px &&
   result.teardownRestoredTo13px &&
-  result.glyphsMounted &&
+  result.explorerStarMounted &&
   result.beforeExplorerStarIs20px &&
-  result.beforeExplorerStarIconIs13px &&
-  result.beforeFavoritesRemoveIs18px &&
-  result.beforeFavoritesRemoveIconIs12px &&
   result.afterExplorerStarIs30px &&
-  result.afterExplorerStarIconIs19_5px &&
-  result.afterFavoritesRemoveIs27px &&
-  result.afterFavoritesRemoveIconIs18px &&
   result.explorerStarRespondsToZoom &&
-  result.favoritesRemoveRespondsToZoom &&
   result.mutualExclusion.mutualExclusionHolds &&
   errors.length === 0;
 
