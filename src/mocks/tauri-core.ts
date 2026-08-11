@@ -94,6 +94,26 @@ const store = new Map<string, string>();
 // (tauri-event.ts) so __mockExternalChange writes the simulated disk content
 // into the in-memory store and emits a file-changed event for that path.
 export let mockWatchedPath: string | null = null;
+
+const smokeBridge = new URL(window.location.href).searchParams.get("smokeBridge");
+const smokeToken = new URL(window.location.href).searchParams.get("smokeToken");
+const SMOKE_BRIDGE_COMMANDS = new Set([
+  "read_file",
+  "write_file",
+  "list_dir",
+  "canonicalize_path",
+  "directory_exists",
+  "path_exists",
+]);
+
+async function invokeSmokeBridge(command: string, args: Args | undefined): Promise<Response | null> {
+  if (!smokeBridge || !smokeToken || !SMOKE_BRIDGE_COMMANDS.has(command)) return null;
+  return fetch(smokeBridge, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Mermark-Smoke-Token": smokeToken },
+    body: JSON.stringify({ command, args: args ?? {} }),
+  });
+}
 /** Simulate an external edit landing on the watched file: update the in-memory
  *  store so a subsequent read_file sees it, and return the payload the event
  *  mock should emit. Returns null when nothing is being watched. */
@@ -343,6 +363,12 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
   const a = (args ?? {}) as Record<string, unknown>;
   // strip plugin prefix e.g. "plugin:opener|open_url" -> "open_url"
   const name = cmd.includes("|") ? cmd.split("|")[1] : cmd;
+
+  const smokeResponse = await invokeSmokeBridge(name, args);
+  if (smokeResponse) {
+    if (!smokeResponse.ok) throw new Error(await smokeResponse.text());
+    return smokeResponse.json();
+  }
 
   switch (name) {
     case "read_file": {
