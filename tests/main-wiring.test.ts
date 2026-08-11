@@ -33,8 +33,9 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
   if (command === "unwatch_file") {
     watcherEvents.push("unwatch");
     if (rejectUnwatch) return Promise.reject(new Error("unwatch failed"));
-    return Promise.resolve();
+    return deferredUnwatch ?? Promise.resolve();
   }
+  if (command === "list_files_recursive") return Promise.resolve(scanResult);
   return Promise.resolve(false);
 });
 
@@ -43,6 +44,9 @@ const watcherEvents: string[] = [];
 const deferredReads = new Map<string, { readonly promise: Promise<unknown> }>();
 const deferredWatches = new Map<string, { readonly promise: Promise<void> }>();
 const rejectedReads = new Set<string>();
+const eventListeners = new Map<string, Set<(event: { readonly payload: unknown }) => void>>();
+let scanResult: unknown = { files: [], truncated: false };
+let deferredUnwatch: Promise<void> | undefined;
 let rejectWrites = false;
 let rejectUnwatch = false;
 let rejectWatchPath: string | undefined;
@@ -52,8 +56,17 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(() => Promise.resolve(() => {})),
+  listen: vi.fn((event: string, listener: (event: { readonly payload: unknown }) => void) => {
+    const listeners = eventListeners.get(event) ?? new Set();
+    listeners.add(listener);
+    eventListeners.set(event, listeners);
+    return Promise.resolve(() => listeners.delete(listener));
+  }),
 }));
+
+const emitEvent = (event: string, payload: unknown): void => {
+  for (const listener of eventListeners.get(event) ?? []) listener({ payload });
+};
 
 const mainSource = readFileSync("src/main.ts", "utf8");
 
@@ -67,6 +80,9 @@ describe("main workspace wiring", () => {
     deferredReads.clear();
     deferredWatches.clear();
     rejectedReads.clear();
+    eventListeners.clear();
+    scanResult = { files: [], truncated: false };
+    deferredUnwatch = undefined;
     rejectWrites = false;
     rejectUnwatch = false;
     rejectWatchPath = undefined;
@@ -351,6 +367,42 @@ describe("main workspace wiring", () => {
     expect(document.querySelector('[data-tab-id="a"][data-active="true"]')).not.toBeNull();
     expect(document.querySelector(".cm-content")?.textContent).toBe("A");
     expect(watcherEvents).toEqual(["unwatch", "watch /P/b.md", "watch /P/a.md"]);
+  });
+
+  it.each(["Recent", "File Finder"])("keeps a late A watch event away from B when switching through %s", async (surface) => {
+    let resolveDetach: (() => void) | undefined;
+    documentContents.set("/P/a.md", "# A");
+    documentContents.set("/P/b.md", "# B");
+    localStorage.setItem("mermark.recentDocs", JSON.stringify(["/P/b.md"]));
+    scanResult = { files: [{ name: "b.md", path: "/P/b.md", rel_path: "b.md" }], truncated: false };
+    vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
+    await vi.waitFor(() => expect(watcherEvents).toContain("watch /P/a.md"));
+    watcherEvents.length = 0;
+    deferredUnwatch = new Promise<void>((resolve) => { resolveDetach = resolve; });
+
+    if (surface === "Recent") {
+      document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
+      document.querySelector<HTMLElement>('.recent-item[data-path="/P/b.md"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    } else {
+      document.querySelector<HTMLButtonElement>(".search-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.search-item[data-path="/P/b.md"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.search-item[data-path="/P/b.md"]')?.click();
+    }
+    await vi.waitFor(() => expect(watcherEvents).toEqual(["unwatch"]));
+
+    expect(document.querySelector(".cm-content")?.textContent).toBe("A");
+    emitEvent("file-changed", { text: "# late A", mtime: 2 });
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("late A"));
+    resolveDetach?.();
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("B"));
+    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+
+    expect(document.querySelector('.workspace-vault-tab[data-active="true"]')?.getAttribute("title")).toBe("/P/b.md");
+    expect(document.querySelector(".cm-content")?.textContent).toBe("B");
+    expect(watcherEvents).toEqual(["unwatch", "watch /P/b.md"]);
   });
 
   it("retains a dirty editor when switching to a vault with no restorable tab fails", async () => {

@@ -66,7 +66,7 @@ import { createBreadcrumb } from "./chrome/breadcrumb";
 import { createRecentPanel } from "./sidebar/recent/recent-panel";
 import { createSearchPanel, type ScanResult } from "./sidebar/search/search-panel";
 import { openFindPanel, enterEditModeForReplace } from "./markdown/find";
-import { pushRecent, pruneMissing } from "./sidebar/recent/recent-docs";
+import { pushRecent } from "./sidebar/recent/recent-docs";
 import { createWelcomePane } from "./chrome/welcome/welcome-pane";
 import {
   makeHistory,
@@ -830,14 +830,7 @@ async function boot() {
       if (!currentFile) {
         location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
       } else {
-        try {
-          const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
-          if (!(await commitBeforeSwitch())) return;
-          openInWindow(absPath, fresh);
-        } catch (err) {
-          console.error("Failed to open recent document; pruning it", err);
-          recentDocsSetting.set(pruneMissing(recentDocsSetting.get(), absPath));
-        }
+        await openDocumentSafely(absPath);
       }
     },
     onOpen: () => closeOtherSidebarPanels("recent"),
@@ -860,9 +853,7 @@ async function boot() {
       if (!currentFile) {
         location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
       } else {
-        const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
-        if (!(await commitBeforeSwitch())) return;
-        openInWindow(absPath, fresh);
+        await openDocumentSafely(absPath);
       }
     },
     onOpenFileNewWindow: (absPath) => {
