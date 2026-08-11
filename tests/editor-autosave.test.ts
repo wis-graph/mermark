@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { mountEditor, shouldOverwriteOnConflict } from "../src/editor";
+import { createRecoveryState } from "../src/document/recovery-contract";
 
 const writes = () =>
   invokeMock.mock.calls.filter((c) => c[0] === "write_file") as [string, { path: string; text: string; baseline: number }][];
@@ -23,6 +24,21 @@ describe("shouldOverwriteOnConflict (conflict policy rule)", () => {
   it("is true only for overwrite", () => {
     expect(shouldOverwriteOnConflict("pause")).toBe(false);
     expect(shouldOverwriteOnConflict("overwrite")).toBe(true);
+  });
+});
+
+describe("filesystem recovery contract for save failures", () => {
+  it("keeps the buffer and tab while offering non-overwriting save recovery", () => {
+    const state = createRecoveryState("save", "disk full");
+
+    expect(state.preservation).toBe("keep-buffer-and-tab");
+    expect(state.allowedActions.map((action) => action.id)).toEqual([
+      "retry",
+      "save-recovered-copy",
+      "save-as",
+      "close-discard",
+    ]);
+    expect(state.allowedActions.find((action) => action.id === "close-discard")?.requiresConfirmation).toBe(true);
   });
 });
 

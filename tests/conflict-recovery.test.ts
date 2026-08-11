@@ -8,6 +8,12 @@ import {
   sameConflictIdentity,
   type ConflictIdentity,
 } from "../src/document/conflict/conflict-recovery";
+import {
+  createRecoveryState,
+  RECOVERY_KINDS,
+  settleRecoveryAction,
+  type RecoveryKind,
+} from "../src/document/recovery-contract";
 
 const identity: ConflictIdentity = {
   vaultId: "vault-a",
@@ -139,5 +145,94 @@ describe("conflict recovery", () => {
     button.click();
     expect(onKeepLocal).toHaveBeenCalledOnce();
     handle.close();
+  });
+});
+
+const expectedActions: Readonly<Record<RecoveryKind, readonly string[]>> = {
+  "open-read": ["retry", "open-another"],
+  "workspace-list": ["retry", "reselect-root"],
+  "external-change": ["keep-buffer", "reload-from-disk", "merge"],
+  deleted: ["retry", "save-recovered-copy", "save-as", "close-discard"],
+  unreadable: ["retry", "save-recovered-copy", "save-as", "close-discard"],
+  save: ["retry", "save-recovered-copy", "save-as", "close-discard"],
+};
+
+describe("typed filesystem recovery state/action matrix", () => {
+  it("enumerates every recovery state with only its allowed actions", () => {
+    expect(RECOVERY_KINDS).toEqual(Object.keys(expectedActions));
+
+    for (const kind of RECOVERY_KINDS) {
+      const state = createRecoveryState(kind, `detail:${kind}`);
+      expect(state.allowedActions.map((action) => action.id)).toEqual(expectedActions[kind]);
+      expect(state.title).toMatch(/[가-힣]/);
+      expect(state.body).toMatch(/[가-힣]/);
+      expect(state.diagnostic).toEqual({ policy: "collapsed", detail: `detail:${kind}` });
+      expect(state.focusTarget).toBe(expectedActions[kind][0]);
+      expect(state.preservation).toBe(kind === "workspace-list" ? "keep-workspace-and-selection" : "keep-buffer-and-tab");
+      expect(state.allowedActions.map((action) => action.id)).not.toEqual(
+        expect.arrayContaining(["overwrite-original", "recreate-original", "discard-buffer", "remove-tab"]),
+      );
+    }
+  });
+
+  it("defines the required Korean deletion actions and confirmation boundary", () => {
+    const state = createRecoveryState("deleted", "ENOENT");
+
+    expect(state.allowedActions.map((action) => action.label)).toEqual([
+      "다시 시도",
+      "복구 사본 저장",
+      "다른 이름으로 저장",
+      "닫기/버리기",
+    ]);
+    expect(state.allowedActions.find((action) => action.id === "close-discard")?.requiresConfirmation).toBe(true);
+  });
+
+  it.each(RECOVERY_KINDS)("preserves %s after every cancelled or failed allowed action", (kind) => {
+    const original = createRecoveryState(kind, `detail:${kind}`);
+
+    for (const action of original.allowedActions) {
+      for (const outcome of ["cancelled", "failed"] as const) {
+        expect(settleRecoveryAction(original, action.id, outcome)).toEqual({
+          kind: "preserved",
+          reason: outcome,
+          state: { ...original, focusTarget: action.id },
+        });
+      }
+    }
+  });
+
+  it("rejects an unknown action or outcome without changing the recovery state", () => {
+    const original = createRecoveryState("deleted", "ENOENT");
+
+    expect(settleRecoveryAction(original, "recreate-original", "succeeded")).toEqual({
+      kind: "preserved",
+      reason: "rejected",
+      state: original,
+    });
+    expect(settleRecoveryAction(original, "retry", "unknown-error")).toEqual({
+      kind: "preserved",
+      reason: "rejected",
+      state: original,
+    });
+  });
+
+  it.each(RECOVERY_KINDS)("rejects runtime-unknown action and outcome for %s while retaining a viable focus target", (kind) => {
+    const original = createRecoveryState(kind, `detail:${kind}`);
+
+    expect(settleRecoveryAction(original, null, { code: "E_UNKNOWN" })).toEqual({
+      kind: "preserved",
+      reason: "rejected",
+      state: original,
+    });
+    expect(original.allowedActions.some((action) => action.id === original.focusTarget)).toBe(true);
+  });
+
+  it("resolves only a recognized successful action", () => {
+    const original = createRecoveryState("external-change", "mtime changed");
+
+    expect(settleRecoveryAction(original, "merge", "succeeded")).toEqual({
+      kind: "resolved",
+      action: "merge",
+    });
   });
 });

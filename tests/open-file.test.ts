@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOpenPathPrompt } from "../src/document/open-file/path-prompt";
+import { createRecoveryState } from "../src/document/recovery-contract";
 
 /** The open-by-path prompt is "bar-becomes-input": clicking the button toggles
  *  `.path-editing` on its host bar and turns it into a full-width path input (no
@@ -138,5 +139,20 @@ describe("open-path title-bar prompt (inline / bar-becomes-input)", () => {
     button.click();
 
     expect(bar.classList.contains("path-editing")).toBe(false);
+  });
+});
+
+describe("filesystem recovery contract for opening and listing", () => {
+  it.each([
+    ["open-read", ["retry", "open-another"]],
+    ["workspace-list", ["retry", "reselect-root"]],
+  ] as const)("defines Korean copy and contextual actions for %s", (kind, expectedActions) => {
+    const state = createRecoveryState(kind, "EACCES: /private/path");
+
+    expect(state.title).toMatch(/[가-힣]/);
+    expect(state.body).toMatch(/[가-힣]/);
+    expect(state.diagnostic).toEqual({ policy: "collapsed", detail: "EACCES: /private/path" });
+    expect(state.allowedActions.map((action) => action.id)).toEqual(expectedActions);
+    expect(state.focusTarget).toBe(expectedActions[0]);
   });
 });
