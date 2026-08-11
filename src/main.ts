@@ -77,7 +77,7 @@ import {
   pruneAt,
   type NavHistory,
 } from "./document/history/nav-history";
-import { decideExternalChange, onFileChanged, onFileUnavailable, watchFile, unwatchFile } from "./document/file-watch";
+import { createWatcherHandoff, decideExternalChange, onFileChanged, onFileUnavailable, watchFile, unwatchFile } from "./document/file-watch";
 import { openConflictModal } from "./document/conflict/conflict-modal";
 import { createConflictRecovery, sameConflictIdentity, type ConflictIdentity } from "./document/conflict/conflict-recovery";
 import { openRecoveryModal, type RecoveryModalHandle } from "./document/recovery-modal";
@@ -366,6 +366,18 @@ async function boot() {
   let cancelSessionTimer: (() => void) | undefined;
   let openConflict: { close(): void } | null = null;
   let openRecovery: RecoveryModalHandle | null = null;
+  let lifecycleRequest = 0;
+  let pendingPrepare: { readonly editor: EditorController; readonly file: string; readonly promise: Promise<boolean> } | null = null;
+  const watcherHandoff = createWatcherHandoff({ watch: watchFile, unwatch: unwatchFile }, (phase, error) => {
+    const label = phase === "detach" ? "detach" : phase === "attach" ? "attach" : "rollback";
+    if (error instanceof Error) console.error(`File watcher ${label} failed`, error.message);
+    else console.error(`File watcher ${label} failed`, String(error));
+  });
+  const beginLifecycleRequest = (): number => {
+    watcherHandoff.invalidate();
+    lifecycleRequest += 1;
+    return lifecycleRequest;
+  };
   const closeConflict = (): void => {
     openConflict?.close();
     openConflict = null;
@@ -579,9 +591,7 @@ async function boot() {
       if (!currentFile) {
         location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
       } else {
-        const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
-        if (!(await commitBeforeSwitch())) return;
-        openInWindow(absPath, fresh);
+        openDocumentSafely(absPath);
       }
     },
     canOpenWithViewer: (name) => viewerForEntry(name) != null,
@@ -604,14 +614,32 @@ async function boot() {
     isRootLocked: () => currentVault()?.persistenceKind === "permanent",
   });
 
-  const openDocument = async (absPath: string): Promise<void> => {
-    const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
-    if (!(await commitBeforeSwitch())) return;
-    openInWindow(absPath, fresh);
+  const openDocument = async (absPath: string, requestId = beginLifecycleRequest(), onCommit?: () => void): Promise<boolean> => {
+    const sourceEditor = current;
+    let fresh: { text: string; mtime: number };
+    try {
+      fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
+    } catch (error: unknown) {
+      if (requestId === lifecycleRequest) throw error;
+      return false;
+    }
+    if (requestId !== lifecycleRequest || !(await commitBeforeSwitch()) || requestId !== lifecycleRequest) {
+      if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
+      return false;
+    }
+    if (!(await watcherHandoff.handoff(absPath)) || requestId !== lifecycleRequest) {
+      if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
+      return false;
+    }
+    onCommit?.();
+    openInWindow(absPath, fresh, { watcherReady: true });
+    return true;
   };
-  const openDocumentSafely = (absPath: string): void => {
-    void openDocument(absPath).catch((error: unknown) => {
-      showOpenRecovery(absPath, String(error));
+  const openDocumentSafely = (absPath: string, onCommit?: () => void): Promise<boolean> => {
+    const requestId = beginLifecycleRequest();
+    return openDocument(absPath, requestId, onCommit).catch((error: unknown) => {
+      if (requestId === lifecycleRequest) showOpenRecovery(absPath, String(error));
+      return false;
     });
   };
 
@@ -715,37 +743,76 @@ async function boot() {
     store: workspaceStore,
     onOpen: () => closeOtherSidebarPanels("workspace"),
     onSelectVault: (vault) => {
-      const selectedVault = workspaceStore.selectVault(vault.vaultId);
+      const selectedVault = workspaceStore.getVault(vault.vaultId) ?? vault;
       const previousVaultId = currentVault()?.vaultId;
-      routedVault = selectedVault;
       const selection = selectVaultView(vaultTabs.get(selectedVault.vaultId));
       if (selection.kind === "document") {
-        if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path);
-        else explorer.jumpToRoot(explorerRootForVault(selectedVault));
+        const commitSelection = (): void => {
+          workspaceStore.selectVault(selectedVault.vaultId);
+          routedVault = selectedVault;
+        };
+        if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path, commitSelection);
+        else { commitSelection(); explorer.jumpToRoot(explorerRootForVault(selectedVault)); }
       } else {
-        renderWelcomeForVault();
-        explorer.jumpToRoot(explorerRootForVault(selectedVault));
+        const requestId = beginLifecycleRequest();
+        const sourceEditor = current;
+        void commitBeforeSwitch().then(async (saved) => {
+          if (!saved || requestId !== lifecycleRequest || !(await watcherHandoff.handoff(undefined)) || requestId !== lifecycleRequest) {
+            if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
+            return;
+          }
+          workspaceStore.selectVault(selectedVault.vaultId);
+          routedVault = selectedVault;
+          renderWelcomeForVault();
+          explorer.jumpToRoot(explorerRootForVault(selectedVault));
+        });
       }
     },
     onSelectTab: (vault, tab) => {
-      const selectedVault = workspaceStore.selectVault(vault.vaultId);
-      routedVault = selectedVault;
-      vaultTabs.select(selectedVault.vaultId, tab.tabId, selectedVault.persistenceKind === "permanent" ? "permanent" : "session");
-      openDocumentSafely(tab.path);
+      const selectedVault = workspaceStore.get().vaults.find((candidate) => candidate.vaultId === vault.vaultId) ?? vault;
+      const scope = selectedVault.persistenceKind === "permanent" ? "permanent" : "session";
+      return openDocumentSafely(tab.path, () => {
+        workspaceStore.selectVault(selectedVault.vaultId);
+        routedVault = selectedVault;
+        vaultTabs.select(selectedVault.vaultId, tab.tabId, scope);
+      });
     },
     onCloseTab: (vault, tab) => {
       const currentTabs = vaultTabs.get(vault.vaultId);
       const wasActive = currentTabs.activeTabId === tab.tabId;
-      const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, vault.persistenceKind === "permanent" ? "permanent" : "session");
-      if (!wasActive || currentVault()?.vaultId !== vault.vaultId) return;
-      const selection = selectVaultView(nextTabs);
-      if (selection.kind === "document") {
-        routedVault = vault;
-        openDocumentSafely(selection.tab.path);
-      } else {
-        routedVault = vault;
-        renderWelcomeForVault();
+      const scope = vault.persistenceKind === "permanent" ? "permanent" : "session";
+      if (!wasActive || currentVault()?.vaultId !== vault.vaultId) {
+        vaultTabs.close(vault.vaultId, tab.tabId, scope);
+        return;
       }
+      const requestId = beginLifecycleRequest();
+      const sourceEditor = current;
+      void (async (): Promise<void> => {
+        const remainingTabs = currentTabs.tabs.filter((candidate) => candidate.tabId !== tab.tabId);
+        const nextTab = remainingTabs[remainingTabs.length - 1];
+        let fresh: { text: string; mtime: number } | undefined;
+        if (nextTab) {
+          try {
+            fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: nextTab.path });
+          } catch (error: unknown) {
+            if (requestId === lifecycleRequest) showOpenRecovery(nextTab.path, String(error));
+            return;
+          }
+        }
+        if (requestId !== lifecycleRequest || !(await commitBeforeSwitch()) || requestId !== lifecycleRequest) {
+          if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
+          return;
+        }
+        if (!(await watcherHandoff.handoff(nextTab?.path)) || requestId !== lifecycleRequest) {
+          if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
+          return;
+        }
+        const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, scope);
+        routedVault = vault;
+        const selection = selectVaultView(nextTabs);
+        if (selection.kind === "document" && fresh) openInWindow(selection.tab.path, fresh, { watcherReady: true });
+        else renderWelcomeForVault();
+      })();
     },
     getTabs: (vaultId) => vaultTabs.get(vaultId),
   });
@@ -919,8 +986,21 @@ async function boot() {
   async function commitBeforeSwitch(): Promise<boolean> {
     if (!current) return true;
     if (!current.hasUnsaved()) return true;
-    current.beginClose();
-    return current.saveOnClose();
+    const editor = current;
+    const file = currentFile;
+    if (pendingPrepare?.editor === editor && pendingPrepare.file === file) return pendingPrepare.promise;
+    editor.beginClose();
+    const promise = editor.saveOnClose().then((saved) => {
+      if (!saved && current === editor && currentFile === file) {
+        editor.resumeWrites();
+        if (!openRecovery) showDocumentRecovery("save", "전환 전에 저장하지 못했습니다");
+      }
+      return saved;
+    }).finally(() => {
+      if (pendingPrepare?.promise === promise) pendingPrepare = null;
+    });
+    pendingPrepare = { editor, file, promise };
+    return promise;
   }
 
   /** Tear down the live editor before a swap: persist its session immediately,
@@ -934,10 +1014,6 @@ async function boot() {
       detachScroll = undefined;
       cancelSessionTimer?.();
       cancelSessionTimer = undefined;
-      // Stop watching the outgoing file: the watcher is a single slot, so a stale
-      // watch would deliver file-changed events for the wrong file after a switch.
-      // openInWindow re-arms the watch for the new file below.
-      void unwatchFile();
     }
     host.replaceChildren();
   }
@@ -950,7 +1026,7 @@ async function boot() {
   function openInWindow(
     file: string,
     fresh: { text: string; mtime: number },
-    opts: { readonly viaHistory?: boolean } = {},
+    opts: { readonly viaHistory?: boolean; readonly watcherReady?: boolean } = {},
   ): void {
     const preserveExplorerRoot = shouldPreserveGlobalExplorerRoot(selectedWorkspaceVault());
     const selectedVault = routeDocumentPath(file);
@@ -1021,10 +1097,7 @@ async function boot() {
       }
     }
 
-    // Watch the newly mounted file for external changes (single slot — replaces
-    // the watch teardownCurrent just released). Non-fatal: the editor works even
-    // if the watcher fails to arm.
-    void watchFile(file);
+    if (!opts.watcherReady) void watcherHandoff.handoff(file);
 
     // Re-opening swaps the document without firing docChanged on the new editor,
     // so an open outline panel would show the previous file's headings. Refresh
@@ -1085,8 +1158,9 @@ async function boot() {
       return;
     }
     if (!(await commitBeforeSwitch())) return;
+    if (!(await watcherHandoff.handoff(target))) return;
     navHistory = next; // commit the pointer only after the read succeeded
-    openInWindow(target, fresh, { viaHistory: true });
+    openInWindow(target, fresh, { viaHistory: true, watcherReady: true });
   }
   const goBack = (): void => void navigateHistory(back);
   const goForward = (): void => void navigateHistory(forward);

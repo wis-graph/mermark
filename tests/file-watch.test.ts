@@ -1,10 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-
 // decideExternalChange is a pure decision — it imports nothing from Tauri, so we
 // don't need to mock the IPC/event modules here. (watchFile/unwatchFile/onFileChanged
 // are thin invoke/listen wrappers covered by the golden-master + render path.)
-import { decideExternalChange } from "../src/document/file-watch";
+import { createWatcherHandoff, decideExternalChange } from "../src/document/file-watch";
 
 describe("decideExternalChange (auto-reload vs conflict)", () => {
   it("reloads silently when there is no unsaved work", () => {
@@ -28,9 +26,20 @@ describe("decideExternalChange (auto-reload vs conflict)", () => {
     expect(event ? decideExternalChange(dirty) : "not-invoked").toBe(expected);
   });
 
-  it("re-arms the single native watch when tab activation replaces the document", () => {
-    const mainSource = readFileSync("src/main.ts", "utf8");
-    expect(mainSource).toMatch(/teardownCurrent\(\);[\s\S]*void watchFile\(file\);/);
-    expect(mainSource).toContain("void unwatchFile();");
+  it("commits a successful handoff and rolls back a rejected attachment", async () => {
+    const events: string[] = [];
+    const handoff = createWatcherHandoff({
+      unwatch: async () => { events.push("unwatch"); },
+      watch: async (path) => {
+        events.push("watch " + path);
+        if (path === "/B.md") throw new Error("watch failed");
+      },
+    }, () => {});
+
+    await expect(handoff.handoff("/A.md")).resolves.toBe(true);
+    events.length = 0;
+    await expect(handoff.handoff("/B.md")).resolves.toBe(false);
+
+    expect(events).toEqual(["unwatch", "watch /B.md", "watch /A.md"]);
   });
 });

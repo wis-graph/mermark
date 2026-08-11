@@ -41,11 +41,63 @@ describe("workspace sidebar", () => {
     expect(sidebar.aside.querySelector(".workspace-vault-tab")?.textContent).toBe("readme.md");
     expect(sidebar.aside.querySelector(".workspace-vault-tab")?.getAttribute("data-active")).toBe("true");
     expect(sidebar.aside.querySelector(".workspace-vault-tabs-label")).toBeNull();
-    expect(sidebar.aside.querySelector(".workspace-vault-tabs")?.getAttribute("role")).toBe("group");
+    expect(sidebar.aside.querySelector(".workspace-vault-tabs")?.getAttribute("role")).toBe("tablist");
     const permanentRow = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"]`);
     expect(permanentRow?.querySelector(".workspace-vault-tabs")?.getAttribute("aria-label")).toBe("Project 탭");
-    expect(permanentRow?.querySelector(".workspace-vault-tab")?.getAttribute("role")).toBeNull();
+    expect(permanentRow?.querySelector(".workspace-vault-tab")?.getAttribute("role")).toBe("tab");
+    expect(permanentRow?.querySelector(".workspace-vault-tab")?.getAttribute("aria-selected")).toBe("true");
+    expect(permanentRow?.querySelector(".workspace-vault-tab")?.getAttribute("tabindex")).toBe("0");
     expect(permanentRow?.querySelector(".workspace-vault-tab")?.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("moves the roving tab focus and activates the tab with horizontal keys", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const onSelectTab = vi.fn();
+    const tabs: VaultTabs = {
+      vaultId: vault.vaultId,
+      tabs: [{ tabId: "tab-1", path: "/notes/one.md" }, { tabId: "tab-2", path: "/notes/two.md" }, { tabId: "tab-3", path: "/notes/three.md" }],
+      activeTabId: "tab-1",
+    };
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), getTabs: () => tabs, onSelectTab });
+    document.body.append(sidebar.aside);
+    const tab = sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-1"]`);
+    tab?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+
+    expect(onSelectTab).toHaveBeenCalledWith(vault, tabs.tabs[1]);
+    expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-2"]`)?.tabIndex).toBe(0);
+    expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-1"]`)?.tabIndex).toBe(-1);
+
+    sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-2"]`)?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    expect(onSelectTab).toHaveBeenLastCalledWith(vault, tabs.tabs[2]);
+    expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-3"]`)?.tabIndex).toBe(0);
+  });
+
+  it("keeps the selected tab tabbable when keyboard activation is rejected", async () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const tabs: VaultTabs = {
+      vaultId: vault.vaultId,
+      tabs: [{ tabId: "tab-1", path: "/notes/one.md" }, { tabId: "tab-2", path: "/notes/two.md" }],
+      activeTabId: "tab-1",
+    };
+    const sidebar = createWorkspaceSidebar({
+      store,
+      onSelectVault: vi.fn(),
+      getTabs: () => tabs,
+      onSelectTab: () => Promise.resolve(false),
+    });
+    document.body.append(sidebar.aside);
+    const active = sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-1"]`);
+    active?.focus();
+    active?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(active?.getAttribute("aria-selected")).toBe("true");
+    expect(active?.tabIndex).toBe(0);
+    expect(document.activeElement).toBe(active);
+    expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-2"]`)?.tabIndex).toBe(-1);
   });
 
   it("opens a clicked vault tab through the injected document handler", () => {

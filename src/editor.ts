@@ -191,7 +191,7 @@ function makeAutosave(
       pending = null;
       save(text);
     },
-    hasWork: () => pending !== null || inFlight !== null,
+    hasWork: () => pending !== null || inFlight !== null || conflicted || suspended,
     forceSave(text: string) {
       if (suspended) {
         pending = text;

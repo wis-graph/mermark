@@ -13,7 +13,7 @@ export interface WorkspaceSidebar {
 export interface WorkspaceSidebarHandlers {
   readonly store: WorkspaceStore;
   readonly onSelectVault: (vault: Vault) => void;
-  readonly onSelectTab?: (vault: Vault, tab: VaultTabs["tabs"][number]) => void;
+  readonly onSelectTab?: (vault: Vault, tab: VaultTabs["tabs"][number]) => void | Promise<boolean>;
   readonly onCloseTab?: (vault: Vault, tab: VaultTabs["tabs"][number]) => void;
   onOpen?(): void;
   readonly getTabs?: (vaultId: string) => VaultTabs;
@@ -55,14 +55,42 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
         const row = create("div", "workspace-vault-row"); row.setAttribute("role", "listitem"); row.dataset.vaultId = vault.vaultId;
         const select = create("button", "workspace-vault-select") as HTMLButtonElement; select.type = "button"; select.title = vault.rootPath ?? vault.displayName; select.append(icon(vault.persistenceKind === "global" ? "folder-open" : "folder"));
         const name = create("span", "workspace-vault-name"); name.textContent = vault.displayName; select.append(name);
-        const tabList = create("div", "workspace-vault-tabs"); tabList.setAttribute("role", "group"); tabList.setAttribute("aria-label", `${vault.displayName} 탭`);
+        const tabList = create("div", "workspace-vault-tabs"); tabList.setAttribute("role", "tablist"); tabList.setAttribute("aria-orientation", "horizontal"); tabList.setAttribute("aria-label", `${vault.displayName} 탭`);
         const tabs = getTabs?.(vault.vaultId) ?? { vaultId: vault.vaultId, tabs: [], activeTabId: null };
         for (const tab of tabs.tabs) {
           const tabName = tab.path.split(/[\\/]/).filter(Boolean).slice(-1)[0] ?? tab.path;
           const tabRow = create("div", "workspace-vault-tab-row");
           const tabEl = create("button", "workspace-vault-tab") as HTMLButtonElement; tabEl.type = "button"; tabEl.textContent = tabName; tabEl.dataset.tabId = tab.tabId; tabEl.title = tab.path;
-          if (tab.tabId === tabs.activeTabId) { tabEl.dataset.active = "true"; tabEl.setAttribute("aria-current", "page"); }
-          tabEl.addEventListener("click", () => { try { onSelectTab?.(vault, tab); } catch (error) { showError(error); } });
+          const selected = tab.tabId === tabs.activeTabId;
+          tabEl.setAttribute("role", "tab"); tabEl.setAttribute("aria-selected", String(selected)); tabEl.tabIndex = selected ? 0 : -1;
+          if (selected) { tabEl.dataset.active = "true"; tabEl.setAttribute("aria-current", "page"); }
+          const commitRoving = (target: VaultTabs["tabs"][number], focus: boolean): void => {
+            const currentList = aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-tabs`);
+            const buttons = [...(currentList?.querySelectorAll<HTMLButtonElement>(".workspace-vault-tab") ?? [])];
+            const targetButton = buttons.find((button) => button.dataset.tabId === target.tabId);
+            for (const button of buttons) button.tabIndex = button === targetButton ? 0 : -1;
+            if (focus) targetButton?.focus();
+          };
+          const activate = (target: VaultTabs["tabs"][number], focus: boolean): void => {
+            try {
+              const result = onSelectTab?.(vault, target);
+              if (result && typeof result.then === "function") {
+                void result.then((committed) => { if (committed) commitRoving(target, focus); }).catch(showError);
+              } else {
+                commitRoving(target, focus);
+              }
+            } catch (error) { showError(error); }
+          };
+          tabEl.addEventListener("click", () => activate(tab, false));
+          tabEl.addEventListener("keydown", (event) => {
+            const key = event.key;
+            if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
+            event.preventDefault();
+            const index = tabs.tabs.findIndex((candidate) => candidate.tabId === tab.tabId);
+            const nextIndex = key === "Home" ? 0 : key === "End" ? tabs.tabs.length - 1 : (index + (key === "ArrowRight" ? 1 : -1) + tabs.tabs.length) % tabs.tabs.length;
+            const target = tabs.tabs[nextIndex];
+            if (target) activate(target, true);
+          });
           const closeTab = create("button", "workspace-vault-tab-close") as HTMLButtonElement; closeTab.type = "button"; closeTab.title = "탭 닫기"; closeTab.setAttribute("aria-label", `${tabName} 탭 닫기`); closeTab.append(icon("x")); closeTab.addEventListener("click", (event) => { event.stopPropagation(); onCloseTab?.(vault, tab); });
           tabRow.append(tabEl, closeTab); tabList.append(tabRow);
         }

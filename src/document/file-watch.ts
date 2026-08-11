@@ -42,6 +42,77 @@ export function unwatchFile(): Promise<void> {
   return invoke<void>("unwatch_file", {});
 }
 
+export type WatcherFailurePhase = "detach" | "attach" | "rollback";
+
+export interface WatcherHandoffPort {
+  readonly watch: (path: string) => Promise<void>;
+  readonly unwatch: () => Promise<void>;
+}
+
+export interface WatcherHandoff {
+  handoff(path: string | undefined): Promise<boolean>;
+  invalidate(): void;
+}
+
+export function createWatcherHandoff(
+  port: WatcherHandoffPort,
+  onFailure: (phase: WatcherFailurePhase, error: unknown) => void,
+): WatcherHandoff {
+  let generation = 0;
+  let queue: Promise<void> = Promise.resolve();
+  let watchedPath: string | undefined;
+
+  const handoff = (path: string | undefined): Promise<boolean> => {
+    const request = ++generation;
+    const result = queue.then(async () => {
+      if (request !== generation) return false;
+      const previous = watchedPath;
+      try {
+        await port.unwatch();
+      } catch (error: unknown) {
+        onFailure("detach", error);
+        return false;
+      }
+      if (request !== generation) return false;
+      if (!path) {
+        watchedPath = undefined;
+        return true;
+      }
+      try {
+        await port.watch(path);
+        if (request !== generation) {
+          if (!previous) return false;
+          try {
+            await port.watch(previous);
+            watchedPath = previous;
+          } catch (rollbackError: unknown) {
+            onFailure("rollback", rollbackError);
+            watchedPath = undefined;
+          }
+          return false;
+        }
+        watchedPath = path;
+        return true;
+      } catch (error: unknown) {
+        onFailure("attach", error);
+        if (!previous) return false;
+        try {
+          await port.watch(previous);
+          watchedPath = previous;
+        } catch (rollbackError: unknown) {
+          onFailure("rollback", rollbackError);
+          watchedPath = undefined;
+        }
+        return false;
+      }
+    });
+    queue = result.then(() => undefined, () => undefined);
+    return result;
+  };
+
+  return { handoff, invalidate: () => { generation += 1; } };
+}
+
 /** Subscribe to the backend's external-change event. Returns the Tauri unlisten
  *  fn so the caller can detach. Installed ONCE at boot; the callback reads the
  *  live `current` editor, so it survives re-mounts without re-subscribing. */
