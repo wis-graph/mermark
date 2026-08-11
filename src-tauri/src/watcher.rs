@@ -122,6 +122,17 @@ fn handle_fs_event(app: &AppHandle, path: &str) {
     let _ = app.emit("file-changed", FileChanged { text, mtime });
 }
 
+#[cfg(test)]
+pub(super) fn read_external_change(state: &WatchState, path: &std::path::Path) -> Option<FileChanged> {
+    let path_string = path.to_string_lossy();
+    let mtime = crate::commands::mtime_ms(&path_string);
+    if state.is_self_write(mtime) {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(FileChanged { text, mtime })
+}
+
 /// Payload for the `file-changed` event: the file's new contents plus the mtime
 /// the watcher observed, so the frontend can reload and re-baseline without a
 /// second `read_file` round-trip. Field names (`text`, `mtime`) match
@@ -131,6 +142,10 @@ pub struct FileChanged {
     pub text: String,
     pub mtime: u64,
 }
+
+#[cfg(test)]
+#[path = "watcher_characterization.rs"]
+mod characterization;
 
 /// Borrow the managed `WatchState`. One helper so every call site reaches the
 /// state the same way and the `tauri::Manager` import stays local to this module.
