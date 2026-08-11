@@ -426,7 +426,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    whichever class sits on the INNERMOST span — an element's own explicit color
    always overrides an ancestor's merely-inherited one, regardless of any
    cascade weight. So today's actual (pre-boldItalic-key) rendering is: bold
-   wins for ***x***/_**x**_/*__x__*, ITALIC wins for **_x_**/__*x*__ — the exact
+   wins for ***x*** / _**x**_ / *__x__*, ITALIC wins for **_x_** / __*x*__ — the exact
    opposite of what 결정 0 claimed for the triple-star case, and genuinely
    direction-dependent, not a single fixed answer. The fix targets BOTH real
    nesting shapes with descendant selectors (matches the actual DOM), and each
