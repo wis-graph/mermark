@@ -104,6 +104,8 @@ const SMOKE_BRIDGE_COMMANDS = new Set([
   "canonicalize_path",
   "directory_exists",
   "path_exists",
+  "watch_file",
+  "unwatch_file",
 ]);
 
 async function invokeSmokeBridge(command: string, args: Args | undefined): Promise<Response | null> {
@@ -367,6 +369,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
   const smokeResponse = await invokeSmokeBridge(name, args);
   if (smokeResponse) {
     if (!smokeResponse.ok) throw new Error(await smokeResponse.text());
+    if (name === "watch_file") mockWatchedPath = String(a.path ?? "");
+    if (name === "unwatch_file") mockWatchedPath = null;
     return smokeResponse.json();
   }
 
