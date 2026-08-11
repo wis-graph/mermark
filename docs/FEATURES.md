@@ -1,8 +1,8 @@
 # mermark 기능 계층 문서
 
-> mermark의 전체 기능을 아키텍처 계층별로 구조화한 단일 참조. **기능을 추가/변경하면 이 문서를 갱신한다**(mermark-dev 파이프라인 Phase 6 규약). 정체성: 볼트 무게 없이 단일 마크다운 파일을 CLI로 즉시 열어 Obsidian급 품질로 편집·렌더하는 경량 에디터.
+> mermark의 전체 기능을 아키텍처 계층별로 구조화한 단일 참조. **기능을 추가/변경하면 이 문서를 갱신한다**(mermark-dev 파이프라인 Phase 6 규약). 정체성: 가벼운 마크다운 파일 편집·렌더링을 중심으로, 선택 가능한 workspace/vault 탐색과 탭을 제공하는 경량 에디터.
 >
-> 기준 버전: v0.5.9 · 최종 갱신: 2026-08-07
+> 기준 버전: v0.10.1 (`package.json`) · 최종 갱신: 2026-08-11
 
 ---
 
@@ -20,10 +20,10 @@
 - **hwp_open / hwp_render_page / hwp_close** (`src-tauri/src/hwp.rs`, 신규) — 고정 rev `rhwp` 크레이트로 HWP/HWPX를 파싱·페이지 단위 SVG 렌더. 단일 슬롯 세션(`Mutex<Option<HwpSession>>`, 파싱 1회 후 페이지는 세션 재사용, `hwp_open`이 기존 세션 교체). 읽기 전용(쓰기 0, conflict guard 미해당). 방어: 파일 크기 상한 100MB(read 전 거부), 파싱 30s/렌더 10s 타임아웃, `catch_unwind`로 파서/렌더러 패닉을 `Err`로 봉쇄(손상 파일이 프로세스를 절대 죽이지 않는다 — 잔여 리스크는 스택오버플로 abort, 문서화하고 수용). 플랫폼별 한글 폴백 폰트 오버라이드(`platform_fallback_font`). CSP/capabilities/`read_file`·`write_file` 시그니처 전부 무변경.
 
 ### 1.2 CLI / 창
-- **단일파일 열기** — CLI 인자로 파일 1개 즉시 마운트(반볼트 정체성). `cli.rs`엔 원래 확장자 게이트가 없어 어떤 경로든 그대로 열리는데, 그 경로가 `.txt`이면 에디터 안에서 `.md`와 **완전히 동일하게** 렌더된다(같은 라이브프리뷰 파이프라인, 플레인텍스트 분기 없음) — 탐색기/검색/위키링크가 `.txt`를 md와 같이 취급하도록 확장된 것과 짝을 이룬다.
+- **단일파일 열기** — CLI 인자로 파일 1개를 즉시 마운트하는 빠른 진입 경로다. `cli.rs`엔 원래 확장자 게이트가 없어 어떤 경로든 그대로 열리는데, 그 경로가 `.txt`이면 에디터 안에서 `.md`와 **완전히 동일하게** 렌더된다(같은 라이브프리뷰 파이프라인, 플레인텍스트 분기 없음) — 탐색기/검색/위키링크가 `.txt`를 md와 같이 취급하도록 확장된 것과 짝을 이룬다.
 - **누락 파일 자동 생성** — 없는 경로 인자 시 Vim식 생성.
 - **`--right`** — 창을 화면 우측 절반에 배치.
-- **`-v` / `--version`** — 현재 버전(`mermark 0.9.8`)을 출력하고 즉시 종료. `lib.rs run()`에서 창 생성 전 헤드리스로 short-circuit(`cli::is_version_flag` 순수 판정 → `CARGO_PKG_VERSION` 단일 출처). `-v`는 단일 대시라 파일 인자로 오인되지 않도록, `--version`은 무시되는 미지 플래그에 섞이지 않도록 `parse_args` 앞에서 가로챈다. mac/Linux 터미널(설치된 CLI 래퍼)에서만 콘솔에 보임 — bundle 서브커맨드와 같은 한계.
+- **`-v` / `--version`** — 현재 버전(`mermark 0.10.1`)을 출력하고 즉시 종료. `lib.rs run()`에서 창 생성 전 헤드리스로 short-circuit(`cli::is_version_flag` 순수 판정 → `CARGO_PKG_VERSION` 단일 출처). `-v`는 단일 대시라 파일 인자로 오인되지 않도록, `--version`은 무시되는 미지 플래그에 섞이지 않도록 `parse_args` 앞에서 가로챈다. mac/Linux 터미널(설치된 CLI 래퍼)에서만 콘솔에 보임 — bundle 서브커맨드와 같은 한계.
 - **bundle CLI / `bundle_doc`** — 위키링크 추종해 문서를 LLM 컨텍스트로 패키징(부모/절대 경로 포함).
 
 ### 1.3 보안 설정
@@ -48,7 +48,13 @@
 - **경로 열기 re-point** — `openInWindow` + `current` SSOT로 새 파일을 현재 창에 재마운트(baseDir/filePath/autosave/세션 전수 갱신).
 - **저장/리로드 자동화** — 자동저장(타이핑 멈춤 200ms debounce, 수동 저장 버튼 없음). 외부 변경 감지 시 미저장 없으면 자동 리로드, **충돌(미저장+외부변경)이면 VSCode식 diff 모달**(라인 LCS, 로컬 유지 / 외부 채택 선택). 저장 상태 인디케이터로 신호.
 
-### 2.3 설정 SSOT
+### 2.3 워크스페이스·볼트·탭
+- **workspace/vault 상태** — `WorkspaceStore`가 workspace와 영구 볼트, 현재 선택 볼트, 볼트별 탐색기 루트를 관리하고 localStorage에 영속화한다. 글로벌 볼트는 파일 인자나 명시적 루트가 없는 세션의 안전한 기본값이다.
+- **볼트 사이드바** — `workspace-sidebar.ts`가 볼트 선택·영구 볼트 해제·탭 스트립을 제공한다. 파일 트리는 `ExplorerPanel`의 레이지 디렉터리 목록으로, 빈 폴더·오류·재시도·새로고침·제한 결과를 구분한다.
+- **볼트별 탭** — `VaultTabStore`가 탭 경로와 활성 탭을 저장한다. 현재 편집기는 하나를 재사용하며, 전환·닫기·watcher 교체는 복구 확인 후 커밋되는 단일-editor/단일-active-watcher 경계다. 탭마다 독립적인 살아있는 CodeMirror 인스턴스가 있다고 주장하지 않는다.
+- **복구 안전성** — 삭제·읽기 불가·저장 충돌에서 버퍼와 탭을 명시적 사용자 행동 전까지 유지한다. 검증 기록은 [`CODE_REVIEW.md`](../CODE_REVIEW.md)의 2026-08-11 현재 상태와 [task 8 통합 증거](../.omo/evidence/code-review-remediation/task-8.md)에 연결돼 있다.
+
+### 2.4 설정 SSOT
 - **`defineSetting` 프리미티브** — 의존성 없는 단일 출처 설정.
 - **sink 구독** — 설정 변경 → sink가 DOM/에디터에 반영(theme/mode/vim/fontScale/conflictPolicy/panZoom 등).
 - **단축키 레지스트리** — 전역 앱 단축키의 단일 SSOT(`src/shortcuts/`). `actions.ts`(rebindable action 선언, 순수 데이터·핸들러 미포함 — `search.document`(찾기, 리더에서도 열림, 기본 `⌘F`)·`search.replace`(찾아 바꾸기, 리더면 편집 모드로 전환 후 열림, 기본 `⌥⌘F`)·`search.files`(파일 찾기, 기본 `⌘⇧F`) 포함) + `keys.ts`(`e.code` 물리키 기반 chord 직렬화 `Mod+B`, mac ⌘⇧ / other Ctrl+Shift 표시, 한글 레이아웃 대응) + `registry.ts`(단일 전역 capture 디스패처, `effectiveBinding`=사용자 override ?? 기본값, `findConflict` 충돌 감지). 흩어진 하드코딩 키맵(구 ⌘E/⌘±/⌘⇧C·CM `Mod-e`)을 전부 수렴 — 앱-chord 하드코딩 keydown 0. `keybindingsSetting`(override분만 localStorage 저장)이 SSOT, 사용자 재정의는 설정 "단축키" 카테고리에서.
@@ -141,7 +147,17 @@
 
 ---
 
-## 곁가지 / 미구현 (정체성상 제외 or 후순위)
-- **볼트/멀티노트/파일트리/탭/그래프/백링크/태그/동기화** — 반볼트 정체성 위배(→ Obsidian 영역).
-- **플러그인 시스템** — 내부 레지스트리(`InlineFeature`/`BlockFeature`)는 있으나 외부 공개 API 미구현. (개선 로드맵 M3 — `docs/IMPROVEMENT_MASTER_PLAN.md`)
-- 상세 로드맵: `docs/IMPROVEMENT_MASTER_PLAN.md`(새 기능) · `docs/REFINEMENT_MASTER_PLAN.md`(폴리시).
+## 범위와 후속 결정 (2026-08-11)
+
+- **현재 제공** — workspace/vault 선택, vault별 파일 트리, 탭, 단일 active-editor/active-watcher 전환, 오류·삭제 복구는 위 L2와 L5에 기록된 현재 기능이다. 탭마다 독립적인 살아있는 에디터 인스턴스가 있다는 뜻은 아니다.
+- **현재 제외** — 그래프, 백링크, 동기화, 외부 플러그인 API와 파일 작업(new/rename/delete)은 여전히 제품 범위 밖 또는 후순위다. 내부 `InlineFeature`/`BlockFeature` 레지스트리는 외부 플러그인 API를 의미하지 않는다.
+- **검색 결정** — `파일 찾기`는 파일명·상대 경로 검색만 제공한다. 본문·태그 검색은 [2026-08-11 결정 게이트](reviews/full-text-search-decision-2026-08-11.md)의 **not approved for implementation** 상태다.
+
+### 검증·결정 기록
+
+- [검색 결정 게이트](reviews/full-text-search-decision-2026-08-11.md) — 본문 검색을 구현하지 않은 이유와 향후 승인 조건.
+- [성능 기준선](../.omo/evidence/code-review-remediation/task-10.md) — 초기 JS/CSS와 Mermaid/PDF/XLSX/DOCX 첫 사용 비용 측정; 최적화는 별도 승인 전 보류.
+- [의존성 advisory](../.omo/evidence/code-review-remediation/task-11.md) — production advisory 3개 노드와 업그레이드 보류 결정.
+- [watcher characterization/fix](../.omo/evidence/code-review-remediation/task-12.md) — 입증된 same-mtime changed-size/cross-tab 누락의 bounded fix와 same-size 미입증 경계.
+
+상세 로드맵: `docs/IMPROVEMENT_MASTER_PLAN.md`(새 기능) · `docs/REFINEMENT_MASTER_PLAN.md`(폴리시).

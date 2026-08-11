@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+
 // decideExternalChange is a pure decision — it imports nothing from Tauri, so we
 // don't need to mock the IPC/event modules here. (watchFile/unwatchFile/onFileChanged
 // are thin invoke/listen wrappers covered by the golden-master + render path.)
@@ -31,7 +32,7 @@ describe("decideExternalChange (auto-reload vs conflict)", () => {
     const handoff = createWatcherHandoff({
       unwatch: async () => { events.push("unwatch"); },
       watch: async (path) => {
-        events.push("watch " + path);
+        events.push(`watch ${path}`);
         if (path === "/B.md") throw new Error("watch failed");
       },
     }, () => {});
