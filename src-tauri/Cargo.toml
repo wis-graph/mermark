@@ -82,9 +82,3 @@ arboard = { version = "3", default-features = false }
 # to the major version `rhwp` already pulls — adds zero new crates, only a
 # direct name for one already-compiled version.
 zip = "8"
-
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
-libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

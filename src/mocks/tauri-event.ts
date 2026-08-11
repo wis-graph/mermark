@@ -5,7 +5,7 @@
 // as a dev hook that simulates an external edit: it writes the new content into
 // the in-memory store (so a later read_file sees it) and fans a "file-changed"
 // event out to every registered listener — exactly the shape the real backend
-// emits: { text, mtime }.
+// emits: { path, generation, text, mtime }.
 import { applyMockExternalChange } from "./tauri-core";
 
 export interface Event<T> {

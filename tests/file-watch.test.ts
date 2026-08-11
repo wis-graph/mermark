@@ -29,11 +29,13 @@ describe("decideExternalChange (auto-reload vs conflict)", () => {
 
   it("commits a successful handoff and rolls back a rejected attachment", async () => {
     const events: string[] = [];
+    let generation = 0;
     const handoff = createWatcherHandoff({
       unwatch: async () => { events.push("unwatch"); },
       watch: async (path) => {
         events.push(`watch ${path}`);
         if (path === "/B.md") throw new Error("watch failed");
+        return { path, generation: String(++generation) };
       },
     }, () => {});
 

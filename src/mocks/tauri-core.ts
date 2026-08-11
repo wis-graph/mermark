@@ -94,6 +94,24 @@ const store = new Map<string, string>();
 // (tauri-event.ts) so __mockExternalChange writes the simulated disk content
 // into the in-memory store and emits a file-changed event for that path.
 export let mockWatchedPath: string | null = null;
+interface MockWatchSession {
+  readonly path: string;
+  readonly generation: string;
+}
+let mockWatchSession: MockWatchSession | null = null;
+let mockWatcherGeneration = 0;
+
+function beginMockWatch(path: string): MockWatchSession {
+  const session = { path, generation: String(++mockWatcherGeneration) };
+  mockWatchedPath = path;
+  mockWatchSession = session;
+  return session;
+}
+
+function clearMockWatch(): void {
+  mockWatchedPath = null;
+  mockWatchSession = null;
+}
 
 const smokeBridge = new URL(window.location.href).searchParams.get("smokeBridge");
 const smokeToken = new URL(window.location.href).searchParams.get("smokeToken");
@@ -119,10 +137,10 @@ async function invokeSmokeBridge(command: string, args: Args | undefined): Promi
 /** Simulate an external edit landing on the watched file: update the in-memory
  *  store so a subsequent read_file sees it, and return the payload the event
  *  mock should emit. Returns null when nothing is being watched. */
-export function applyMockExternalChange(text: string): { text: string; mtime: number } | null {
-  if (mockWatchedPath == null) return null;
-  store.set(mockWatchedPath, text);
-  return { text, mtime: Date.now() };
+export function applyMockExternalChange(text: string): { readonly path: string; readonly generation: string; readonly text: string; readonly mtime: number } | null {
+  if (mockWatchSession == null) return null;
+  store.set(mockWatchSession.path, text);
+  return { ...mockWatchSession, text, mtime: Date.now() };
 }
 
 // Minimal stubs of `@tauri-apps/api/core`'s `Resource`/`Channel` classes.
@@ -369,9 +387,10 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
   const smokeResponse = await invokeSmokeBridge(name, args);
   if (smokeResponse) {
     if (!smokeResponse.ok) throw new Error(await smokeResponse.text());
-    if (name === "watch_file") mockWatchedPath = String(a.path ?? "");
-    if (name === "unwatch_file") mockWatchedPath = null;
-    return smokeResponse.json();
+    const result: unknown = await smokeResponse.json();
+    if (name === "watch_file") return beginMockWatch(String(a.path ?? "")) as T;
+    if (name === "unwatch_file") clearMockWatch();
+    return result as T;
   }
 
   switch (name) {
@@ -476,11 +495,10 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // Single-slot fs watcher. No real watcher in the browser — record the
       // path so __mockExternalChange (in the event mock) can target it, and
       // no-op otherwise. The real backend replaces any prior watch here.
-      mockWatchedPath = String(a.path ?? "");
-      console.info("[mock] watch_file", mockWatchedPath);
-      return undefined as T;
+      console.info("[mock] watch_file", a.path);
+      return beginMockWatch(String(a.path ?? "")) as T;
     case "unwatch_file":
-      mockWatchedPath = null;
+      clearMockWatch();
       console.info("[mock] unwatch_file");
       return undefined as T;
     case "resolve_image": {

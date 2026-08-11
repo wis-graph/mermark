@@ -2629,7 +2629,6 @@ version = "0.10.1"
 dependencies = [
  "arboard",
  "getrandom 0.3.4",
- "libc",
  "notify",
  "rhwp",
  "rusqlite",
@@ -2642,7 +2641,6 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "urlencoding",
- "windows-sys 0.61.2",
  "zip 8.6.0",
 ]
 

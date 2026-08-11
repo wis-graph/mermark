@@ -1227,11 +1227,15 @@ async function boot() {
   // live `current` cell, so it tracks re-opens without re-subscribing. Self-writes
   // are filtered in the backend (mtime baseline), so this only fires on real
   // external edits. Guarded to Tauri/browser-mock environments that emit events.
-  void onFileChanged(({ text, mtime }) => resolveExternalChange(text, mtime));
-  void onFileUnavailable(({ kind, detail }) => {
+  void onFileChanged((change) => {
+    if (!watcherHandoff.accepts(change, currentFile)) return;
+    resolveExternalChange(change.text, change.mtime);
+  });
+  void onFileUnavailable((change) => {
+    if (!watcherHandoff.accepts(change, currentFile)) return;
     if (!current || !currentFile) return;
-    current.suspendWrites(detail);
-    showDocumentRecovery(kind, detail);
+    current.suspendWrites(change.detail);
+    showDocumentRecovery(change.kind, change.detail);
   });
   // Don't lose the last keystrokes typed within the autosave debounce window:
   // intercept the window close, persist the live buffer, then close. Guarded so

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-type UnavailablePayload = { readonly kind: "deleted" | "unreadable"; readonly detail: string };
+type UnavailablePayload = {
+  readonly path: string;
+  readonly generation: string;
+  readonly kind: "deleted" | "unreadable";
+  readonly detail: string;
+};
 type EventHandler = (event: { readonly payload: UnavailablePayload }) => void;
 
 let unavailableHandler: EventHandler | undefined;
@@ -18,8 +23,12 @@ describe("file-unavailable watcher boundary", () => {
     const received: UnavailablePayload[] = [];
     await onFileUnavailable((payload) => received.push(payload));
 
-    unavailableHandler?.({ payload: { kind: "deleted", detail: "ENOENT: note.md" } });
+    unavailableHandler?.({
+      payload: { path: "/note.md", generation: "7", kind: "deleted", detail: "ENOENT: note.md" },
+    });
 
-    expect(received).toEqual([{ kind: "deleted", detail: "ENOENT: note.md" }]);
+    expect(received).toEqual([
+      { path: "/note.md", generation: "7", kind: "deleted", detail: "ENOENT: note.md" },
+    ]);
   });
 });

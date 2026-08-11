@@ -25,10 +25,11 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
   }
   if (command === "watch_file") {
     watcherEvents.push(`watch ${path}`);
+    const session = { path, generation: String(++watcherGeneration) };
     const deferred = deferredWatches.get(path);
-    if (deferred) return deferred.promise;
+    if (deferred) return deferred.promise.then(() => session);
     if (rejectWatchPath === path) return Promise.reject(new Error("watch failed"));
-    return Promise.resolve();
+    return Promise.resolve(session);
   }
   if (command === "unwatch_file") {
     watcherEvents.push("unwatch");
@@ -50,6 +51,7 @@ let deferredUnwatch: Promise<void> | undefined;
 let rejectWrites = false;
 let rejectUnwatch = false;
 let rejectWatchPath: string | undefined;
+let watcherGeneration = 0;
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => invokeMock(command, args),
@@ -86,6 +88,7 @@ describe("main workspace wiring", () => {
     rejectWrites = false;
     rejectUnwatch = false;
     rejectWatchPath = undefined;
+    watcherGeneration = 0;
     const app = document.createElement("div");
     app.id = "app";
     document.body.append(app);
@@ -423,7 +426,7 @@ describe("main workspace wiring", () => {
     await vi.waitFor(() => expect(watcherEvents).toEqual(["unwatch"]));
 
     expect(document.querySelector(".cm-content")?.textContent).toBe("A");
-    emitEvent("file-changed", { text: "# late A", mtime: 2 });
+    emitEvent("file-changed", { path: "/P/a.md", generation: "1", text: "# late A", mtime: 2 });
     await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("late A"));
     resolveDetach?.();
     await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("B"));
@@ -432,6 +435,28 @@ describe("main workspace wiring", () => {
     expect(document.querySelector('.workspace-vault-tab[data-active="true"]')?.getAttribute("title")).toBe("/P/b.md");
     expect(document.querySelector(".cm-content")?.textContent).toBe("B");
     expect(watcherEvents).toEqual(["unwatch", "watch /P/b.md"]);
+  });
+
+  it("rejects delayed A watcher events after a successful handoff to B", async () => {
+    documentContents.set("/P/a.md", "# A");
+    documentContents.set("/P/b.md", "# B");
+    localStorage.setItem("mermark.recentDocs", JSON.stringify(["/P/b.md"]));
+    vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
+    await vi.waitFor(() => expect(watcherEvents).toContain("watch /P/a.md"));
+    document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
+    document.querySelector<HTMLElement>('.recent-item[data-path="/P/b.md"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("B"));
+    await vi.waitFor(() => expect(watcherEvents).toContain("watch /P/b.md"));
+
+    emitEvent("file-changed", { path: "/P/a.md", generation: "1", text: "# stale A", mtime: 2 });
+    emitEvent("file-unavailable", { path: "/P/a.md", generation: "1", kind: "deleted", detail: "A 파일이 삭제되었습니다" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(document.querySelector(".cm-content")?.textContent).toBe("B");
+    expect(document.querySelector(".recovery-modal")).toBeNull();
   });
 
   it.each(["Recent", "File Finder"])("keeps A mounted and watched when detaching it is rejected through %s", async (surface) => {
@@ -456,7 +481,7 @@ describe("main workspace wiring", () => {
     }
     await vi.waitFor(() => expect(watcherEvents).toEqual(["unwatch"]));
 
-    emitEvent("file-changed", { text: "# late A", mtime: 2 });
+    emitEvent("file-changed", { path: "/P/a.md", generation: "1", text: "# late A", mtime: 2 });
     await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("late A"));
 
     expect(document.querySelector('.workspace-vault-tab[data-active="true"]')?.getAttribute("title")).toBe("/P/a.md");

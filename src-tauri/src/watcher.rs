@@ -18,6 +18,7 @@
 //! halves are named functions with clean CQS roles so the rule never hides in
 //! an inline `if` at the callback site.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -37,6 +38,7 @@ use tauri::{AppHandle, Emitter};
 pub struct WatchState {
     watcher: Mutex<Option<RecommendedWatcher>>,
     last_self_write: Mutex<Option<SelfWriteIdentity>>,
+    generation: AtomicU64,
 }
 
 struct SelfWriteIdentity {
@@ -46,6 +48,20 @@ struct SelfWriteIdentity {
 }
 
 impl WatchState {
+    fn next_session(&self, path: String) -> Result<WatchSession, String> {
+        let generation = self
+            .generation
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .map(|previous| previous + 1)
+            .map_err(|_| "watcher generation exhausted".to_owned())?;
+        Ok(WatchSession {
+            path,
+            generation: generation.to_string(),
+        })
+    }
+
     /// Record the bounded identity of the file we just wrote so the watcher
     /// event from that write is recognised and ignored.
     pub fn record_self_write(&self, path: &str, mtime: u64, size: usize) {
@@ -87,9 +103,11 @@ impl WatchState {
 /// re-mounts onto a different file. `NonRecursive` because we watch one file,
 /// not a tree. The callback re-reads the file and emits `file-changed` for
 /// genuine external edits only (self-writes are muted via `is_self_write`).
-pub fn set_watch(app: &AppHandle, path: String) -> Result<(), String> {
+pub fn set_watch(app: &AppHandle, path: String) -> Result<WatchSession, String> {
+    let state = tauri_watch_state(app);
+    let session = state.next_session(path.clone())?;
     let app_for_cb = app.clone();
-    let watched_path = path.clone();
+    let callback_session = session.clone();
 
     // The callback runs on notify's watcher thread. It must never panic (a
     // panic there would poison the watch silently), so every fallible step is
@@ -97,7 +115,7 @@ pub fn set_watch(app: &AppHandle, path: String) -> Result<(), String> {
     // means we skip this notification rather than crash the watcher.
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(_event) = res else { return };
-        handle_fs_event(&app_for_cb, &watched_path);
+        handle_fs_event(&app_for_cb, &callback_session);
     })
     .map_err(|e| format!("create watcher for {path}: {e}"))?;
 
@@ -105,12 +123,11 @@ pub fn set_watch(app: &AppHandle, path: String) -> Result<(), String> {
         .watch(std::path::Path::new(&path), RecursiveMode::NonRecursive)
         .map_err(|e| format!("watch {path}: {e}"))?;
 
-    let state = tauri_watch_state(app);
     *state
         .watcher
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(watcher);
-    Ok(())
+    Ok(session)
 }
 
 /// Empty the watch slot, dropping the live watcher (and so ending its OS watch).
@@ -131,13 +148,30 @@ pub fn clear_watch(app: &AppHandle) {
 /// thread. Events matching the latest bounded self-write identity emit nothing.
 /// A vanished/unreadable file (e.g. an editor mid-atomic-rename) is skipped
 /// silently rather than emitting a spurious change.
-fn handle_fs_event(app: &AppHandle, path: &str) {
+fn handle_fs_event(app: &AppHandle, session: &WatchSession) {
+    let path = &session.path;
     if !std::path::Path::new(path).exists() {
-        let _ = app.emit("file-unavailable", FileUnavailable { kind: "deleted", detail: format!("file deleted: {path}") });
+        let _ = app.emit(
+            "file-unavailable",
+            FileUnavailable {
+                path: path.clone(),
+                generation: session.generation.clone(),
+                kind: "deleted",
+                detail: format!("file deleted: {path}"),
+            },
+        );
         return;
     }
     let Ok(text) = std::fs::read_to_string(path) else {
-        let _ = app.emit("file-unavailable", FileUnavailable { kind: "unreadable", detail: format!("file unreadable: {path}") });
+        let _ = app.emit(
+            "file-unavailable",
+            FileUnavailable {
+                path: path.clone(),
+                generation: session.generation.clone(),
+                kind: "unreadable",
+                detail: format!("file unreadable: {path}"),
+            },
+        );
         return;
     };
     let Ok(metadata) = std::fs::metadata(path) else {
@@ -151,7 +185,15 @@ fn handle_fs_event(app: &AppHandle, path: &str) {
     }
     // Genuine external change → carry the new content + mtime so the frontend
     // doesn't have to round-trip a second read_file.
-    let _ = app.emit("file-changed", FileChanged { text, mtime });
+    let _ = app.emit(
+        "file-changed",
+        FileChanged {
+            path: path.clone(),
+            generation: session.generation.clone(),
+            text,
+            mtime,
+        },
+    );
 }
 
 #[cfg(test)]
@@ -166,21 +208,34 @@ pub(super) fn read_external_change(
         return None;
     }
     let text = std::fs::read_to_string(path).ok()?;
-    Some(FileChanged { text, mtime })
+    Some(FileChanged {
+        path: path_string.into_owned(),
+        generation: "0".to_owned(),
+        text,
+        mtime,
+    })
 }
 
-/// Payload for the `file-changed` event: the file's new contents plus the mtime
-/// the watcher observed, so the frontend can reload and re-baseline without a
-/// second `read_file` round-trip. Field names (`text`, `mtime`) match
-/// `commands::FileContent` and the `src/mocks/tauri-core.ts` simulation hook.
+#[derive(Clone, serde::Serialize)]
+pub struct WatchSession {
+    pub path: String,
+    pub generation: String,
+}
+
+/// Payload for the `file-changed` event: immutable watcher provenance plus the
+/// file contents and mtime observed by that watcher session.
 #[derive(Clone, serde::Serialize)]
 pub struct FileChanged {
+    pub path: String,
+    pub generation: String,
     pub text: String,
     pub mtime: u64,
 }
 
 #[derive(Clone, serde::Serialize)]
 pub struct FileUnavailable {
+    pub path: String,
+    pub generation: String,
     pub kind: &'static str,
     pub detail: String,
 }
@@ -199,6 +254,18 @@ fn tauri_watch_state(app: &AppHandle) -> tauri::State<'_, WatchState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watcher_sessions_have_monotonic_path_bound_generations() {
+        let state = WatchState::default();
+        let first = state.next_session("/A.md".to_owned()).unwrap();
+        let second = state.next_session("/B.md".to_owned()).unwrap();
+
+        assert_eq!(first.path, "/A.md");
+        assert_eq!(first.generation, "1");
+        assert_eq!(second.path, "/B.md");
+        assert_eq!(second.generation, "2");
+    }
 
     // --- is_self_write / record_self_write (the mute baseline) ---
     //

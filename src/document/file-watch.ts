@@ -11,13 +11,22 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 /** The payload the backend emits on a real external change (self-writes are
  *  filtered out in Rust, so the frontend never sees its own autosave here). */
 export interface FileChange {
-  text: string;
-  mtime: number;
+  readonly path: string;
+  readonly generation: string;
+  readonly text: string;
+  readonly mtime: number;
 }
 
 export interface FileUnavailable {
-  kind: "deleted" | "unreadable";
-  detail: string;
+  readonly path: string;
+  readonly generation: string;
+  readonly kind: "deleted" | "unreadable";
+  readonly detail: string;
+}
+
+export interface WatchSession {
+  readonly path: string;
+  readonly generation: string;
 }
 
 export type ExternalChangeAction = "reload" | "conflict";
@@ -31,10 +40,9 @@ export function decideExternalChange(hasUnsaved: boolean): ExternalChangeAction 
 }
 
 /** Begin watching `path` for external changes (single slot: replaces any prior
- *  watch). Command/CQS: void-ish (the invoke promise is awaited by callers that
- *  care; failures are non-fatal — the editor still works without a watcher). */
-export function watchFile(path: string): Promise<void> {
-  return invoke<void>("watch_file", { path });
+ *  watch) and return its immutable backend-assigned identity. */
+export function watchFile(path: string): Promise<WatchSession> {
+  return invoke<WatchSession>("watch_file", { path });
 }
 
 /** Stop watching the current file (called on teardown before a re-mount). */
@@ -45,13 +53,14 @@ export function unwatchFile(): Promise<void> {
 export type WatcherFailurePhase = "detach" | "attach" | "rollback";
 
 export interface WatcherHandoffPort {
-  readonly watch: (path: string) => Promise<void>;
+  readonly watch: (path: string) => Promise<WatchSession>;
   readonly unwatch: () => Promise<void>;
 }
 
 export interface WatcherHandoff {
   handoff(path: string | undefined): Promise<boolean>;
   invalidate(): void;
+  accepts(event: Pick<WatchSession, "path" | "generation">, currentPath: string): boolean;
 }
 
 export function createWatcherHandoff(
@@ -60,13 +69,13 @@ export function createWatcherHandoff(
 ): WatcherHandoff {
   let generation = 0;
   let queue: Promise<void> = Promise.resolve();
-  let watchedPath: string | undefined;
+  let activeSession: WatchSession | undefined;
 
   const handoff = (path: string | undefined): Promise<boolean> => {
     const request = ++generation;
     const result = queue.then(async () => {
       if (request !== generation) return false;
-      const previous = watchedPath;
+      const previous = activeSession;
       try {
         await port.unwatch();
       } catch (error: unknown) {
@@ -75,33 +84,31 @@ export function createWatcherHandoff(
       }
       if (request !== generation) return false;
       if (!path) {
-        watchedPath = undefined;
+        activeSession = undefined;
         return true;
       }
       try {
-        await port.watch(path);
+        const session = await port.watch(path);
         if (request !== generation) {
           if (!previous) return false;
           try {
-            await port.watch(previous);
-            watchedPath = previous;
+            activeSession = await port.watch(previous.path);
           } catch (rollbackError: unknown) {
             onFailure("rollback", rollbackError);
-            watchedPath = undefined;
+            activeSession = undefined;
           }
           return false;
         }
-        watchedPath = path;
+        activeSession = session;
         return true;
       } catch (error: unknown) {
         onFailure("attach", error);
         if (!previous) return false;
         try {
-          await port.watch(previous);
-          watchedPath = previous;
+          activeSession = await port.watch(previous.path);
         } catch (rollbackError: unknown) {
           onFailure("rollback", rollbackError);
-          watchedPath = undefined;
+          activeSession = undefined;
         }
         return false;
       }
@@ -110,7 +117,14 @@ export function createWatcherHandoff(
     return result;
   };
 
-  return { handoff, invalidate: () => { generation += 1; } };
+  return {
+    handoff,
+    invalidate: () => { generation += 1; },
+    accepts: (event, currentPath) =>
+      currentPath === event.path
+      && activeSession?.path === event.path
+      && activeSession.generation === event.generation,
+  };
 }
 
 /** Subscribe to the backend's external-change event. Returns the Tauri unlisten
