@@ -116,8 +116,37 @@ describe("main workspace wiring", () => {
     expect(mainSource).not.toContain("createTemporaryVault");
   });
 
-  it("routes every no-document opener through the shared reload handoff", () => {
-    expect(mainSource.match(/location\.href = createDocumentReloadUrl/g)).toHaveLength(3);
+  it.each([
+    ["Explorer", "/A/start.md"],
+    ["Recent", "/P/b.md"],
+    ["File Finder", "/P/b.md"],
+  ])("reloads from the welcome screen through %s", async (surface, target) => {
+    localStorage.setItem("mermark.recentDocs", JSON.stringify(["/P/b.md"]));
+    scanResult = { files: [{ name: "b.md", path: "/P/b.md", rel_path: "b.md" }], truncated: false };
+    vi.stubGlobal("location", { search: "", href: "" });
+
+    await import("../src/main");
+
+    if (surface === "Explorer") {
+      document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-dir[data-path="/A"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.explorer-dir[data-path="/A"]')?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="/A/start.md"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.explorer-file[data-path="/A/start.md"]')?.click();
+    } else if (surface === "Recent") {
+      document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
+      document.querySelector<HTMLElement>('.recent-item[data-path="/P/b.md"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    } else {
+      document.querySelector<HTMLButtonElement>(".search-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.search-item[data-path="/P/b.md"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.search-item[data-path="/P/b.md"]')?.click();
+    }
+
+    const reload = new URL(location.href, "https://mermark.test/");
+    expect(reload.pathname).toBe("/index.html");
+    expect(reload.searchParams.get("file")).toBe(target);
+    expect(reload.searchParams.get("vault")).toBe("global");
+    expect(reload.searchParams.get("root")).toBe("/");
   });
 
   it("routes live tab selection and close fallback through main", () => {
@@ -403,6 +432,52 @@ describe("main workspace wiring", () => {
     expect(document.querySelector('.workspace-vault-tab[data-active="true"]')?.getAttribute("title")).toBe("/P/b.md");
     expect(document.querySelector(".cm-content")?.textContent).toBe("B");
     expect(watcherEvents).toEqual(["unwatch", "watch /P/b.md"]);
+  });
+
+  it.each(["Recent", "File Finder"])("keeps A mounted and watched when detaching it is rejected through %s", async (surface) => {
+    documentContents.set("/P/a.md", "# A");
+    documentContents.set("/P/b.md", "# B");
+    localStorage.setItem("mermark.recentDocs", JSON.stringify(["/P/b.md"]));
+    scanResult = { files: [{ name: "b.md", path: "/P/b.md", rel_path: "b.md" }], truncated: false };
+    vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
+    watcherEvents.length = 0;
+    rejectUnwatch = true;
+
+    if (surface === "Recent") {
+      document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
+      document.querySelector<HTMLElement>('.recent-item[data-path="/P/b.md"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    } else {
+      document.querySelector<HTMLButtonElement>(".search-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.search-item[data-path="/P/b.md"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.search-item[data-path="/P/b.md"]')?.click();
+    }
+    await vi.waitFor(() => expect(watcherEvents).toEqual(["unwatch"]));
+
+    emitEvent("file-changed", { text: "# late A", mtime: 2 });
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("late A"));
+
+    expect(document.querySelector('.workspace-vault-tab[data-active="true"]')?.getAttribute("title")).toBe("/P/a.md");
+    expect(watcherEvents).toEqual(["unwatch"]);
+    expect(watcherEvents).not.toContain("watch /P/b.md");
+  });
+
+  it("keeps an unavailable recent entry visible so the user can retry it", async () => {
+    documentContents.set("/P/a.md", "# A");
+    localStorage.setItem("mermark.recentDocs", JSON.stringify(["/P/missing.md"]));
+    rejectedReads.add("/P/missing.md");
+    vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
+    document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
+    document.querySelector<HTMLElement>('.recent-item[data-path="/P/missing.md"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    await vi.waitFor(() => expect(document.querySelector(".recovery-modal")).not.toBeNull());
+
+    document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
+    expect(document.querySelector('.recent-item[data-path="/P/missing.md"]')).not.toBeNull();
   });
 
   it("retains a dirty editor when switching to a vault with no restorable tab fails", async () => {

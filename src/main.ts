@@ -821,9 +821,9 @@ async function boot() {
 
   // ── Recent documents LEFT SIDEBAR. Same toggle shape as explorer/outline; the
   //    list is read from recentDocsSetting (SSOT — the panel never writes it)
-  //    and a click reuses main's open path. A read failure prunes the dead
-  //    entry. The panel re-renders from a single recentDocsSetting.subscribe
-  //    below. ──────────────────────────────────────────────────────────────────
+  //    and a click reuses main's open transaction. An unavailable entry stays
+  //    visible so its recovery flow can retry it. The panel re-renders from a
+  //    single recentDocsSetting.subscribe below. ────────────────────────────────
   const recent = createRecentPanel({
     getRecent: () => recentDocsSetting.get(),
     onOpenFile: async (absPath) => {

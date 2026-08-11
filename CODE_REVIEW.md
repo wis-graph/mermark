@@ -81,6 +81,14 @@ P0-2가 이후 파일 열기·탭·탐색기 작업의 공통 오류 표면을 �
 
 **후속 결정 링크:** 본문 검색은 [2026-08-11 검색 결정](docs/reviews/full-text-search-decision-2026-08-11.md), 실측 성능 기준선은 [task 10](.omo/evidence/code-review-remediation/task-10.md), 의존성 advisory는 [task 11](.omo/evidence/code-review-remediation/task-11.md), watcher characterization 및 입증된 bounded fix는 [task 12](.omo/evidence/code-review-remediation/task-12.md)에 기록되어 있다. 각 문서는 승인·측정·잔여 위험의 범위를 독립적으로 보존한다.
 
+### 2026-08-11 F2 후속 재검증 범위
+
+Recent Documents와 File Finder의 현재 문서 전환은 `openDocumentSafely`의 read → 저장 준비 → watcher detach/attach → mount 트랜잭션을 사용한다. 두 경로 각각의 detach 거부 시나리오는 A 편집기·A 탭·A watcher를 유지하고, 늦은 pathless A 이벤트가 B를 오염시키지 않는지 `tests/main-wiring.test.ts`에서 검증한다. 문서 없는 Explorer/Recent/File Finder 진입은 source-occurrence 수 대신 실제 reload URL의 file·global vault·root 파라미터를 검증한다.
+
+최근 문서에서 읽을 수 없는 경로는 자동 제거하지 않는다. 복구 모달의 재시도를 위해 목록에 남기는 현재 동작을 통합 테스트로 고정했고, 사용되지 않던 `pruneMissing` 순수 helper와 그 구현 전용 단위 테스트는 제거했다.
+
+이 후속 범위는 TypeScript/브라우저 wiring뿐이며 Rust FFI는 수정하거나 재검증하지 않았다. 검증 호스트는 Darwin arm64이고 installed nightly components에 `cargo-miri`가 없으므로 Miri를 실행하지 않았다. Windows `ReplaceFileW` FFI도 Windows runner·linker·runtime이 없는 macOS 호스트에서는 실행하지 않았다. 이는 FFI 안전성의 통과 증거가 아니며, 해당 경계는 Windows 환경과 Miri가 설치된 적절한 Rust 도구체인에서 별도로 검증해야 한다.
+
 ### 2026-08-09 기능별 구현 우선순위(P0~P2)와 예상 작업 규모 (역사적 스냅샷)
 
 아래 표는 기능별로 `구현 우선순위`와 `예상 작업 규모`를 별도 판단한 결과다. 우선순위는 사용자 흐름을 막는 정도와 선행 의존성을 기준으로 P0(즉시 결정·착수), P1(핵심 개선), P2(후속 품질 보강)으로 구분했다. 규모는 현재 단일 문서 모델을 볼트 워크스페이스로 확장할 때 필요한 프론트엔드·Rust 경계·수동 검증을 함께 포함한 상대적 추정이다.

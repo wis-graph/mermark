@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { pushRecent, pruneMissing, RECENT_CAP } from "../src/sidebar/recent/recent-docs";
+import { pushRecent, RECENT_CAP } from "../src/sidebar/recent/recent-docs";
 
-// Pure list arithmetic: dedup → front → cap (most-recent-first), and prune a
-// dead entry.
+// Pure list arithmetic: dedup → front → cap (most-recent-first).
 
 describe("pushRecent", () => {
   it("prepends a new path (most-recent-first)", () => {
@@ -23,14 +22,5 @@ describe("pushRecent", () => {
 
   it("respects a custom cap", () => {
     expect(pushRecent(["/a", "/b"], "/c", 2)).toEqual(["/c", "/a"]);
-  });
-});
-
-describe("pruneMissing", () => {
-  it("removes the given path", () => {
-    expect(pruneMissing(["/a", "/b", "/c"], "/b")).toEqual(["/a", "/c"]);
-  });
-  it("is a no-op when the path is absent", () => {
-    expect(pruneMissing(["/a"], "/x")).toEqual(["/a"]);
   });
 });

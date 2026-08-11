@@ -14,9 +14,3 @@ export function pushRecent(list: string[], path: string, cap = RECENT_CAP): stri
   const withoutDupe = list.filter((p) => p !== path);
   return [path, ...withoutDupe].slice(0, cap);
 }
-
-/** Remove a path that turned out to be gone (open failed). Named so the
- *  "forget a dead entry" rule isn't an inline filter at the call site. Pure. */
-export function pruneMissing(list: string[], missing: string): string[] {
-  return list.filter((p) => p !== missing);
-}
