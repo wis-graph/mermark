@@ -23,7 +23,7 @@ afterEach(() => {
   host.remove();
 });
 
-function mount(overrides: Partial<SearchHandlers> = {}, scanImpl?: (root: string) => Promise<ScanResult>) {
+function mount(overrides: Partial<SearchHandlers> = {}, scanImpl?: (root: string) => Promise<unknown>) {
   const scan = vi.fn(scanImpl ?? (() => Promise.resolve(fakeResult())));
   const onOpenFile = vi.fn();
   const onOpenFileNewWindow = vi.fn();
@@ -44,6 +44,11 @@ function mount(overrides: Partial<SearchHandlers> = {}, scanImpl?: (root: string
 const flush = () => new Promise<void>((r) => setTimeout(r, 0));
 const input = (aside: HTMLElement) => aside.querySelector(".search-input") as HTMLInputElement;
 const rows = (aside: HTMLElement) => [...aside.querySelectorAll<HTMLElement>(".search-item")];
+
+type DeferredScan = {
+  readonly resolve: (result: ScanResult) => void;
+  readonly reject: (reason: Error) => void;
+};
 
 describe("createSearchPanel", () => {
   it("revealSearch opens the aside, focuses the input, and fires onOpen", async () => {
@@ -124,7 +129,68 @@ describe("createSearchPanel", () => {
     await flush();
     const err = panel.aside.querySelector(".search-error");
     expect(err).not.toBeNull();
+    expect(err?.querySelector(".search-state-message")).not.toBeNull();
     expect(panel.aside.querySelector(".search-empty")).toBeNull();
+  });
+
+  it("a malformed scan result renders a distinct error row", async () => {
+    const { panel } = mount({}, () => Promise.resolve({ files: [], truncated: "not a boolean" }));
+    panel.revealSearch();
+    await flush();
+    expect(panel.aside.querySelector(".search-error")).not.toBeNull();
+    expect(panel.aside.querySelector(".search-empty")).toBeNull();
+  });
+
+  it("keeps a newer same-root scan error after an older scan resolves late", async () => {
+    // Given: two deferred opens of the same root.
+    const pending: DeferredScan[] = [];
+    const { panel } = mount({}, () =>
+      new Promise<ScanResult>((resolve, reject) => {
+        pending.push({ resolve, reject });
+      }),
+    );
+
+    // When: the later scan rejects before the older one succeeds.
+    panel.button.click();
+    panel.button.click();
+    panel.button.click();
+    const older = pending[0];
+    const newer = pending[1];
+    if (!older || !newer) throw new Error("two scan requests were not created");
+    newer.reject(new Error("newer scan failed"));
+    await flush();
+    older.resolve({ files: [hit("stale.md", "/root/stale.md", "stale.md")], truncated: false });
+    await flush();
+
+    // Then: the later error remains authoritative and stale results are absent.
+    expect(panel.aside.querySelector(".search-error")).not.toBeNull();
+    expect(panel.aside.querySelector(".search-item[data-path='/root/stale.md']")).toBeNull();
+  });
+
+  it("keeps newer same-root scan results after an older scan rejects late", async () => {
+    // Given: two deferred opens of the same root.
+    const pending: DeferredScan[] = [];
+    const { panel } = mount({}, () =>
+      new Promise<ScanResult>((resolve, reject) => {
+        pending.push({ resolve, reject });
+      }),
+    );
+
+    // When: the later scan succeeds before the older one rejects.
+    panel.button.click();
+    panel.button.click();
+    panel.button.click();
+    const older = pending[0];
+    const newer = pending[1];
+    if (!older || !newer) throw new Error("two scan requests were not created");
+    newer.resolve({ files: [hit("fresh.md", "/root/fresh.md", "fresh.md")], truncated: false });
+    await flush();
+    older.reject(new Error("older scan failed"));
+    await flush();
+
+    // Then: the later results remain authoritative and no error is rendered.
+    expect(panel.aside.querySelector(".search-error")).toBeNull();
+    expect(panel.aside.querySelector(".search-item[data-path='/root/fresh.md']")).not.toBeNull();
   });
 
   it("truncated: true renders a banner row above the results", async () => {

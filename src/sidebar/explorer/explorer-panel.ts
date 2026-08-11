@@ -209,7 +209,14 @@ export function createExplorerPanel({
   const header = create("div", "explorer-header sidebar-header");
   // Static — path display is now the footer breadcrumb's job (single source
   // of truth), so the header never carries the root path (see renderTree).
-  header.textContent = "탐색기";
+  const headerTitle = create("span");
+  headerTitle.textContent = "탐색기";
+  const refreshButton = create("button", "explorer-refresh chrome-btn icon-only") as HTMLButtonElement;
+  refreshButton.type = "button";
+  refreshButton.title = "현재 폴더 새로고침";
+  refreshButton.setAttribute("aria-label", "현재 폴더 새로고침");
+  refreshButton.append(icon("refresh-cw"));
+  header.append(headerTitle, refreshButton);
 
   /** Render the toggle button for the current open/closed state (icon + ARIA).
    *  Called at init and on every open()/close() so they never drift. */
@@ -224,6 +231,8 @@ export function createExplorerPanel({
   // (no re-call). Cleared on root change / panel reopen — MVP has no fs-watch
   // invalidation (lazy read-only tree, "look around this doc lightly").
   const childrenCache = new Map<string, DirEntry[]>();
+  const listingErrors = new Map<string, string>();
+  const listingRequests = new Map<string, number>();
 
   /** The tree's current root path (canonical, post-normalization) — set at the
    *  single canonicalization/observation point in renderTree (same spot
@@ -231,6 +240,7 @@ export function createExplorerPanel({
    *  never a stale or pre-normalized value. `refreshListing` reads this to
    *  rebuild in place instead of falling back to getBaseDir(). */
   let currentRoot: string | null = null;
+  let renderGeneration = 0;
 
   const refreshVaultToggles = async (): Promise<void> => {
     if (!isVaultRegistered) return;
@@ -301,22 +311,58 @@ export function createExplorerPanel({
     item.classList.add("is-selected");
   };
 
-  /** Read `path` once, then serve from cache on every re-read (re-expand of the
-   *  same folder never re-calls list_dir). A missing/blocked folder makes
-   *  list_dir reject — treat it as empty (silent, not a crash): the user just
-   *  sees no children. The empty result is cached so a bad folder isn't retried. */
-  const readChildren = async (path: string): Promise<DirEntry[]> => {
+  const errorMessage = (error: unknown): string =>
+    error instanceof Error && error.message.length > 0 ? error.message : "알 수 없는 오류";
+
+  const isValidEntry = (entry: DirEntry): boolean =>
+    typeof entry?.name === "string" &&
+    typeof entry.path === "string" &&
+    typeof entry.is_dir === "boolean";
+
+  /** Read `path` once, then serve successful results from cache on every
+   * re-read. Rejections are deliberately never cached as empty arrays. The
+   * request number prevents a late result from an older retry from replacing a
+   * newer successful result. */
+  const readChildren = async (path: string): Promise<{ entries: DirEntry[]; request: number }> => {
     const hit = childrenCache.get(path);
-    if (hit) return hit;
-    let entries: DirEntry[];
+    if (hit) return { entries: hit, request: listingRequests.get(path) ?? 0 };
+    const request = (listingRequests.get(path) ?? 0) + 1;
+    listingRequests.set(path, request);
     try {
-      entries = await listDir(path);
-    } catch {
-      entries = [];
+      const entries = await listDir(path);
+      if (!Array.isArray(entries) || !entries.every(isValidEntry)) {
+        throw new Error("폴더 목록 형식이 올바르지 않습니다");
+      }
+      if (listingRequests.get(path) === request) {
+        childrenCache.set(path, entries);
+        listingErrors.delete(path);
+      }
+      return { entries, request };
+    } catch (error) {
+      if (listingRequests.get(path) === request) listingErrors.set(path, errorMessage(error));
+      throw error;
     }
-    childrenCache.set(path, entries);
-    return entries;
   };
+
+  const makeState = (className: string, message: string, action?: { className: string; label: string; run: () => void }): HTMLElement => {
+    const state = create("div", className);
+    const messageNode = create("span", "explorer-state-message");
+    messageNode.textContent = message;
+    state.append(messageNode);
+    if (action) {
+      const actionButton = create("button", action.className) as HTMLButtonElement;
+      actionButton.type = "button";
+      actionButton.textContent = action.label;
+      actionButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        action.run();
+      });
+      state.append(actionButton);
+    }
+    return state;
+  };
+
+  const makeEmptyState = (): HTMLElement => makeState("explorer-empty", "이 폴더에는 표시할 파일이 없습니다");
 
   /** Build one entry row. Folders get a chevron twisty + aria-expanded + a lazy
    *  children group; files get a spacer (chevron alignment) and are greyed +
@@ -374,12 +420,38 @@ export function createExplorerPanel({
     if (!kids) return;
     kids.hidden = false;
     if (node.dataset.loaded === "true") return;
-    node.dataset.loaded = "true";
     const path = node.dataset.path;
     if (!path) return;
     const level = Number(node.dataset.level ?? "1") + 1;
-    const entries = await readChildren(path);
-    for (const child of entries) kids.append(await makeEntry(child, level));
+    try {
+      const result = await readChildren(path);
+      if (listingRequests.get(path) !== result.request) return;
+      node.dataset.loaded = "true";
+      kids.replaceChildren();
+      if (result.entries.length === 0) {
+        kids.append(makeEmptyState());
+        return;
+      }
+      for (const child of result.entries) kids.append(await makeEntry(child, level));
+    } catch (error) {
+      if (listingErrors.get(path) !== errorMessage(error)) return;
+      node.removeAttribute("data-loaded");
+      kids.replaceChildren(
+        makeState("explorer-child-error", `하위 폴더를 읽을 수 없습니다: ${errorMessage(error)}`, {
+          className: "explorer-retry",
+          label: "다시 시도",
+          run: () => retryFolder(node),
+        }),
+      );
+    }
+  };
+
+  const retryFolder = (node: HTMLElement): void => {
+    const kids = node.querySelector(":scope > .explorer-children") as HTMLElement | null;
+    if (!kids) return;
+    node.removeAttribute("data-loaded");
+    kids.replaceChildren();
+    void expandFolder(node);
   };
 
   /** Hide a folder's children (DOM + cache preserved for instant re-expand).
@@ -429,6 +501,7 @@ export function createExplorerPanel({
    *  stale or pre-normalized value. */
   const renderTree = async (rootPath: string): Promise<void> => {
     rootPath = normalizePath(rootPath);
+    const renderId = ++renderGeneration;
     currentRoot = rootPath;
     onRootChange?.(rootPath);
     tree.replaceChildren();
@@ -461,8 +534,22 @@ export function createExplorerPanel({
       tree.append(up);
     }
 
-    const entries = await readChildren(rootPath);
-    for (const e of entries) tree.append(await makeEntry(e, 1));
+    try {
+      const result = await readChildren(rootPath);
+      if (renderGeneration !== renderId || listingRequests.get(rootPath) !== result.request) return;
+      if (result.entries.length === 0) tree.append(makeEmptyState());
+      else for (const e of result.entries) tree.append(await makeEntry(e, 1));
+    } catch (error) {
+      if (renderGeneration !== renderId || listingErrors.get(rootPath) !== errorMessage(error)) return;
+      tree.append(
+        makeState("explorer-root-error", `현재 루트를 읽을 수 없습니다: ${errorMessage(error)}`, {
+          className: "explorer-root-reselect",
+          label: "루트 다시 선택",
+          run: () => changeRoot(getBaseDir()),
+        }),
+      );
+      return;
+    }
 
     const first = visibleItems()[0];
     if (first) focusItem(first, false);
@@ -599,6 +686,8 @@ export function createExplorerPanel({
     void renderTree(currentRoot ?? getBaseDir());
   };
 
+  refreshButton.addEventListener("click", () => refreshListing());
+
   button.addEventListener("click", () => {
     if (aside.hidden) open();
     else close();
@@ -611,6 +700,12 @@ export function createExplorerPanel({
 
   tree.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
+    const retry = target.closest(".explorer-retry");
+    if (retry) {
+      const row = retry.closest(".explorer-dir") as HTMLElement | null;
+      if (row) retryFolder(row);
+      return;
+    }
     const toggle = target.closest(".explorer-vault-toggle");
     if (toggle) {
       const row = toggle.closest(".explorer-item") as HTMLElement | null;

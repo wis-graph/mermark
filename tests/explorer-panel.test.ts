@@ -1137,6 +1137,83 @@ describe("explorer: refreshListing (showHiddenFiles setting sink)", () => {
   });
 });
 
+describe("explorer: explicit filesystem states (task 5)", () => {
+  it("renders a resolved empty root distinctly from a rejected root", async () => {
+    const empty = await openPanel({
+      listDir: vi.fn(async () => []),
+      getBaseDir: () => "/empty",
+      onOpenFile: vi.fn(),
+    });
+    expect(empty.aside.querySelector(".explorer-empty")).not.toBeNull();
+    expect(empty.aside.querySelector(".explorer-root-error")).toBeNull();
+
+    let rootAttempts = 0;
+    const rootList = vi.fn(async (): Promise<DirEntry[]> => {
+      rootAttempts += 1;
+      if (rootAttempts === 1) throw new Error("permission denied");
+      return [file("reselected.md", "/unreadable/reselected.md")];
+    });
+    const rejected = await openPanel({
+      listDir: rootList,
+      getBaseDir: () => "/unreadable",
+      onOpenFile: vi.fn(),
+    });
+    expect(rejected.aside.querySelector(".explorer-root-error")).not.toBeNull();
+    expect(rejected.aside.querySelector(".explorer-empty")).toBeNull();
+    expect(rejected.aside.querySelector(".explorer-root-error .explorer-state-message")).not.toBeNull();
+    const reselect = rejected.aside.querySelector<HTMLButtonElement>(".explorer-root-reselect");
+    expect(reselect).not.toBeNull();
+    reselect?.click();
+    await flush();
+    expect(rootList).toHaveBeenCalledTimes(2);
+    expect(rejected.aside.querySelector(".explorer-root-error")).toBeNull();
+    expect(rejected.aside.textContent).toContain("reselected.md");
+  });
+
+  it("renders only the affected child error and retries the real adapter without caching rejection", async () => {
+    let childAttempts = 0;
+    const listDir = vi.fn(async (path: string): Promise<DirEntry[]> => {
+      if (path === "/root") return [dir("blocked", "/root/blocked"), dir("other", "/root/other")];
+      if (path === "/root/blocked") {
+        childAttempts += 1;
+        if (childAttempts === 1) throw new Error("child denied");
+        return [file("recovered.md", "/root/blocked/recovered.md")];
+      }
+      return [];
+    });
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const blocked = items(panel.aside).find((item) => item.dataset.path === "/root/blocked") as HTMLElement;
+    clickItem(blocked);
+    await flush();
+
+    expect(blocked.querySelector(".explorer-child-error")).not.toBeNull();
+    expect(blocked.querySelector(".explorer-child-error .explorer-state-message")).not.toBeNull();
+    expect(blocked.querySelector(".explorer-empty")).toBeNull();
+    expect(panel.aside.querySelector(".explorer-root-error")).toBeNull();
+    expect(items(panel.aside).find((item) => item.dataset.path === "/root/other")?.querySelector(".explorer-child-error")).toBeNull();
+
+    const retry = blocked.querySelector<HTMLButtonElement>(".explorer-retry");
+    expect(retry).not.toBeNull();
+    retry?.click();
+    await flush();
+    expect(listDir).toHaveBeenLastCalledWith("/root/blocked");
+    expect(childAttempts).toBe(2);
+    expect(blocked.querySelector(".explorer-child-error")).toBeNull();
+    expect(blocked.textContent).toContain("recovered.md");
+  });
+
+  it("exposes refresh through the existing invalidation path", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const refresh = panel.aside.querySelector<HTMLButtonElement>(".explorer-refresh");
+    expect(refresh).not.toBeNull();
+    refresh?.click();
+    await flush();
+    expect(listDir).toHaveBeenLastCalledWith("/root");
+    expect(listDir).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("explorer: viewer openability refresh", () => {
   // refreshOpenability() — the viewer-toggle mid-session bug guard. `.is-nonmd`
   // is baked in at row-creation time (K's tests above), so a live toggle of the

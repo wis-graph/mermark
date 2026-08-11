@@ -1640,8 +1640,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    untouched. */
 .explorer-aside { overflow: hidden; }
 .explorer-header {
+  display: flex; align-items: center; justify-content: space-between; gap: .4em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.explorer-refresh { flex: none; color: var(--sidebar-muted); }
+.explorer-refresh:hover, .explorer-refresh:focus-visible { color: var(--sidebar-fg); }
+.explorer-empty, .explorer-root-error, .explorer-child-error { padding: .5em 8px; color: var(--sidebar-muted); }
+.explorer-root-error, .explorer-child-error { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .5em; }
+.explorer-state-message, .search-state-message { min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
+.explorer-root-reselect, .explorer-retry { border: 1px solid var(--sidebar-border); border-radius: var(--radius-sm, 6px); background: transparent; color: var(--sidebar-fg); font: inherit; padding: .2em .5em; cursor: pointer; }
+.explorer-root-reselect:hover, .explorer-root-reselect:focus-visible, .explorer-retry:hover, .explorer-retry:focus-visible { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
 .explorer-tree { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 2px 6px 8px; }
 /* An item is a vertical BLOCK: its label row on top, its children group below.
    The old row-flex on .explorer-item pulled the children group up beside the
@@ -2659,6 +2667,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .search-empty, .search-error { padding: .5em 8px; color: var(--sidebar-muted); }
 .search-error { color: var(--danger, #d33); }
 .search-truncated-banner {
-  padding: 4px 8px; font-size: calc(11em / 13); color: var(--sidebar-muted);
+  padding: 4px 8px; font-size: calc(11em / 13); color: var(--sidebar-muted); word-break: keep-all; overflow-wrap: anywhere;
   border-bottom: 1px solid var(--sidebar-border); margin-bottom: 2px;
 }

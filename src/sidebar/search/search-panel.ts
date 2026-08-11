@@ -40,6 +40,14 @@ export interface ScanResult {
   truncated: boolean;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+
+const isValidFileHit = (hit: unknown): hit is FileHit =>
+  isRecord(hit) && typeof hit.name === "string" && typeof hit.path === "string" && typeof hit.rel_path === "string";
+
+const isValidScanResult = (result: unknown): result is ScanResult =>
+  isRecord(result) && Array.isArray(result.files) && typeof result.truncated === "boolean" && result.files.every(isValidFileHit);
+
 export interface SearchPanel {
   readonly button: HTMLButtonElement;
   readonly aside: HTMLElement;
@@ -60,7 +68,7 @@ export interface SearchHandlers {
    *  { root, showHidden: … })`) and unit-tests with a fake tree. Called
    *  exactly once per panel-open (see §캐시 전략 in the design doc) — never
    *  per keystroke. */
-  scan(root: string): Promise<ScanResult>;
+  scan(root: string): Promise<unknown>;
   /** The folder to scan: the live explorer root, or a fallback when the
    *  explorer has never been opened. A closure (read at open time, not
    *  subscribed) — main wires `() => explorer.currentRootPath() ?? currentBaseDir`. */
@@ -173,6 +181,7 @@ export function createSearchPanel({
   let cachedFiles: FileHit[] = [];
   let truncated = false;
   let scanError: string | null = null;
+  let scanGeneration = 0;
 
   let highlighted = -1; // index into the currently-rendered row list
 
@@ -207,7 +216,9 @@ export function createSearchPanel({
     resultsEl.replaceChildren();
     if (scanError) {
       const row = create("div", "search-error");
-      row.textContent = `폴더를 읽을 수 없습니다: ${scanError}`;
+      const message = create("span", "search-state-message");
+      message.textContent = `폴더를 읽을 수 없습니다: ${scanError}`;
+      row.append(message);
       resultsEl.append(row);
       highlighted = -1;
       return;
@@ -217,7 +228,9 @@ export function createSearchPanel({
       // "표시 상한"이 아니라 "스캔 자체가 중단됐다"는 사실을 정직하게 전달—
       // 잘린 것은 렌더 목록이 아니라 백엔드 walk(list_files_recursive의
       // MAX_SCAN_DEPTH/MAX_SCAN_FILES)이다 (audit 04, nit #4).
-      banner.textContent = "폴더가 너무 커서 일부 파일은 스캔되지 않았습니다";
+      const message = create("span", "search-state-message");
+      message.textContent = "폴더가 너무 커서 일부 파일은 스캔되지 않았습니다";
+      banner.append(message);
       resultsEl.append(banner);
     }
     const query = input.value;
@@ -263,6 +276,7 @@ export function createSearchPanel({
    *  cache can never hold a stale root's results under a mismatched key. */
   const runScan = (): void => {
     const root = getRoot();
+    const generation = ++scanGeneration;
     cachedRoot = root;
     scanError = null;
     // Reset synchronously (not just on resolve): while this scan is
@@ -271,23 +285,24 @@ export function createSearchPanel({
     // matches from a possibly different root (audit 04, minor #1). The
     // renderResults() call below shows this reset immediately (an empty
     // list, not a flash of stale files), and the resolved/rejected branches
-    // below still hold "no root-mismatched write" (the `cachedRoot !== root`
+    // below still hold "no request-mismatched write" (the root-and-generation
     // guard) as the second half of the contract.
     cachedFiles = [];
     truncated = false;
     renderResults();
     scan(root)
       .then((result) => {
-        if (cachedRoot !== root) return; // a newer open superseded this scan
+        if (cachedRoot !== root || scanGeneration !== generation) return;
+        if (!isValidScanResult(result)) throw new Error("검색 결과 형식이 올바르지 않습니다");
         cachedFiles = result.files;
         truncated = result.truncated;
         renderResults();
       })
       .catch((err) => {
-        if (cachedRoot !== root) return;
+        if (cachedRoot !== root || scanGeneration !== generation) return;
         cachedFiles = [];
         truncated = false;
-        scanError = String(err);
+        scanError = err instanceof Error && err.message.length > 0 ? err.message : "알 수 없는 오류";
         renderResults();
       });
   };
