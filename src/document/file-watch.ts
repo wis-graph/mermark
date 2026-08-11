@@ -15,6 +15,11 @@ export interface FileChange {
   mtime: number;
 }
 
+export interface FileUnavailable {
+  kind: "deleted" | "unreadable";
+  detail: string;
+}
+
 export type ExternalChangeAction = "reload" | "conflict";
 
 /** The auto-reload-vs-conflict rule in ONE named place: if the local buffer has
@@ -42,4 +47,8 @@ export function unwatchFile(): Promise<void> {
  *  live `current` editor, so it survives re-mounts without re-subscribing. */
 export function onFileChanged(cb: (change: FileChange) => void): Promise<UnlistenFn> {
   return listen<FileChange>("file-changed", (event) => cb(event.payload));
+}
+
+export function onFileUnavailable(cb: (change: FileUnavailable) => void): Promise<UnlistenFn> {
+  return listen<FileUnavailable>("file-unavailable", (event) => cb(event.payload));
 }

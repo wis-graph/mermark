@@ -17,7 +17,7 @@ import { markupWrap } from "./markdown/markup-wrap";
 import { pasteLinkWrap } from "./markdown/paste-link";
 import type { ConflictPolicy, VimMode } from "./settings/app";
 
-export type SaveStatus = "saved" | "saving" | "error" | "conflict";
+export type SaveStatus = "saved" | "saving" | "error" | "conflict" | "recovery";
 export type { PreviewMode };
 
 function vimExtensions(vimEnabled: boolean) {
@@ -57,6 +57,16 @@ export interface EditorController {
   /** True while an edit is buffered but not yet persisted to disk — including
    *  edits made after a conflict halted autosave. */
   hasUnsaved(): boolean;
+  /** Suspend every write to the original path while keeping the mounted buffer. */
+  suspendWrites(detail: string): void;
+  /** Retry only after a readable original is confirmed; never recreates a missing path. */
+  retryOriginal(): Promise<boolean>;
+  /** Explicitly write a sibling recovery copy without touching the original. */
+  saveRecoveredCopy(): Promise<boolean>;
+  /** Explicitly write to a user-selected alternate path. */
+  saveAs(path: string): Promise<boolean>;
+  /** Resume autosave after a cancelled recovery/close action. */
+  resumeWrites(): void;
   /** Overwrite the file even though it changed on disk (conflict recovery):
    *  keeps the user's buffer, discards the external change, re-arms autosave. */
   forceSave(): void;
@@ -67,7 +77,7 @@ export interface EditorController {
    *  to the file normally; if the file changed on disk it writes a sibling
    *  `.mermark-recovered` instead, so neither the edits nor the external change
    *  are lost. Used by the window-close handler. */
-  saveOnClose(): Promise<void>;
+  saveOnClose(): Promise<boolean>;
   /** Live autosave-debounce sink: the new delay applies from the NEXT debounce
    *  (already-scheduled timers keep their delay, so no keystroke is lost). */
   setAutosaveDelay(ms: number): void;
@@ -91,13 +101,13 @@ function makeAutosave(
   baseMtime: number,
   onStatus: (s: SaveStatus, detail?: string) => void,
   getDelay: () => number,
-  getPolicy: () => ConflictPolicy,
 ) {
   const recoveryPath = `${path}.mermark-recovered`;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: string | null = null;
   let baseline = baseMtime;
   let conflicted = false; // a disk write was refused; autosave paused until resolved
+  let suspended = false; // original path is unavailable; no write may recreate it
   let closing = false; // window is closing; stop accepting new autosave work
   let inFlight: Promise<void> | null = null;
 
@@ -109,6 +119,7 @@ function makeAutosave(
    *  re-arming autosave. Shared by the conflict `overwrite` policy and the
    *  manual force-save button so the clobber-and-rebaseline rule lives once. */
   const overwriteOnDisk = (text: string): Promise<void> => {
+    if (suspended) return Promise.resolve();
     const p = invoke<number>("write_file", { path, text, baseline: 0 })
       .then((mtime) => {
         if (typeof mtime === "number" && mtime > 0) baseline = mtime;
@@ -127,6 +138,10 @@ function makeAutosave(
    *  write the conflict policy decides: `overwrite` clobbers the external
    *  change immediately; `pause` (default) halts autosave and waits. */
   const save = (text: string): Promise<void> => {
+    if (suspended) {
+      pending = text;
+      return Promise.resolve();
+    }
     const p = invoke<number>("write_file", { path, text, baseline })
       .then((mtime) => {
         if (typeof mtime === "number" && mtime > 0) baseline = mtime;
@@ -136,13 +151,13 @@ function makeAutosave(
       .catch((err) => {
         const msg = String(err);
         if (msg.startsWith("CONFLICT")) {
-          if (shouldOverwriteOnConflict(getPolicy())) {
-            overwriteOnDisk(text); // policy: discard the external change
-            return;
-          }
           conflicted = true;
           onStatus("conflict", msg);
         } else {
+          suspended = true;
+          conflicted = true;
+          pending = text;
+          onStatus("recovery", msg);
           onStatus("error", msg);
         }
       })
@@ -157,7 +172,7 @@ function makeAutosave(
     extension: EditorView.updateListener.of((u) => {
       if (!u.docChanged || closing) return;
       pending = u.state.doc.toString(); // always track the latest buffer
-      if (conflicted) return; // don't keep hitting a file that changed under us
+      if (conflicted || suspended) return; // don't keep hitting an unavailable path
       onStatus("saving");
       clearTimeout(timer);
       timer = setTimeout(() => {
@@ -170,7 +185,7 @@ function makeAutosave(
     /** Save the buffered edit now (leaving edit mode). No-op while conflicted —
      *  the buffer stays put and is rescued on close or via forceSave. */
     flush() {
-      if (pending === null || conflicted) return;
+      if (pending === null || conflicted || suspended) return;
       clearTimeout(timer);
       const text = pending;
       pending = null;
@@ -178,6 +193,11 @@ function makeAutosave(
     },
     hasWork: () => pending !== null || inFlight !== null,
     forceSave(text: string) {
+      if (suspended) {
+        pending = text;
+        onStatus("recovery", "원본 경로가 안전하게 일시 중지되었습니다");
+        return;
+      }
       clearTimeout(timer); // absorb any scheduled debounce so it can't fire a duplicate write
       pending = null;
       onStatus("saving");
@@ -187,46 +207,97 @@ function makeAutosave(
       closing = true;
       clearTimeout(timer);
     },
-    async saveOnClose(text: string): Promise<void> {
+    async saveOnClose(text: string): Promise<boolean> {
       clearTimeout(timer);
       pending = null;
+      if (suspended) {
+        pending = text;
+        onStatus("recovery", "원본 경로에 저장하지 않았습니다");
+        return false;
+      }
       if (!conflicted) {
         try {
           const mtime = await invoke<number>("write_file", { path, text, baseline });
           if (typeof mtime === "number" && mtime > 0) baseline = mtime;
           onStatus("saved");
-          return;
+          return true;
         } catch (err) {
           // A fresh external change can surface only now — fall through to rescue.
           if (!String(err).startsWith("CONFLICT")) {
             onStatus("error", String(err));
-            return;
+            suspended = true;
+            conflicted = true;
+            pending = text;
+            onStatus("recovery", String(err));
+            return false;
           }
         }
-      }
-      // Conflicted on the way out. The overwrite policy clobbers the external
-      // change (discard it); pause (default) parks the buffer beside the file so
-      // neither side is lost.
-      if (shouldOverwriteOnConflict(getPolicy())) {
-        try {
-          const mtime = await invoke<number>("write_file", { path, text, baseline: 0 });
-          if (typeof mtime === "number" && mtime > 0) baseline = mtime;
-          onStatus("saved");
-        } catch (err) {
-          onStatus("error", String(err));
-        }
-        return;
       }
       try {
         await invoke("write_file", { path: recoveryPath, text, baseline: 0 });
         onStatus("conflict", `편집 내용을 ${recoveryPath} 에 보존했습니다`);
+        return true;
       } catch (err) {
         onStatus("error", String(err));
+        pending = text;
+        return false;
       }
+    },
+    suspend(text: string, detail: string) {
+      clearTimeout(timer);
+      pending = text;
+      suspended = true;
+      conflicted = true;
+      onStatus("recovery", detail);
+    },
+    async retryOriginal(text: string): Promise<boolean> {
+      try {
+        const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path });
+        baseline = fresh.mtime;
+        suspended = false;
+        conflicted = false;
+        closing = false;
+        pending = text;
+        await save(text);
+        return !suspended && !conflicted;
+      } catch (err) {
+        suspended = true;
+        conflicted = true;
+        pending = text;
+        onStatus("recovery", String(err));
+        return false;
+      }
+    },
+    async saveRecoveredCopy(text: string): Promise<boolean> {
+      try {
+        await invoke("write_file", { path: recoveryPath, text, baseline: 0 });
+        onStatus("recovery", `복구 사본을 저장했습니다: ${recoveryPath}`);
+        return true;
+      } catch (err) {
+        onStatus("recovery", String(err));
+        return false;
+      }
+    },
+    async saveAs(text: string, target: string): Promise<boolean> {
+      if (!target || target === path) return false;
+      try {
+        await invoke("write_file", { path: target, text, baseline: 0 });
+        onStatus("recovery", `다른 이름으로 저장했습니다: ${target}`);
+        return true;
+      } catch (err) {
+        onStatus("recovery", String(err));
+        return false;
+      }
+    },
+    resume() {
+      closing = false;
+      if (!suspended) conflicted = false;
     },
     resetBaseline(mtime: number) {
       baseline = mtime;
       conflicted = false;
+      suspended = false;
+      closing = false;
       pending = null;
       onStatus("saved");
     },
@@ -284,17 +355,16 @@ export function mountEditor(
     extraExtensions = [],
     findReplaceHint,
   } = opts;
+  void conflictPolicy;
   // The SSOT settings are the writers; these mutable cells are the editor's sink
   // for them. makeAutosave reads them live via getters so a settings change
   // reaches in-flight behavior without re-creating the autosave controller.
   let delay = autosaveDelay;
-  let policy: ConflictPolicy = conflictPolicy;
   const autosave = makeAutosave(
     filePath,
     baseMtime,
     onStatus,
     () => delay,
-    () => policy,
   );
   const modeCompartment = new Compartment();
   const vimCompartment = new Compartment();
@@ -326,6 +396,13 @@ export function mountEditor(
       controller.view.dispatch({ effects: featureCompartment.reconfigure(featureExtensions()) });
     },
     hasUnsaved: () => autosave.hasWork(),
+    suspendWrites(detail: string) {
+      autosave.suspend(controller.view.state.doc.toString(), detail);
+    },
+    retryOriginal: () => autosave.retryOriginal(controller.view.state.doc.toString()),
+    saveRecoveredCopy: () => autosave.saveRecoveredCopy(controller.view.state.doc.toString()),
+    saveAs: (path: string) => autosave.saveAs(controller.view.state.doc.toString(), path),
+    resumeWrites: () => autosave.resume(),
     forceSave() {
       autosave.forceSave(controller.view.state.doc.toString());
     },
@@ -334,9 +411,7 @@ export function mountEditor(
     setAutosaveDelay(ms: number) {
       delay = ms;
     },
-    setConflictPolicy(p: ConflictPolicy) {
-      policy = p;
-    },
+    setConflictPolicy(_p: ConflictPolicy) {},
     setVimMode(enabled: boolean) {
       controller.view.dispatch({ effects: vimCompartment.reconfigure(vimExtensions(enabled)) });
     },

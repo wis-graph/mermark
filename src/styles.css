@@ -952,9 +952,22 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .save-label .icon { flex: none; width: 16px; height: 16px; }
 .save-status[data-state="error"] { color: #dc2626; }
 .save-status[data-state="conflict"] { color: #d97706; }
+.save-status[data-state="recovery"] { color: #dc2626; }
 /* Spinner: the loader-circle icon rotates while a write is in flight. */
 .save-status[data-state="saving"] .save-label .icon { animation: status-spin .8s linear infinite; }
 @keyframes status-spin { to { transform: rotate(360deg); } }
+
+.recovery-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, #000 45%, transparent); }
+.recovery-modal { display: flex; flex-direction: column; gap: 14px; width: min(520px, 92vw); padding: 20px; border-radius: var(--radius-lg, 12px); background: var(--bg); color: var(--fg); border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent); box-shadow: 0 16px 48px color-mix(in srgb, #000 35%, transparent); }
+.recovery-title { margin: 0; font-size: 16px; }
+.recovery-body { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.recovery-modal details { color: var(--muted); font-size: 12px; }
+.recovery-modal code { display: block; overflow: auto; max-height: 7em; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.recovery-action, .recovery-cancel { min-height: 34px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); border-radius: var(--radius-md, 8px); background: transparent; color: var(--fg); font: inherit; font-size: 13px; cursor: pointer; }
+.recovery-action:hover, .recovery-cancel:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.recovery-action-close-discard { color: #dc2626; border-color: color-mix(in srgb, #dc2626 55%, transparent); }
+.recovery-cancel { align-self: flex-start; color: var(--muted); }
 
 /* Conflict modal: a body-level overlay (sibling of .editor-host, outside the CM
    measure tree → ZOOM GUARD holds). Shown only when the file changed on disk AND

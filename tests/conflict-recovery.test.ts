@@ -53,6 +53,14 @@ describe("conflict recovery", () => {
     expect(() => recovery.applyExternal(identity)).toThrow("Unknown conflict");
   });
 
+  it("keeps the live conflict pending when a resolution targets another identity", () => {
+    const recovery = createConflictRecovery();
+    const pending = recovery.detect(identity, "mine", "external");
+
+    expect(() => recovery.applyExternal({ ...identity, tabId: "vault-a-tab-other" })).toThrow("Unknown conflict");
+    expect(recovery.get(identity)).toEqual(pending);
+  });
+
   it("does not treat a different vault or tab as the live conflict identity", () => {
     expect(sameConflictIdentity(identity, identity)).toBe(true);
     expect(sameConflictIdentity(identity, { ...identity, vaultId: "vault-b" })).toBe(false);

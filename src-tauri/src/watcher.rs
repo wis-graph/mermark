@@ -109,6 +109,14 @@ pub fn clear_watch(app: &AppHandle) {
 /// A vanished/unreadable file (e.g. an editor mid-atomic-rename) is skipped
 /// silently rather than emitting a spurious change.
 fn handle_fs_event(app: &AppHandle, path: &str) {
+    if !std::path::Path::new(path).exists() {
+        let _ = app.emit("file-unavailable", FileUnavailable { kind: "deleted", detail: format!("file deleted: {path}") });
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        let _ = app.emit("file-unavailable", FileUnavailable { kind: "unreadable", detail: format!("file unreadable: {path}") });
+        return;
+    };
     let mtime = crate::commands::mtime_ms(path);
     let state = tauri_watch_state(app);
     // Self-write (our own autosave) → stay silent, no reload loop.
@@ -116,9 +124,7 @@ fn handle_fs_event(app: &AppHandle, path: &str) {
         return;
     }
     // Genuine external change → carry the new content + mtime so the frontend
-    // doesn't have to round-trip a second read_file. An unreadable file is
-    // skipped (no payload to emit).
-    let Ok(text) = std::fs::read_to_string(path) else { return };
+    // doesn't have to round-trip a second read_file.
     let _ = app.emit("file-changed", FileChanged { text, mtime });
 }
 
@@ -141,6 +147,12 @@ pub(super) fn read_external_change(state: &WatchState, path: &std::path::Path) -
 pub struct FileChanged {
     pub text: String,
     pub mtime: u64,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct FileUnavailable {
+    pub kind: &'static str,
+    pub detail: String,
 }
 
 #[cfg(test)]

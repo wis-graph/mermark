@@ -77,9 +77,11 @@ import {
   pruneAt,
   type NavHistory,
 } from "./document/history/nav-history";
-import { decideExternalChange, onFileChanged, watchFile, unwatchFile } from "./document/file-watch";
+import { decideExternalChange, onFileChanged, onFileUnavailable, watchFile, unwatchFile } from "./document/file-watch";
 import { openConflictModal } from "./document/conflict/conflict-modal";
 import { createConflictRecovery, sameConflictIdentity, type ConflictIdentity } from "./document/conflict/conflict-recovery";
+import { openRecoveryModal, type RecoveryModalHandle } from "./document/recovery-modal";
+import { createRecoveryState, type RecoveryActionId, type RecoveryActionOutcome, type RecoveryKind } from "./document/recovery-contract";
 import { openImageViewer } from "./chrome/viewer/image-viewer";
 import { isRemoteSrc } from "./markdown/image";
 import { setImageOpenHandler } from "./markdown/image-open";
@@ -163,6 +165,8 @@ function makeSaveStatus(): {
         setButtonContent(label, "triangle-alert", `저장 실패: ${detail ?? "unknown error"}`);
       } else if (s === "conflict") {
         setButtonContent(label, "triangle-alert", "외부 변경 감지 — 선택 필요");
+      } else if (s === "recovery") {
+        setButtonContent(label, "triangle-alert", `복구 필요${detail ? `: ${detail}` : ""}`);
       } else if (s === "saving") {
         setButtonContent(label, "loader-circle", "저장 중");
       } else {
@@ -361,9 +365,14 @@ async function boot() {
   let detachScroll: (() => void) | undefined;
   let cancelSessionTimer: (() => void) | undefined;
   let openConflict: { close(): void } | null = null;
+  let openRecovery: RecoveryModalHandle | null = null;
   const closeConflict = (): void => {
     openConflict?.close();
     openConflict = null;
+  };
+  const closeRecovery = (): void => {
+    openRecovery?.close();
+    openRecovery = null;
   };
 
   // ── Open-by-path title-bar chrome (M2: moved from the footer). The button
@@ -376,17 +385,52 @@ async function boot() {
     onOpen: async (raw) => {
       const target = resolveOpenPath(raw, currentBaseDir);
       if (!target) throw new Error("경로를 입력하세요");
-      if (!currentFile) {
-        location.href = createDocumentReloadUrl(target, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
-        return;
+      try {
+        await openDocument(target);
+      } catch (error: unknown) {
+        showOpenRecovery(target, String(error));
+        throw error;
       }
-      // read_file first: if it fails (missing/unreadable) we throw BEFORE any
-      // teardown, so the switch only happens after a successful read.
-      const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: target });
-      await commitBeforeSwitch();
-      openInWindow(target, fresh);
     },
   });
+
+  const showRecovery = (
+    kind: RecoveryKind,
+    detail: string,
+    onAction: (action: RecoveryActionId) => RecoveryActionOutcome | Promise<RecoveryActionOutcome>,
+    onCancel?: () => void,
+  ): void => {
+    closeRecovery();
+    const handle = openRecoveryModal({
+      state: createRecoveryState(kind, detail),
+      onAction: async (action) => {
+        const outcome = await onAction(action);
+        if (outcome === "succeeded") openRecovery = null;
+        return outcome;
+      },
+      onCancel: () => {
+        openRecovery = null;
+        onCancel?.();
+      },
+    });
+    openRecovery = handle;
+  };
+
+  function showOpenRecovery(path: string, detail: string): void {
+    showRecovery("open-read", detail, async (action) => {
+      if (action === "open-another") {
+        prompt.button.click();
+        return "succeeded";
+      }
+      if (action !== "retry") return "failed";
+      try {
+        await openDocument(path);
+        return "succeeded";
+      } catch {
+        return "failed";
+      }
+    });
+  }
   // ── Outline (table of contents) title-bar chrome. Same toggle shape as
   //    open-path but a vertical heading tree; clicking a heading jumps via the
   //    shared jumpTo landing. getView is a closure over `current` so it follows
@@ -536,7 +580,7 @@ async function boot() {
         location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
       } else {
         const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
-        await commitBeforeSwitch();
+        if (!(await commitBeforeSwitch())) return;
         openInWindow(absPath, fresh);
       }
     },
@@ -562,12 +606,12 @@ async function boot() {
 
   const openDocument = async (absPath: string): Promise<void> => {
     const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
-    await commitBeforeSwitch();
+    if (!(await commitBeforeSwitch())) return;
     openInWindow(absPath, fresh);
   };
   const openDocumentSafely = (absPath: string): void => {
     void openDocument(absPath).catch((error: unknown) => {
-      window.alert(`문서를 열 수 없습니다: ${error instanceof Error ? error.message : String(error)}`);
+      showOpenRecovery(absPath, String(error));
     });
   };
 
@@ -584,6 +628,7 @@ async function boot() {
   const renderWelcomeForVault = (): void => {
     closeOpenViewer();
     closeConflict();
+    closeRecovery();
     teardownCurrent();
     currentFile = "";
     const vault = currentVault();
@@ -591,6 +636,38 @@ async function boot() {
     host.classList.add("welcome-host");
     host.append(welcomePane);
   };
+
+  function discardCurrentDocument(editor: EditorController, file: string): void {
+    if (current !== editor || currentFile !== file) return;
+    const vault = currentVault();
+    const identity = currentConflictIdentity();
+    if (vault && identity) {
+      const scope = vault.persistenceKind === "permanent" ? "permanent" : "session";
+      vaultTabs.close(vault.vaultId, identity.tabId, scope);
+    }
+    renderWelcomeForVault();
+  }
+
+  function showDocumentRecovery(kind: "deleted" | "unreadable" | "save", detail: string): void {
+    const editor = current;
+    const file = currentFile;
+    if (!editor || !file) return;
+    showRecovery(kind, detail, async (action) => {
+      if (current !== editor || currentFile !== file) return "failed";
+      if (action === "retry") return (await editor.retryOriginal()) ? "succeeded" : "failed";
+      if (action === "save-recovered-copy") return (await editor.saveRecoveredCopy()) ? "succeeded" : "failed";
+      if (action === "save-as") {
+        const target = window.prompt("다른 이름으로 저장할 경로", `${file}.recovered.md`);
+        if (target === null) return "cancelled";
+        return (await editor.saveAs(target)) ? "succeeded" : "failed";
+      }
+      if (action === "close-discard") {
+        discardCurrentDocument(editor, file);
+        return "succeeded";
+      }
+      return "failed";
+    }, () => editor.resumeWrites());
+  }
 
   const canonicalizeVaultPath = async (root: string): Promise<string> => {
     const resolved: unknown = await invoke("canonicalize_path", { path: root });
@@ -688,7 +765,7 @@ async function boot() {
       } else {
         try {
           const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
-          await commitBeforeSwitch();
+          if (!(await commitBeforeSwitch())) return;
           openInWindow(absPath, fresh);
         } catch (err) {
           console.error("Failed to open recent document; pruning it", err);
@@ -717,7 +794,7 @@ async function boot() {
         location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
       } else {
         const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
-        await commitBeforeSwitch();
+        if (!(await commitBeforeSwitch())) return;
         openInWindow(absPath, fresh);
       }
     },
@@ -839,11 +916,11 @@ async function boot() {
    *  drops edits. On conflict, saveOnClose writes the `.mermark-recovered`
    *  sibling, so neither the edits nor the external change are lost. Named so
    *  the "don't lose work on switch" rule lives in one place. */
-  async function commitBeforeSwitch(): Promise<void> {
-    if (!current) return;
-    if (!current.hasUnsaved()) return;
+  async function commitBeforeSwitch(): Promise<boolean> {
+    if (!current) return true;
+    if (!current.hasUnsaved()) return true;
     current.beginClose();
-    await current.saveOnClose();
+    return current.saveOnClose();
   }
 
   /** Tear down the live editor before a swap: persist its session immediately,
@@ -887,7 +964,10 @@ async function boot() {
     const { text, mtime } = fresh;
 
     current = mountEditor(host, text, currentBaseDir, file, {
-      onStatus: save.set,
+      onStatus: (status, detail) => {
+        save.set(status, detail);
+        if (status === "recovery" && !openRecovery) showDocumentRecovery("save", detail ?? "저장 경로를 사용할 수 없습니다");
+      },
       initialMode: modeSetting.get(),
       onCursor: (line, col) => {
         pos.textContent = `Ln ${line}, Col ${col}`;
@@ -1004,7 +1084,7 @@ async function boot() {
       navHistory = pruneAt(navHistory, next.index);
       return;
     }
-    await commitBeforeSwitch();
+    if (!(await commitBeforeSwitch())) return;
     navHistory = next; // commit the pointer only after the read succeeded
     openInWindow(target, fresh, { viaHistory: true });
   }
@@ -1083,6 +1163,11 @@ async function boot() {
   // are filtered in the backend (mtime baseline), so this only fires on real
   // external edits. Guarded to Tauri/browser-mock environments that emit events.
   void onFileChanged(({ text, mtime }) => resolveExternalChange(text, mtime));
+  void onFileUnavailable(({ kind, detail }) => {
+    if (!current || !currentFile) return;
+    current.suspendWrites(detail);
+    showDocumentRecovery(kind, detail);
+  });
   // Don't lose the last keystrokes typed within the autosave debounce window:
   // intercept the window close, persist the live buffer, then close. Guarded so
   // it only runs under Tauri (the browser-mock dev mode has no window IPC).
@@ -1094,10 +1179,11 @@ async function boot() {
       if (!current.hasUnsaved()) return;
       e.preventDefault();
       current.beginClose();
-      try {
-        await current.saveOnClose();
-      } finally {
-        await win.destroy();
+      const saved = await current.saveOnClose();
+      if (saved) await win.destroy();
+      else {
+        current.resumeWrites();
+        showDocumentRecovery("save", "닫기 전에 저장하지 못했습니다");
       }
     });
   }
@@ -1277,7 +1363,8 @@ async function boot() {
     const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: initialFile });
     openInWindow(initialFile, fresh);
   } catch (e) {
-    host.textContent = `Failed to open: ${String(e)}`;
+    host.replaceChildren();
+    showOpenRecovery(initialFile, String(e));
   }
 }
 

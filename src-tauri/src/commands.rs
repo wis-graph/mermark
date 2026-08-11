@@ -1,3 +1,4 @@
+use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
@@ -143,7 +144,22 @@ fn write_file_with_state(
     baseline: u64,
     watch: &crate::watcher::WatchState,
 ) -> Result<u64, String> {
+    write_file_with_commit_hook(path, text, baseline, watch, || {})
+}
+
+fn write_file_with_commit_hook<F: FnOnce()>(
+    path: &str,
+    text: &str,
+    baseline: u64,
+    watch: &crate::watcher::WatchState,
+    before_commit: F,
+) -> Result<u64, String> {
     let normalized = normalize_path(Path::new(path)).to_string_lossy().into_owned();
+    let original_metadata = if baseline != 0 {
+        Some(guarded_original_metadata(&normalized)?)
+    } else {
+        None
+    };
     if baseline != 0 {
         // `>` (strictly newer) flags an external change without false-positiving
         // on our own writes. Caveat: on coarse-resolution filesystems (HFS+ 1s,
@@ -161,15 +177,247 @@ fn write_file_with_state(
 
     let tmp = format!("{normalized}.mermark-tmp.{}", TMP_SEQ.fetch_add(1, Ordering::Relaxed));
     std::fs::write(&tmp, text).map_err(|e| format!("write {tmp}: {e}"))?;
-    std::fs::rename(&tmp, &normalized).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp); // don't leave the temp behind on failure
-        format!("rename {tmp} -> {normalized}: {e}")
-    })?;
+    before_commit();
+    commit_temp(
+        &tmp,
+        &normalized,
+        original_metadata.as_ref().map(file_identity),
+    )?;
     let new_mtime = mtime_ms(&normalized);
     // Mute the watcher event this write is about to trigger: record our own
     // post-write mtime so `is_self_write(new_mtime)` returns true on the callback.
     watch.record_self_write(new_mtime);
     Ok(new_mtime)
+}
+
+/// Commit an editor temp file. An unguarded write retains the historical
+/// create-or-replace behavior. A guarded write must require the destination at
+/// the commit syscall itself; ordinary `rename` is not sufficient because it
+/// creates a destination that disappeared after the mtime check.
+fn commit_temp(tmp: &str, target: &str, expected: Option<(u64, u64)>) -> Result<(), String> {
+    match expected {
+        None => std::fs::rename(tmp, target).map_err(|e| {
+            let _ = std::fs::remove_file(tmp);
+            format!("rename {tmp} -> {target}: {e}")
+        }),
+        Some(expected_identity) => atomic_guarded_commit(tmp, target, expected_identity),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn atomic_guarded_commit(tmp: &str, target: &str, expected: (u64, u64)) -> Result<(), String> {
+    let tmp_c = CString::new(tmp).map_err(|_| format!("RECOVERY: invalid temp path: {tmp}"))?;
+    let target_c = CString::new(target).map_err(|_| format!("RECOVERY: invalid target path: {target}"))?;
+    let staged = guarded_original_metadata(tmp)
+        .map(|metadata| file_identity(&metadata))
+        .map_err(|error| format!("RECOVERY: cannot inspect staged temp {tmp}: {error}"))?;
+    // SAFETY: both C strings are NUL-terminated, remain alive for this call,
+    // and `RENAME_SWAP` atomically exchanges two names on the same filesystem.
+    let result = unsafe {
+        libc::renameatx_np(
+            libc::AT_FDCWD,
+            tmp_c.as_ptr(),
+            libc::AT_FDCWD,
+            target_c.as_ptr(),
+            libc::RENAME_SWAP,
+        )
+    };
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        let _ = std::fs::remove_file(tmp);
+        return Err(format!("RECOVERY: guarded swap {tmp} -> {target}: {error}"));
+    }
+    finish_guarded_exchange(tmp, target, expected, staged)
+}
+
+#[cfg(target_os = "linux")]
+fn atomic_guarded_commit(tmp: &str, target: &str, expected: (u64, u64)) -> Result<(), String> {
+    let tmp_c = CString::new(tmp).map_err(|_| format!("RECOVERY: invalid temp path: {tmp}"))?;
+    let target_c = CString::new(target).map_err(|_| format!("RECOVERY: invalid target path: {target}"))?;
+    let staged = guarded_original_metadata(tmp)
+        .map(|metadata| file_identity(&metadata))
+        .map_err(|error| format!("RECOVERY: cannot inspect staged temp {tmp}: {error}"))?;
+    // SAFETY: both C strings are NUL-terminated, remain alive for this call,
+    // and `RENAME_EXCHANGE` atomically exchanges two existing names.
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            tmp_c.as_ptr(),
+            libc::AT_FDCWD,
+            target_c.as_ptr(),
+            libc::RENAME_EXCHANGE,
+        )
+    };
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        let _ = std::fs::remove_file(tmp);
+        return Err(format!("RECOVERY: guarded exchange {tmp} -> {target}: {error}"));
+    }
+    finish_guarded_exchange(tmp, target, expected, staged)
+}
+
+#[cfg(windows)]
+fn atomic_guarded_commit(tmp: &str, target: &str, expected: (u64, u64)) -> Result<(), String> {
+    let backup = format!("{target}.mermark-backup.{}", TMP_SEQ.fetch_add(1, Ordering::Relaxed));
+    let target_wide = to_wide(target)?;
+    let tmp_wide = to_wide(tmp)?;
+    let backup_wide = to_wide(&backup)?;
+    let staged = guarded_original_metadata(tmp)
+        .map(|metadata| file_identity(&metadata))
+        .map_err(|error| format!("RECOVERY: cannot inspect staged temp {tmp}: {error}"))?;
+    // SAFETY: each UTF-16 buffer is NUL-terminated and remains alive for this
+    // call; ReplaceFileW requires an existing destination and atomically moves
+    // its displaced object to the unique backup name.
+    let replaced = unsafe {
+        windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
+            target_wide.as_ptr(),
+            tmp_wide.as_ptr(),
+            backup_wide.as_ptr(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if replaced == 0 {
+        let error = std::io::Error::last_os_error();
+        let _ = std::fs::remove_file(tmp);
+        return Err(format!("RECOVERY: guarded replacement {tmp} -> {target}: {error}"));
+    }
+    let target_identity = match guarded_original_metadata(target) {
+        Ok(metadata) => file_identity(&metadata),
+        Err(error) => return Err(format!("RECOVERY: {error}; retained {backup}")),
+    };
+    let displaced_identity = match guarded_original_metadata(&backup) {
+        Ok(metadata) => file_identity(&metadata),
+        Err(error) => return Err(format!("RECOVERY: {error}; retained {backup}")),
+    };
+    if target_identity == staged && displaced_identity == expected {
+        return std::fs::remove_file(&backup).map_err(|error| {
+            format!("RECOVERY: guarded commit succeeded; retained {backup}: {error}")
+        });
+    }
+    if displaced_identity == expected {
+        return Err(format!("RECOVERY: target changed after guarded commit: {target}; retained {backup}"));
+    }
+    let current = format!("CONFLICT: original changed during guarded write: {target}");
+    // SAFETY: the UTF-16 buffers remain NUL-terminated and alive for this
+    // call; ReplaceFileW requires the existing target and backup paths.
+    let rollback = unsafe {
+        windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
+            target_wide.as_ptr(),
+            backup_wide.as_ptr(),
+            tmp_wide.as_ptr(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if rollback == 0 {
+        return Err(format!("RECOVERY: {current}; rollback failed; retained {backup}"));
+    }
+    let _ = std::fs::remove_file(tmp);
+    Err(current)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+fn atomic_guarded_commit(tmp: &str, target: &str, _expected: (u64, u64)) -> Result<(), String> {
+    let _ = std::fs::remove_file(tmp);
+    Err(format!("RECOVERY: guarded atomic commit is unsupported for {target}"))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn finish_guarded_exchange(
+    tmp: &str,
+    target: &str,
+    expected: (u64, u64),
+    staged: (u64, u64),
+) -> Result<(), String> {
+    let target_identity = match guarded_original_metadata(target) {
+        Ok(metadata) => file_identity(&metadata),
+        Err(error) => return Err(format!("RECOVERY: {error}; retained {tmp}")),
+    };
+    let displaced_identity = match guarded_original_metadata(tmp) {
+        Ok(metadata) => file_identity(&metadata),
+        Err(error) => return Err(format!("RECOVERY: {error}; retained {tmp}")),
+    };
+    if target_identity == staged && displaced_identity == expected {
+        return std::fs::remove_file(tmp).map_err(|error| {
+            format!("RECOVERY: guarded commit succeeded; retained {tmp}: {error}")
+        });
+    }
+    if displaced_identity == expected {
+        return Err(format!("RECOVERY: target changed after guarded commit: {target}; retained {tmp}"));
+    }
+    let current = format!("CONFLICT: original changed during guarded write: {target}");
+    let tmp_c = match CString::new(tmp) {
+        Ok(path) => path,
+        Err(_) => return Err(format!("RECOVERY: invalid temp path while rolling back: {tmp}")),
+    };
+    let target_c = match CString::new(target) {
+        Ok(path) => path,
+        Err(_) => return Err(format!("RECOVERY: invalid target path while rolling back: {target}")),
+    };
+    // SAFETY: the exchanged names are still valid NUL-terminated paths, and
+    // exchanging them again restores the displaced object atomically.
+    let rollback = unsafe {
+        #[cfg(target_os = "macos")]
+        {
+            libc::renameatx_np(
+                libc::AT_FDCWD,
+                tmp_c.as_ptr(),
+                libc::AT_FDCWD,
+                target_c.as_ptr(),
+                libc::RENAME_SWAP,
+            )
+        }
+        #[cfg(target_os = "linux")]
+        {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                tmp_c.as_ptr(),
+                libc::AT_FDCWD,
+                target_c.as_ptr(),
+                libc::RENAME_EXCHANGE,
+            )
+        }
+    };
+    if rollback != 0 {
+        return Err(format!("RECOVERY: {current}; rollback failed; retained {tmp}"));
+    }
+    let _ = std::fs::remove_file(tmp);
+    Err(current)
+}
+
+#[cfg(windows)]
+fn to_wide(path: &str) -> Result<Vec<u16>, String> {
+    if path.encode_utf16().any(|unit| unit == 0) {
+        return Err(format!("RECOVERY: invalid path contains NUL: {path}"));
+    }
+    Ok(path.encode_utf16().chain(std::iter::once(0)).collect())
+}
+
+fn guarded_original_metadata(path: &str) -> Result<std::fs::Metadata, String> {
+    std::fs::File::open(path)
+        .and_then(|file| file.metadata())
+        .map_err(|e| format!("UNAVAILABLE: cannot access original {path}: {e}"))
+}
+
+#[cfg(unix)]
+fn file_identity(metadata: &std::fs::Metadata) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    (metadata.dev(), metadata.ino())
+}
+
+#[cfg(windows)]
+fn file_identity(metadata: &std::fs::Metadata) -> (u64, u64) {
+    use std::os::windows::fs::MetadataExt;
+    (metadata.volume_serial_number().unwrap_or_default(), metadata.file_index())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn file_identity(metadata: &std::fs::Metadata) -> (u64, u64) {
+    let modified = metadata.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok()).map_or(0, |duration| duration.as_nanos() as u64);
+    (metadata.len(), modified)
 }
 
 /// Begin watching the single open file at `path` for external changes, replacing
@@ -1041,6 +1289,54 @@ mod tests {
         // baseline=0 means "no baseline" → always allowed to write.
         assert!(write_file_with_state(&p, "forced", 0, &fresh_watch_state()).is_ok());
         assert_eq!(fs::read_to_string(&p).unwrap(), "forced");
+        fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn guarded_write_does_not_recreate_deleted_original() {
+        let p = temp_path("deleted");
+        fs::write(&p, "disk").unwrap();
+        let baseline = read_file(p.clone()).unwrap().mtime;
+        fs::remove_file(&p).unwrap();
+
+        let err = write_file_with_state(&p, "mine", baseline, &fresh_watch_state()).unwrap_err();
+
+        assert!(err.starts_with("UNAVAILABLE"), "got: {err}");
+        assert!(!std::path::Path::new(&p).exists(), "a guarded write must not recreate a deleted original");
+    }
+
+    #[test]
+    fn guarded_write_rejects_deletion_between_validation_and_rename() {
+        let p = temp_path("commit-race");
+        fs::write(&p, "disk").unwrap();
+        let baseline = read_file(p.clone()).unwrap().mtime;
+        let hook_path = p.clone();
+
+        let result = write_file_with_commit_hook(&p, "mine", baseline, &fresh_watch_state(), || {
+            fs::remove_file(&hook_path).unwrap();
+        });
+
+        assert!(result.is_err(), "guarded commit must reject a path removed after validation");
+        assert!(!std::path::Path::new(&p).exists(), "a deleted original must remain absent");
+    }
+
+    #[test]
+    fn guarded_write_preserves_replacement_between_validation_and_rename() {
+        let p = temp_path("replacement-race");
+        let backup = format!("{p}.backup");
+        fs::write(&p, "disk").unwrap();
+        let baseline = read_file(p.clone()).unwrap().mtime;
+        let hook_path = p.clone();
+        let hook_backup = backup.clone();
+
+        let result = write_file_with_commit_hook(&p, "mine", baseline, &fresh_watch_state(), || {
+            fs::rename(&hook_path, &hook_backup).unwrap();
+            fs::write(&hook_path, "external").unwrap();
+        });
+
+        assert!(result.is_err(), "guarded commit must reject a replacement after validation");
+        assert_eq!(fs::read_to_string(&p).unwrap(), "external", "external replacement bytes must survive");
+        fs::remove_file(&backup).ok();
         fs::remove_file(&p).ok();
     }
 

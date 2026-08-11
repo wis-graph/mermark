@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 // Controllable invoke: read_file → {text,mtime}; write_file routes through a
 // per-test handler so a CONFLICT can be simulated; everything else → false.
 let writeHandler: (args: { path: string; text: string; baseline: number }) => Promise<number>;
+let readHandler: () => Promise<{ text: string; mtime: number }>;
 const invokeMock = vi.fn((cmd: string, args?: unknown) => {
-  if (cmd === "read_file") return Promise.resolve({ text: "", mtime: 1 });
+  if (cmd === "read_file") return readHandler();
   if (cmd === "write_file")
     return writeHandler(args as { path: string; text: string; baseline: number });
   return Promise.resolve(false);
@@ -47,6 +50,7 @@ describe("autosaveDelay thread", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockClear();
+    readHandler = () => Promise.resolve({ text: "", mtime: 1 });
     writeHandler = () => Promise.resolve(2); // success → new mtime
     host = document.createElement("div");
     document.body.appendChild(host);
@@ -87,6 +91,7 @@ describe("conflictPolicy branch", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockClear();
+    readHandler = () => Promise.resolve({ text: "", mtime: 1 });
     host = document.createElement("div");
     document.body.appendChild(host);
   });
@@ -112,15 +117,8 @@ describe("conflictPolicy branch", () => {
     ed.view.destroy();
   });
 
-  it("overwrite: a refused write re-records the buffer at baseline 0 (clobbers the external change)", async () => {
-    let conflictOnce = true;
-    writeHandler = (args) => {
-      if (conflictOnce && args.baseline !== 0) {
-        conflictOnce = false;
-        return Promise.reject("CONFLICT: file changed on disk");
-      }
-      return Promise.resolve(3); // the baseline:0 retry succeeds
-    };
+  it("overwrite policy still pauses a refused write until an explicit force-save", async () => {
+    writeHandler = () => Promise.reject("CONFLICT: file changed on disk");
     const ed = mountEditor(host, "a", "/tmp", "/tmp/doc.md", {
       initialMode: "edit",
       autosaveDelay: 100,
@@ -129,9 +127,8 @@ describe("conflictPolicy branch", () => {
     });
     ed.view.dispatch({ changes: { from: 1, insert: "b" } });
     await vi.advanceTimersByTimeAsync(150);
-    expect(writes().some((c) => c[1].baseline === 0)).toBe(true);
-    const overwrite = writes().find((c) => c[1].baseline === 0)!;
-    expect(overwrite[1].text).toBe("ab"); // the user's buffer, not the external change
+    expect(writes()).toHaveLength(1);
+    expect(writes().every((c) => c[1].baseline !== 0)).toBe(true);
     ed.view.destroy();
   });
 });
@@ -141,6 +138,7 @@ describe("reloadFromFile branch", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockClear();
+    readHandler = () => Promise.resolve({ text: "", mtime: 1 });
     host = document.createElement("div");
     document.body.appendChild(host);
   });
@@ -189,6 +187,7 @@ describe("forceSave absorbs the pending debounce", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockClear();
+    readHandler = () => Promise.resolve({ text: "", mtime: 1 });
     writeHandler = () => Promise.resolve(2);
     host = document.createElement("div");
     document.body.appendChild(host);
@@ -208,5 +207,77 @@ describe("forceSave absorbs the pending debounce", () => {
     await vi.advanceTimersByTimeAsync(1000); // the old debounce window must NOT fire a 2nd write
     expect(writes().length).toBe(1);
     ed.view.destroy();
+  });
+});
+
+describe("safe recovery suspension", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    invokeMock.mockClear();
+    readHandler = () => Promise.resolve({ text: "", mtime: 1 });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("suspends the original path after it becomes unreadable before autosave can retry", async () => {
+    const statuses: string[] = [];
+    writeHandler = () => Promise.reject("write /tmp/doc.md: No such file or directory");
+    const ed = mountEditor(host, "keep me", "/tmp", "/tmp/doc.md", {
+      initialMode: "edit",
+      autosaveDelay: 50,
+      onStatus: (status) => statuses.push(status),
+    });
+
+    ed.view.dispatch({ changes: { from: 7, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(60);
+    expect(statuses).toContain("recovery");
+    expect(ed.hasUnsaved()).toBe(true);
+
+    ed.view.dispatch({ changes: { from: 8, insert: "?" } });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(writes()).toHaveLength(1);
+    ed.view.destroy();
+  });
+
+  it("never writes the original path for recovery-copy or cancelled retry", async () => {
+    writeHandler = (args) => args.path.endsWith(".mermark-recovered") ? Promise.resolve(4) : Promise.reject("ENOENT");
+    readHandler = () => Promise.reject("ENOENT");
+    const ed = mountEditor(host, "buffer", "/tmp", "/tmp/doc.md", { initialMode: "edit", autosaveDelay: 10 });
+    ed.suspendWrites("deleted");
+
+    await ed.saveRecoveredCopy();
+    expect(writes().every(([, args]) => args.path !== "/tmp/doc.md")).toBe(true);
+    expect(await ed.retryOriginal()).toBe(false);
+    expect(writes().every(([, args]) => args.path !== "/tmp/doc.md")).toBe(true);
+    ed.view.destroy();
+  });
+
+  it("proves a deleted dirty file is never recreated during recovery", async () => {
+    const root = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "mermark-recovery-"));
+    const original = join(root, "note.md");
+    const recovered = `${original}.mermark-recovered`;
+    writeFileSync(original, "on disk");
+    readHandler = async () => ({ text: readFileSync(original, "utf8"), mtime: 1 });
+    writeHandler = async (args) => {
+      if (!existsSync(args.path) && args.path === original) throw new Error("ENOENT");
+      writeFileSync(args.path, args.text);
+      return 2;
+    };
+    try {
+      const ed = mountEditor(document.createElement("div"), "dirty buffer", root, original, { initialMode: "edit" });
+      ed.suspendWrites("deleted");
+      unlinkSync(original);
+
+      expect(await ed.saveRecoveredCopy()).toBe(true);
+      expect(existsSync(original)).toBe(false);
+      expect(readFileSync(recovered, "utf8")).toBe("dirty buffer");
+      expect(await ed.retryOriginal()).toBe(false);
+      expect(existsSync(original)).toBe(false);
+      ed.view.destroy();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
