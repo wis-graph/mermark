@@ -45,6 +45,14 @@ fn bytes(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|_| "<unreadable-or-missing>".to_owned())
 }
 
+fn record_identity(state: &WatchState, path: &Path, mtime: u64) {
+    state.record_self_write(
+        &path.to_string_lossy(),
+        mtime,
+        fs::read(path).unwrap().len(),
+    );
+}
+
 fn set_mtime_after(path: &Path, baseline: u64) {
     set_mtime(path, baseline.saturating_add(1));
 }
@@ -80,7 +88,11 @@ fn self_save_is_muted_while_preserving_saved_bytes() {
     let fixture = Fixture::create("self_save", "saved by mermark");
     let path = fixture.path();
     let state = WatchState::default();
-    state.record_self_write(crate::commands::mtime_ms(&path.to_string_lossy()));
+    record_identity(
+        &state,
+        path,
+        crate::commands::mtime_ms(&path.to_string_lossy()),
+    );
 
     // When: the production callback's disk-decision seam inspects the event.
     let change = read_external_change(&state, &path);
@@ -96,7 +108,7 @@ fn clean_external_edit_emits_reload_with_new_bytes() {
     let fixture = Fixture::create("clean_external", "before");
     let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
-    state.record_self_write(baseline.saturating_sub(1));
+    record_identity(&state, fixture.path(), baseline.saturating_sub(1));
     fs::write(fixture.path(), "after clean edit").unwrap();
     set_mtime_after(fixture.path(), baseline);
 
@@ -119,7 +131,7 @@ fn dirty_external_edit_emits_conflict_with_new_bytes() {
     let fixture = Fixture::create("dirty_external", "before");
     let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
-    state.record_self_write(baseline.saturating_sub(1));
+    record_identity(&state, fixture.path(), baseline.saturating_sub(1));
     fs::write(fixture.path(), "after dirty edit").unwrap();
     set_mtime_after(fixture.path(), baseline);
 
@@ -138,12 +150,12 @@ fn dirty_external_edit_emits_conflict_with_new_bytes() {
 }
 
 #[test]
-fn same_mtime_rewrite_is_not_emitted_and_exposes_false_negative() {
+fn same_mtime_changed_size_rewrite_is_emitted() {
     let fixture = Fixture::create("same_mtime", "before");
     let original_mtime = fs::metadata(fixture.path()).unwrap().modified().unwrap();
     let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
-    state.record_self_write(baseline);
+    record_identity(&state, fixture.path(), baseline);
     fs::write(fixture.path(), "after same-mtime rewrite").unwrap();
     File::open(fixture.path())
         .unwrap()
@@ -157,13 +169,14 @@ fn same_mtime_rewrite_is_not_emitted_and_exposes_false_negative() {
         baseline
     );
     assert_eq!(bytes(fixture.path()), "after same-mtime rewrite");
-    assert!(change.is_none());
+    let change = change.expect("changed-size rewrite at the same mtime must be emitted");
+    assert_eq!(change.text, "after same-mtime rewrite");
     report(
         "same-mtime-rewrite",
-        "no-event",
-        "not-invoked",
+        "event",
+        "reload",
         &bytes(fixture.path()),
-        "yes",
+        "no",
     );
 }
 
@@ -172,7 +185,7 @@ fn atomic_replacement_emits_new_bytes() {
     let fixture = Fixture::create("atomic-replacement", "before");
     let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
-    state.record_self_write(baseline);
+    record_identity(&state, fixture.path(), baseline);
     let (event_tx, event_rx) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |result| {
         let _ = event_tx.send(result);
@@ -203,26 +216,31 @@ fn atomic_replacement_emits_new_bytes() {
 }
 
 #[test]
-fn tab_activation_reuses_old_self_write_baseline_for_new_path() {
+fn tab_activation_does_not_reuse_another_path_self_write_identity() {
     let tab_a = Fixture::create("tab-a", "tab A");
     let tab_b = Fixture::create("tab-b", "tab B before");
     set_mtime(tab_a.path(), 200);
     set_mtime(tab_b.path(), 150);
     let state = WatchState::default();
-    state.record_self_write(crate::commands::mtime_ms(&tab_a.path().to_string_lossy()));
+    record_identity(
+        &state,
+        tab_a.path(),
+        crate::commands::mtime_ms(&tab_a.path().to_string_lossy()),
+    );
 
     fs::write(tab_b.path(), "tab B after external edit").unwrap();
     set_mtime(tab_b.path(), 150);
     let change = read_external_change(&state, tab_b.path());
 
-    assert!(change.is_none());
+    let change = change.expect("tab B must not inherit tab A's self-write identity");
+    assert_eq!(change.text, "tab B after external edit");
     assert_eq!(bytes(tab_b.path()), "tab B after external edit");
     report(
         "watcher-replacement-tab-activation",
-        "no-event",
-        "not-invoked",
+        "event",
+        "reload",
         &bytes(tab_b.path()),
-        "yes",
+        "no",
     );
 }
 
@@ -231,7 +249,7 @@ fn deletion_is_not_emitted_and_original_bytes_are_gone() {
     let fixture = Fixture::create("deletion", "before deletion");
     let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
-    state.record_self_write(baseline);
+    record_identity(&state, fixture.path(), baseline);
     fs::remove_file(fixture.path()).unwrap();
 
     let change = read_external_change(&state, fixture.path());
@@ -246,7 +264,7 @@ fn unreadable_path_is_not_emitted() {
     let fixture = Fixture::create("unreadable", "before unreadable");
     let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
-    state.record_self_write(baseline.saturating_sub(1));
+    record_identity(&state, fixture.path(), baseline.saturating_sub(1));
     fs::remove_file(fixture.path()).unwrap();
     fs::create_dir(fixture.path()).unwrap();
 

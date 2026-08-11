@@ -119,9 +119,9 @@ pub fn read_file(path: String) -> Result<FileContent, String> {
 /// `baseline` is a single-word arg name on purpose: it maps identically under
 /// every JS↔Rust naming convention, avoiding camelCase/snake_case surprises.
 ///
-/// After a successful write it records the new mtime as a self-write on the fs
-/// watcher's `WatchState`, so the watcher event our own rename provokes is muted
-/// instead of being mistaken for an external change (the auto-reload loop guard).
+/// After a successful write it records the bounded path/mtime/size identity on
+/// the fs watcher's `WatchState`, so the watcher event our own rename provokes
+/// is muted instead of being mistaken for an external change.
 /// The signature the frontend sees is unchanged — `WatchState` is injected by
 /// Tauri's managed state, not passed from JS — so the existing mock stays valid.
 #[tauri::command]
@@ -185,8 +185,8 @@ fn write_file_with_commit_hook<F: FnOnce()>(
     )?;
     let new_mtime = mtime_ms(&normalized);
     // Mute the watcher event this write is about to trigger: record our own
-    // post-write mtime so `is_self_write(new_mtime)` returns true on the callback.
-    watch.record_self_write(new_mtime);
+    // post-write identity so the callback recognises this exact file event.
+    watch.record_self_write(&normalized, new_mtime, text.len());
     Ok(new_mtime)
 }
 
@@ -1235,8 +1235,14 @@ mod tests {
         fs::write(&p, "old").unwrap();
         let state = fresh_watch_state();
         let m = write_file_with_state(&p, "new", 0, &state).unwrap();
-        assert!(state.is_self_write(m), "the write's own mtime must be muted as a self-write");
-        assert!(!state.is_self_write(m + 1), "a strictly-newer mtime is still external");
+        assert!(
+            state.is_self_write(&p, m, 3),
+            "the write's own identity must be muted"
+        );
+        assert!(
+            !state.is_self_write(&p, m + 1, 3),
+            "a strictly-newer mtime is still external"
+        );
         fs::remove_file(&p).ok();
     }
 

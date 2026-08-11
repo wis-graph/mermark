@@ -17,9 +17,9 @@ describe("decideExternalChange (auto-reload vs conflict)", () => {
     ["self-save", false, false, "not-invoked"],
     ["clean-external-edit", true, false, "reload"],
     ["dirty-external-edit", true, true, "conflict"],
-    ["same-mtime-rewrite", false, false, "not-invoked"],
+    ["same-mtime-rewrite", true, false, "reload"],
     ["atomic-replacement", true, false, "reload"],
-    ["watcher-replacement-tab-activation", false, false, "not-invoked"],
+    ["watcher-replacement-tab-activation", true, false, "reload"],
     ["deletion", false, false, "not-invoked"],
     ["unreadable-path", false, false, "not-invoked"],
   ] as const)("projects the native %s boundary to %s", (_scenario, event, dirty, expected) => {

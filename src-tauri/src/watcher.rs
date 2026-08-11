@@ -12,15 +12,12 @@
 //!
 //! Autosave calls `write_file`, which atomically renames over the target. That
 //! rename fires a filesystem event the watcher would otherwise mistake for an
-//! *external* change, causing a reload/conflict loop. The fix is an mtime
-//! baseline: `write_file` records its own post-write mtime via
-//! [`record_self_write`]; the watcher callback asks [`is_self_write`] whether an
-//! observed mtime is at-or-below that baseline and, if so, stays silent. Both
-//! halves are named functions with clean CQS roles — [`is_self_write`] is a pure
-//! bool query, [`record_self_write`] is a void command — so the rule never hides
-//! in an inline `if` at the callback site.
+//! *external* change, causing a reload/conflict loop. `write_file` records its
+//! bounded `(path, mtime, size)` identity via [`record_self_write`], and the
+//! watcher callback asks [`is_self_write`] whether an event matches it. Both
+//! halves are named functions with clean CQS roles so the rule never hides in
+//! an inline `if` at the callback site.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -33,33 +30,53 @@ use tauri::{AppHandle, Emitter};
 ///   wholesale on `set_watch` (the old watcher drops, ending its watch) and
 ///   emptied on `clear_watch`. `Mutex` because `notify`'s watcher isn't `Sync`
 ///   on its own and both commands and the (rare) teardown touch it.
-/// - `last_self_write_mtime` is the highest mtime mermark itself wrote, used by
-///   `is_self_write` to ignore the watcher event our own write provokes. An
-///   `AtomicU64` so `write_file` can record without taking the watcher lock.
+/// - `last_self_write` is the bounded `(path, mtime, size)` identity mermark
+///   most recently wrote. Path prevents a tab's baseline muting another tab;
+///   size distinguishes changed-size rewrites within the same mtime bucket.
 #[derive(Default)]
 pub struct WatchState {
     watcher: Mutex<Option<RecommendedWatcher>>,
-    last_self_write_mtime: AtomicU64,
+    last_self_write: Mutex<Option<SelfWriteIdentity>>,
+}
+
+struct SelfWriteIdentity {
+    path: String,
+    mtime: u64,
+    size: u64,
 }
 
 impl WatchState {
-    /// Record that *we* just wrote the file at this mtime, so the watcher event
-    /// our own write triggers is recognised as a self-write and ignored. A void
-    /// command (CQS): it mutates the mute baseline and returns nothing. Uses
-    /// `Ordering::SeqCst` so the store is visible to the watcher thread that
-    /// later reads it in `is_self_write`.
-    pub fn record_self_write(&self, mtime: u64) {
-        self.last_self_write_mtime.store(mtime, Ordering::SeqCst);
+    /// Record the bounded identity of the file we just wrote so the watcher
+    /// event from that write is recognised and ignored.
+    pub fn record_self_write(&self, path: &str, mtime: u64, size: usize) {
+        let Ok(size) = u64::try_from(size) else {
+            return;
+        };
+        let identity = SelfWriteIdentity {
+            path: path.to_owned(),
+            mtime,
+            size,
+        };
+        *self
+            .last_self_write
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(identity);
     }
 
-    /// Whether `event_mtime` is one of our own writes rather than an external
-    /// edit. Pure bool query (CQS): reads the recorded baseline, mutates
-    /// nothing. An event at or below the baseline is mermark's own write (`<=`,
-    /// not `<`, because the rename's mtime equals the value we recorded); only a
-    /// *strictly newer* mtime is a genuine external change. This mirrors the
-    /// write conflict-guard's "strictly newer == external" rule on the read side.
-    pub fn is_self_write(&self, event_mtime: u64) -> bool {
-        event_mtime <= self.last_self_write_mtime.load(Ordering::SeqCst)
+    /// Whether the event belongs to the latest self-write. Older events for the
+    /// same path retain the established mute rule; an equal mtime is muted only
+    /// when its O(1) metadata size also matches.
+    pub fn is_self_write(&self, path: &str, event_mtime: u64, event_size: u64) -> bool {
+        let identity = self
+            .last_self_write
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(identity) = identity.as_ref() else {
+            return false;
+        };
+        identity.path == path
+            && (event_mtime < identity.mtime
+                || (event_mtime == identity.mtime && event_size == identity.size))
     }
 }
 
@@ -89,7 +106,10 @@ pub fn set_watch(app: &AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| format!("watch {path}: {e}"))?;
 
     let state = tauri_watch_state(app);
-    *state.watcher.lock().unwrap() = Some(watcher);
+    *state
+        .watcher
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(watcher);
     Ok(())
 }
 
@@ -99,13 +119,16 @@ pub fn set_watch(app: &AppHandle, path: String) -> Result<(), String> {
 /// but an explicit `unwatch_file` lets the frontend stop watching deterministically.
 pub fn clear_watch(app: &AppHandle) {
     let state = tauri_watch_state(app);
-    *state.watcher.lock().unwrap() = None;
+    *state
+        .watcher
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
 }
 
 /// Re-read the watched file and emit `file-changed` for a genuine external edit.
 /// Pulled out of the callback closure so the "ignore self-writes, otherwise emit
 /// the new content+mtime" rule is one named step, not inline logic on the watcher
-/// thread. Self-writes (mtime at or below our recorded baseline) emit nothing.
+/// thread. Events matching the latest bounded self-write identity emit nothing.
 /// A vanished/unreadable file (e.g. an editor mid-atomic-rename) is skipped
 /// silently rather than emitting a spurious change.
 fn handle_fs_event(app: &AppHandle, path: &str) {
@@ -117,10 +140,13 @@ fn handle_fs_event(app: &AppHandle, path: &str) {
         let _ = app.emit("file-unavailable", FileUnavailable { kind: "unreadable", detail: format!("file unreadable: {path}") });
         return;
     };
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return;
+    };
     let mtime = crate::commands::mtime_ms(path);
     let state = tauri_watch_state(app);
     // Self-write (our own autosave) → stay silent, no reload loop.
-    if state.is_self_write(mtime) {
+    if state.is_self_write(path, mtime, metadata.len()) {
         return;
     }
     // Genuine external change → carry the new content + mtime so the frontend
@@ -129,10 +155,14 @@ fn handle_fs_event(app: &AppHandle, path: &str) {
 }
 
 #[cfg(test)]
-pub(super) fn read_external_change(state: &WatchState, path: &std::path::Path) -> Option<FileChanged> {
+pub(super) fn read_external_change(
+    state: &WatchState,
+    path: &std::path::Path,
+) -> Option<FileChanged> {
     let path_string = path.to_string_lossy();
+    let metadata = std::fs::metadata(path).ok()?;
     let mtime = crate::commands::mtime_ms(&path_string);
-    if state.is_self_write(mtime) {
+    if state.is_self_write(&path_string, mtime, metadata.len()) {
         return None;
     }
     let text = std::fs::read_to_string(path).ok()?;
@@ -179,19 +209,23 @@ mod tests {
 
     #[test]
     fn equal_mtime_is_a_self_write() {
-        // The atomic rename's mtime equals exactly what write_file records, so
-        // an event at that mtime is our own write → muted. `<=`, not `<`.
         let state = WatchState::default();
-        state.record_self_write(100);
-        assert!(state.is_self_write(100), "an event at the recorded mtime is our own write");
+        state.record_self_write("/note.md", 100, 4);
+        assert!(
+            state.is_self_write("/note.md", 100, 4),
+            "an event at the recorded identity is our own write"
+        );
     }
 
     #[test]
     fn newer_mtime_is_an_external_change() {
         // Strictly newer than our last write → something else touched the file.
         let state = WatchState::default();
-        state.record_self_write(100);
-        assert!(!state.is_self_write(101), "a strictly-newer mtime is an external edit");
+        state.record_self_write("/note.md", 100, 4);
+        assert!(
+            !state.is_self_write("/note.md", 101, 4),
+            "a strictly-newer mtime is an external edit"
+        );
     }
 
     #[test]
@@ -200,18 +234,29 @@ mod tests {
         // our last write, so it's muted too (defensive against clock jitter /
         // out-of-order events).
         let state = WatchState::default();
-        state.record_self_write(100);
-        assert!(state.is_self_write(99), "an older-than-baseline mtime is not an external change");
+        state.record_self_write("/note.md", 100, 4);
+        assert!(
+            state.is_self_write("/note.md", 99, 4),
+            "an older-than-baseline mtime is not an external change"
+        );
     }
 
     #[test]
-    fn record_self_write_round_trips_through_atomic() {
-        // record → is_self_write reflects the stored value (AtomicU64 round-trip).
+    fn record_self_write_round_trips_through_identity() {
         let state = WatchState::default();
-        assert!(!state.is_self_write(50), "default baseline is 0 → any positive mtime is external");
-        state.record_self_write(50);
-        assert!(state.is_self_write(50), "after recording 50, an event at 50 is a self-write");
-        assert!(!state.is_self_write(51), "but 51 is still external");
+        assert!(
+            !state.is_self_write("/note.md", 50, 4),
+            "a fresh state mutes nothing"
+        );
+        state.record_self_write("/note.md", 50, 4);
+        assert!(
+            state.is_self_write("/note.md", 50, 4),
+            "the recorded identity is a self-write"
+        );
+        assert!(
+            !state.is_self_write("/note.md", 51, 4),
+            "but 51 is still external"
+        );
     }
 
     #[test]
@@ -219,17 +264,29 @@ mod tests {
         // With no self-write recorded yet, the very first external edit (any
         // positive mtime) must be seen as external, not muted by a stale 0.
         let state = WatchState::default();
-        assert!(!state.is_self_write(1), "a fresh state mutes nothing");
+        assert!(
+            !state.is_self_write("/note.md", 1, 4),
+            "a fresh state mutes nothing"
+        );
     }
 
     #[test]
     fn last_self_write_wins_when_recorded_repeatedly() {
         // Autosave records on every write; only the latest baseline matters.
         let state = WatchState::default();
-        state.record_self_write(100);
-        state.record_self_write(200);
-        assert!(state.is_self_write(150), "150 <= latest baseline 200 → self-write");
-        assert!(state.is_self_write(200), "200 == latest baseline → self-write");
-        assert!(!state.is_self_write(201), "201 > latest baseline → external");
+        state.record_self_write("/note.md", 100, 4);
+        state.record_self_write("/note.md", 200, 8);
+        assert!(
+            state.is_self_write("/note.md", 150, 4),
+            "150 < latest baseline 200 → self-write"
+        );
+        assert!(
+            state.is_self_write("/note.md", 200, 8),
+            "the latest identity is a self-write"
+        );
+        assert!(
+            !state.is_self_write("/note.md", 201, 8),
+            "201 > latest baseline → external"
+        );
     }
 }
