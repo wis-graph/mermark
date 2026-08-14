@@ -287,6 +287,28 @@ mod workspace_directory_exists_tests {
     }
 }
 
+#[cfg(test)]
+mod open_path_window_spec_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn open_path_spawns_a_fresh_w_labelled_window_loading_the_encoded_file_query() {
+        let (label, url) = document_window_spec(7, Path::new("/tmp/a b.md"));
+        assert_eq!(label, "w7");
+        assert_eq!(url, "index.html?file=%2Ftmp%2Fa%20b.md");
+    }
+}
+
+/// The (label, URL) pair for one explicit new-window open: a fresh `w{seq}`
+/// webview loading `index.html?file=<urlencoded path>`. Under the approved
+/// window-routing matrix this is the ONLY meaning `open_path` carries.
+fn document_window_spec(seq: u32, path: &Path) -> (String, String) {
+    let label = format!("w{seq}");
+    let url = format!("index.html?file={}", urlencoding::encode(&path.to_string_lossy()));
+    (label, url)
+}
+
 /// Open another file in a brand-new window (used by wikilink clicks).
 #[tauri::command]
 pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
@@ -294,11 +316,9 @@ pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     if !normalized.is_file() {
         return Err(format!("not a file: {}", normalized.display()));
     }
-    let label = format!("w{}", WINDOW_SEQ.fetch_add(1, Ordering::Relaxed));
-    let path_str = normalized.to_string_lossy().into_owned();
-    let url = WebviewUrl::App(format!("index.html?file={}", urlencoding::encode(&path_str)).into());
+    let (label, url) = document_window_spec(WINDOW_SEQ.fetch_add(1, Ordering::Relaxed), &normalized);
     crate::with_document_chrome(
-        WebviewWindowBuilder::new(&app, label, url)
+        WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
             .title("mermark")
             .inner_size(crate::DEFAULT_WINDOW.0, crate::DEFAULT_WINDOW.1)
             .min_inner_size(crate::MIN_WINDOW.0, crate::MIN_WINDOW.1),
