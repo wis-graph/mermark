@@ -25,6 +25,38 @@ fn bin_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mermark"))
 }
 
+/// The single-instance socket the *production* identifier resolves to.
+///
+/// This binary is built with `tauri.conf.json`'s real `identifier`
+/// (`com.mermark.app`), which is what `tauri-plugin-single-instance` derives
+/// its socket path from — so a debug build spawned here joins **the same
+/// singleton as an installed mermark the developer is actually using**. It
+/// cannot be overridden at runtime; the identifier is baked in at build time
+/// (`scripts/window-routing-smoke.mjs` sidesteps this by building its own
+/// binary under a QA identifier, which a cargo integration test cannot do).
+///
+/// So this test refuses to run while that socket exists. See
+/// `assert_no_foreign_singleton`.
+const PRODUCTION_SINGLETON_SOCKET: &str = "/tmp/com_mermark_app_si.sock";
+
+/// Refuse to run when someone else already holds the production singleton.
+///
+/// Without this the test does real harm *and* lies: the spawned "primary"
+/// finds the socket taken, so it forwards its argv to the developer's running
+/// mermark and exits immediately — the app is signalled (its window is pulled
+/// to the front by the `FocusOnly` route), and every later assertion is then
+/// measured against *that* app instead of the primary this test meant to
+/// start. The test still passed when this happened, which is the worse half:
+/// a green that proved nothing.
+fn assert_no_foreign_singleton() {
+    assert!(
+        !PathBuf::from(PRODUCTION_SINGLETON_SOCKET).exists(),
+        "refusing to run: {PRODUCTION_SINGLETON_SOCKET} exists, so another mermark already owns \
+         the singleton. This test would signal that app instead of its own primary and would \
+         then assert against the wrong process. Quit the running mermark and re-run."
+    );
+}
+
 fn kill_and_wait(mut child: Child) {
     let _ = child.kill();
     let _ = child.wait();
@@ -36,7 +68,9 @@ fn stdin_pipe_survives_running_singleton() {
     // 1. Start the primary (singleton) process with no args — an ordinary
     // `SingletonRouted(None)` launch that installs the single-instance
     // plugin and opens the default `main` window.
-    let primary = Command::new(bin_path())
+    assert_no_foreign_singleton();
+
+    let mut primary = Command::new(bin_path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -46,6 +80,22 @@ fn stdin_pipe_survives_running_singleton() {
     // Give the primary time to install the single-instance plugin and open
     // its window before the secondary launches.
     std::thread::sleep(Duration::from_secs(2));
+
+    // The primary must still be running, which is what proves it actually
+    // *claimed* the singleton. A process that found the socket already held
+    // notifies the existing owner and exits inside the plugin's setup
+    // (tauri-plugin-single-instance's `platform_impl/macos.rs` calls
+    // `std::process::exit(0)` there), so an exited "primary" means the
+    // singleton under test belongs to some other process — and everything
+    // below would be measuring that one. Checking liveness here makes that
+    // false green impossible even if the socket-path guard above ever goes
+    // stale (a changed identifier, a different tmp dir).
+    if let Some(status) = primary.try_wait().expect("try_wait primary") {
+        panic!(
+            "primary exited immediately (status: {status:?}) — it did not claim the singleton, so \
+             another mermark owns it. Refusing to assert against a foreign process."
+        );
+    }
 
     // 2. Launch a second, isolated process with piped stdin (`mermark -`).
     let mut secondary = Command::new(bin_path())
