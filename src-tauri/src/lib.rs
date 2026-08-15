@@ -10,9 +10,12 @@ mod commands;
 mod epubview;
 mod htmlview;
 mod hwp;
+mod qa_trace;
 mod single_instance;
 mod sqlite;
 mod watcher;
+
+use qa_trace::qa_trace;
 
 #[cfg(target_os = "macos")]
 fn setup_cli_path() -> std::io::Result<()> {
@@ -163,6 +166,68 @@ fn is_bundle_subcommand(argv: &[String]) -> bool {
     argv.first().is_some_and(|first| first == "bundle")
 }
 
+/// QA trace payload for the `launch-class` event (single-window-opening
+/// Todo 6): which `LaunchClass` this process resolved to, plus (for
+/// `Isolated`) the file path and `--right` flag the native harness asserts
+/// against. This function's only call site is a `qa_trace!` argument, whose
+/// release arm discards it unevaluated — cfg-gating the function itself too
+/// means a release build never even sees it as an item, so there is no
+/// "unused function" warning to suppress on top of that.
+#[cfg(debug_assertions)]
+fn qa_launch_class_fields(class: &cli::LaunchClass) -> serde_json::Value {
+    match class {
+        cli::LaunchClass::Headless(cli::Headless::Version) => {
+            serde_json::json!({ "class": "headless-version" })
+        }
+        cli::LaunchClass::Headless(cli::Headless::Bundle) => {
+            serde_json::json!({ "class": "headless-bundle" })
+        }
+        cli::LaunchClass::Isolated(cli::LaunchArgs { target, right }) => serde_json::json!({
+            "class": "isolated",
+            "file": match target {
+                cli::Target::File(p) => Some(p.to_string_lossy().into_owned()),
+                cli::Target::Stdin => None,
+            },
+            "right": right,
+        }),
+        cli::LaunchClass::SingletonRouted(path) => serde_json::json!({
+            "class": "singleton-routed",
+            "file": path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        }),
+    }
+}
+
+/// QA trace payload for the `stdin-scratch` event: the scratch file's path
+/// plus its byte length, so the native harness can diff the on-disk bytes
+/// against what it piped in. Debug-only for the same reason as
+/// `qa_launch_class_fields` above.
+#[cfg(debug_assertions)]
+fn qa_stdin_scratch_fields(path: &Path) -> serde_json::Value {
+    let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    serde_json::json!({ "path": path.to_string_lossy(), "bytes": bytes })
+}
+
+/// QA trace payload for the `isolated-geometry` event: the monitor's logical
+/// size and the resolved `--right` window geometry, so the native harness
+/// can assert `right_half_geometry`'s contract end-to-end (`x == width ==
+/// monitor.logical_width/2 && height == monitor.logical_height`) against a
+/// real monitor instead of just the pure function in isolation. Debug-only
+/// for the same reason as `qa_launch_class_fields` above.
+#[cfg(debug_assertions)]
+fn qa_isolated_geometry_fields(
+    right: bool,
+    logical_width: f64,
+    logical_height: f64,
+    geometry: (f64, f64, f64),
+) -> serde_json::Value {
+    let (width, height, x) = geometry;
+    serde_json::json!({
+        "right": right,
+        "monitor": { "logical_width": logical_width, "logical_height": logical_height },
+        "window": { "x": x, "y": 0.0, "width": width, "height": height },
+    })
+}
+
 /// Pure core of the `bundle` subcommand: turn the tokens *after* `bundle` plus a
 /// cwd into the bundle string, with no process exit so it is unit-testable.
 /// The first remaining token is the file path, resolved to an absolute path
@@ -222,6 +287,7 @@ pub fn run() {
         // rather than propagating `Missing` as an error.
         Err(cli::CliError::Missing) => unreachable!("classify_launch never returns Missing"),
     };
+    qa_trace!("launch-class", qa_launch_class_fields(&class));
 
     // Headless dispatch: `--version`/`bundle` print to stdout and exit
     // before any window or webview exists — same shape as before, just
@@ -392,6 +458,7 @@ pub fn run() {
                         &std::env::temp_dir(),
                     )
                     .map_err(|e| format!("mermark: failed to buffer stdin: {e}"))?;
+                    qa_trace!("stdin-scratch", qa_stdin_scratch_fields(&path));
                     (Some(path), *right)
                 }
                 cli::LaunchClass::SingletonRouted(path) => (path.clone(), false),
@@ -422,7 +489,12 @@ pub fn run() {
                         let size = monitor.size();
                         let logical_width = size.width as f64 / scale;
                         let logical_height = size.height as f64 / scale;
-                        right_half_geometry(logical_width, logical_height)
+                        let geometry = right_half_geometry(logical_width, logical_height);
+                        qa_trace!(
+                            "isolated-geometry",
+                            qa_isolated_geometry_fields(right, logical_width, logical_height, geometry)
+                        );
+                        geometry
                     })
             } else {
                 None

@@ -193,6 +193,12 @@ function makeModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode) =>
 }
 
 async function boot() {
+  // Dev-only QA bridge driver (single-window-opening Todo 6): lets the
+  // native scripts/window-routing-smoke.mjs harness drive this real webview
+  // over local HTTP instead of a browser mock. Statically folded to `false`
+  // and dead-code-eliminated in `npm run build` (import.meta.env.DEV is a
+  // Vite compile-time constant) — see src/qa/native-smoke-driver.ts.
+  if (import.meta.env.DEV && import.meta.env.VITE_QA_BRIDGE) void import("./qa/native-smoke-driver");
   void unwatchFile();
   const migrateLegacyFavorites = shouldMigrateLegacyFavorites(
     localStorage.getItem(favoriteFoldersStorageKey) !== null,
@@ -698,6 +704,16 @@ async function boot() {
     const vault = currentVault();
     return vault?.persistenceKind === "permanent" ? { rootPath: vault.rootPath } : null;
   });
+  // dev-only: expose vault-routing state for the native QA harness
+  // (scripts/window-routing-smoke.mjs) to read via queryDoc's debugVault
+  // field on a timeout — same DEV gate as `window.__mermark` above.
+  if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
+    (window as unknown as { __mermarkDebugVault?: unknown }).__mermarkDebugVault = {
+      currentVault: currentVault(),
+      workspaceState: workspaceStore.get(),
+      requestedFile,
+      globalExplorerRoot: reloadHandoff.globalExplorerRoot,
+    };
 
   const welcomePane = createWelcomePane({
     getRecent: () => recentDocsSetting.get(),

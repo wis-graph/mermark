@@ -16,6 +16,8 @@ use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
 
+use crate::qa_trace::qa_trace;
+
 /// One request still awaiting delivery-and-acknowledgement, FIFO-queued per
 /// recipient label. `delivered` distinguishes "sent, awaiting ack" from
 /// "queued, not yet sent" — `pump` only ever advances it forward, and only
@@ -259,6 +261,45 @@ impl Routing {
     }
 }
 
+/// QA-observability-only view of the routing core: focus recency order,
+/// which labels have registered ready, and each label's queue (id/delivered/
+/// path per still-pending request). A pure query (`&self`, no side effect) —
+/// this is what lets the Todo 6 native harness observe "the request landed
+/// in window w1's queue" even in the pre-ready case, where no `Deliver`
+/// action exists yet to observe instead (see `enqueue_open`: a request can
+/// sit queued, undelivered, before its recipient ever calls
+/// `register_window_ready`). Debug-only, alongside the rest of the qa_trace
+/// seam: this method doesn't exist in a release build, so a release call
+/// site referencing it would be a compile error, not a runtime no-op — the
+/// seam's absence is structural.
+#[cfg(debug_assertions)]
+impl Routing {
+    pub(crate) fn qa_snapshot(&self) -> serde_json::Value {
+        let queues: serde_json::Map<String, serde_json::Value> = self
+            .queues
+            .iter()
+            .map(|(label, queue)| {
+                let items: Vec<serde_json::Value> = queue
+                    .iter()
+                    .map(|req| {
+                        serde_json::json!({
+                            "id": req.id,
+                            "delivered": req.delivered,
+                            "path": req.path.to_string_lossy(),
+                        })
+                    })
+                    .collect();
+                (label.clone(), serde_json::Value::Array(items))
+            })
+            .collect();
+        serde_json::json!({
+            "focus_order": self.focus_order,
+            "ready": self.ready.iter().cloned().collect::<Vec<_>>(),
+            "queues": serde_json::Value::Object(queues),
+        })
+    }
+}
+
 #[cfg(test)]
 impl Routing {
     /// Test-only introspection: the current queue head for `label`, without
@@ -294,6 +335,53 @@ fn secondary_route_decision(argv: &[String], cwd: &Path) -> Option<SecondaryOpen
     }
 }
 
+/// Runs `f` (a `Routing` core call) with the routing lock held, then — debug
+/// builds only — emits a `"routing"` trace line for it. `extra` adds one
+/// caller-supplied field (`acknowledge_open_request`'s `outcome`; every
+/// other caller passes `None`). The snapshot is taken from `routing`
+/// *before* the `MutexGuard` is dropped (so it reflects exactly the state
+/// `f` just produced), but `qa_trace!` — the file write — runs only *after*
+/// `drop(routing)`, so file I/O never happens while the routing mutex is
+/// held. Centralizes that ordering rule once instead of repeating it at
+/// every shell entry point (`route_secondary_invocation`,
+/// `register_window_ready`, `acknowledge_open_request`, `track_window_event`'s
+/// `Destroyed` arm).
+#[cfg(debug_assertions)]
+fn with_routing_trace(
+    state: &RoutingState,
+    trigger: &str,
+    extra: Option<(&str, serde_json::Value)>,
+    f: impl FnOnce(&mut Routing) -> Vec<RoutingAction>,
+) -> Vec<RoutingAction> {
+    let mut routing = state.0.lock().unwrap();
+    let actions = f(&mut routing);
+    let mut fields = serde_json::json!({
+        "trigger": trigger,
+        "actions": actions.iter().map(|a| format!("{a:?}")).collect::<Vec<_>>(),
+        "snapshot": routing.qa_snapshot(),
+    });
+    if let (Some(map), Some((key, value))) = (fields.as_object_mut(), extra) {
+        map.insert(key.to_string(), value);
+    }
+    drop(routing); // release the lock before any file I/O
+    qa_trace!("routing", fields);
+    actions
+}
+
+/// Release-build twin of the function above: same lock-and-call shape, no
+/// tracing at all. This function (not a runtime `if`) is what a release
+/// caller actually compiles against, so `trigger`/`extra`/`qa_snapshot` never
+/// enter a release build through this path either.
+#[cfg(not(debug_assertions))]
+fn with_routing_trace(
+    state: &RoutingState,
+    _trigger: &str,
+    _extra: Option<(&str, serde_json::Value)>,
+    f: impl FnOnce(&mut Routing) -> Vec<RoutingAction>,
+) -> Vec<RoutingAction> {
+    f(&mut state.0.lock().unwrap())
+}
+
 /// The single-instance plugin's callback, invoked in the **primary**
 /// process when a second `mermark` process launches (tauri-plugin-single-
 /// instance transports `cwd + "\0\0" + argv` including `argv[0]`). The
@@ -304,16 +392,28 @@ fn secondary_route_decision(argv: &[String], cwd: &Path) -> Option<SecondaryOpen
 /// creates or writes a file; it only routes an already-resolved path.
 pub fn route_secondary_invocation(app: &tauri::AppHandle, argv: &[String], cwd: &str) {
     let decision = secondary_route_decision(argv, Path::new(cwd));
+    qa_trace!(
+        "secondary-invocation",
+        serde_json::json!({
+            "argv": argv,
+            "decision": match &decision {
+                Some(SecondaryOpen::File(_)) => "file",
+                Some(SecondaryOpen::FocusOnly) => "focus-only",
+                None => "none",
+            },
+        })
+    );
     let live: HashSet<String> = app.webview_windows().keys().cloned().collect();
-    let actions = {
-        let state = app.state::<RoutingState>();
-        let mut routing = state.0.lock().unwrap();
-        match decision {
-            Some(SecondaryOpen::File(path)) => routing.enqueue_open(path, &live),
-            Some(SecondaryOpen::FocusOnly) => routing.focus_only(&live),
-            None => return,
+    let state = app.state::<RoutingState>();
+    let actions = match decision {
+        Some(SecondaryOpen::File(path)) => {
+            with_routing_trace(&state, "enqueue", None, |routing| routing.enqueue_open(path, &live))
         }
-    }; // lock released before apply_actions — see RoutingState's doc comment.
+        Some(SecondaryOpen::FocusOnly) => {
+            with_routing_trace(&state, "focus-only", None, |routing| routing.focus_only(&live))
+        }
+        None => return,
+    }; // lock released inside with_routing_trace before apply_actions — see RoutingState's doc comment.
     apply_actions(app.clone(), actions);
 }
 
@@ -338,10 +438,19 @@ fn spawn_main_window(app: &tauri::AppHandle) {
             .inner_size(crate::DEFAULT_WINDOW.0, crate::DEFAULT_WINDOW.1)
             .min_inner_size(crate::MIN_WINDOW.0, crate::MIN_WINDOW.1),
     );
-    if let Err(e) = builder.build() {
-        eprintln!("mermark: failed to recreate main window: {e}");
-        let state = app.state::<RoutingState>();
-        state.0.lock().unwrap().main_spawn_pending = false;
+    match builder.build() {
+        Ok(_) => {
+            qa_trace!("spawn-main-result", serde_json::json!({ "ok": true }));
+        }
+        Err(e) => {
+            eprintln!("mermark: failed to recreate main window: {e}");
+            qa_trace!(
+                "spawn-main-result",
+                serde_json::json!({ "ok": false, "error": e.to_string() })
+            );
+            let state = app.state::<RoutingState>();
+            state.0.lock().unwrap().main_spawn_pending = false;
+        }
     }
 }
 
@@ -397,6 +506,7 @@ pub fn track_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     let app = window.app_handle();
     match event {
         tauri::WindowEvent::Focused(true) => {
+            qa_trace!("window-focused", serde_json::json!({ "label": label }));
             let state = app.state::<RoutingState>();
             state.0.lock().unwrap().note_focused(label);
         }
@@ -407,11 +517,13 @@ pub fn track_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 .filter(|l| l.as_str() != label)
                 .cloned()
                 .collect();
-            let actions = {
-                let state = app.state::<RoutingState>();
-                let mut routing = state.0.lock().unwrap();
-                routing.window_destroyed(label, &live)
-            };
+            let state = app.state::<RoutingState>();
+            let actions =
+                with_routing_trace(&state, "destroyed", None, |routing| routing.window_destroyed(label, &live));
+            qa_trace!(
+                "window-destroyed",
+                serde_json::json!({ "label": label, "requeued": !actions.is_empty() })
+            );
             apply_actions(app.clone(), actions);
         }
         _ => {}
@@ -425,7 +537,7 @@ pub fn track_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
 #[tauri::command]
 pub fn register_window_ready(window: tauri::WebviewWindow, state: tauri::State<RoutingState>) {
     let label = window.label().to_string();
-    let actions = state.0.lock().unwrap().mark_ready(&label);
+    let actions = with_routing_trace(&state, "ready", None, |routing| routing.mark_ready(&label));
     apply_actions(window.app_handle().clone(), actions);
 }
 
@@ -442,9 +554,13 @@ pub fn acknowledge_open_request(
     id: u64,
     outcome: String,
 ) {
-    let _ = outcome; // trace-observability only, see doc comment above.
     let label = window.label().to_string();
-    let actions = state.0.lock().unwrap().acknowledge(&label, id);
+    let actions = with_routing_trace(
+        &state,
+        "ack",
+        Some(("outcome", serde_json::Value::String(outcome))),
+        |routing| routing.acknowledge(&label, id),
+    );
     apply_actions(window.app_handle().clone(), actions);
 }
 
@@ -641,6 +757,37 @@ mod tests {
         let mut r2 = Routing::default();
         let actions2 = r2.focus_only(&live_set(&[]));
         assert_eq!(actions2, vec![RoutingAction::SpawnMain]);
+    }
+
+    // --- qa_snapshot (Todo 6 trace seam observability) ---
+
+    #[test]
+    fn qa_snapshot_names_focus_ready_and_queues() {
+        let mut r = Routing::default();
+        r.note_focused("main");
+        let live = live_set(&["main"]);
+        // Pre-ready enqueue: queued but not yet delivered — the exact case
+        // `qa_snapshot` exists to make observable before any `Deliver`
+        // action fires (see this method's doc comment).
+        r.enqueue_open(PathBuf::from("/tmp/a.md"), &live);
+
+        let snap = r.qa_snapshot();
+
+        assert_eq!(snap["focus_order"], serde_json::json!(["main"]));
+        assert_eq!(snap["ready"], serde_json::json!([]), "main hasn't called mark_ready yet");
+        let head = &snap["queues"]["main"][0];
+        assert_eq!(head["id"], 1);
+        assert_eq!(head["delivered"], false);
+        assert_eq!(head["path"], "/tmp/a.md");
+
+        let actions = r.mark_ready("main");
+        assert_eq!(
+            actions,
+            vec![RoutingAction::Deliver { label: "main".into(), id: 1, path: "/tmp/a.md".into() }]
+        );
+        let snap_after = r.qa_snapshot();
+        assert_eq!(snap_after["ready"], serde_json::json!(["main"]));
+        assert_eq!(snap_after["queues"]["main"][0]["delivered"], true);
     }
 
     // --- secondary invocation's argv reclassification, at the argv-slice level ---

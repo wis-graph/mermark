@@ -50,6 +50,7 @@ use crate::attachments::{
 };
 use crate::attachments::validate_attachment_basename;
 use crate::commands::is_image_ext;
+use crate::qa_trace::qa_trace;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -296,11 +297,80 @@ fn finalize_import(receipts: &AttachmentReceipts, token: u64) {
     receipts.0.lock().unwrap().remove(&token);
 }
 
-/// Picks an image via the native file dialog and imports it into the
-/// permanent vault at `vault_root`. Returns `Cancelled` when the user closes
-/// the picker without choosing a file — import never runs on a cancelled
-/// selection because the code to run it is simply never reached, not because
-/// of a check the frontend must remember to make.
+/// Debug-only override for `import_vault_attachment`'s native file dialog
+/// (single-window-opening Todo 6): the native picker is an OS modal with no
+/// scripting seam, so a QA harness stands in for it via
+/// `MERMARK_QA_PICK_FILE` — a path means "the user picked this file"
+/// (`Source`), an empty string means "the user cancelled" (`Cancel`). This
+/// enum only exists in debug builds, alongside the rest of the qa_trace seam.
+#[cfg(debug_assertions)]
+#[derive(Debug, PartialEq)]
+pub(crate) enum PickOverride {
+    Cancel,
+    Source(PathBuf),
+}
+
+/// Pure mapping from `std::env::var("MERMARK_QA_PICK_FILE")`'s raw `Result`
+/// to a `PickOverride`: unset (`Err`) means no override at all — the real
+/// dialog runs — set-and-empty means "cancelled", set-and-non-empty is the
+/// source path. Takes the `Result` as a parameter rather than reading the
+/// env var itself specifically so this domain rule is a plain function a
+/// unit test can lock down without mutating process env (which would
+/// otherwise race across `cargo test`'s parallel threads).
+#[cfg(debug_assertions)]
+pub(crate) fn qa_pick_override(raw: Result<String, std::env::VarError>) -> Option<PickOverride> {
+    match raw {
+        Err(_) => None,
+        Ok(s) if s.is_empty() => Some(PickOverride::Cancel),
+        Ok(s) => Some(PickOverride::Source(PathBuf::from(s))),
+    }
+}
+
+/// Opens the real native picker and resolves its result to a source path, or
+/// `None` for "user cancelled". The one place `blocking_pick_file()` is
+/// called from — both the debug QA-override path and the plain release path
+/// route through this so there is exactly one dialog call site to reason
+/// about.
+fn pick_file_via_dialog(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
+    let picked = app.dialog().file().add_filter("Image", IMAGE_DIALOG_FILTERS).blocking_pick_file();
+    match picked {
+        None => Ok(None),
+        Some(file_path) => file_path
+            .into_path()
+            .map(Some)
+            .map_err(|e| format!("ATTACH_INVALID_IMAGE: cannot resolve picked file: {e}")),
+    }
+}
+
+/// Resolves the source path `import_vault_attachment` should import, or
+/// `None` for "cancelled" — from the Todo 6 QA override when
+/// `MERMARK_QA_PICK_FILE` is set, else the real native dialog. The override
+/// replaces exactly this one call; every step after it (validation, temp
+/// copy, install, receipt) is the same real code either way (see this
+/// module's doc comment on the picker plugin).
+#[cfg(debug_assertions)]
+fn resolve_import_source(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
+    match qa_pick_override(std::env::var("MERMARK_QA_PICK_FILE")) {
+        Some(PickOverride::Cancel) => Ok(None),
+        Some(PickOverride::Source(path)) => Ok(Some(path)),
+        None => pick_file_via_dialog(app),
+    }
+}
+
+/// Release build's twin of the function above: always the real dialog, no
+/// QA override in scope at all — `MERMARK_QA_PICK_FILE` is read nowhere in
+/// this compilation.
+#[cfg(not(debug_assertions))]
+fn resolve_import_source(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
+    pick_file_via_dialog(app)
+}
+
+/// Picks an image (via the native dialog, or the debug-only QA override
+/// above) and imports it into the permanent vault at `vault_root`. Returns
+/// `Cancelled` when the user closes the picker without choosing a file —
+/// import never runs on a cancelled selection because the code to run it is
+/// simply never reached, not because of a check the frontend must remember
+/// to make.
 ///
 /// `async fn` is load-bearing: see this module's doc comment for why that is
 /// what makes `blocking_pick_file()` safe to call here (it must not run on
@@ -317,16 +387,31 @@ pub async fn import_vault_attachment(
         return Err(format!("ATTACH_COPY: vault root is not a directory: {}", root.display()));
     }
 
-    let picked = app.dialog().file().add_filter("Image", IMAGE_DIALOG_FILTERS).blocking_pick_file();
-    let source = match picked {
-        None => return Ok(AttachmentImportOutcome::Cancelled),
-        Some(file_path) => file_path
-            .into_path()
-            .map_err(|e| format!("ATTACH_INVALID_IMAGE: cannot resolve picked file: {e}"))?,
+    let source = match resolve_import_source(&app)? {
+        None => {
+            qa_trace!("attach-import", serde_json::json!({ "outcome": "cancelled" }));
+            return Ok(AttachmentImportOutcome::Cancelled);
+        }
+        Some(path) => path,
     };
 
-    let receipt = import_attachment_from(&source, &root, &receipts)?;
-    Ok(AttachmentImportOutcome::Imported { receipt })
+    match import_attachment_from(&source, &root, &receipts) {
+        Ok(receipt) => {
+            qa_trace!(
+                "attach-import",
+                serde_json::json!({
+                    "outcome": "imported",
+                    "token": receipt.token,
+                    "rel_path": receipt.rel_path,
+                })
+            );
+            Ok(AttachmentImportOutcome::Imported { receipt })
+        }
+        Err(e) => {
+            qa_trace!("attach-import", serde_json::json!({ "outcome": "error", "error": e }));
+            Err(e)
+        }
+    }
 }
 
 /// Makes a successful import permanent. Called only after the frontend's
@@ -339,7 +424,24 @@ pub fn finalize_attachment_import(
     receipts: tauri::State<'_, AttachmentReceipts>,
 ) -> Result<(), String> {
     finalize_import(&receipts, token);
+    qa_trace!("attach-finalize", serde_json::json!({ "token": token }));
     Ok(())
+}
+
+/// Classifies a `rollback_import` result into the trace vocabulary the Todo
+/// 6 harness asserts against (`removed`/`changed`/`io`/`unknown`), read off
+/// the same `ROLLBACK_*` error prefixes the frontend already branches on.
+/// Debug-only: its one call site is a `qa_trace!` argument, discarded
+/// unevaluated in release (see `qa_trace` module doc), so gating the
+/// function too avoids an "unused function" warning in that build.
+#[cfg(debug_assertions)]
+fn qa_rollback_result_label(result: &Result<(), String>) -> &'static str {
+    match result {
+        Ok(()) => "removed",
+        Err(e) if e.starts_with("ROLLBACK_CHANGED:") => "changed",
+        Err(e) if e.starts_with("ROLLBACK_IO:") => "io",
+        Err(_) => "unknown",
+    }
 }
 
 /// Undoes a successful import after a synchronous editor-insertion failure.
@@ -350,7 +452,12 @@ pub fn rollback_attachment_import(
     token: u64,
     receipts: tauri::State<'_, AttachmentReceipts>,
 ) -> Result<(), String> {
-    rollback_import(&receipts, token)
+    let result = rollback_import(&receipts, token);
+    qa_trace!(
+        "attach-rollback",
+        serde_json::json!({ "token": token, "result": qa_rollback_result_label(&result) })
+    );
+    result
 }
 
 #[cfg(test)]
@@ -646,6 +753,19 @@ mod attachment_import_tests {
         assert!(dest.exists(), "file must survive state loss between import and finalize");
 
         fs::remove_dir_all(&vault).ok();
+    }
+
+    #[test]
+    fn qa_pick_override_maps_env_shapes() {
+        // Unset env (VarError) -> no override, real dialog runs.
+        assert_eq!(qa_pick_override(Err(std::env::VarError::NotPresent)), None);
+        // Set-and-empty -> cancel simulation.
+        assert_eq!(qa_pick_override(Ok(String::new())), Some(PickOverride::Cancel));
+        // Set-and-non-empty -> the source path to use instead of the dialog.
+        assert_eq!(
+            qa_pick_override(Ok("/p/x.png".to_string())),
+            Some(PickOverride::Source(PathBuf::from("/p/x.png")))
+        );
     }
 
     #[test]
