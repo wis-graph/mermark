@@ -90,6 +90,31 @@ Local image (won't load in a plain browser — expected): ![local](./pic.png)
 // in-memory FS so write_file -> read_file round-trips during a session
 const store = new Map<string, string>();
 
+// --- Vault image attachment (single-window-opening Wave 2, Todo 5) ---
+//
+// mock-fidelity note (design §분기7): this simulates the FRONTEND-visible
+// orchestration contract only — picker cancellation, deterministic collision
+// suffixing, opaque token plumbing, and a content-snapshot stand-in for the
+// native (dev,ino) identity check. It does NOT simulate atomicity
+// (hard_link no-replace), real file bytes, or TempGuard cleanup — those are
+// native properties only the cargo temp-vault integration tests
+// (attachment_import.rs) can prove. "vitest green" here means the
+// orchestration is wired correctly, not that the real import is safe.
+interface MockAttachmentRecord {
+  readonly relPath: string;
+  readonly fileName: string;
+  /** Stand-in for the native (dev,ino) identity captured at import time —
+   *  compared against `attachmentStore`'s CURRENT value for this relPath at
+   *  rollback time, the same "has this been replaced since?" question the
+   *  real identity check answers. */
+  readonly snapshot: string;
+}
+// relPath -> content snapshot ("bytes"). Never read as real file content —
+// existence + snapshot-equality is all rollback/no-clobber need from it.
+const attachmentStore = new Map<string, string>();
+const attachmentReceipts = new Map<number, MockAttachmentRecord>();
+let attachmentTokenSeq = 0;
+
 // CLI file-open routing (Todo 2): every `acknowledge_open_request` invoke
 // (see the case below) is recorded here, in call order, so golden/CDP
 // scripts and manual dev:browser checks can assert a `cli-open-request` was
@@ -98,6 +123,11 @@ const store = new Map<string, string>();
 declare global {
   interface Window {
     __mockAcks?: { id: number; outcome: string }[];
+    // Vault image attachment (single-window-opening Wave 2, Todo 5) test
+    // hooks — see the import_vault_attachment/rollback_attachment_import
+    // cases below for how each is consumed.
+    __mockAttachPick?: string | null | (() => string | null);
+    __mockRollbackFail?: boolean;
   }
 }
 window.__mockAcks = [];
@@ -703,6 +733,73 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
     case "open_url":
       console.info("[mock] open_url", a.url);
       return undefined as T;
+    case "import_vault_attachment": {
+      // Mirrors the real `import_vault_attachment(vault_root) ->
+      // Result<AttachmentImportOutcome, String>`. The browser mock has no
+      // native file dialog, so `window.__mockAttachPick` stands in for the
+      // user's picker choice: `null`/unset -> cancelled (no import code
+      // reached, matching the real command's "None -> Ok{cancelled}" shape),
+      // a string -> the "picked" source path (never actually read — the mock
+      // has no real bytes to copy). Candidate naming reproduces the real
+      // `attachment_file_name` decision: n=0 keeps the basename, n>=1 inserts
+      // `-{n}` before the extension, retried only while the slot is taken —
+      // same no-clobber contract, just against `attachmentStore` instead of
+      // a real `.attachments` directory.
+      const pick = typeof window.__mockAttachPick === "function" ? window.__mockAttachPick() : (window.__mockAttachPick ?? null);
+      console.info("[mock] import_vault_attachment", a.vaultRoot, "-> picked", pick);
+      if (pick === null || pick === undefined) return { status: "cancelled" } as T;
+      const picked = String(pick);
+      const name = picked.split(/[/\\]/).pop() ?? picked;
+      const dot = name.lastIndexOf(".");
+      const stem = dot <= 0 ? name : name.slice(0, dot);
+      const ext = dot <= 0 ? "" : name.slice(dot + 1);
+      let n = 0;
+      let fileName = name;
+      let relPath = `.attachments/${fileName}`;
+      while (attachmentStore.has(relPath)) {
+        n += 1;
+        fileName = ext ? `${stem}-${n}.${ext}` : `${stem}-${n}`;
+        relPath = `.attachments/${fileName}`;
+      }
+      const snapshot = `mock-bytes:${picked}`;
+      attachmentStore.set(relPath, snapshot);
+      const token = ++attachmentTokenSeq;
+      attachmentReceipts.set(token, { relPath, fileName, snapshot });
+      console.info("[mock] import_vault_attachment -> imported", relPath, "token", token);
+      return { status: "imported", receipt: { token, relPath, fileName } } as T;
+    }
+    case "finalize_attachment_import": {
+      // Mirrors the real `finalize_attachment_import(token) -> Result<(),
+      // String>`: drop the receipt record only — the file (attachmentStore
+      // entry) stays, now permanent. Idempotent on an unknown token, same as
+      // the real command.
+      const token = Number(a.token ?? -1);
+      attachmentReceipts.delete(token);
+      console.info("[mock] finalize_attachment_import", token);
+      return undefined as T;
+    }
+    case "rollback_attachment_import": {
+      // Mirrors the real `rollback_attachment_import(token) -> Result<(),
+      // String>`. `window.__mockRollbackFail` simulates a native ROLLBACK_IO
+      // failure (vitest exercises design failure 보조a without needing a real
+      // unremovable file). An unknown token is always ROLLBACK_UNKNOWN — the
+      // mock never guesses. A snapshot mismatch (attachmentStore's current
+      // value for relPath differs from what was captured at import time)
+      // simulates the identity-changed guard: reject ROLLBACK_CHANGED and
+      // preserve the file, exactly like the real (dev,ino) check.
+      const token = Number(a.token ?? -1);
+      const record = attachmentReceipts.get(token);
+      console.info("[mock] rollback_attachment_import", token, record ? record.relPath : "(unknown token)");
+      if (!record) throw `ROLLBACK_UNKNOWN: ${token}`;
+      if (window.__mockRollbackFail) throw `ROLLBACK_IO: ${record.relPath}`;
+      if (attachmentStore.get(record.relPath) !== record.snapshot) {
+        attachmentReceipts.delete(token);
+        throw `ROLLBACK_CHANGED: ${record.relPath}`;
+      }
+      attachmentStore.delete(record.relPath);
+      attachmentReceipts.delete(token);
+      return undefined as T;
+    }
     case "check":
       // `@tauri-apps/plugin-updater`'s `check()` calls
       // `invoke("plugin:updater|check", ...)`; the "plugin:" prefix is

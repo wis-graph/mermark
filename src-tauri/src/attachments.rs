@@ -10,11 +10,10 @@
 //! live. Splitting it this way lets the contract land, get reviewed, and lock
 //! in tests before any filesystem-mutating code exists to get it wrong.
 //!
-//! Every non-test item here is exercised by its own `#[cfg(test)]` case but
-//! has no caller in this commit's non-test code — `attachment_import.rs`
-//! (Todo 5) is the caller, landing in the next commit. `dead_code` is
-//! allowed module-wide for that reason rather than item-by-item.
-#![allow(dead_code)]
+//! Every non-test item here is exercised by its own `#[cfg(test)]` case and,
+//! as of Todo 5, by its one real caller: `attachment_import.rs`, which drives
+//! the whole install/rollback/finalize sequence through exactly this
+//! module's types and pure functions.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -148,7 +147,7 @@ pub enum AttachmentImportOutcome {
 /// accepted back as input to any command (see `AttachmentReceipts` doc).
 /// `rel_path` is always forward-slash and vault-root-relative, e.g.
 /// `.attachments/pic-1.png`.
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachmentReceipt {
     pub token: u64,

@@ -88,6 +88,8 @@ import { isRemoteSrc } from "./markdown/image";
 import { setImageOpenHandler } from "./markdown/image-open";
 import { setDocumentOpenHandler } from "./markdown/document-open";
 import { openStandardLocalLink } from "./markdown/local-doc-link";
+import { setVaultImageContext, vaultImageContext } from "./markdown/vault-image";
+import { attachImageToVault } from "./markdown/vault-image-widget";
 import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore, type Vault } from "./workspace/workspace-state";
 import { routeCliFile, routeCliFileResolved } from "./workspace/cli-routing";
 import { createDocumentReloadUrl, readDocumentReloadHandoff } from "./workspace/reload-handoff";
@@ -683,6 +685,18 @@ async function boot() {
         ? { documentPath: currentFile, vaultRootPath: vault.rootPath }
         : null;
     void openStandardLocalLink(request, context, openDocumentSafely);
+  });
+
+  // ── Vault image attachment context seam (single-window-opening Wave 2,
+  //    Todo 5): the ONE provider both the `vault:` render path
+  //    (features/image.ts → vaultImageContext()) and the image.attach action
+  //    (below) read for "what's the current permanent vault root?" —
+  //    GlobalVault.rootPath is typed `null` (workspace-state.ts), so this can
+  //    only ever construct a VaultImageContext from a real permanent vault;
+  //    the global vault structurally never becomes a filesystem root.
+  setVaultImageContext(() => {
+    const vault = currentVault();
+    return vault?.persistenceKind === "permanent" ? { rootPath: vault.rootPath } : null;
   });
 
   const welcomePane = createWelcomePane({
@@ -1438,6 +1452,18 @@ async function boot() {
     void copyTextToClipboard(currentFile).then((ok) =>
       flashStatus(ok ? "✓ 경로 복사됨" : "⚠ 경로 복사 실패"),
     );
+  });
+  // 이미지 첨부 (single-window-opening Wave 2, Todo 5): attachImageToVault owns
+  // the whole picker→import→insert→finalize/rollback orchestration (design
+  // §분기7) — this is only the DI adapter wiring it to the live editor/vault
+  // context/flash surface, mirroring bundle.copy/path.copy's own thin wiring.
+  registerHandler("image.attach", () => {
+    void attachImageToVault({
+      context: vaultImageContext(),
+      view: current?.view ?? null,
+      invoke,
+      flash: flashStatus,
+    });
   });
   bindKeybindings(keybindingsSetting);
   installDispatcher();

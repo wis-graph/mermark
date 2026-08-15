@@ -2,6 +2,7 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod attachment_import;
 pub mod attachments;
 mod bundle;
 pub mod cli;
@@ -274,6 +275,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Native file picker for vault image attachment import
+        // (single-window-opening Todo 5). Only `attachment_import.rs`'s
+        // `import_vault_attachment` command calls into this plugin's Rust
+        // API (`DialogExt::dialog().file().blocking_pick_file()`) — the
+        // webview never invokes a dialog command directly, so this adds
+        // zero entries to capabilities/default.json. See that module's doc
+        // comment and `_workspace/00_adjudication_wave2.md` for the
+        // orchestrator's ruling on why "minimum capability permission" is 0
+        // here, and the main-thread-deadlock check this required.
+        .plugin(tauri_plugin_dialog::init())
         // The single-file fs watcher's slot + self-write mute baseline. Managed
         // state so `write_file` can record its own mtime and `watch_file` /
         // `unwatch_file` can swap the one live watcher.
@@ -283,6 +294,12 @@ pub fn run() {
         // `htmlview` protocol handler below reads it via `AppHandle::state`.
         // See `htmlview.rs` module doc for the full design.
         .manage(htmlview::HtmlViewRoots::default())
+        // Opaque token -> in-flight import receipt map for vault attachment
+        // import/finalize/rollback (single-window-opening Todo 5). See
+        // `attachments::AttachmentReceipts`'s doc comment for why dropping
+        // this state (process exit) is exactly what makes "retain the file
+        // conservatively on abrupt termination" fall out structurally.
+        .manage(attachments::AttachmentReceipts::default())
         // Frame-only CSP delivery for the HTML viewer's opt-in scripted mode
         // (`_workspace/01_architect_design_htmljs.md` §2). Serves only files
         // that resolve inside an armed root (`htmlview::handle_html_view_request`);
@@ -329,6 +346,9 @@ pub fn run() {
             commands::watch_file,
             commands::unwatch_file,
             commands::copy_to_clipboard,
+            attachment_import::import_vault_attachment,
+            attachment_import::finalize_attachment_import,
+            attachment_import::rollback_attachment_import,
             htmlview::arm_html_view_root,
             epubview::arm_epub_view,
             epubview::read_epub_entry,

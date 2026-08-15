@@ -44,7 +44,7 @@ const CLICK_DRAG_SLOP_PX = 4;
  *  this a drag release rather than a click — the domain rule "the end of a
  *  drag is not a click" named once instead of as an inline distance check.
  *  Pure query. */
-function dragExceededClickSlop(downX: number, downY: number, e: MouseEvent): boolean {
+export function dragExceededClickSlop(downX: number, downY: number, e: MouseEvent): boolean {
   return Math.hypot(e.clientX - downX, e.clientY - downY) > CLICK_DRAG_SLOP_PX;
 }
 

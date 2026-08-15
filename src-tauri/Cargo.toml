@@ -28,6 +28,16 @@ tauri-plugin-process = "2"
 # never for `-`/`--right` (`Isolated`) — so isolated processes never risk
 # being intercepted. See src-tauri/src/single_instance.rs.
 tauri-plugin-single-instance = "2.4.3"
+# Rust-side native file picker for vault image attachment import
+# (single-window-opening Todo 5). Registered as a plugin so its `DialogExt`
+# trait/`blocking_pick_file` is available, but no webview-facing dialog
+# command is ever invoked from JS — the picker is called from *inside*
+# `import_vault_attachment` (attachment_import.rs), never from the frontend.
+# That keeps the capability surface at zero: see
+# `_workspace/00_adjudication_wave2.md` for the orchestrator's ruling that
+# "minimum capability permission" for a Rust-API-only use is 0 entries in
+# capabilities/default.json, not the npm-plugin + `dialog:allow-open` route.
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 # OS RNG for `htmlview.rs`'s per-open view token (128-bit random, hex — the
 # access-scoping value the htmlview:// protocol's per-token-origin isolation

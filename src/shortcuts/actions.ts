@@ -49,4 +49,8 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   // see main.ts's openReplacePanel.
   { id: "search.replace", label: "찾아 바꾸기 (편집 모드로 전환)", defaultBinding: "Mod+Alt+F" },
   { id: "search.files", label: "파일 찾기", defaultBinding: "Mod+Shift+F" },
+  // Permanent-vault image import (single-window-opening Wave 2, Todo 5) —
+  // unbound by default (listed but no chord ships), same as recent/outline/
+  // openPath/vim above; a user opts in through the settings panel.
+  { id: "image.attach", label: "이미지 첨부", defaultBinding: null },
 ];
