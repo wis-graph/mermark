@@ -7,8 +7,9 @@ import { openExternal } from "./open-external";
 import { isEditableTextFile } from "../sidebar/explorer/file-icons";
 import { requestDocumentOpen } from "./document-open";
 
-/** Whether a wikilink target opens in mermark's own editor window (`open_path`)
- *  rather than being handed to the external app (`openAsset`). Delegates to
+/** Whether a wikilink target opens in mermark's own editor (current-window
+ *  safe transaction, `requestDocumentOpen`) rather than being handed to the
+ *  external app (`openAsset`). Delegates to
  *  the explorer/search SSOT (`isEditableTextFile`) so `.txt` targets open the
  *  same way `.md` targets do — one gate, not a third copy of ".md-only". */
 function isEditorOpenablePath(path: string): boolean {

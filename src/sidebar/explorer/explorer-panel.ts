@@ -13,8 +13,10 @@ const EXPLORER_ASIDE_ID = "explorer-aside";
 // hover — WCAG 1.4.13), a top `..` entry single-clicks/Enters upward (root
 // change), and clicking/Entering a markdown file opens it in the current window
 // through the injected onOpenFile(). ⌘/Ctrl+click or ⌘+Enter on a markdown file
-// instead routes to onOpenFileNewWindow() — a brand-new window, same as a
-// wikilink click.
+// instead routes to onOpenFileNewWindow() — a brand-new window, the explicit
+// new-window gesture (single-window-opening plan). Wikilink clicks do NOT use
+// this path — they always open in the current window's safe transaction
+// (document-open.ts), with no ⌘/Ctrl new-window variant of their own.
 //
 // The tree is a WAI-ARIA Tree (APG): role=tree > role=treeitem > role=group,
 // roving tabindex (exactly one item is tab-focusable), and a full keyboard set
@@ -130,8 +132,9 @@ export interface ExplorerHandlers {
    *  callers keep today's behavior exactly. Markdown-only by design — a
    *  viewer-claimed row is already claimed by onOpenWithViewer before this
    *  branch is reached, so this never fires for it. Injected
-   *  so main owns the actual window-spawning call (reuses open_path — the same
-   *  command wikilink clicks already use to open a file in a new window). */
+   *  so main owns the actual window-spawning call (reuses open_path — the
+   *  same command the search panel's own ⌘Enter uses for an explicit
+   *  brand-new window). */
   onOpenFileNewWindow?(absPath: string): void;
   /** Called when this sidebar opens, so main can close the other left sidebar
    *  (mutual exclusion). Optional — omitted in unit tests / standalone use. */

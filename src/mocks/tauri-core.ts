@@ -720,11 +720,16 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       return normalizeMockPath(String(a.path ?? "")) as T;
     case "open_path": {
       // Mirrors the real `open_path(path) -> Result<(), String>`: spawns the
-      // file in a brand-new window (wikilink clicks, explorer ⌘/Ctrl+click,
-      // ⌘+Enter). The browser mock has no real webview windows to spawn, so it
-      // falls back to a new browser tab carrying the same `?file=` query the
-      // real backend's window URL uses — close enough to exercise the flow
-      // under CDP/DevTools debugging.
+      // file in a brand-new window. Only the EXPLICIT new-window gesture still
+      // reaches this command — explorer/search ⌘/Ctrl+click and ⌘+Enter
+      // (single-window-opening plan). Wikilink clicks and standard local
+      // Markdown links no longer call this: they route through
+      // `requestDocumentOpen`/`openDocumentSafely` (main.ts) into the CURRENT
+      // window's safe-open transaction instead (Todo 3) — see that seam's own
+      // mock entries below, not this one. The browser mock has no real
+      // webview windows to spawn, so it falls back to a new browser tab
+      // carrying the same `?file=` query the real backend's window URL uses —
+      // close enough to exercise the flow under CDP/DevTools debugging.
       const path = String(a.path ?? "");
       console.info("[mock] open_path ->", path);
       window.open(`?file=${encodeURIComponent(path)}`, "_blank");

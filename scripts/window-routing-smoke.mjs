@@ -19,6 +19,40 @@
 // real running mermark (com.mermark.app / /tmp/com_mermark_app_si.sock).
 // This harness launches real GUI windows and requires a real macOS session
 // (not CI-headless).
+//
+// ## What this harness does NOT cover
+// Read this before treating a green run as "multi-window routing is verified".
+// Each gap is a deliberate decision with a compensating layer, not an oversight.
+//
+//  1. Focus-flip scenarios (make window B most-recent, then assert delivery).
+//     Driving focus from JS needs `core:window:allow-set-focus` in
+//     capabilities/default.json — a permanent production IPC grant for a
+//     test-only need, and production never focuses from JS (it focuses
+//     natively via RoutingAction::Focus). That was rejected. The one
+//     substitute available under existing permissions, minimizeSelf, was
+//     measured rather than assumed: it does not reliably fire
+//     WindowEvent::Focused(true) for the window regaining focus, AND a
+//     minimized WKWebView permanently stops answering the QA bridge, so it
+//     destroys the very channel this harness observes through.
+//     Compensated by: cargo unit tests over resolve_recipient / focus
+//     recency. What stays unproven is one layer — whether the OS focus event
+//     reaches logic those units already lock.
+//  2. Packaged custom-scheme + CSP behaviour. This runs a debug binary, which
+//     loads devUrl with devCsp null. The real app serves from a custom scheme
+//     under a real CSP, and this repo has previously shipped a bug visible
+//     ONLY in a `tauri build` bundle (golden + `tauri dev` are http origins
+//     and missed it). Nothing here can stand in for that.
+//     Compensated by: nothing. Verify against a real bundle before release.
+//  3. SpawnMain (recreating `main` with zero live windows). Closing the last
+//     window exits the process, so this is not dead code but a defence for
+//     the narrow race between Destroyed and exit — unreachable from a driver.
+//     Compensated by: cargo units no_live_window_spawns_main_once,
+//     dead_focus_and_dead_main_recreates_main.
+//  4. The native NSOpenPanel itself, and forcing a CodeMirror insertion
+//     failure in a real webview. MERMARK_QA_PICK_FILE substitutes for the
+//     panel (replacing exactly one dialog call, leaving the rest of the
+//     import real); insertion-failure rollback orchestration lives in
+//     tests/vault-attach.test.ts.
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, writeFile, rm, chmod } from "node:fs/promises";
