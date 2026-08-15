@@ -35,7 +35,7 @@ export const wikilink: InlineFeature = {
       ? Decoration.replace({ widget: embedWidget })
       : embed && isImageTarget(target)
         ? Decoration.replace({
-            widget: new ImageWidget(resolveImageUrl(target, ctx.baseDir), alias, target, ctx.baseDir),
+            widget: new ImageWidget(resolveImageUrl(target, ctx.baseDir), alias, target, ctx.baseDir, "vault"),
           })
         : external !== null
           ? Decoration.replace({ widget: new WikilinkWidget(alias, "", null, external) })

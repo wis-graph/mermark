@@ -147,24 +147,22 @@ fn split_stem_ext(file_name: &str) -> (String, String) {
     (stem, ext)
 }
 
-/// The dialog-free, filesystem-mutating core of `import_vault_attachment`:
-/// validate `source`, copy it into a sibling temp under
-/// `vault_root/.attachments`, and install it under a deterministic
-/// collision-free name via no-replace `hard_link`. No dialog, no
-/// `AppHandle` — every temp-vault integration test in this module drives
-/// this function directly; the command wrapper below is a thin
-/// dialog-then-delegate shell around it (design §분기 2).
+/// The shared source-acceptability gate for attaching an image: `source` must
+/// have a file name, that name's extension must be a recognized image
+/// extension (`is_image_ext`), and `source` must be a regular file (not a
+/// directory, a device node, etc.). Applied identically whether the source
+/// ends up copied into `.attachments` (outside-vault, `import_attachment_from`
+/// below) or referenced in place (`AlreadyInVault`, inside-vault,
+/// `attach_outcome_from` below) — an already-in-vault non-image file must be
+/// rejected exactly like an outside one (design §분기 4, row 2). Returns the
+/// borrowed file name on success so callers don't re-derive it.
 ///
-/// Must NOT: touch `source` beyond reading it (never moved, never deleted —
-/// the only filesystem call against it is `metadata`/`File::open`),
-/// overwrite an existing `.attachments` entry (`hard_link`'s `AlreadyExists`
-/// is the *only* retried error), or leave a temp file behind on any failure
-/// (enforced by `TempGuard`, not by enumerating failure branches).
-pub(crate) fn import_attachment_from(
-    source: &Path,
-    vault_root: &Path,
-    receipts: &AttachmentReceipts,
-) -> Result<AttachmentReceipt, String> {
+/// Deliberately does NOT run `validate_attachment_basename` (the
+/// destination-escape gate): that only matters when a name is about to be
+/// placed as a new `.attachments` entry, which never happens for an in-vault
+/// source — `import_attachment_from` applies it itself, right after this gate,
+/// only on the path that actually writes a destination name.
+fn validate_attachable_source(source: &Path) -> Result<&str, String> {
     let file_name = source
         .file_name()
         .and_then(|n| n.to_str())
@@ -183,6 +181,47 @@ pub(crate) fn import_attachment_from(
     if !source_is_regular_file {
         return Err(format!("ATTACH_INVALID_IMAGE: {file_name} is not a regular file"));
     }
+    Ok(file_name)
+}
+
+/// Whether the picked `source` file already lives inside the vault rooted at
+/// `root_canon` (which the caller must already have canonicalized). Resolves
+/// `source` via `fs::canonicalize` too — not a lexical comparison — so a
+/// symlink that lexically sits under the vault but points *outside* it is
+/// correctly judged "outside" and takes the ordinary copy-in path rather than
+/// being referenced in place (the same canonicalize-then-compare argument as
+/// `file_target_is_within_base` in `commands.rs`, applied here to the
+/// picker's selection instead of a scan candidate — design §분기 4).
+/// `fs::canonicalize` failing (source vanished, permission denied, a broken
+/// symlink, …) is treated as "outside" too: a fail-through into the ordinary
+/// import path, which will surface its own clear `ATTACH_*` error rather than
+/// silently skipping the copy on an unresolvable path.
+fn picked_source_is_inside_vault(root_canon: &Path, source: &Path) -> bool {
+    match fs::canonicalize(source) {
+        Ok(resolved) => resolved.starts_with(root_canon),
+        Err(_) => false,
+    }
+}
+
+/// The dialog-free, filesystem-mutating core of `import_vault_attachment`:
+/// validate `source`, copy it into a sibling temp under
+/// `vault_root/.attachments`, and install it under a deterministic
+/// collision-free name via no-replace `hard_link`. No dialog, no
+/// `AppHandle` — every temp-vault integration test in this module drives
+/// this function directly; the command wrapper below is a thin
+/// dialog-then-delegate shell around it (design §분기 2).
+///
+/// Must NOT: touch `source` beyond reading it (never moved, never deleted —
+/// the only filesystem call against it is `metadata`/`File::open`),
+/// overwrite an existing `.attachments` entry (`hard_link`'s `AlreadyExists`
+/// is the *only* retried error), or leave a temp file behind on any failure
+/// (enforced by `TempGuard`, not by enumerating failure branches).
+pub(crate) fn import_attachment_from(
+    source: &Path,
+    vault_root: &Path,
+    receipts: &AttachmentReceipts,
+) -> Result<AttachmentReceipt, String> {
+    let file_name = validate_attachable_source(source)?;
     validate_attachment_basename(file_name).map_err(|e| format!("ATTACH_ESCAPE: {e}"))?;
 
     let attachments_dir = ensure_real_attachments_dir(vault_root)?;
@@ -247,6 +286,31 @@ pub(crate) fn import_attachment_from(
         }
     }
     Err(format!("ATTACH_COPY: exhausted {MAX_CANDIDATES} collision candidates for {file_name}"))
+}
+
+/// The dialog-free core of `import_vault_attachment`'s outcome decision
+/// (`vault:` scheme withdrawal, design §분기 4): after the shared
+/// `validate_attachable_source` gate accepts the picked file, a source that
+/// already lives inside the vault (`picked_source_is_inside_vault`) is
+/// referenced in place — `AlreadyInVault`, no copy, no receipt minted, since
+/// there is nothing to finalize or roll back — while a source outside the
+/// vault goes through the unchanged `import_attachment_from` machinery. This
+/// is the one place the "is it already in the vault?" judgment is made: the
+/// native picker only exists on the backend, so this is the only place it
+/// *can* be made. `root_canon` must already be canonicalized by the caller
+/// (the command wrapper below does this once and reuses it for both this
+/// check and the import call).
+pub(crate) fn attach_outcome_from(
+    source: &Path,
+    root_canon: &Path,
+    receipts: &AttachmentReceipts,
+) -> Result<AttachmentImportOutcome, String> {
+    let file_name = validate_attachable_source(source)?;
+    if picked_source_is_inside_vault(root_canon, source) {
+        return Ok(AttachmentImportOutcome::AlreadyInVault { file_name: file_name.to_string() });
+    }
+    let receipt = import_attachment_from(source, root_canon, receipts)?;
+    Ok(AttachmentImportOutcome::Imported { receipt })
 }
 
 /// Deletes the file behind `token` only if it is still exactly the file this
@@ -395,17 +459,24 @@ pub async fn import_vault_attachment(
         Some(path) => path,
     };
 
-    match import_attachment_from(&source, &root, &receipts) {
-        Ok(receipt) => {
-            qa_trace!(
-                "attach-import",
-                serde_json::json!({
-                    "outcome": "imported",
-                    "token": receipt.token,
-                    "rel_path": receipt.rel_path,
-                })
-            );
-            Ok(AttachmentImportOutcome::Imported { receipt })
+    match attach_outcome_from(&source, &root, &receipts) {
+        Ok(outcome) => {
+            match &outcome {
+                AttachmentImportOutcome::Imported { receipt } => qa_trace!(
+                    "attach-import",
+                    serde_json::json!({
+                        "outcome": "imported",
+                        "token": receipt.token,
+                        "rel_path": receipt.rel_path,
+                    })
+                ),
+                AttachmentImportOutcome::AlreadyInVault { file_name } => qa_trace!(
+                    "attach-import",
+                    serde_json::json!({ "outcome": "alreadyInVault", "file_name": file_name })
+                ),
+                AttachmentImportOutcome::Cancelled => {} // unreachable here — early-returned above
+            }
+            Ok(outcome)
         }
         Err(e) => {
             qa_trace!("attach-import", serde_json::json!({ "outcome": "error", "error": e }));
@@ -653,6 +724,117 @@ mod attachment_import_tests {
         assert!(!vault.join(".attachments").exists());
 
         fs::remove_dir_all(&vault).ok();
+    }
+
+    // --- attach_outcome_from (vault: withdrawal — inside-vault vs outside-vault) ---
+
+    #[test]
+    fn inside_vault_source_returns_already_in_vault_without_copying() {
+        let vault = temp_vault("inside_already");
+        fs::create_dir_all(vault.join("sub")).unwrap();
+        let source = vault.join("sub/pic.png");
+        write_bytes(&source, b"pixels");
+        let root = fs::canonicalize(&vault).unwrap();
+        let receipts = AttachmentReceipts::default();
+
+        let outcome = attach_outcome_from(&source, &root, &receipts).unwrap();
+
+        match outcome {
+            AttachmentImportOutcome::AlreadyInVault { file_name } => {
+                assert_eq!(file_name, "pic.png")
+            }
+            other => panic!("expected AlreadyInVault, got {other:?}"),
+        }
+        assert!(!vault.join(".attachments").exists(), "an in-vault source must never be copied");
+        assert!(
+            receipts.0.lock().unwrap().is_empty(),
+            "no receipt is minted for an in-vault reference — nothing to finalize/roll back"
+        );
+
+        fs::remove_dir_all(&vault).ok();
+    }
+
+    #[test]
+    fn inside_vault_non_image_is_rejected() {
+        // The image/regular-file gate applies inside the AlreadyInVault branch
+        // too, not just on the copy-in path — a non-image can't be attached
+        // just because it happens to already live in the vault.
+        let vault = temp_vault("inside_non_image");
+        let source = vault.join("note.md");
+        write_bytes(&source, b"# not an image");
+        let root = fs::canonicalize(&vault).unwrap();
+        let receipts = AttachmentReceipts::default();
+
+        let result = attach_outcome_from(&source, &root, &receipts);
+
+        match &result {
+            Err(e) if e.starts_with("ATTACH_INVALID_IMAGE:") => {}
+            other => panic!("expected ATTACH_INVALID_IMAGE: prefix, got {other:?}"),
+        }
+        assert!(!vault.join(".attachments").exists());
+
+        fs::remove_dir_all(&vault).ok();
+    }
+
+    #[test]
+    fn outside_vault_source_still_imports() {
+        // A source entirely outside the vault tree must still take the
+        // ordinary copy-in path, byte-for-byte the same as
+        // import_attachment_from's own direct behavior.
+        let vault = temp_vault("outside_source_vault");
+        let outside = temp_vault("outside_source_origin");
+        let source = outside.join("pic.png");
+        write_bytes(&source, b"pixels");
+        let root = fs::canonicalize(&vault).unwrap();
+        let receipts = AttachmentReceipts::default();
+
+        let outcome = attach_outcome_from(&source, &root, &receipts).unwrap();
+
+        match outcome {
+            AttachmentImportOutcome::Imported { receipt } => {
+                assert_eq!(receipt.file_name, "pic.png");
+                assert_eq!(fs::read(vault.join(".attachments/pic.png")).unwrap(), b"pixels");
+            }
+            other => panic!("expected Imported, got {other:?}"),
+        }
+        // Source is read, never moved — the same guarantee as the direct path.
+        assert_eq!(fs::read(&source).unwrap(), b"pixels");
+
+        fs::remove_dir_all(&vault).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_inside_vault_pointing_outside_is_treated_as_outside() {
+        // vault/link.png -> outside/real.png: lexically inside the vault, but
+        // its resolved target is outside — canonicalize-then-compare must
+        // judge this "outside" and take the copy-in path, not reference it in
+        // place (a symlink masquerading as an in-vault file must not bypass
+        // the import machinery).
+        let vault = temp_vault("symlink_inside_points_outside");
+        let outside = temp_vault("symlink_outside_target");
+        let real = outside.join("real.png");
+        write_bytes(&real, b"real-pixels");
+        let source = vault.join("link.png");
+        std::os::unix::fs::symlink(&real, &source).unwrap();
+        let root = fs::canonicalize(&vault).unwrap();
+        let receipts = AttachmentReceipts::default();
+
+        let outcome = attach_outcome_from(&source, &root, &receipts).unwrap();
+
+        match outcome {
+            AttachmentImportOutcome::Imported { receipt } => {
+                assert_eq!(receipt.file_name, "link.png");
+                assert_eq!(fs::read(vault.join(".attachments/link.png")).unwrap(), b"real-pixels");
+            }
+            other => {
+                panic!("expected Imported (symlink resolves outside the vault), got {other:?}")
+            }
+        }
+
+        fs::remove_dir_all(&vault).ok();
+        fs::remove_dir_all(&outside).ok();
     }
 
     #[test]

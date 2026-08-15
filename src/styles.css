@@ -712,11 +712,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    link (single-window-opening Todo 3) rejected by local-doc-link.ts — e.g. a
    traversal attempt or a missing target. */
 .cm-local-link-error { color: #dc2626; text-decoration: underline wavy; }
-/* A `vault:` image reference that failed to resolve (single-window-opening
-   Wave 2 §분기4/1) — the raw markdown stays intact; the <img> itself shows a
-   visible broken-image treatment (an anchor's underline doesn't apply to an
-   image element) plus the Korean rejection reason as its hover `title`. */
-.cm-vault-image-error { border: 1px dashed #dc2626; opacity: .6; min-width: 2em; min-height: 2em; }
 
 /* Links rendered inside a table cell or the settings version pane's
    changelog list (both via renderInlineMarkdown/inline-render.ts) share the

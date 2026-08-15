@@ -129,24 +129,34 @@ pub(crate) struct ReceiptRecord {
 #[derive(Default)]
 pub struct AttachmentReceipts(pub(crate) Mutex<HashMap<u64, ReceiptRecord>>);
 
-/// Wire shape of an `import_vault_attachment` result (Todo 5 command). Tagged
-/// so the frontend can branch on `status` without a separate boolean, and
-/// `Cancelled` carries no payload because a cancelled picker never reaches
-/// the install path — there is nothing to report beyond the tag itself.
-#[derive(serde::Serialize)]
+/// Wire shape of an `import_vault_attachment` result (Todo 5 command, revised
+/// for the `vault:` scheme's withdrawal — see `attach_outcome_from` in
+/// `attachment_import.rs`). Tagged so the frontend can branch on `status`
+/// without a separate boolean.
+///
+/// - `Cancelled` carries no payload because a cancelled picker never reaches
+///   the install path — there is nothing to report beyond the tag itself.
+/// - `Imported` is the outside-vault path: the file was copied into
+///   `.attachments` via the existing atomic import machinery, unchanged.
+/// - `AlreadyInVault` is the inside-vault path: the picked file already lives
+///   somewhere under the vault root, so nothing is copied and no receipt is
+///   minted (there is nothing to finalize or roll back) — only its basename
+///   is reported, for the frontend to embed as `![[file_name]]`.
+#[derive(Debug, serde::Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum AttachmentImportOutcome {
     Cancelled,
     Imported { receipt: AttachmentReceipt },
+    AlreadyInVault { file_name: String },
 }
 
 /// Opaque receipt returned to the frontend after a successful import.
 /// `token` is the only handle the frontend can use to finalize or roll back
 /// the import — `rel_path`/`file_name` are display-only, used to build the
-/// `![name](vault:.attachments/name.ext)` insertion text, and are never
-/// accepted back as input to any command (see `AttachmentReceipts` doc).
-/// `rel_path` is always forward-slash and vault-root-relative, e.g.
-/// `.attachments/pic-1.png`.
+/// `![[name.ext]]` wikilink-image insertion text (`embedMarkdownFor` on the
+/// frontend), and are never accepted back as input to any command (see
+/// `AttachmentReceipts` doc). `rel_path` is always forward-slash and
+/// vault-root-relative, e.g. `.attachments/pic-1.png`.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachmentReceipt {

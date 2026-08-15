@@ -3,6 +3,8 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { recursiveImageSearchSetting } from "../settings/app";
 import { attachAltClickEdit } from "./wikilink";
 import { requestImageOpen } from "./image-open";
+import { boundedCache } from "./bounded-cache";
+import { imageSearchRoot, VAULT_IMAGE_SCAN_DEPTH } from "./image-search-root";
 
 /** A literal target is a remote/data URL — it never gets the recursive-search
  *  fallback (the scan is a filesystem walk under baseDir; only local files can be
@@ -67,24 +69,77 @@ export function viewerSourceFor(
   return resolveImageSrc(rawSrc, baseDir);
 }
 
+/** How the recursive-search fallback should run for one onerror firing — the
+ *  ONE place that decides base directory / depth / whether the setting gates
+ *  it, so `onerror` doesn't carry the branch inline (mermark-frontend §7).
+ *
+ *  `"vault"` scope (a `![[name]]` embed — wikilink.ts) with a resolved owning
+ *  vault root (image-search-root.ts's `owningVaultRoot`, NOT the active
+ *  vault) searches the whole vault: depth `VAULT_IMAGE_SCAN_DEPTH`, ungated —
+ *  the setting only ever governed the OLD document-folder convenience
+ *  fallback, and vault-wide name search is now `![[…]]`'s CONTRACTED
+ *  meaning, not an opt-in nicety a setting should be able to silently break
+ *  (design §분기1's SSOT-gate judgment). Every other case — `"folder"` scope
+ *  (a standard `![](name)`), or `"vault"` scope with no owning root (global
+ *  vault, or a document outside every registered vault) — keeps the
+ *  pre-existing document-folder behavior: depth 3, gated by the setting.
+ *  Pure query. */
+function searchPlanFor(
+  scope: "vault" | "folder",
+  root: string | null,
+  baseDir: string,
+): { readonly baseDir: string; readonly maxDepth: number; readonly gated: boolean } {
+  if (scope === "vault" && root !== null) return { baseDir: root, maxDepth: VAULT_IMAGE_SCAN_DEPTH, gated: false };
+  return { baseDir, maxDepth: 3, gated: true };
+}
+
+/** Dedupes concurrent `resolve_image` lookups for the SAME (search base,
+ *  name) pair — several `![[pic.png]]` embeds in one document would
+ *  otherwise each fire their own vault-wide scan. Keyed on the search plan's
+ *  OWN baseDir (vault root or document folder) so a vault-scope and a
+ *  folder-scope lookup sharing a basename never collide (different bases,
+ *  different candidates). `boundedCache` — the same FIFO-eviction cache
+ *  math-widget/mermaid-widget use for their renders — bounds it. */
+const searchCache = boundedCache<string, Promise<string | null>>(64);
+const searchCacheKey = (baseDir: string, name: string): string => `${baseDir} ${name}`;
+
+/** Drop every cached `resolve_image` lookup — a test-only escape hatch for
+ *  suites that reuse the same (baseDir, name) pair across cases expecting
+ *  independent invoke counts. Never called by the app itself: a `null`
+ *  result already self-evicts (see searchCache.delete below), so production
+ *  code has no occasion to need a blanket reset. */
+export function clearImageSearchCache(): void {
+  searchCache.clear();
+}
+
 export class ImageWidget extends WidgetType {
   /** `url` is the literal-resolved asset URL (the cheap, no-cost path that
    *  preserves current behavior). `rawSrc`/`baseDir` are kept so a load failure
-   *  can ask the backend to rediscover the file by basename under baseDir. */
+   *  can ask the backend to rediscover the file by basename under baseDir.
+   *  `searchScope` picks which rule (`searchPlanFor` above) governs that
+   *  fallback: `"vault"` for a `![[name]]` embed (wikilink.ts), `"folder"`
+   *  (the default) for a standard `![](name)` image. */
   constructor(
     readonly url: string,
     readonly alt: string,
     readonly rawSrc = "",
     readonly baseDir = "",
+    readonly searchScope: "vault" | "folder" = "folder",
   ) {
     super();
   }
   eq(o: ImageWidget) {
-    // The fallback result is a pure function of (url, rawSrc, baseDir), so the
-    // identity must include all three — otherwise selection churn that rebuilds
-    // with the same url but a stale rawSrc/baseDir would reuse the wrong DOM (or
-    // re-trigger a resolve). Same widget ⇒ same rendered+resolved image.
-    return o.url === this.url && o.rawSrc === this.rawSrc && o.baseDir === this.baseDir;
+    // The fallback result is a pure function of (url, rawSrc, baseDir,
+    // searchScope), so identity must include all four — otherwise selection
+    // churn that rebuilds with the same url but a stale rawSrc/baseDir/scope
+    // would reuse the wrong DOM (or re-trigger a resolve under the wrong
+    // rule). Same widget ⇒ same rendered+resolved image.
+    return (
+      o.url === this.url &&
+      o.rawSrc === this.rawSrc &&
+      o.baseDir === this.baseDir &&
+      o.searchScope === this.searchScope
+    );
   }
   toDOM(view: EditorView) {
     const img = document.createElement("img");
@@ -107,22 +162,30 @@ export class ImageWidget extends WidgetType {
       if (triedFallback) return;
       triedFallback = true;
       if (isRemoteSrc(this.rawSrc)) return; // remote/data never rediscovered
-      if (recursiveImageSearchSetting.get() !== "on") return; // user opted out
-      if (!this.rawSrc || !this.baseDir) return; // nothing to resolve against
-      invoke<string | null>("resolve_image", {
-        baseDir: this.baseDir,
-        name: this.rawSrc,
-        maxDepth: 3,
-      })
-        .then((found) => {
-          if (found) {
-            resolvedPath = found;
-            img.src = convertFileSrc(found);
-          }
-        })
-        .catch(() => {
-          /* best-effort fallback: a backend error leaves the broken image as-is */
-        });
+      if (!this.rawSrc) return; // nothing to search by name
+      const plan = searchPlanFor(this.searchScope, imageSearchRoot(), this.baseDir);
+      if (plan.gated && recursiveImageSearchSetting.get() !== "on") return; // user opted out (folder scope only)
+      if (!plan.baseDir) return; // nothing to resolve against
+      const key = searchCacheKey(plan.baseDir, this.rawSrc);
+      let pending = searchCache.get(key);
+      if (!pending) {
+        pending = invoke<string | null>("resolve_image", {
+          baseDir: plan.baseDir,
+          name: this.rawSrc,
+          maxDepth: plan.maxDepth,
+        }).catch(() => null); // best-effort: a backend error leaves the broken image as-is
+        searchCache.put(key, pending);
+      }
+      pending.then((found) => {
+        if (found) {
+          resolvedPath = found;
+          img.src = convertFileSrc(found);
+        } else {
+          // Not a permanent miss — the file may show up later (e.g. right
+          // after an attach), so don't remember "not found" forever.
+          searchCache.delete(key);
+        }
+      });
     };
 
     // Click → open the image viewer (one click, no modifier — user-confirmed

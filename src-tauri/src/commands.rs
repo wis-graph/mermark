@@ -486,28 +486,50 @@ fn file_target_is_within_base(base: &Path, candidate: &Path, meta: &std::fs::Met
     }
 }
 
-/// Hard ceiling on directory entries visited in one `scan_match` call. Paired with
-/// `max_depth`, this caps the cost of a fallback scan over a pathologically large
-/// folder: once this many entries have been inspected the scan gives up and returns
-/// whatever (if anything) it has found. A bounded best-effort search, never a
-/// runaway walk. 2000 is comfortably above any realistic note folder's image count
-/// while still bounding worst-case latency to a few milliseconds.
-const MAX_ENTRIES: u32 = 2000;
+/// Hard ceiling on directory entries visited in one `scan_match` call by
+/// default (`resolve_image` always passes this; tests may pass a smaller
+/// budget to exercise the cutoff directly). Paired with `max_depth`, this caps
+/// the cost of a fallback scan over a pathologically large folder: once this
+/// many entries have been inspected the scan gives up and returns whatever (if
+/// anything) it has found. A bounded best-effort search, never a runaway walk.
+/// 10,000 matches `list_files_recursive`'s own `MAX_SCAN_FILES` ceiling — a
+/// vault-root image search (`![[name]]`, depth up to `MAX_IMAGE_SCAN_DEPTH`)
+/// now has to cover the same ground the ⌘⇧F file finder already covers
+/// routinely, so it gets the same budget.
+const MAX_ENTRIES: u32 = 10_000;
+
+/// Depth ceiling for `scan_match`. Shared by the vault-root name search
+/// (`![[name]]`, which asks for this directly) and the narrower document-folder
+/// fallback (`![](name)`, which clamps its own request to 3 before calling in).
+/// Aligned with `list_files_recursive`'s `MAX_SCAN_DEPTH` (also 12) — the same
+/// "how deep is a vault" budget applies to both scans. The frontend's
+/// `VAULT_IMAGE_SCAN_DEPTH` constant (`src/markdown/image-search-root.ts`) must
+/// mirror this value.
+const MAX_IMAGE_SCAN_DEPTH: u8 = 12;
 
 /// Deterministic, bounded, children-only recursive search for an image file whose
 /// basename matches `target_basename`, rooted at `base` and descending at most
-/// `max_depth` levels (clamped to 3). Returns the first match in a stable order:
-/// shallower directories first, then path-ascending within a level (so the same
-/// tree always yields the same hit). Read-only; never follows directory symlinks
+/// `max_depth` levels (clamped to `MAX_IMAGE_SCAN_DEPTH`). Returns the first match
+/// in a stable order: shallower directories first, then path-ascending within a
+/// level (so the same tree always yields the same hit) — this ordering is a
+/// contract, not an implementation detail, and is pinned by `resolve_is_deterministic`
+/// / `resolve_prefers_shallower_match`. Read-only; never follows directory symlinks
 /// (which could escape `base`) and never follows a file symlink whose target lands
 /// outside `base` (`is_within_base`). Any unreadable directory is silently skipped
 /// rather than aborting the whole scan — this is a best-effort fallback, not a
 /// command the user explicitly invoked, so it degrades to `None` instead of erroring.
-fn scan_match(base: &Path, target_basename: &str, max_depth: u8) -> Option<PathBuf> {
+/// Directories named in `EXCLUDED_SCAN_DIRS` (`node_modules`, `.git`, etc.) are never
+/// descended into — they aren't where attachments live and would otherwise burn the
+/// entry budget. Dot-directories are *not* filtered as a class (unlike
+/// `list_files_recursive`'s `show_hidden` gate): a vault's own attachment folder
+/// (`.attachments/`) is itself a dot-directory and must stay reachable.
+/// `max_entries` is a caller-supplied visited-entry ceiling (`resolve_image` always
+/// passes `MAX_ENTRIES`; tests pass smaller budgets to exercise the cutoff).
+fn scan_match(base: &Path, target_basename: &str, max_depth: u8, max_entries: u32) -> Option<PathBuf> {
     // Clamp depth to the documented ceiling so a caller can never request an
     // unbounded walk. `max_depth` counts levels *below* `base` (depth 1 = direct
     // children).
-    let max_depth = max_depth.min(3);
+    let max_depth = max_depth.min(MAX_IMAGE_SCAN_DEPTH);
     if target_basename.is_empty() {
         return None;
     }
@@ -535,7 +557,7 @@ fn scan_match(base: &Path, target_basename: &str, max_depth: u8) -> Option<PathB
         // shallower directory always wins over one deeper down).
         for path in &children {
             visited += 1;
-            if visited > MAX_ENTRIES {
+            if visited > max_entries {
                 return None; // cost ceiling reached → bounded best-effort gives up
             }
             // A symlink whose metadata says "file" is fine *if* its resolved path
@@ -561,7 +583,10 @@ fn scan_match(base: &Path, target_basename: &str, max_depth: u8) -> Option<PathB
 
         // Second pass: enqueue child directories for the next level, unless we're
         // already at the depth ceiling. Directory *symlinks* are never followed —
-        // they're the one way a children-only walk could still escape `base`.
+        // they're the one way a children-only walk could still escape `base`. Names
+        // in `EXCLUDED_SCAN_DIRS` are skipped too — they burn the entry budget on
+        // heavy generated trees and are never where an attachment lives. Note this
+        // is *not* a dot-directory filter: `.attachments` itself is untouched.
         if depth < max_depth {
             for path in &children {
                 let meta = match std::fs::symlink_metadata(path) {
@@ -571,6 +596,13 @@ fn scan_match(base: &Path, target_basename: &str, max_depth: u8) -> Option<PathB
                 // `symlink_metadata` reports the link itself: a symlinked dir has
                 // `is_symlink()` true and we skip it; a real dir is descended into.
                 if meta.file_type().is_dir() && !meta.file_type().is_symlink() {
+                    let file_name = match path.file_name().and_then(|n| n.to_str()) {
+                        Some(n) => n,
+                        None => continue,
+                    };
+                    if is_excluded_scan_dir(file_name) {
+                        continue;
+                    }
                     queue.push_back((path.clone(), depth + 1));
                 }
             }
@@ -601,7 +633,7 @@ fn scan_match(base: &Path, target_basename: &str, max_depth: u8) -> Option<PathB
 pub fn resolve_image(base_dir: String, name: String, max_depth: u8) -> Option<String> {
     let target = image_basename(&name);
     let base = normalize_path(Path::new(&base_dir));
-    scan_match(&base, target, max_depth).map(|p| p.to_string_lossy().into_owned())
+    scan_match(&base, target, max_depth, MAX_ENTRIES).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Whether a file name is a mermark scratch/recovery artifact that must never be
@@ -1617,7 +1649,7 @@ mod tests {
         );
 
         // One level shallower than needed → unreachable (proves no off-by-one).
-        let at2 = scan_match(&dir, "pic.png", 2);
+        let at2 = scan_match(&dir, "pic.png", 2, MAX_ENTRIES);
         assert_eq!(at2, None, "a depth-3 file must be invisible at max_depth=2");
         fs::remove_dir_all(&dir).ok();
     }
@@ -1742,10 +1774,17 @@ mod tests {
     #[test]
     fn resolve_prefers_shallower_match() {
         // A hit directly in base outranks a deeper hit, regardless of name order:
-        // base/pic.png wins over base/zzz/pic.png because shallow comes first.
+        // base/pic.png wins over base/zzz/pic.png AND base/.attachments/pic.png
+        // because shallow comes first. The `.attachments` sibling is included
+        // specifically to lock that a dot-directory match at the same depth as
+        // `zzz/` is treated identically — no special-casing either way — while
+        // the depth-1 root file still wins over both (design 분기 4's shadowing
+        // scenario, locked here at the backend layer).
         let dir = temp_dir("resolve_shallow");
         fs::create_dir_all(dir.join("zzz")).unwrap();
+        fs::create_dir_all(dir.join(".attachments")).unwrap();
         fs::write(dir.join("zzz/pic.png"), "deep").unwrap();
+        fs::write(dir.join(".attachments/pic.png"), "deep-dot").unwrap();
         fs::write(dir.join("pic.png"), "shallow").unwrap();
         let got = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
         assert_eq!(got, Some(normalize_path(&dir.join("pic.png")).to_string_lossy().into_owned()));
@@ -1781,6 +1820,121 @@ mod tests {
         fs::write(dir.join("Pic.PNG"), "img").unwrap();
         let got = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
         assert_eq!(got, Some(normalize_path(&dir.join("Pic.PNG")).to_string_lossy().into_owned()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_reaches_vault_depth() {
+        // A vault-root search (`![[name]]`) must reach far deeper than the old
+        // document-folder fallback's depth-3 clamp: base/a/b/c/d/e/pic.png is
+        // depth 6, requested with max_depth=12 (MAX_IMAGE_SCAN_DEPTH). This is
+        // the depth the frontend's vault scope actually asks for.
+        let dir = temp_dir("resolve_vault_depth");
+        fs::create_dir_all(dir.join("a/b/c/d/e")).unwrap();
+        let buried = dir.join("a/b/c/d/e/pic.png");
+        fs::write(&buried, "img").unwrap();
+        let got = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 12);
+        assert_eq!(
+            got,
+            Some(normalize_path(&buried).to_string_lossy().into_owned()),
+            "depth 6 must be reachable at max_depth=12"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_skips_excluded_scan_dirs() {
+        // node_modules/pic.png and zsrc/pic.png are both depth 2, and
+        // "node_modules" sorts before "zsrc" — without the exclusion, the old
+        // BFS would visit node_modules first and return its (wrong) match.
+        // EXCLUDED_SCAN_DIRS must keep the walk from ever descending into
+        // node_modules at all, so zsrc/pic.png is the only candidate found.
+        let dir = temp_dir("resolve_excluded_dirs");
+        fs::create_dir_all(dir.join("node_modules")).unwrap();
+        fs::create_dir_all(dir.join("zsrc")).unwrap();
+        fs::write(dir.join("node_modules/pic.png"), "decoy").unwrap();
+        fs::write(dir.join("zsrc/pic.png"), "real").unwrap();
+        let got = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
+        assert_eq!(
+            got,
+            Some(normalize_path(&dir.join("zsrc/pic.png")).to_string_lossy().into_owned()),
+            "node_modules must never be descended into, even though it sorts first"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_scans_dot_directories() {
+        // Dot-directories are not filtered as a class — `.attachments` is a
+        // vault's own attachment folder and must stay reachable. Regression
+        // guard: EXCLUDED_SCAN_DIRS is an explicit unconditional list, not a
+        // hidden-entry gate, so this must keep passing.
+        let dir = temp_dir("resolve_dot_dir");
+        fs::create_dir_all(dir.join(".attachments")).unwrap();
+        let target = dir.join(".attachments/pic.png");
+        fs::write(&target, "img").unwrap();
+        let got = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
+        assert_eq!(got, Some(normalize_path(&target).to_string_lossy().into_owned()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_gives_up_at_entry_budget() {
+        // Five files where the match ("zzz.png") sorts last by name; a budget
+        // of 3 must give up before ever reaching it — proving the ceiling is a
+        // hard visited-entry cutoff, not merely "nothing matched".
+        let dir = temp_dir("scan_budget");
+        for name in ["a.png", "b.png", "c.png", "d.png", "zzz.png"] {
+            fs::write(dir.join(name), "img").unwrap();
+        }
+        let starved = scan_match(&dir, "zzz.png", 3, 3);
+        assert_eq!(starved, None, "a small entry budget must give up before finding a later match");
+        // A generous budget finds it fine — proves the fixture itself is valid
+        // and the starved result above is really the budget's doing.
+        let generous = scan_match(&dir, "zzz.png", 3, MAX_ENTRIES);
+        assert_eq!(
+            generous,
+            Some(normalize_path(&dir.join("zzz.png"))),
+            "the same fixture must resolve under the default budget"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    #[ignore = "perf measurement, not a correctness assertion — run manually: \
+                cargo test --lib -- --ignored --nocapture scan_perf (release build's test \
+                harness is broken by the pre-existing debug_assertions-gated QA seam, so this \
+                measures the debug/unoptimized build — a real production binary is faster)"]
+    fn scan_perf_measures_worst_case_vault_walk() {
+        // Approximates the worst case a real vault-root `![[name]]` search
+        // (depth 12, budget MAX_ENTRIES=10,000) can hit: ~6,000 files spread
+        // across 400 directories at depth 2, none matching, so the walk must
+        // inspect close to the full budget without an early hit rather than
+        // stopping short. Printed (`--nocapture`), not asserted — see
+        // `_workspace/02_backend_vaultimage_changes.md` for the number this
+        // measured on the developer's machine; the assertion below only pins
+        // "did not silently truncate the fixture", not a latency budget (CI
+        // hardware varies too much for a hard ms assertion to be meaningful).
+        let dir = temp_dir("scan_perf");
+        let mut n = 0usize;
+        'outer: for a in 0..20u32 {
+            for b in 0..20u32 {
+                let sub = dir.join(format!("d{a}/d{b}"));
+                fs::create_dir_all(&sub).unwrap();
+                for f in 0..15u32 {
+                    fs::write(sub.join(format!("f{f}.png")), "x").unwrap();
+                    n += 1;
+                    if n >= 6000 {
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let start = std::time::Instant::now();
+        let got = scan_match(&dir, "does-not-exist.png", 12, MAX_ENTRIES);
+        let elapsed = start.elapsed();
+        assert_eq!(got, None, "the target basename must not exist in the fixture");
+        eprintln!("scan_perf: {n} files, depth 12, budget {MAX_ENTRIES} -> {elapsed:?} (no match, full walk)");
         fs::remove_dir_all(&dir).ok();
     }
 

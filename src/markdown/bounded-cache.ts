@@ -8,6 +8,12 @@
 export interface BoundedCache<K, V> {
   get(key: K): V | undefined;
   put(key: K, value: V): void;
+  /** Remove one entry early, ahead of FIFO eviction — for a negative-cache
+   *  result that must not be remembered (e.g. a promise that resolved to
+   *  "not found": a later retry should be allowed to look again, since the
+   *  file may show up after the first miss). A plain miss (key never put)
+   *  is a silent no-op. */
+  delete(key: K): void;
   clear(): void;
   readonly size: number;
 }
@@ -23,6 +29,7 @@ export function boundedCache<K, V>(max: number): BoundedCache<K, V> {
       }
       map.set(key, value);
     },
+    delete: (key) => void map.delete(key),
     clear: () => map.clear(),
     get size() {
       return map.size;

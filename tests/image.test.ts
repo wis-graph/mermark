@@ -8,24 +8,18 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeSpy(...args),
 }));
 
-import { resolveImageSrc, resolveImageUrl, ImageWidget, viewerSourceFor, isRemoteSrc } from "../src/markdown/image";
+import {
+  resolveImageSrc,
+  resolveImageUrl,
+  ImageWidget,
+  viewerSourceFor,
+  isRemoteSrc,
+  clearImageSearchCache,
+} from "../src/markdown/image";
+import { setImageSearchRoot, owningVaultRoot, VAULT_IMAGE_SCAN_DEPTH } from "../src/markdown/image-search-root";
 import { recursiveImageSearchSetting } from "../src/settings/app";
 import { setImageOpenHandler } from "../src/markdown/image-open";
 import type { EditorView } from "@codemirror/view";
-import {
-  isVaultImageRef,
-  parseVaultImageRef,
-  encodeVaultImagePath,
-  vaultAttachmentMarkdown,
-  attachmentFailureMessage,
-  setVaultImageContext,
-  vaultImageContext,
-  VAULT_ATTACHMENT_MESSAGES,
-  VAULT_IMAGE_REJECTION_MESSAGES,
-  type VaultImageRejectionReason,
-  type AttachmentFailureKind,
-} from "../src/markdown/vault-image";
-import { decodeOnceStrict } from "../src/markdown/local-doc-link";
 
 // The click handler's `attachAltClickEdit` only ever touches `view` when a
 // MOUSEDOWN carries Alt (not exercised by these click-only tests), so a stub
@@ -98,6 +92,8 @@ describe("ImageWidget recursive-search fallback", () => {
   beforeEach(() => {
     invokeSpy.mockReset();
     recursiveImageSearchSetting.set("on");
+    clearImageSearchCache(); // fresh slate — several cases below reuse the same rawSrc/baseDir pair
+    setImageSearchRoot(() => null); // no vault-scope tests in this describe; every widget here is default "folder" scope
   });
 
   // Mount the widget DOM and fire its onerror as the browser would on a failed
@@ -172,6 +168,163 @@ describe("ImageWidget recursive-search fallback", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Vault-scope search root routing (`vault:` withdrawal + name-based image
+// resolution, _workspace/00_request_vaultimage_fix.md). `searchScope`
+// deliberately reads image-search-root.ts's OWNING vault root — never "the
+// active vault" — so a document's `![[name]]` resolution can never change
+// just because the sidebar's active vault changed (the exact bug this
+// change reverts). Distinct rawSrc basenames per case below avoid
+// module-level searchCache collisions between cases (see the promise-cache
+// tests, which deliberately reuse a name WITHIN one test).
+// ---------------------------------------------------------------------------
+
+describe("ImageWidget vault-scope search root", () => {
+  const docFolder = "/vault/notes/deep";
+
+  beforeEach(() => {
+    invokeSpy.mockReset();
+    invokeSpy.mockResolvedValue(null); // default: "not found" unless a case overrides it
+    recursiveImageSearchSetting.set("on");
+    clearImageSearchCache();
+    setImageSearchRoot(() => null);
+  });
+
+  const mountScoped = (rawSrc: string, scope: "vault" | "folder" = "vault", baseDir = docFolder) => {
+    const w = new ImageWidget(`${baseDir}/${rawSrc}`, "alt", rawSrc, baseDir, scope);
+    return w.toDOM(fakeView) as HTMLImageElement;
+  };
+  const fireError = (img: HTMLImageElement) => img.onerror?.(new Event("error"));
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it("vault scope with a resolved owning root calls resolve_image with {baseDir: root, maxDepth: VAULT_IMAGE_SCAN_DEPTH}", () => {
+    setImageSearchRoot(() => "/vault");
+    const img = mountScoped("pic-root.png");
+    fireError(img);
+    expect(invokeSpy).toHaveBeenCalledTimes(1);
+    expect(invokeSpy).toHaveBeenCalledWith("resolve_image", {
+      baseDir: "/vault",
+      name: "pic-root.png",
+      maxDepth: VAULT_IMAGE_SCAN_DEPTH,
+    });
+  });
+
+  it("vault scope with no owning root (global vault / outside every vault) falls back to folder-scope args", () => {
+    setImageSearchRoot(() => null);
+    const img = mountScoped("pic-noroot.png");
+    fireError(img);
+    expect(invokeSpy).toHaveBeenCalledWith("resolve_image", {
+      baseDir: docFolder,
+      name: "pic-noroot.png",
+      maxDepth: 3,
+    });
+  });
+
+  it("folder scope ignores an owning vault root even when one is wired", () => {
+    setImageSearchRoot(() => "/vault");
+    const img = mountScoped("pic-folderscope.png", "folder");
+    fireError(img);
+    expect(invokeSpy).toHaveBeenCalledWith("resolve_image", {
+      baseDir: docFolder,
+      name: "pic-folderscope.png",
+      maxDepth: 3,
+    });
+  });
+
+  it("setting off: vault scope with an owning root still invokes (the setting only gates folder-scope fallback)", () => {
+    recursiveImageSearchSetting.set("off");
+    setImageSearchRoot(() => "/vault");
+    const img = mountScoped("pic-off-vault.png");
+    fireError(img);
+    expect(invokeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("setting off: folder scope still does not invoke (unchanged)", () => {
+    recursiveImageSearchSetting.set("off");
+    setImageSearchRoot(() => "/vault");
+    const img = mountScoped("pic-off-folder.png", "folder");
+    fireError(img);
+    expect(invokeSpy).not.toHaveBeenCalled();
+  });
+
+  it("promise cache: two widgets for the same (root, name) share one invoke", async () => {
+    setImageSearchRoot(() => "/vault");
+    let resolveInvoke: (v: string | null) => void = () => {};
+    invokeSpy.mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolveInvoke = r;
+        }),
+    );
+    const imgA = mountScoped("pic-dedup.png");
+    const imgB = mountScoped("pic-dedup.png");
+    fireError(imgA);
+    fireError(imgB);
+    expect(invokeSpy).toHaveBeenCalledTimes(1);
+    resolveInvoke("/mock/found/pic-dedup.png");
+    await flush();
+    expect(imgA.src).toContain("/mock/found/pic-dedup.png");
+    expect(imgB.src).toContain("/mock/found/pic-dedup.png");
+  });
+
+  it("promise cache: a null resolution clears the entry so a later widget retries", async () => {
+    setImageSearchRoot(() => "/vault");
+    invokeSpy.mockResolvedValueOnce(null);
+    const imgA = mountScoped("pic-retry.png");
+    fireError(imgA);
+    await flush();
+    expect(invokeSpy).toHaveBeenCalledTimes(1);
+
+    invokeSpy.mockResolvedValueOnce("/mock/found/pic-retry.png");
+    const imgB = mountScoped("pic-retry.png");
+    fireError(imgB);
+    await flush();
+    expect(invokeSpy).toHaveBeenCalledTimes(2); // retried, not served from a stale negative cache
+    expect(imgB.src).toContain("/mock/found/pic-retry.png");
+  });
+
+  it("regression (00_request_vaultimage_fix.md 결함1), end-to-end through the render path: resolve_image's baseDir is the SAME regardless of simulated active-vault switching", () => {
+    // main.ts wires setImageSearchRoot(() => owningVaultRoot(dirOf(currentFile),
+    // permanentRootsOf(workspaceStore.get()))) — reproduce that EXACT composition
+    // here (not a stubbed imageSearchRoot()) so this exercises owningVaultRoot on
+    // the actual render path (onerror -> searchPlanFor -> imageSearchRoot() ->
+    // owningVaultRoot -> invoke), not just image-search-root.test.ts's isolated
+    // pure-function unit tests. `owningVaultRoot` has no "active vault" parameter
+    // at all, so the only channel a vault switch COULD leak through is the order
+    // of the registered-roots list — flip it (simulating "/proj" vs "/proj/sub"
+    // selected as active) and the resolved search root must not move.
+    const documentDir = "/proj/sub/notes";
+    const rootsAsIfProjActive = ["/proj", "/proj/sub"];
+    const rootsAsIfSubActive = ["/proj/sub", "/proj"];
+
+    setImageSearchRoot(() => owningVaultRoot(documentDir, rootsAsIfProjActive));
+    const imgA = mountScoped("pic-e2e.png", "vault", documentDir);
+    fireError(imgA);
+    expect(invokeSpy).toHaveBeenCalledWith("resolve_image", {
+      baseDir: "/proj/sub",
+      name: "pic-e2e.png",
+      maxDepth: VAULT_IMAGE_SCAN_DEPTH,
+    });
+
+    clearImageSearchCache(); // force a fresh lookup under the "switched" state — a cache hit would prove nothing
+    invokeSpy.mockClear();
+    setImageSearchRoot(() => owningVaultRoot(documentDir, rootsAsIfSubActive));
+    const imgB = mountScoped("pic-e2e.png", "vault", documentDir);
+    fireError(imgB);
+    expect(invokeSpy).toHaveBeenCalledWith("resolve_image", {
+      baseDir: "/proj/sub",
+      name: "pic-e2e.png",
+      maxDepth: VAULT_IMAGE_SCAN_DEPTH,
+    });
+  });
+
+  it("eq() includes searchScope — a scope-only rebuild is not reused", () => {
+    const a = new ImageWidget("u", "alt", "pic.png", "/a", "vault");
+    expect(a.eq(new ImageWidget("u", "alt", "pic.png", "/a", "vault"))).toBe(true);
+    expect(a.eq(new ImageWidget("u", "alt", "pic.png", "/a", "folder"))).toBe(false);
+  });
+});
+
 describe("ImageWidget click → open viewer (_workspace/01_architect_design_imgclick.md)", () => {
   const baseDir = "/home/u/notes";
   let openSpy: ReturnType<typeof vi.fn>;
@@ -233,194 +386,5 @@ describe("ImageWidget click → open viewer (_workspace/01_architect_design_imgc
     await new Promise((r) => setTimeout(r, 0));
     clickAt(img, 10, 10);
     expect(openSpy).toHaveBeenCalledWith("/mock/found/pic.png");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Vault image attachment contracts (single-window-opening Wave 2, Todo 4).
-// Pure module — no invoke calls, so the shared invokeSpy above is untouched
-// by any test in this section.
-// ---------------------------------------------------------------------------
-
-describe("isVaultImageRef", () => {
-  it("true only for a lowercase `vault:` prefix", () => {
-    expect(isVaultImageRef("vault:.attachments/pic.png")).toBe(true);
-  });
-  it("false for uppercase VAULT: — existing relative-path-join semantics own it instead", () => {
-    expect(isVaultImageRef("VAULT:.attachments/pic.png")).toBe(false);
-  });
-  it("false for an ordinary relative path", () => {
-    expect(isVaultImageRef("img/a.png")).toBe(false);
-  });
-  it("false for a remote URL", () => {
-    expect(isVaultImageRef("https://x.com/a.png")).toBe(false);
-  });
-});
-
-describe("parseVaultImageRef — accepted", () => {
-  it("an exact vault-relative reference under .attachments", () => {
-    expect(parseVaultImageRef("vault:.attachments/pic.png")).toEqual({ ok: true, relPath: ".attachments/pic.png" });
-  });
-  it("a nested path", () => {
-    expect(parseVaultImageRef("vault:notes/img/pic.png")).toEqual({ ok: true, relPath: "notes/img/pic.png" });
-  });
-  it("a percent-encoded Korean/space filename decodes exactly once", () => {
-    const result = parseVaultImageRef("vault:.attachments/%EC%82%AC%EC%A7%84%201.png");
-    expect(result).toEqual({ ok: true, relPath: ".attachments/사진 1.png" });
-  });
-  it("an uppercase extension still passes the (lowercased) extension gate", () => {
-    expect(parseVaultImageRef("vault:PIC.PNG")).toEqual({ ok: true, relPath: "PIC.PNG" });
-  });
-});
-
-describe("parseVaultImageRef — rejected (reason asserted individually)", () => {
-  const rejectionReason = (raw: string): VaultImageRejectionReason | undefined => {
-    const result = parseVaultImageRef(raw);
-    return result.ok ? undefined : result.reason;
-  };
-
-  it("`..` at the start of the path is traversal", () => {
-    expect(rejectionReason("vault:../escape.png")).toBe("traversal");
-  });
-  it("`..` buried inside the path is traversal", () => {
-    expect(rejectionReason("vault:a/../../b.png")).toBe("traversal");
-  });
-  it("a filesystem-absolute path is rooted-path", () => {
-    expect(rejectionReason("vault:/abs/a.png")).toBe("rooted-path");
-  });
-  it("a remote URL disguised behind the vault: prefix is not-an-image (scheme treated as ordinary text, fails the extension gate)", () => {
-    expect(rejectionReason("vault:https://x/a.png")).toBe("not-an-image");
-  });
-  it("a backslash makes the separators mixed", () => {
-    expect(rejectionReason("vault:a\\b.png")).toBe("mixed-separators");
-  });
-  it("a malformed percent-escape fails to decode", () => {
-    expect(rejectionReason("vault:pic%zz.png")).toBe("malformed-escape");
-  });
-  it("a NUL byte (from %00) is rejected", () => {
-    expect(rejectionReason("vault:pic%00.png")).toBe("nul");
-  });
-  it("a non-image document extension fails the extension gate", () => {
-    expect(rejectionReason("vault:note.md")).toBe("not-an-image");
-  });
-  it("an empty path (nothing after vault:) is empty-path", () => {
-    expect(rejectionReason("vault:")).toBe("empty-path");
-  });
-  it("a trailing slash leaves an empty final segment — empty-path", () => {
-    expect(rejectionReason("vault:.attachments/")).toBe("empty-path");
-  });
-  it("a leading double slash reads as a UNC-shaped path, not a plain relative one", () => {
-    expect(rejectionReason("vault://escape.png")).toBe("unc-path");
-  });
-  it("a Windows drive prefix is drive-path", () => {
-    expect(rejectionReason("vault:C:\\pic.png")).toBe("drive-path");
-  });
-});
-
-describe("encodeVaultImagePath ↔ decodeOnceStrict round trip", () => {
-  it("round-trips a Korean filename with a space", () => {
-    const encoded = encodeVaultImagePath(".attachments/사진 1.png");
-    expect(decodeOnceStrict(encoded)).toBe(".attachments/사진 1.png");
-  });
-  it("round-trips parentheses in a filename", () => {
-    const encoded = encodeVaultImagePath(".attachments/a(b).png");
-    expect(decodeOnceStrict(encoded)).toBe(".attachments/a(b).png");
-  });
-  it("leaves an already-safe path unchanged (identity encode)", () => {
-    expect(encodeVaultImagePath(".attachments/pic-1.png")).toBe(".attachments/pic-1.png");
-  });
-});
-
-describe("vaultAttachmentMarkdown", () => {
-  it("builds `![stem](vault:.attachments/<fileName>)` for a name needing no encoding", () => {
-    expect(vaultAttachmentMarkdown("pic-1.png")).toBe("![pic-1](vault:.attachments/pic-1.png)");
-  });
-  it("percent-encodes a space-containing name in the link destination", () => {
-    expect(vaultAttachmentMarkdown("사진 1.png")).toBe(
-      `![사진 1](vault:${encodeVaultImagePath(".attachments/사진 1.png")})`,
-    );
-  });
-});
-
-describe("VAULT_ATTACHMENT_MESSAGES / VAULT_IMAGE_REJECTION_MESSAGES — full coverage", () => {
-  const allRejectionReasons: VaultImageRejectionReason[] = [
-    "not-vault-ref",
-    "empty-path",
-    "malformed-escape",
-    "drive-path",
-    "unc-path",
-    "rooted-path",
-    "nul",
-    "mixed-separators",
-    "traversal",
-    "not-an-image",
-    "no-permanent-vault",
-    "vault-root-unavailable",
-    "missing-target",
-    "outside-vault",
-    "not-a-regular-file",
-  ];
-  const allAttachmentFailureKinds: AttachmentFailureKind[] = [
-    "no-permanent-vault",
-    "no-document",
-    "cancelled",
-    "invalid-image",
-    "copy-failed",
-    "dir-invalid",
-    "escape",
-    "insertion-failed",
-    "rollback-changed",
-    "rollback-io",
-    "rollback-unknown",
-  ];
-
-  it("every VaultImageRejectionReason has a non-empty Korean message", () => {
-    for (const reason of allRejectionReasons) {
-      expect(VAULT_IMAGE_REJECTION_MESSAGES[reason]).toBeTruthy();
-    }
-  });
-  it("every AttachmentFailureKind has a non-empty Korean message", () => {
-    for (const kind of allAttachmentFailureKinds) {
-      expect(VAULT_ATTACHMENT_MESSAGES[kind]).toBeTruthy();
-    }
-  });
-});
-
-describe("attachmentFailureMessage", () => {
-  it("maps ATTACH_COPY: to the copy-failure message", () => {
-    expect(attachmentFailureMessage("ATTACH_COPY: disk full")).toBe(VAULT_ATTACHMENT_MESSAGES["copy-failed"]);
-  });
-  it("maps ATTACH_INVALID_IMAGE: to the invalid-image message", () => {
-    expect(attachmentFailureMessage("ATTACH_INVALID_IMAGE: not an image")).toBe(
-      VAULT_ATTACHMENT_MESSAGES["invalid-image"],
-    );
-  });
-  it("maps ATTACH_DIR_INVALID: to the dir-invalid message", () => {
-    expect(attachmentFailureMessage("ATTACH_DIR_INVALID: symlink")).toBe(VAULT_ATTACHMENT_MESSAGES["dir-invalid"]);
-  });
-  it("maps ATTACH_ESCAPE: to the escape message", () => {
-    expect(attachmentFailureMessage("ATTACH_ESCAPE: bad basename")).toBe(VAULT_ATTACHMENT_MESSAGES["escape"]);
-  });
-  it("maps ROLLBACK_CHANGED: to the rollback-changed message", () => {
-    expect(attachmentFailureMessage("ROLLBACK_CHANGED: /a/b")).toBe(VAULT_ATTACHMENT_MESSAGES["rollback-changed"]);
-  });
-  it("maps ROLLBACK_IO: to the rollback-io message", () => {
-    expect(attachmentFailureMessage("ROLLBACK_IO: /a/b")).toBe(VAULT_ATTACHMENT_MESSAGES["rollback-io"]);
-  });
-  it("maps ROLLBACK_UNKNOWN: to the rollback-unknown message", () => {
-    expect(attachmentFailureMessage("ROLLBACK_UNKNOWN: 7")).toBe(VAULT_ATTACHMENT_MESSAGES["rollback-unknown"]);
-  });
-  it("falls back to the copy-failure message for an unrecognized error string", () => {
-    expect(attachmentFailureMessage("some unexpected native error")).toBe(VAULT_ATTACHMENT_MESSAGES["copy-failed"]);
-  });
-});
-
-describe("vault image context slot (structural global-vault containment)", () => {
-  it("is null before any provider is wired, and reflects whatever the wired provider returns afterward", () => {
-    expect(vaultImageContext()).toBeNull(); // no provider wired yet in this test's execution
-    setVaultImageContext(() => null); // simulates the global vault (no permanent root)
-    expect(vaultImageContext()).toBeNull();
-    setVaultImageContext(() => ({ rootPath: "/vault" }));
-    expect(vaultImageContext()).toEqual({ rootPath: "/vault" });
   });
 });

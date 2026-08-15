@@ -76,10 +76,10 @@ function splitLinkSuffix(href: string): { readonly path: string; readonly fragme
  *  (`decodeURIComponent` throws on e.g. `%zz`). This is the pipeline's only
  *  decode call — nowhere else in this module (or its callers) may call
  *  `decodeURIComponent` again, or a double-encoded traversal (`%252e%252e`)
- *  would silently get promoted into a real `..`. Exported so `vault-image.ts`
- *  (single-window-opening Wave 2 Todo 4) can reuse the same single-decode
- *  rule for `vault:` references instead of re-deriving it — every OTHER
- *  caller of this export must uphold the same "decode exactly once" rule. */
+ *  would silently get promoted into a real `..`. Exported so any future
+ *  reference-parsing module can reuse the same single-decode rule instead of
+ *  re-deriving it — every caller of this export must uphold the same
+ *  "decode exactly once" rule. */
 export function decodeOnceStrict(path: string): string | null {
   try {
     return decodeURIComponent(path);

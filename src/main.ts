@@ -88,9 +88,15 @@ import { isRemoteSrc } from "./markdown/image";
 import { setImageOpenHandler } from "./markdown/image-open";
 import { setDocumentOpenHandler } from "./markdown/document-open";
 import { openStandardLocalLink } from "./markdown/local-doc-link";
-import { setVaultImageContext, vaultImageContext } from "./markdown/vault-image";
-import { attachImageToVault } from "./markdown/vault-image-widget";
-import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore, type Vault } from "./workspace/workspace-state";
+import { setImageSearchRoot, owningVaultRoot } from "./markdown/image-search-root";
+import { attachImageToVault } from "./markdown/attach-image";
+import {
+  GLOBAL_VAULT_ID,
+  WorkspaceStateError,
+  WorkspaceStore,
+  type Vault,
+  type WorkspaceState,
+} from "./workspace/workspace-state";
 import { routeCliFile, routeCliFileResolved } from "./workspace/cli-routing";
 import { createDocumentReloadUrl, readDocumentReloadHandoff } from "./workspace/reload-handoff";
 import {
@@ -126,6 +132,15 @@ const SAFE_EXPLORER_BASE_PATH = "/";
 
 export function shouldPreserveGlobalExplorerRoot(vault: Pick<Vault, "persistenceKind"> | undefined): boolean {
   return vault?.persistenceKind === "global";
+}
+
+/** Every registered PERMANENT vault's canonical root path — the exact input
+ *  `owningVaultRoot` (image-search-root.ts) needs. Named so "which vaults
+ *  count" (permanent only; the global vault has no `rootPath` to search)
+ *  lives in one place instead of being re-derived as an inline filter at
+ *  each call site. Pure query. */
+export function permanentRootsOf(state: WorkspaceState): readonly string[] {
+  return state.vaults.filter((vault) => vault.persistenceKind === "permanent").map((vault) => vault.rootPath);
 }
 
 /** Set a chrome button (title-bar or footer) to a Lucide icon + (optional) label,
@@ -291,6 +306,17 @@ async function boot() {
   const currentVault = () => {
     return routedVault ?? selectedWorkspaceVault();
   };
+  // The vault root that OWNS the current document — image-search-root.ts's
+  // `owningVaultRoot`, a pure function of the document's own path and the
+  // registered permanent vaults, NEVER of `currentVault()` (which is app
+  // state, not a document property). Both the render path
+  // (setImageSearchRoot below) and the image.attach handler read through
+  // THIS one function, so they can never drift onto two different rules
+  // (design §분기4's single-SSOT requirement — see
+  // _workspace/00_request_vaultimage_fix.md's 결함1 for why that drift is
+  // exactly the bug this whole change reverts).
+  const currentOwningVaultRoot = (): string | null =>
+    currentFile ? owningVaultRoot(dirOf(currentFile), permanentRootsOf(workspaceStore.get())) : null;
   const routeDocumentPath = (path: string) => {
     const current = routedVault;
     if (current?.persistenceKind === "global") return current;
@@ -693,17 +719,14 @@ async function boot() {
     void openStandardLocalLink(request, context, openDocumentSafely);
   });
 
-  // ── Vault image attachment context seam (single-window-opening Wave 2,
-  //    Todo 5): the ONE provider both the `vault:` render path
-  //    (features/image.ts → vaultImageContext()) and the image.attach action
-  //    (below) read for "what's the current permanent vault root?" —
-  //    GlobalVault.rootPath is typed `null` (workspace-state.ts), so this can
-  //    only ever construct a VaultImageContext from a real permanent vault;
-  //    the global vault structurally never becomes a filesystem root.
-  setVaultImageContext(() => {
-    const vault = currentVault();
-    return vault?.persistenceKind === "permanent" ? { rootPath: vault.rootPath } : null;
-  });
+  // ── Vault-root image search seam (`vault:` scheme withdrawal —
+  //    _workspace/00_request_vaultimage_fix.md): wires `currentOwningVaultRoot`
+  //    (defined above, alongside currentVault) as the provider `![[name]]`'s
+  //    onerror fallback (image.ts's vault-scope search) reads through
+  //    `imageSearchRoot()`. Document-derived, not app-state-derived — the
+  //    fix for the exact bug (링크가 문서가 아니라 앱 상태로 해석된다) the
+  //    old `setVaultImageContext(() => currentVault()...)` wiring had.
+  setImageSearchRoot(currentOwningVaultRoot);
   // dev-only: expose vault-routing state for the native QA harness
   // (scripts/window-routing-smoke.mjs) to read via queryDoc's debugVault
   // field on a timeout — same DEV gate as `window.__mermark` above.
@@ -1469,13 +1492,15 @@ async function boot() {
       flashStatus(ok ? "✓ 경로 복사됨" : "⚠ 경로 복사 실패"),
     );
   });
-  // 이미지 첨부 (single-window-opening Wave 2, Todo 5): attachImageToVault owns
-  // the whole picker→import→insert→finalize/rollback orchestration (design
-  // §분기7) — this is only the DI adapter wiring it to the live editor/vault
-  // context/flash surface, mirroring bundle.copy/path.copy's own thin wiring.
+  // 이미지 첨부 (`vault:` scheme withdrawal): attachImageToVault owns the
+  // whole picker→import→insert→finalize/rollback orchestration — this is
+  // only the DI adapter wiring it to the live editor/vault-root/flash
+  // surface, mirroring bundle.copy/path.copy's own thin wiring.
+  // `currentOwningVaultRoot()` is the SAME function setImageSearchRoot wires
+  // for rendering — attach and render share one SSOT rule, never two.
   registerHandler("image.attach", () => {
     void attachImageToVault({
-      context: vaultImageContext(),
+      vaultRoot: currentOwningVaultRoot(),
       view: current?.view ?? null,
       invoke,
       flash: flashStatus,

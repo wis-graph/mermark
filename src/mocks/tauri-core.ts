@@ -554,7 +554,9 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // calls resolve_image with name "./pic.png", and the basename "pic.png" maps
       // here to "/mock/found/pic.png", which convertFileSrc returns verbatim so the
       // swapped `img.src` is observable in the DOM. Args are camelCase to match the
-      // Tauri snake→camel mapping: { baseDir, name, maxDepth }.
+      // Tauri snake→camel mapping: { baseDir, name, maxDepth }. `maxDepth` is
+      // accepted but ignored here (the mock has no tree to bound a walk over) —
+      // the real backend clamps it to `MAX_IMAGE_SCAN_DEPTH` (12).
       const baseDir = String(a.baseDir ?? "");
       const name = String(a.name ?? "");
       const basename = name.split(/[/\\]/).pop() ?? name;
@@ -740,21 +742,38 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       return undefined as T;
     case "import_vault_attachment": {
       // Mirrors the real `import_vault_attachment(vault_root) ->
-      // Result<AttachmentImportOutcome, String>`. The browser mock has no
-      // native file dialog, so `window.__mockAttachPick` stands in for the
-      // user's picker choice: `null`/unset -> cancelled (no import code
+      // Result<AttachmentImportOutcome, String>` (post `vault:` withdrawal —
+      // see `attach_outcome_from` in attachment_import.rs). The browser mock
+      // has no native file dialog, so `window.__mockAttachPick` stands in for
+      // the user's picker choice: `null`/unset -> cancelled (no import code
       // reached, matching the real command's "None -> Ok{cancelled}" shape),
       // a string -> the "picked" source path (never actually read — the mock
-      // has no real bytes to copy). Candidate naming reproduces the real
-      // `attachment_file_name` decision: n=0 keeps the basename, n>=1 inserts
-      // `-{n}` before the extension, retried only while the slot is taken —
-      // same no-clobber contract, just against `attachmentStore` instead of
-      // a real `.attachments` directory.
+      // has no real bytes to copy, except for the alreadyInVault check below,
+      // which only needs the string itself).
+      //
+      // Inside-vault check: if the picked path already sits under
+      // `vault_root` (a plain string-prefix approximation of the real
+      // backend's `fs::canonicalize` + prefix check — the mock has no real
+      // filesystem to canonicalize), the outcome is `alreadyInVault`: no
+      // copy, no receipt, matching `attach_outcome_from`'s no-op-on-in-vault
+      // contract. Otherwise the picked source is copied in, and candidate
+      // naming reproduces the real `attachment_file_name` decision: n=0 keeps
+      // the basename, n>=1 inserts `-{n}` before the extension, retried only
+      // while the slot is taken — same no-clobber contract, just against
+      // `attachmentStore` instead of a real `.attachments` directory.
       const pick = typeof window.__mockAttachPick === "function" ? window.__mockAttachPick() : (window.__mockAttachPick ?? null);
       console.info("[mock] import_vault_attachment", a.vaultRoot, "-> picked", pick);
       if (pick === null || pick === undefined) return { status: "cancelled" } as T;
       const picked = String(pick);
       const name = picked.split(/[/\\]/).pop() ?? picked;
+      const vaultRoot = String(a.vaultRoot ?? "");
+      if (vaultRoot) {
+        const rootPrefix = vaultRoot.endsWith("/") ? vaultRoot : `${vaultRoot}/`;
+        if (picked === vaultRoot || picked.startsWith(rootPrefix)) {
+          console.info("[mock] import_vault_attachment -> alreadyInVault", name);
+          return { status: "alreadyInVault", fileName: name } as T;
+        }
+      }
       const dot = name.lastIndexOf(".");
       const stem = dot <= 0 ? name : name.slice(0, dot);
       const ext = dot <= 0 ? "" : name.slice(dot + 1);

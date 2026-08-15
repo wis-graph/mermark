@@ -52,7 +52,7 @@
 //     failure in a real webview. MERMARK_QA_PICK_FILE substitutes for the
 //     panel (replacing exactly one dialog call, leaving the rest of the
 //     import real); insertion-failure rollback orchestration lives in
-//     tests/vault-attach.test.ts.
+//     tests/attach-image.test.ts.
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, writeFile, rm, chmod } from "node:fs/promises";
@@ -78,7 +78,7 @@ const outOfScope = [
   { item: "네이티브 NSOpenPanel 조작(실제 선택/취소 클릭)", why: "OS 모달, 스크립팅 seam 없음", coveredBy: "MERMARK_QA_PICK_FILE debug 우회(다이얼로그 1콜만 대체) + 취소 의미론은 이 하네스의 S10 + 기존 vitest" },
   { item: "SpawnMain(살아있는 창 0에서 main 재생성) 네이티브 재현", why: "마지막 창 닫힘 = 앱 종료 — 그 상태가 프로덕션에 도달 불가한 것이 아니라, Destroyed와 프로세스 종료 사이의 좁은 레이스 구간에서만 도달하는 레이스 방어 코드(오케스트레이터 판정)", coveredBy: "cargo 유닛 no_live_window_spawns_main_once / dead_focus_and_dead_main_recreates_main" },
   { item: "패키지드 커스텀 스킴/CSP 하의 동작", why: "debug 바이너리는 devUrl + devCsp:null로 돈다 — 실앱과 다른 조건. 이 리포의 알려진 테스트 사각지대(과거 WKWebView 커스텀 스킴 전용 버그가 golden/tauri dev로는 안 잡히고 tauri build 번들에서만 드러난 전례)", coveredBy: "이 하네스는 이 증명을 하지 않는다 — 릴리스 전 실제 tauri build 번들 확인은 Todo 7/릴리스 프로세스 소관" },
-  { item: "삽입-실패 유발 롤백의 프론트 자동 경로", why: "실 WKWebView에서 CodeMirror dispatch 실패를 강제할 훅이 없다(프로덕션 표면 증가 없이는 불가)", coveredBy: "롤백 커맨드 자체(rollback_attachment_import)는 이 하네스의 S11이 네이티브로 검증, 프론트 오케스트레이션은 기존 tests/vault-attach.test.ts" },
+  { item: "삽입-실패 유발 롤백의 프론트 자동 경로", why: "실 WKWebView에서 CodeMirror dispatch 실패를 강제할 훅이 없다(프로덕션 표면 증가 없이는 불가)", coveredBy: "롤백 커맨드 자체(rollback_attachment_import)는 이 하네스의 S11이 네이티브로 검증, 프론트 오케스트레이션은 기존 tests/attach-image.test.ts" },
 ];
 
 function check(id, condition, observable) {
@@ -637,10 +637,24 @@ try {
   const attachedBytes = await readFile(attachedPath).catch(() => null);
   check("s9.disk-bytes-match-source", attachedBytes !== null && attachedBytes.equals(onePixelPng), { attachedPath });
   const mainDocAfterAttach = await drive("main", "queryDoc", { selectors: [] });
-  check("s9.doc-references-vault-path", mainDocAfterAttach.textHead.includes(`vault:${importTrace.fields.rel_path}`), mainDocAfterAttach);
+  // `vault:` withdrawal (_workspace/00_request_vaultimage_fix.md): the
+  // insertion contract is now a plain `![[fileName]]` wikilink-image embed,
+  // not a `vault:`-scheme link — attach-image.ts's `embedMarkdownFor`. The
+  // qa_trace "imported" event only carries `rel_path` (`.attachments/<name>`),
+  // not a separate file_name field, so derive the basename the same way the
+  // frontend does.
+  const attachedFileName = importTrace.fields.rel_path.split("/").pop();
+  check(
+    "s9.doc-references-wikilink-embed",
+    mainDocAfterAttach.textHead.includes(`![[${attachedFileName}]]`),
+    mainDocAfterAttach,
+  );
   await drive("main", "runAction", { id: "mode.toggle" });
-  const mainReadModeAttach = await drive("main", "queryDoc", { selectors: [".cm-vault-image"] });
-  check("s9.cm-vault-image-present-in-read-mode", mainReadModeAttach.selectors[".cm-vault-image"] === true, mainReadModeAttach);
+  // The `vault:` render path (VaultImageWidget, `.cm-vault-image`) is gone —
+  // a vault-scope `![[name]]` embed now renders through the SAME ImageWidget
+  // as any other image (image.ts), whose DOM class is `.cm-image`.
+  const mainReadModeAttach = await drive("main", "queryDoc", { selectors: [".cm-image"] });
+  check("s9.cm-image-present-in-read-mode", mainReadModeAttach.selectors[".cm-image"] === true, mainReadModeAttach);
   await drive("main", "runAction", { id: "mode.toggle" });
 
   // ── S11: rollback rejected (attachment changed on disk) ────────────────
@@ -654,7 +668,7 @@ try {
   // same call stack as the insertion that triggers it, with no seam to
   // pause it. Route around this by invoking `import_vault_attachment`
   // directly via `invokeRaw` — the SAME backend command `image.attach`'s
-  // orchestration calls first (vault-image-widget.ts), just without the
+  // orchestration calls first (attach-image.ts), just without the
   // frontend's insert+finalize follow-through, so the import stays
   // genuinely pending until THIS scenario's own rollback call resolves it.
   await drive("main", "invokeRaw", { cmd: "import_vault_attachment", args: { vaultRoot } });
@@ -675,33 +689,38 @@ try {
   check("s11.disk-bytes-preserved", attachedBytesAfterReject.length === onePixelPng.length + "changed".length, {});
   check("s11.disk-not-restored-to-original", !attachedBytesAfterReject.equals(originalBytes2), {});
 
-  // ── S12: attachment render error paths ─────────────────────────────────
+  // ── S12: unresolved name-search reference stays a harmless broken image ──
+  // `vault:` withdrawal (_workspace/00_request_vaultimage_fix.md): there is
+  // no more scheme-specific rejection path (`resolveVaultImage`,
+  // `.cm-vault-image-error`) — an unresolved `![[name]]` now falls through
+  // the SAME recursive-search fallback as any other image (image.ts) and,
+  // finding nothing, just stays a normal (broken) `.cm-image` <img> with its
+  // literal (failing) src — no special error class, no rejection-reason
+  // title. This only re-proves the two invariants that still matter here:
+  // the raw markdown is never mutated by a failed search, and the widget
+  // still mounts (doesn't silently vanish) even when resolution fails.
+  //
   // No command in the fixed 7-vocabulary types text into the live editor
   // (runAction only triggers a registered action id; invokeRaw is IPC-only)
   // — and main's `write_file` would be recorded as main's own self-write by
   // the backend watcher (record_self_write), muting the file-changed reload
-  // it would otherwise get. Route around both by writing the broken refs to
+  // it would otherwise get. Route around both by writing the broken ref to
   // disk directly, then `openPath`-ing the SAME path into a fresh window
   // (w1): that's a real `read_file` from disk, no self-write suppression,
-  // and still only ever the fixed 7 commands. Unlike S9/S11, this DOESN'T
-  // need the spawned window to see the vault — `.cm-vault-image-error`
-  // renders for ANY unresolved `vault:` reference, vault-context-missing
-  // included (vault-image-widget.ts's `resolveVaultImage`: `context ===
-  // null` is just one more rejection reason feeding the same error class),
-  // so the earlier openPath/spawn concern doesn't apply here.
+  // and still only ever the fixed 7 commands.
   const mainHead = await drive("main", "queryDoc", {});
-  const brokenAppend = "\n\n![x](vault:missing.png)\n![y](vault:../escape.png)\n";
+  const brokenAppend = "\n\n![[missing-does-not-exist.png]]\n";
   await drive("main", "invokeRaw", {
     cmd: "write_file",
     args: { path: vaultNotePath, text: `${mainHead.textHead}${brokenAppend}`, baseline: 0 },
   });
   await drive("main", "openPath", { path: vaultNotePath });
   await bridge.waitForLabel("w1");
-  await awaitDocLoaded("w1", "vault:../escape.png"); // wait for the just-written broken refs, not just the realm
-  await drive("w1", "runAction", { id: "mode.toggle" }); // -> read mode; error widgets render there
-  const s12Doc = await drive("w1", "queryDoc", { selectors: [".cm-vault-image-error"] });
-  check("s12.raw-text-preserved", s12Doc.textHead.includes("vault:missing.png") && s12Doc.textHead.includes("vault:../escape.png"), s12Doc);
-  check("s12.error-widget-selector-present", s12Doc.selectors[".cm-vault-image-error"] === true, s12Doc);
+  await awaitDocLoaded("w1", "missing-does-not-exist.png"); // wait for the just-written broken ref, not just the realm
+  await drive("w1", "runAction", { id: "mode.toggle" }); // -> read mode; the image widget renders there
+  const s12Doc = await drive("w1", "queryDoc", { selectors: [".cm-image"] });
+  check("s12.raw-text-preserved", s12Doc.textHead.includes("![[missing-does-not-exist.png]]"), s12Doc);
+  check("s12.image-widget-still-mounts-when-unresolved", s12Doc.selectors[".cm-image"] === true, s12Doc);
   await drive("w1", "closeSelf", {}).catch(() => {});
 
   // ── S10: picker cancel ─────────────────────────────────────────────────

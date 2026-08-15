@@ -801,13 +801,13 @@ describe("main workspace wiring", () => {
     });
   });
 
-  // Vault image attachment action wiring (single-window-opening Wave 2, Todo
-  // 5): image.attach's orchestration itself (context/cancel/insert/rollback)
-  // is covered end-to-end by tests/vault-attach.test.ts's DI-based
-  // attachImageToVault suite — this only proves the catalog entry exists and
-  // main.ts actually registers a handler wired to it (the gap the CLI-routing
-  // header comment above warns about: a handler with no registration is a
-  // silent no-op).
+  // Vault image attachment action wiring (`vault:` scheme withdrawal —
+  // _workspace/00_request_vaultimage_fix.md): image.attach's orchestration
+  // itself (vaultRoot/cancel/insert/rollback) is covered end-to-end by
+  // tests/attach-image.test.ts's DI-based attachImageToVault suite — this
+  // only proves the catalog entry exists and main.ts actually registers a
+  // handler wired to it (the gap the CLI-routing header comment above warns
+  // about: a handler with no registration is a silent no-op).
   describe("vault image attachment action wiring", () => {
     it("lists image.attach in the shortcut catalog, unbound by default", () => {
       const action = SHORTCUT_ACTIONS.find((a) => a.id === "image.attach");
@@ -817,12 +817,14 @@ describe("main workspace wiring", () => {
     it("registers a handler for image.attach wired to attachImageToVault", () => {
       expect(mainSource).toContain('registerHandler("image.attach", () => {');
       expect(mainSource).toContain("void attachImageToVault({");
-      expect(mainSource).toContain("context: vaultImageContext(),");
+      expect(mainSource).toContain("vaultRoot: currentOwningVaultRoot(),");
     });
 
-    it("wires setVaultImageContext from the current permanent vault at boot", () => {
-      expect(mainSource).toContain("setVaultImageContext(() => {");
-      expect(mainSource).toContain('vault?.persistenceKind === "permanent" ? { rootPath: vault.rootPath } : null;');
+    it("wires setImageSearchRoot from the document's OWNING vault root at boot (never the active vault)", () => {
+      expect(mainSource).toContain("setImageSearchRoot(currentOwningVaultRoot);");
+      expect(mainSource).toContain(
+        "owningVaultRoot(dirOf(currentFile), permanentRootsOf(workspaceStore.get())) : null;",
+      );
     });
   });
 });
