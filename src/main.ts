@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { dirOf, resolveOpenPath, normalizePath, basename } from "./document/path";
 import { createOpenPathPrompt } from "./document/open-file/path-prompt";
 import { EditorState } from "@codemirror/state";
@@ -85,6 +86,8 @@ import { createRecoveryState, type RecoveryActionId, type RecoveryActionOutcome,
 import { openImageViewer } from "./chrome/viewer/image-viewer";
 import { isRemoteSrc } from "./markdown/image";
 import { setImageOpenHandler } from "./markdown/image-open";
+import { setDocumentOpenHandler } from "./markdown/document-open";
+import { openStandardLocalLink } from "./markdown/local-doc-link";
 import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore, type Vault } from "./workspace/workspace-state";
 import { routeCliFile, routeCliFileResolved } from "./workspace/cli-routing";
 import { createDocumentReloadUrl, readDocumentReloadHandoff } from "./workspace/reload-handoff";
@@ -642,6 +645,45 @@ async function boot() {
       return false;
     });
   };
+
+  // CLI file-open routing (single-window-opening Todo 2): the backend's
+  // single-instance broker queues an ordinary `mermark <file>` request from a
+  // second process until this webview registers ready, then delivers it
+  // recipient-scoped via `emit_to(WebviewWindow{label})`. The listener MUST be
+  // registered before `register_window_ready` is invoked — once the backend
+  // sees this window as ready, it emits immediately, and a request emitted
+  // before the listener exists is lost. openDocumentSafely already surfaces a
+  // visible recovery state on failure/supersede (resolves false rather than
+  // throwing), so `opened` alone tells the backend whether to retain the
+  // request as "recovered" (still-visible, not silently dropped) or drop it
+  // as delivered ("opened").
+  const registerCliOpenRouting = async (): Promise<void> => {
+    const label = getCurrentWindow().label;
+    await listen<{ id: number; path: string }>(
+      "cli-open-request",
+      async (e) => {
+        const opened = await openDocumentSafely(e.payload.path);
+        void invoke("acknowledge_open_request", { id: e.payload.id, outcome: opened ? "opened" : "recovered" });
+      },
+      { target: label },
+    );
+    void invoke("register_window_ready");
+  };
+
+  // ── Document-open seam (Todo 3): 렌더러(위키링크/표준 로컬 링크)의 문서 열기 요청을
+  //    현재 창의 안전 트랜잭션으로 보낸다. setImageOpenHandler(위)와 평행한 plain-module 슬롯.
+  setDocumentOpenHandler((request) => {
+    if (request.kind === "resolved-document") {
+      void openDocumentSafely(request.path);
+      return;
+    }
+    const vault = currentVault();
+    const context =
+      vault?.persistenceKind === "permanent" && currentFile
+        ? { documentPath: currentFile, vaultRootPath: vault.rootPath }
+        : null;
+    void openStandardLocalLink(request, context, openDocumentSafely);
+  });
 
   const welcomePane = createWelcomePane({
     getRecent: () => recentDocsSetting.get(),
@@ -1423,6 +1465,7 @@ async function boot() {
   if (!initialFile) {
     host.classList.add("welcome-host");
     host.append(welcomePane);
+    await registerCliOpenRouting();
     return;
   }
 
@@ -1435,6 +1478,7 @@ async function boot() {
     host.replaceChildren();
     showOpenRecovery(initialFile, String(e));
   }
+  await registerCliOpenRouting();
 }
 
 boot();

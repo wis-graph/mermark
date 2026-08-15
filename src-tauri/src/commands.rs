@@ -259,6 +259,63 @@ pub fn canonicalize_path(path: String) -> Result<String, String> {
         .map_err(|error| format!("cannot canonicalize vault path {path}: {error}"))
 }
 
+/// Locks `canonicalize_path`'s two semantics that Todo 3's vault-escape
+/// detection (`isPathInsideRoot` on the frontend) rests on: symlinks are
+/// resolved all the way to their real target — so a symlink planted inside
+/// a vault that points outside it canonicalizes to a path outside the
+/// vault, which is exactly what makes the escape detectable — and a path
+/// that doesn't exist on disk is an `Err`, never a best-effort guess.
+#[cfg(test)]
+mod canonicalize_path_tests {
+    use super::canonicalize_path;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "mermark_canonicalize_{}_{}_{tag}",
+            std::process::id(),
+            TEST_SEQ.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn canonicalize_resolves_symlinks_to_the_real_path() {
+        let root = temp_root("symlink");
+        let vault = root.join("vault");
+        let outside = root.join("outside");
+        fs::create_dir_all(&vault).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let real_file = outside.join("real.md");
+        fs::write(&real_file, "# real").unwrap();
+        let link = vault.join("escape.md");
+        std::os::unix::fs::symlink(&real_file, &link).unwrap();
+
+        let resolved = canonicalize_path(link.to_string_lossy().into_owned()).unwrap();
+        let expected = fs::canonicalize(&real_file).unwrap().to_string_lossy().into_owned();
+        assert_eq!(resolved, expected);
+        // The resolved path lands outside the vault directory the symlink
+        // was planted in — the fact the frontend's escape check depends on.
+        assert!(!resolved.starts_with(&vault.to_string_lossy().into_owned()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn canonicalize_errors_on_missing_paths() {
+        let root = temp_root("missing");
+        let missing = root.join("does-not-exist.md");
+        // Deliberately do not create `root` or `missing` — the path must
+        // not resolve to anything on disk.
+
+        let result = canonicalize_path(missing.to_string_lossy().into_owned());
+        assert!(result.is_err());
+    }
+}
+
 #[cfg(test)]
 mod workspace_directory_exists_tests {
     use super::directory_exists;

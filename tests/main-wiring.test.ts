@@ -9,7 +9,13 @@ const pathArg = (args: unknown): string | undefined => {
 
 const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => {
   const path = pathArg(args) ?? "";
-  if (command === "canonicalize_path") return Promise.resolve(path);
+  // Identity mock (single "." segment collapsed only — never ".." — matching
+  // this file's stated contract: it is NOT a real fs::canonicalize, it just
+  // lets a literal `./B/doc.md` join (local-doc-link.ts's candidateAbs, which
+  // deliberately does not lexically collapse before canonicalizing — design
+  // D3) resolve to a stable path for the Phase F happy-path assertion below).
+  if (command === "canonicalize_path") return Promise.resolve(path.replace(/\/\.\//g, "/"));
+  if (command === "path_exists") return Promise.resolve(pathExistsPaths.has(path));
   if (command === "read_file") {
     if (rejectedReads.has(path)) return Promise.reject(new Error("read failed"));
     const deferred = deferredReads.get(path);
@@ -36,6 +42,15 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
     if (rejectUnwatch) return Promise.reject(new Error("unwatch failed"));
     return deferredUnwatch ?? Promise.resolve();
   }
+  if (command === "register_window_ready") {
+    cliRoutingOrder.push("ready");
+    return Promise.resolve(undefined);
+  }
+  if (command === "acknowledge_open_request") {
+    const a = args as Record<string, unknown>;
+    cliAcks.push({ id: Number(a.id ?? -1), outcome: String(a.outcome ?? "") });
+    return Promise.resolve(undefined);
+  }
   if (command === "list_files_recursive") return Promise.resolve(scanResult);
   return Promise.resolve(false);
 });
@@ -47,23 +62,56 @@ const deferredWatches = new Map<string, { readonly promise: Promise<void> }>();
 const rejectedReads = new Set<string>();
 const eventListeners = new Map<string, Set<(event: { readonly payload: unknown }) => void>>();
 let scanResult: unknown = { files: [], truncated: false };
+// Phase F (Todo 3 document-open seam): paths that `path_exists` should report
+// as present. Empty by default — only the happy-path permanent-vault test
+// below populates it, so every other test's implicit "path_exists → false"
+// behavior (there is no other consumer of this command in this suite) stays
+// unchanged.
+const pathExistsPaths = new Set<string>();
 let deferredUnwatch: Promise<void> | undefined;
 let rejectWrites = false;
 let rejectUnwatch = false;
 let rejectWatchPath: string | undefined;
 let watcherGeneration = 0;
 
+// CLI file-open routing (Todo 2). `cliRoutingOrder` records "listen"/"ready"
+// in call order — the listen→register_window_ready sequencing contract is
+// only meaningful as an *order* assertion, so this stays a plain push log
+// (same pattern as watcherEvents above) rather than relying on vi.fn's
+// invocationCallOrder (which mockClear() would disturb between tests).
+// `cliAcks` records every acknowledge_open_request invoke in call order —
+// the observable proof that a delivered request was retained until the
+// frontend surfaced a success or a visible-recovery outcome, never silently
+// dropped.
+const cliRoutingOrder: string[] = [];
+const cliAcks: { id: number; outcome: string }[] = [];
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => invokeMock(command, args),
 }));
 
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn((event: string, listener: (event: { readonly payload: unknown }) => void) => {
+const listenMock = vi.fn(
+  (event: string, listener: (event: { readonly payload: unknown }) => void, _options?: unknown) => {
+    if (event === "cli-open-request") cliRoutingOrder.push("listen");
     const listeners = eventListeners.get(event) ?? new Set();
     listeners.add(listener);
     eventListeners.set(event, listeners);
     return Promise.resolve(() => listeners.delete(listener));
-  }),
+  },
+);
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (event: string, listener: (event: { readonly payload: unknown }) => void, options?: unknown) =>
+    listenMock(event, listener, options),
+}));
+
+// registerCliOpenRouting() reads getCurrentWindow().label unconditionally (not
+// gated behind the "__TAURI_INTERNALS__" check the close-requested wiring
+// uses), so this jsdom environment needs a window mock too — same precedent
+// as tests/session-persistence.test.ts. label: "main" matches the browser
+// mock (src/mocks/tauri-window.ts).
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({ label: "main", onCloseRequested: () => Promise.resolve(() => {}) }),
 }));
 
 const emitEvent = (event: string, payload: unknown): void => {
@@ -84,11 +132,15 @@ describe("main workspace wiring", () => {
     rejectedReads.clear();
     eventListeners.clear();
     scanResult = { files: [], truncated: false };
+    pathExistsPaths.clear();
     deferredUnwatch = undefined;
     rejectWrites = false;
     rejectUnwatch = false;
     rejectWatchPath = undefined;
     watcherGeneration = 0;
+    cliRoutingOrder.length = 0;
+    cliAcks.length = 0;
+    listenMock.mockClear();
     const app = document.createElement("div");
     app.id = "app";
     document.body.append(app);
@@ -613,5 +665,138 @@ describe("main workspace wiring", () => {
     expect(document.querySelector('[data-tab-id="a"][data-active="true"]')).not.toBeNull();
     expect(document.querySelector(".cm-content")?.textContent).toBe("A");
     console.info("WATCH_ROLLBACK_EVENTS", JSON.stringify(watcherEvents));
+  });
+
+  // CLI file-open routing (single-window-opening Todo 2): the backend's
+  // single-instance broker delivers a second `mermark <file>` process's
+  // request as a "cli-open-request" event once this webview registers ready,
+  // and retains the request until acknowledged. These four tests cover the
+  // frontend's half of that contract (design §분기3).
+
+  it("registers the cli-open-request listener before announcing window readiness", async () => {
+    await import("../src/main");
+    await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+
+    // Not just "both happened" — listen must complete before register_window_ready
+    // is invoked, or a request the backend delivers right after seeing "ready"
+    // would be emitted into a webview with no listener yet (design §분기3 순서 계약).
+    expect(cliRoutingOrder).toEqual(["listen", "ready"]);
+  });
+
+  it("opens a delivered cli-open-request and acknowledges it as opened", async () => {
+    documentContents.set("/A/other.md", "# other");
+    await import("../src/main");
+    await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+
+    emitEvent("cli-open-request", { id: 7, path: "/A/other.md" });
+
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("other"));
+    expect(cliAcks).toEqual([{ id: 7, outcome: "opened" }]);
+  });
+
+  it("acknowledges a cli-open-request as recovered (not silently) when a dirty commit fails", async () => {
+    documentContents.set("/A/start.md", "# start");
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("start"));
+    await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+
+    const liveEditor = (window as Window & { readonly __mermark?: { readonly view: EditorView } }).__mermark;
+    liveEditor?.view.dispatch({ changes: { from: 0, to: 0, insert: "x" } });
+    rejectWrites = true;
+
+    emitEvent("cli-open-request", { id: 9, path: "/A/other.md" });
+
+    await vi.waitFor(() => expect(cliAcks).toEqual([{ id: 9, outcome: "recovered" }]));
+    // The failed/cancelled safe-open must not vanish from view either — the
+    // still-dirty document stays mounted, visibly, rather than being
+    // silently swapped out from under the ack.
+    expect(document.querySelector(".cm-content")?.textContent).toContain("start");
+  });
+
+  it("acknowledges rapid double cli-open-requests in FIFO id order", async () => {
+    documentContents.set("/A/one.md", "# One");
+    documentContents.set("/A/two.md", "# Two");
+    await import("../src/main");
+    await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+
+    emitEvent("cli-open-request", { id: 1, path: "/A/one.md" });
+    emitEvent("cli-open-request", { id: 2, path: "/A/two.md" });
+
+    await vi.waitFor(() => expect(cliAcks.map((ack) => ack.id)).toEqual([1, 2]));
+    // The second request supersedes the in-flight first one (one editor, one
+    // active lifecycle request) — id 1 resolves as a visible non-open outcome,
+    // id 2 lands. Ack *order* (id ascending) is the FIFO contract under test;
+    // outcome values follow from the existing single-editor supersede rule.
+    expect(cliAcks).toEqual([
+      { id: 1, outcome: "recovered" },
+      { id: 2, outcome: "opened" },
+    ]);
+    expect(document.querySelector(".cm-content")?.textContent).toBe("Two");
+  });
+
+  // Document-open seam wiring (single-window-opening Todo 3, Phase F): the
+  // seam itself (document-open.ts/local-doc-link.ts) and its callers
+  // (wikilink.ts/features/link.ts) are covered by their own test files —
+  // this suite only proves the wiring exists and actually reaches
+  // openDocumentSafely at runtime, closing the gap a prior session left
+  // (setDocumentOpenHandler had no caller, so requestDocumentOpen was a
+  // silent no-op end to end).
+  describe("document-open seam wiring", () => {
+    it("wires setDocumentOpenHandler to openDocumentSafely and openStandardLocalLink", () => {
+      expect(mainSource).toContain("setDocumentOpenHandler((request) => {");
+      expect(mainSource).toContain("openStandardLocalLink(request, context, openDocumentSafely)");
+    });
+
+    it("opens a resolved-document seam request through openDocumentSafely (read_file)", async () => {
+      documentContents.set("/A/B/doc.md", "# doc");
+      await import("../src/main");
+      await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+      const { requestDocumentOpen } = await import("../src/markdown/document-open");
+      invokeMock.mockClear();
+
+      requestDocumentOpen({ kind: "resolved-document", path: "/A/B/doc.md" });
+
+      await vi.waitFor(() =>
+        expect(invokeMock.mock.calls.some(([command, args]) => command === "read_file" && pathArg(args) === "/A/B/doc.md")).toBe(true),
+      );
+    });
+
+    it("rejects a standard-link seam request with no-vault-context in the default (global-vault) boot state", async () => {
+      await import("../src/main");
+      await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+      const { requestDocumentOpen } = await import("../src/markdown/document-open");
+      invokeMock.mockClear();
+      const feedbackEl = document.createElement("a");
+
+      requestDocumentOpen({ kind: "standard-link", href: "./x.md", feedbackEl });
+      await vi.waitFor(() => expect(feedbackEl.title).toBe("영구 볼트의 문서에서만 로컬 링크를 열 수 있습니다"));
+
+      expect(invokeMock.mock.calls.some(([command]) => command === "read_file")).toBe(false);
+    });
+
+    it("opens a standard-link seam request through the validation pipeline in a permanent vault", async () => {
+      localStorage.setItem("mermark.workspaceState", JSON.stringify({
+        workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FA"], currentVaultId: "vault-%2FA", lastSelectedPermanentVaultId: "vault-%2FA" }],
+        vaults: [{ vaultId: "vault-%2FA", workspaceId: "workspace-default", displayName: "A", rootPath: "/A", persistenceKind: "permanent", explorerRoot: "/A" }],
+        currentWorkspaceId: "workspace-default",
+      }));
+      documentContents.set("/A/start.md", "# start");
+      documentContents.set("/A/B/doc.md", "# doc");
+      pathExistsPaths.add("/A/start.md");
+      pathExistsPaths.add("/A/B/doc.md");
+
+      await import("../src/main");
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("start"));
+      const { requestDocumentOpen } = await import("../src/markdown/document-open");
+      invokeMock.mockClear();
+      const feedbackEl = document.createElement("a");
+
+      requestDocumentOpen({ kind: "standard-link", href: "./B/doc.md", feedbackEl });
+
+      await vi.waitFor(() =>
+        expect(invokeMock.mock.calls.some(([command, args]) => command === "read_file" && pathArg(args) === "/A/B/doc.md")).toBe(true),
+      );
+      expect(feedbackEl.title).toBe("");
+    });
   });
 });

@@ -90,6 +90,18 @@ Local image (won't load in a plain browser — expected): ![local](./pic.png)
 // in-memory FS so write_file -> read_file round-trips during a session
 const store = new Map<string, string>();
 
+// CLI file-open routing (Todo 2): every `acknowledge_open_request` invoke
+// (see the case below) is recorded here, in call order, so golden/CDP
+// scripts and manual dev:browser checks can assert a `cli-open-request` was
+// actually acknowledged — the design's "emit success ≠ delivery" contract
+// only holds if something observes the ack.
+declare global {
+  interface Window {
+    __mockAcks?: { id: number; outcome: string }[];
+  }
+}
+window.__mockAcks = [];
+
 // The path the (mock) watcher is currently armed on. Shared with the event mock
 // (tauri-event.ts) so __mockExternalChange writes the simulated disk content
 // into the in-memory store and emits a file-changed event for that path.
@@ -646,6 +658,29 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // above) is refused rather than fabricating XML content.
       console.info("[mock] read_epub_entry", a.token, a.entry, "-> rejected (no epub:// scheme in browser dev)");
       throw "EPUB 뷰어는 브라우저 dev에서 지원되지 않습니다 (epub:// 스킴 없음)";
+    }
+    case "register_window_ready":
+      // Mirrors the real `register_window_ready(window, state)`: a void
+      // command whose only real effect is marking this webview's label ready
+      // in the backend's single-instance broker, so it starts receiving
+      // `cli-open-request` deliveries. The browser mock has no such broker —
+      // registerCliOpenRouting() in main.ts calls this after listen() purely
+      // to keep the listen→ready ordering contract exercised under
+      // dev:browser too.
+      console.info("[mock] register_window_ready");
+      return undefined as T;
+    case "acknowledge_open_request": {
+      // Mirrors the real `acknowledge_open_request(window, state, id, outcome)`.
+      // The mock has no request queue to pop, so it just records the ack on
+      // window.__mockAcks — the observation hook golden/CDP scripts and
+      // manual dev:browser checks use to confirm a request was actually
+      // acknowledged (not just that the emit succeeded; emit success ≠
+      // delivery per the design contract).
+      const id = Number(a.id ?? -1);
+      const outcome = String(a.outcome ?? "");
+      console.info("[mock] acknowledge_open_request", id, outcome);
+      window.__mockAcks?.push({ id, outcome });
+      return undefined as T;
     }
     case "path_exists":
       return true as T;

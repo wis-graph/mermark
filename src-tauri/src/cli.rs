@@ -91,6 +91,90 @@ pub fn parse_args(args: &[String], cwd: &Path) -> Result<LaunchArgs, CliError> {
     Ok(LaunchArgs { target: Target::File(path), right })
 }
 
+/// The two `LaunchClass::Headless` reasons a process prints to stdout/stderr
+/// and exits with no window at all.
+#[derive(Debug, PartialEq)]
+pub enum Headless {
+    Version,
+    Bundle,
+}
+
+/// Which launch pipeline this process's argv selects, decided once in
+/// `lib.rs::run()` *before* `tauri::Builder` is constructed — the classifier
+/// runs, then `run()` builds the app around the answer, never the other way
+/// around. This ordering is load-bearing: `Isolated` processes must never
+/// install the single-instance plugin (`LaunchClass::joins_singleton`), and
+/// the only way to guarantee that is to know the class before the plugin
+/// would be installed, not after.
+#[derive(Debug, PartialEq)]
+pub enum LaunchClass {
+    /// No window: print to stdout/stderr and exit (`--version` / `bundle`).
+    Headless(Headless),
+    /// Independent process, independent window: piped stdin (`-`) or an
+    /// explicit `--right` placement. Never installs the singleton plugin, so
+    /// it can never be intercepted by a running instance — installation
+    /// itself is the only thing that could route it away.
+    Isolated(LaunchArgs),
+    /// Wants to participate in the running singleton (or become it): an
+    /// ordinary file open (`Some`) or a bare launch with no document
+    /// (`None`, which still joins — it's "singleton, no file", not "no
+    /// singleton").
+    SingletonRouted(Option<PathBuf>),
+}
+
+impl LaunchClass {
+    /// True only for `SingletonRouted` — the single fact `run()` gates
+    /// installing the single-instance plugin on. Keeping this as one named
+    /// predicate (rather than re-deriving "is this isolated" at each call
+    /// site) means the isolated-launch guarantee lives behind one name that
+    /// a unit test can lock down directly, rather than being implied by
+    /// several `match` arms staying in sync by convention.
+    pub fn joins_singleton(&self) -> bool {
+        matches!(self, LaunchClass::SingletonRouted(_))
+    }
+
+    /// The file path this class wants opened/created *before* any window
+    /// exists, if any. `Isolated(File)` and `SingletonRouted(Some)` share
+    /// this pre-builder "create on launch" step (vim's `:e newfile.md`
+    /// convention, performed by `lib.rs::ensure_file_target`); every other
+    /// variant — `Isolated(Stdin)`, `SingletonRouted(None)`, and all of
+    /// `Headless` — has no file to create ahead of the window.
+    pub fn file_target(&self) -> Option<&Path> {
+        match self {
+            LaunchClass::Isolated(LaunchArgs { target: Target::File(p), .. }) => Some(p),
+            LaunchClass::SingletonRouted(Some(p)) => Some(p),
+            _ => None,
+        }
+    }
+}
+
+/// Classify this process's launch intent, pure and I/O-free: reuses
+/// `is_version_flag` and `crate::is_bundle_subcommand` for the two headless
+/// cases (version wins over bundle, matching `run()`'s pre-existing
+/// priority), then delegates the rest to `parse_args`. A missing argument
+/// (`CliError::Missing`) is *not* propagated as an error here — a bare
+/// `mermark` launch is a valid intent ("join the singleton, no document"),
+/// so it's absorbed into `SingletonRouted(None)`. Only `IsDirectory`
+/// propagates, since the caller (`run()`, or the primary process's secondary
+/// invocation handler) is the one with a terminal/exit code to report it to.
+pub fn classify_launch(args: &[String], cwd: &Path) -> Result<LaunchClass, CliError> {
+    if is_version_flag(args) {
+        return Ok(LaunchClass::Headless(Headless::Version));
+    }
+    if crate::is_bundle_subcommand(args) {
+        return Ok(LaunchClass::Headless(Headless::Bundle));
+    }
+    match parse_args(args, cwd) {
+        Ok(parsed @ LaunchArgs { target: Target::Stdin, .. }) => Ok(LaunchClass::Isolated(parsed)),
+        Ok(parsed @ LaunchArgs { right: true, .. }) => Ok(LaunchClass::Isolated(parsed)),
+        Ok(LaunchArgs { target: Target::File(p), right: false }) => {
+            Ok(LaunchClass::SingletonRouted(Some(p)))
+        }
+        Err(CliError::Missing) => Ok(LaunchClass::SingletonRouted(None)),
+        Err(e) => Err(e),
+    }
+}
+
 /// Resolve the first positional argument to an absolute *file* path to open.
 /// The path may already exist or be created on launch (vim's `:e newfile`
 /// convention), so a missing path is a valid target — only a directory is
@@ -348,5 +432,130 @@ mod tests {
         // and `--versionx` isn't `--version`.
         assert!(!is_version_flag(&["-vim".into()]));
         assert!(!is_version_flag(&["--versionx".into()]));
+    }
+
+    // --- classify_launch (single-window-opening Todo 2) ---
+
+    #[test]
+    fn classify_stdin_is_isolated() {
+        let cwd = std::env::temp_dir();
+        let got = classify_launch(&["-".into()], &cwd).unwrap();
+        assert_eq!(got, LaunchClass::Isolated(LaunchArgs { target: Target::Stdin, right: false }));
+    }
+
+    #[test]
+    fn classify_right_is_isolated_and_keeps_right() {
+        // `LaunchArgs.right` must survive the reclassification into
+        // `Isolated` — losing it was exactly the bug that got
+        // `secondary_launch_path()` deleted (see 00_request_todo2.md).
+        let dir = fixture_dir("classify_right");
+        let got = classify_launch(&["--right".into(), "a.md".into()], &dir).unwrap();
+        assert_eq!(
+            got,
+            LaunchClass::Isolated(LaunchArgs { target: Target::File(dir.join("a.md")), right: true })
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn classify_stdin_right_is_isolated() {
+        let cwd = std::env::temp_dir();
+        let got = classify_launch(&["-".into(), "--right".into()], &cwd).unwrap();
+        assert_eq!(got, LaunchClass::Isolated(LaunchArgs { target: Target::Stdin, right: true }));
+    }
+
+    #[test]
+    fn classify_ordinary_file_is_singleton_routed() {
+        let dir = fixture_dir("classify_ordinary");
+        let got = classify_launch(&["a.md".into()], &dir).unwrap();
+        assert_eq!(got, LaunchClass::SingletonRouted(Some(dir.join("a.md"))));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn classify_missing_file_is_singleton_routed() {
+        // vim `:e newfile.md` convention extends to the classifier: a
+        // to-be-created path still joins the singleton with a file target.
+        let cwd = std::env::temp_dir();
+        let got = classify_launch(&["nope_classify_xyz.md".into()], &cwd).unwrap();
+        assert_eq!(got, LaunchClass::SingletonRouted(Some(cwd.join("nope_classify_xyz.md"))));
+    }
+
+    #[test]
+    fn classify_no_args_is_singleton_routed_none() {
+        // A bare `mermark` launch is not an error — it's "join the
+        // singleton, no document", the same intent as focusing it.
+        let cwd = std::env::temp_dir();
+        assert_eq!(classify_launch(&[], &cwd).unwrap(), LaunchClass::SingletonRouted(None));
+    }
+
+    #[test]
+    fn classify_directory_is_rejected() {
+        let cwd = std::env::temp_dir();
+        match classify_launch(&[cwd.to_string_lossy().into_owned()], &cwd) {
+            Err(CliError::IsDirectory(_)) => {}
+            other => panic!("expected IsDirectory, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_version_wins_over_everything() {
+        // Matches run()'s pre-existing priority: version short-circuits
+        // ahead of even the bundle subcommand.
+        let cwd = std::env::temp_dir();
+        let got = classify_launch(&["--version".into(), "bundle".into()], &cwd).unwrap();
+        assert_eq!(got, LaunchClass::Headless(Headless::Version));
+    }
+
+    #[test]
+    fn classify_bundle_token_is_headless() {
+        let cwd = std::env::temp_dir();
+        let got = classify_launch(&["bundle".into(), "f.md".into()], &cwd).unwrap();
+        assert_eq!(got, LaunchClass::Headless(Headless::Bundle));
+    }
+
+    #[test]
+    fn classify_bundle_lookalike_file_is_singleton_routed() {
+        // A file literally named `bundle.md` opened via a path (not the bare
+        // `bundle` token) is an ordinary file open, not the subcommand.
+        let dir = fixture_dir("classify_bundle_lookalike");
+        fs::write(dir.join("bundle.md"), "# hi").unwrap();
+        let got = classify_launch(&["./bundle.md".into()], &dir).unwrap();
+        assert_eq!(got, LaunchClass::SingletonRouted(Some(dir.join("./bundle.md"))));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn joins_singleton_truth_table() {
+        let cwd = std::env::temp_dir();
+        assert!(!LaunchClass::Headless(Headless::Version).joins_singleton());
+        assert!(!LaunchClass::Headless(Headless::Bundle).joins_singleton());
+        assert!(!LaunchClass::Isolated(LaunchArgs { target: Target::Stdin, right: false })
+            .joins_singleton());
+        assert!(!LaunchClass::Isolated(LaunchArgs {
+            target: Target::File(cwd.join("a.md")),
+            right: true
+        })
+        .joins_singleton());
+        assert!(LaunchClass::SingletonRouted(Some(cwd.join("a.md"))).joins_singleton());
+        assert!(LaunchClass::SingletonRouted(None).joins_singleton());
+    }
+
+    #[test]
+    fn file_target_exposes_creatable_paths() {
+        let cwd = std::env::temp_dir();
+        let p = cwd.join("target.md");
+        assert_eq!(
+            LaunchClass::Isolated(LaunchArgs { target: Target::File(p.clone()), right: true })
+                .file_target(),
+            Some(p.as_path())
+        );
+        assert_eq!(LaunchClass::SingletonRouted(Some(p.clone())).file_target(), Some(p.as_path()));
+        assert_eq!(
+            LaunchClass::Isolated(LaunchArgs { target: Target::Stdin, right: false }).file_target(),
+            None
+        );
+        assert_eq!(LaunchClass::SingletonRouted(None).file_target(), None);
+        assert_eq!(LaunchClass::Headless(Headless::Version).file_target(), None);
     }
 }

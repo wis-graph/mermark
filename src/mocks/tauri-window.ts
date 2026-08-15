@@ -25,6 +25,12 @@ async function requestClose(): Promise<void> {
 }
 
 const currentWindow = {
+  // Single-instance CLI routing (Todo 2): the backend resolves `window.label()`
+  // server-side (the frontend can't forge it), and registerCliOpenRouting()
+  // reads it to scope its `listen("cli-open-request", ..., { target: label })`
+  // call. The browser mock only ever has one window, so "main" is the only
+  // label that ever needs to exist here.
+  label: "main",
   onCloseRequested(handler: CloseRequestedHandler): Promise<() => void> {
     closeHandlers.add(handler);
     return Promise.resolve(() => closeHandlers.delete(handler));

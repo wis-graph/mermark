@@ -5,6 +5,7 @@ import { findHeadingByText } from "./outline";
 import { jumpTo } from "./footnote-nav";
 import { openExternal } from "./open-external";
 import { isEditableTextFile } from "../sidebar/explorer/file-icons";
+import { requestDocumentOpen } from "./document-open";
 
 /** Whether a wikilink target opens in mermark's own editor window (`open_path`)
  *  rather than being handed to the external app (`openAsset`). Delegates to
@@ -147,10 +148,12 @@ export class WikilinkWidget extends WidgetType {
 
       if (fileExists) {
         if (isMd) {
-          invoke("open_path", { path: this.path }).catch((err: any) => {
-            a.classList.add("cm-wikilink-error");
-            a.title = `Failed to open: ${String(err)}`;
-          });
+          // Current-window safe open (single-window-opening Todo 3) — was
+          // `invoke("open_path", …)` (a brand-new window). Failure feedback
+          // moves with it: openDocumentSafely's own recovery modal now
+          // surfaces open failures (more visible than the old anchor title),
+          // so no local `.catch` here.
+          requestDocumentOpen({ kind: "resolved-document", path: this.path });
         } else {
           openAsset(this.path).catch((err: any) => {
             a.classList.add("cm-wikilink-error");
@@ -165,10 +168,9 @@ export class WikilinkWidget extends WidgetType {
               a.classList.remove("cm-wikilink-missing");
               a.classList.add("cm-wikilink-active");
               fileExists = true; // update state so subsequent clicks don't re-create it
-              return invoke("open_path", { path: this.path }).catch((err: any) => {
-                a.classList.add("cm-wikilink-error");
-                a.title = `Failed to open file: ${String(err)}`;
-              });
+              // Current-window safe open, same as the existing-file branch
+              // above — was `invoke("open_path", …)`.
+              requestDocumentOpen({ kind: "resolved-document", path: this.path });
             })
             .catch((err: any) => {
               a.classList.add("cm-wikilink-error");

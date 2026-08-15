@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { wikilinkPath, isImageTarget, sameFileHeadingAnchor, WikilinkWidget } from "../src/markdown/wikilink";
+import { setDocumentOpenHandler } from "../src/markdown/document-open";
 
 const mockInvoke = vi.fn();
 const mockOpenAsset = vi.fn();
@@ -9,6 +10,15 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
   convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }));
+
+// document-open.ts's handler slot is a module-level singleton that outlives
+// individual tests — every test that clicks a resolving wikilink must rewire
+// its own spy so a leftover handler from a previous test can't leak through.
+let documentOpenSpy = vi.fn();
+beforeEach(() => {
+  documentOpenSpy = vi.fn();
+  setDocumentOpenHandler(documentOpenSpy);
+});
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: (...args: any[]) => mockOpenAsset(...args),
@@ -112,7 +122,8 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     expect(dom.className).not.toContain("cm-wikilink-missing");
 
     dom.click();
-    expect(mockInvoke).toHaveBeenCalledWith("open_path", { path: "existing.md" });
+    expect(documentOpenSpy).toHaveBeenCalledWith({ kind: "resolved-document", path: "existing.md" });
+    expect(mockInvoke).not.toHaveBeenCalledWith("open_path", expect.any(Object));
   });
 
   it("checks existence and opens non-markdown asset via openAsset if existing", async () => {
@@ -142,7 +153,6 @@ describe("WikilinkWidget toDOM click behaviors", () => {
         exists = true;
         return Promise.resolve();
       }
-      if (cmd === "open_path") return Promise.resolve();
       return Promise.resolve();
     });
 
@@ -159,15 +169,18 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mockInvoke).toHaveBeenCalledWith("create_markdown_file", { path: "missing.md" });
-    expect(mockInvoke).toHaveBeenCalledWith("open_path", { path: "missing.md" });
+    expect(documentOpenSpy).toHaveBeenCalledWith({ kind: "resolved-document", path: "missing.md" });
+    expect(mockInvoke).not.toHaveBeenCalledWith("open_path", expect.any(Object));
     expect(dom.className).toContain("cm-wikilink-active");
     expect(dom.className).not.toContain("cm-wikilink-missing");
   });
 
   // txt-as-md (_workspace/01_architect_design_txt.md §4): [[note.txt]] opens
-  // via open_path (mermark's own window), same as [[note.md]] — NOT openAsset
-  // (the external-app path a pre-txt .txt target used to take).
-  it("[[note.txt]] existing target opens via open_path (mermark window), not openAsset", async () => {
+  // via the current-window seam (mermark's own window), same as [[note.md]]
+  // — NOT openAsset (the external-app path a pre-txt .txt target used to
+  // take). single-window-opening Todo 3: the seam replaces the old
+  // `invoke("open_path", …)` new-window call.
+  it("[[note.txt]] existing target opens via the current-window seam (mermark window), not openAsset", async () => {
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === "path_exists") return Promise.resolve(true);
       return Promise.resolve();
@@ -179,7 +192,8 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     expect(dom.className).toContain("cm-wikilink-active");
 
     dom.click();
-    expect(mockInvoke).toHaveBeenCalledWith("open_path", { path: "existing.txt" });
+    expect(documentOpenSpy).toHaveBeenCalledWith({ kind: "resolved-document", path: "existing.txt" });
+    expect(mockInvoke).not.toHaveBeenCalledWith("open_path", expect.any(Object));
     expect(mockOpenAsset).not.toHaveBeenCalled();
   });
 
@@ -191,7 +205,6 @@ describe("WikilinkWidget toDOM click behaviors", () => {
         exists = true;
         return Promise.resolve();
       }
-      if (cmd === "open_path") return Promise.resolve();
       return Promise.resolve();
     });
 
@@ -204,7 +217,8 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mockInvoke).toHaveBeenCalledWith("create_markdown_file", { path: "missing.txt" });
-    expect(mockInvoke).toHaveBeenCalledWith("open_path", { path: "missing.txt" });
+    expect(documentOpenSpy).toHaveBeenCalledWith({ kind: "resolved-document", path: "missing.txt" });
+    expect(mockInvoke).not.toHaveBeenCalledWith("open_path", expect.any(Object));
     expect(dom.className).toContain("cm-wikilink-active");
   });
 
@@ -236,7 +250,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it("regression: a real path (unaffected by the anchor branch) still opens via open_path", async () => {
+  it("regression: a real path (unaffected by the anchor branch) still opens via the current-window seam", async () => {
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === "path_exists") return Promise.resolve(true);
       return Promise.resolve();
@@ -245,7 +259,8 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     const dom = widget.toDOM({} as any);
     await new Promise((resolve) => setTimeout(resolve, 0));
     dom.click();
-    expect(mockInvoke).toHaveBeenCalledWith("open_path", { path: "/abs/note.md" });
+    expect(documentOpenSpy).toHaveBeenCalledWith({ kind: "resolved-document", path: "/abs/note.md" });
+    expect(mockInvoke).not.toHaveBeenCalledWith("open_path", expect.any(Object));
   });
 });
 

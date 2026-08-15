@@ -20,7 +20,18 @@ export type UnlistenFn = () => void;
 const listeners = new Map<string, Set<EventCallback<unknown>>>();
 let nextId = 1;
 
-export async function listen<T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> {
+// `_options` accepts the real API's third arg (e.g. `{ target: label }`, used
+// by registerCliOpenRouting() for recipient-scoped delivery). The browser mock
+// only ever runs a single window, so there is no second recipient to filter
+// out — every listener for `event` gets fanned in, same as before options
+// existed. Real recipient-scoped filtering is exercised by
+// tests/main-wiring.test.ts's own event mock and the Rust broker's tests, not
+// here.
+export async function listen<T>(
+  event: string,
+  handler: EventCallback<T>,
+  _options?: unknown,
+): Promise<UnlistenFn> {
   let set = listeners.get(event);
   if (!set) {
     set = new Set();

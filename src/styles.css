@@ -708,6 +708,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    same tone as .cm-wikilink-error, applied to any anchor that failed to open
    (main-body link, wikilink, autolink, or a table-cell/changelog anchor). */
 .cm-external-link-error { color: #dc2626; text-decoration: underline wavy; }
+/* Same tone as .cm-external-link-error, applied to a standard local Markdown
+   link (single-window-opening Todo 3) rejected by local-doc-link.ts — e.g. a
+   traversal attempt or a missing target. */
+.cm-local-link-error { color: #dc2626; text-decoration: underline wavy; }
 
 /* Links rendered inside a table cell or the settings version pane's
    changelog list (both via renderInlineMarkdown/inline-render.ts) share the

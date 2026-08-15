@@ -22,6 +22,12 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# Routes an ordinary `mermark <file>` launch to the already-running instance
+# instead of opening a second window (single-window-opening Todo 2). Installed
+# conditionally at runtime — only for `LaunchClass::SingletonRouted` launches,
+# never for `-`/`--right` (`Isolated`) — so isolated processes never risk
+# being intercepted. See src-tauri/src/single_instance.rs.
+tauri-plugin-single-instance = "2.4.3"
 serde = { version = "1", features = ["derive"] }
 # OS RNG for `htmlview.rs`'s per-open view token (128-bit random, hex — the
 # access-scoping value the htmlview:// protocol's per-token-origin isolation

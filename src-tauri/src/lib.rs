@@ -8,6 +8,7 @@ mod commands;
 mod epubview;
 mod htmlview;
 mod hwp;
+mod single_instance;
 mod sqlite;
 mod watcher;
 
@@ -195,30 +196,80 @@ fn dispatch_bundle(rest: &[String]) -> ! {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    let cwd = std::env::current_dir().unwrap_or_default();
 
-    // `-v`/`--version` short-circuits ahead of every other launch path (even
-    // `bundle`): print the version and exit before any window/webview is
-    // created, same shape as the `bundle` dispatch below. The version string
-    // comes from `CARGO_PKG_VERSION` (Cargo.toml, bumped by release.sh) —
-    // the single source of truth, never duplicated as a hand-written
+    // Pre-builder launch classification (single-window-opening Todo 2): the
+    // launch class is decided once, here, before `tauri::Builder` even
+    // exists — everything downstream (whether the single-instance plugin
+    // gets installed, whether a file target gets created, what `.setup`
+    // does) branches on this one answer instead of re-deriving it. This
+    // ordering is load-bearing for `Isolated` launches — see
+    // `cli::LaunchClass`'s doc comment and `single_instance.rs`'s module
+    // doc for why.
+    let class = match cli::classify_launch(&argv, &cwd) {
+        Ok(class) => class,
+        Err(cli::CliError::IsDirectory(p)) => {
+            eprintln!(
+                "mermark: {} is a directory, not a file.\nusage: mermark <file.md>",
+                p.display()
+            );
+            std::process::exit(2);
+        }
+        // classify_launch absorbs a missing argument into
+        // `SingletonRouted(None)` ("join the singleton, no document")
+        // rather than propagating `Missing` as an error.
+        Err(cli::CliError::Missing) => unreachable!("classify_launch never returns Missing"),
+    };
+
+    // Headless dispatch: `--version`/`bundle` print to stdout and exit
+    // before any window or webview exists — same shape as before, just
+    // routed through the classifier instead of two separate ad hoc checks.
+    // The version string comes from `CARGO_PKG_VERSION` (Cargo.toml, bumped
+    // by release.sh) — the single source of truth, never a hand-written
     // constant. Console output only reaches a terminal on macOS/Linux; a
     // Windows release build is `windows_subsystem = "windows"` (no attached
     // console), the same pre-existing limitation `bundle` already has — the
     // CLI surface itself is a macOS-first concept.
-    if cli::is_version_flag(&argv) {
-        println!("mermark {}", env!("CARGO_PKG_VERSION"));
-        std::process::exit(0);
+    match &class {
+        cli::LaunchClass::Headless(cli::Headless::Version) => {
+            println!("mermark {}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+        cli::LaunchClass::Headless(cli::Headless::Bundle) => {
+            dispatch_bundle(&argv[1..]); // never returns (always exits)
+        }
+        _ => {}
     }
 
-    // Headless subcommand split: `mermark bundle <file.md>` prints an LLM bundle
-    // and exits before any window/webview is created. The window arg parser
-    // never sees the `bundle` token (separation of concerns: subcommand detection
-    // here, window args in cli::parse_args).
-    if is_bundle_subcommand(&argv) {
-        dispatch_bundle(&argv[1..]); // never returns (always exits)
+    // File-target creation (vim's `:e newfile.md` convention) happens here,
+    // pre-builder, for both `Isolated(File)` and `SingletonRouted(Some)` —
+    // never inside `.setup`. A second process's `.setup` never runs once
+    // the single-instance plugin's own setup has already notified the
+    // primary and exited it (see `single_instance.rs`'s module doc), so
+    // this pre-builder point is the only place a second process can still
+    // report a creation failure to its own terminal.
+    if let Some(path) = class.file_target() {
+        if let Err(e) = ensure_file_target(path) {
+            eprintln!("mermark: cannot open {}: {e}", path.display());
+            std::process::exit(2);
+        }
     }
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    if class.joins_singleton() {
+        // README:60 — the single-instance plugin must be the *first*
+        // plugin registered (plugin setup runs in registration order, and
+        // this plugin's own setup is what notifies the primary process and
+        // exits a second one). Installed *only* for `SingletonRouted`
+        // launches: an `Isolated` process never installs it, so it can
+        // never be intercepted — installation itself is the interception
+        // gate.
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            single_instance::route_secondary_invocation(app, &argv, &cwd);
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -256,6 +307,11 @@ pub fn run() {
         .register_uri_scheme_protocol("epub", |ctx, request| {
             epubview::handle_epub_view_request(ctx.app_handle(), &request)
         })
+        // The single-window-opening routing broker's managed state
+        // (recency/readiness/queues) plus the window-lifecycle hook that
+        // feeds it — see `single_instance.rs` module doc.
+        .manage(single_instance::RoutingState::default())
+        .on_window_event(single_instance::track_window_event)
         .invoke_handler(tauri::generate_handler![
             commands::read_file,
             commands::write_file,
@@ -280,48 +336,30 @@ pub fn run() {
             hwp::hwp_close,
             sqlite::sqlite_tables,
             sqlite::sqlite_table_info,
-            sqlite::sqlite_rows
+            sqlite::sqlite_rows,
+            single_instance::register_window_ready,
+            single_instance::acknowledge_open_request
         ])
-        .setup(|app| {
+        .setup(move |app| {
             #[cfg(target_os = "macos")]
             if let Err(e) = setup_cli_path() {
                 eprintln!("mermark: failed to setup CLI path: {e}");
             }
-            let args: Vec<String> = std::env::args().skip(1).collect();
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let parsed_args = cli::parse_args(&args, &cwd);
-            let (target, right) = match parsed_args {
-                Ok(args) => (Some(args.target), args.right),
-                Err(cli::CliError::Missing) => (None, false),
-                Err(cli::CliError::IsDirectory(p)) => {
-                    eprintln!(
-                        "mermark: {} is a directory, not a file.\nusage: mermark <file.md>",
-                        p.display()
-                    );
-                    std::process::exit(2);
-                }
-            };
 
-            // Resolve the parse-time intent into a concrete file path to
-            // open. `File` already carries one; `Stdin` performs the
-            // effect (read piped stdin into a scratch .md) the pure
-            // parser deferred. Both converge here so the url/geometry/
-            // builder code below runs once for either source.
-            let target_path = match target {
-                Some(cli::Target::File(path)) => {
-                    // Create the file if it doesn't exist yet (vim-style)
-                    // before opening; an existing file is opened as-is.
-                    // A creation failure (e.g. unwritable parent dir) is a
-                    // launch error: report it and exit gracefully with the
-                    // same code/style as the other CLI failures below
-                    // rather than panicking out of `setup`.
-                    if let Err(e) = ensure_file_target(&path) {
-                        eprintln!("mermark: cannot open {}: {e}", path.display());
-                        std::process::exit(2);
-                    }
-                    Some(path)
-                }
-                Some(cli::Target::Stdin) => {
+            // `class` was fully decided pre-builder (above); `Headless`
+            // already exited before `tauri::Builder` was even constructed,
+            // so only `Isolated`/`SingletonRouted` ever reach here.
+            // `.setup` performs the one effect the classifier deferred —
+            // reading piped stdin into a scratch `.md` file — and then
+            // builds the window; file targets were already created
+            // pre-builder, so both file-carrying arms just pass the path
+            // through.
+            let (target_path, right) = match &class {
+                cli::LaunchClass::Isolated(cli::LaunchArgs {
+                    target: cli::Target::File(path),
+                    right,
+                }) => (Some(path.clone()), *right),
+                cli::LaunchClass::Isolated(cli::LaunchArgs { target: cli::Target::Stdin, right }) => {
                     if !stdin_is_piped() {
                         eprintln!(
                             "mermark: '-' reads piped stdin; nothing was piped.\nusage: cat file.md | mermark -"
@@ -333,9 +371,12 @@ pub fn run() {
                         &std::env::temp_dir(),
                     )
                     .map_err(|e| format!("mermark: failed to buffer stdin: {e}"))?;
-                    Some(path)
+                    (Some(path), *right)
                 }
-                None => None,
+                cli::LaunchClass::SingletonRouted(path) => (path.clone(), false),
+                cli::LaunchClass::Headless(_) => {
+                    unreachable!("headless classes exit before .setup runs")
+                }
             };
             let url = match target_path {
                 Some(path) => tauri::WebviewUrl::App(

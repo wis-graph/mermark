@@ -25,6 +25,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 }));
 
 import { mountEditor } from "../src/editor";
+import { setDocumentOpenHandler, type DocumentOpenRequest } from "../src/markdown/document-open";
 
 const DOC = `# Title
 
@@ -216,8 +217,10 @@ describe("full-editor render smoke", () => {
     view.destroy();
   });
 
-  it("a relative-path link gets no data-href and its click falls through to caret placement, not openExternal (D)", () => {
+  it("a relative-path link gets no data-href but IS a local-link candidate, and its click routes through the document-open seam, not openExternal (D, single-window-opening Todo 3)", () => {
     mockOpenUrl.mockClear();
+    const openSpy = vi.fn();
+    setDocumentOpenHandler(openSpy);
     const doc = "go [rel](./rel.md) now\n\nfar away";
     const view = mount(host, doc);
     view.dispatch({ selection: { anchor: view.state.doc.length } });
@@ -226,10 +229,60 @@ describe("full-editor render smoke", () => {
     expect(link).not.toBeNull();
     // no external marker on an internal-looking href
     expect(link!.hasAttribute("data-href")).toBe(false);
+    // but it IS a recognized local-document-link candidate now
+    expect(link!.dataset.localHref).toBe("./rel.md");
+    expect(link!.title).toBe("./rel.md");
     link!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     expect(mockOpenUrl).not.toHaveBeenCalled();
+    expect(openSpy).toHaveBeenCalledWith({
+      kind: "standard-link",
+      href: "./rel.md",
+      feedbackEl: link,
+    } satisfies DocumentOpenRequest);
     view.destroy();
   });
+
+  it("Alt+click or a non-primary-button click on a local link does not request an open (caret/context-menu passthrough, single-window-opening Todo 3)", () => {
+    const openSpy = vi.fn();
+    setDocumentOpenHandler(openSpy);
+    const doc = "go [rel](./rel.md) now\n\nfar away";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    (view as unknown as { measure(): void }).measure();
+    const link = view.contentDOM.querySelector(".cm-link") as HTMLElement | null;
+    expect(link).not.toBeNull();
+
+    link!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, altKey: true }));
+    expect(openSpy).not.toHaveBeenCalled();
+
+    link!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 2 }));
+    expect(openSpy).not.toHaveBeenCalled();
+
+    view.destroy();
+  });
+
+  it.each([
+    ["javascript:alert(1)", "javascript: scheme"],
+    ["/abs.md", "rooted absolute path"],
+    ["C:\\a.md", "windows drive path"],
+    ["./img.png", "non-document extension"],
+  ])(
+    "[x](%s) — %s — gets no data-local-href and its click requests no open (single-window-opening Todo 3)",
+    (href) => {
+      const openSpy = vi.fn();
+      setDocumentOpenHandler(openSpy);
+      const doc = `go [x](${href}) now\n\nfar away`;
+      const view = mount(host, doc);
+      view.dispatch({ selection: { anchor: view.state.doc.length } });
+      (view as unknown as { measure(): void }).measure();
+      const link = view.contentDOM.querySelector(".cm-link") as HTMLElement | null;
+      expect(link).not.toBeNull();
+      expect(link!.hasAttribute("data-local-href")).toBe(false);
+      link!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      expect(openSpy).not.toHaveBeenCalled();
+      view.destroy();
+    },
+  );
 
   it("clicking an external [text](url) link routes through openExternal (open_url), no window.open fallback (D)", async () => {
     mockOpenUrl.mockClear();
