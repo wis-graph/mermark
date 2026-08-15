@@ -54,7 +54,7 @@ break the in-app updater for CLI-launched instances):
 mermark path/to/file.md
 ```
 
-Running with no file prints usage and exits with code 2. A second `mermark file.md`
+Running with no file opens a window on the welcome pane. A second `mermark file.md`
 invocation is routed to your last-focused mermark window rather than opening a new one
 (see "Window routing" above); `mermark -` and `mermark --right` are the exceptions and
 always open independently. Wikilinks open their target in the current window. Relative
