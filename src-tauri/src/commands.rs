@@ -417,7 +417,7 @@ pub struct LinkTarget {
 /// (`png|jpe?g|gif|webp|svg|avif|bmp`); the two sets must stay identical so the
 /// picker and the embed renderer agree on what counts as an image. Case-insensitive
 /// to match the TS `/i` flag.
-fn is_image_ext(ext: &str) -> bool {
+pub(crate) fn is_image_ext(ext: &str) -> bool {
     matches!(
         ext.to_ascii_lowercase().as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "avif" | "bmp"

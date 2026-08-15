@@ -12,6 +12,20 @@ import { resolveImageSrc, resolveImageUrl, ImageWidget, viewerSourceFor, isRemot
 import { recursiveImageSearchSetting } from "../src/settings/app";
 import { setImageOpenHandler } from "../src/markdown/image-open";
 import type { EditorView } from "@codemirror/view";
+import {
+  isVaultImageRef,
+  parseVaultImageRef,
+  encodeVaultImagePath,
+  vaultAttachmentMarkdown,
+  attachmentFailureMessage,
+  setVaultImageContext,
+  vaultImageContext,
+  VAULT_ATTACHMENT_MESSAGES,
+  VAULT_IMAGE_REJECTION_MESSAGES,
+  type VaultImageRejectionReason,
+  type AttachmentFailureKind,
+} from "../src/markdown/vault-image";
+import { decodeOnceStrict } from "../src/markdown/local-doc-link";
 
 // The click handler's `attachAltClickEdit` only ever touches `view` when a
 // MOUSEDOWN carries Alt (not exercised by these click-only tests), so a stub
@@ -219,5 +233,194 @@ describe("ImageWidget click → open viewer (_workspace/01_architect_design_imgc
     await new Promise((r) => setTimeout(r, 0));
     clickAt(img, 10, 10);
     expect(openSpy).toHaveBeenCalledWith("/mock/found/pic.png");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Vault image attachment contracts (single-window-opening Wave 2, Todo 4).
+// Pure module — no invoke calls, so the shared invokeSpy above is untouched
+// by any test in this section.
+// ---------------------------------------------------------------------------
+
+describe("isVaultImageRef", () => {
+  it("true only for a lowercase `vault:` prefix", () => {
+    expect(isVaultImageRef("vault:.attachments/pic.png")).toBe(true);
+  });
+  it("false for uppercase VAULT: — existing relative-path-join semantics own it instead", () => {
+    expect(isVaultImageRef("VAULT:.attachments/pic.png")).toBe(false);
+  });
+  it("false for an ordinary relative path", () => {
+    expect(isVaultImageRef("img/a.png")).toBe(false);
+  });
+  it("false for a remote URL", () => {
+    expect(isVaultImageRef("https://x.com/a.png")).toBe(false);
+  });
+});
+
+describe("parseVaultImageRef — accepted", () => {
+  it("an exact vault-relative reference under .attachments", () => {
+    expect(parseVaultImageRef("vault:.attachments/pic.png")).toEqual({ ok: true, relPath: ".attachments/pic.png" });
+  });
+  it("a nested path", () => {
+    expect(parseVaultImageRef("vault:notes/img/pic.png")).toEqual({ ok: true, relPath: "notes/img/pic.png" });
+  });
+  it("a percent-encoded Korean/space filename decodes exactly once", () => {
+    const result = parseVaultImageRef("vault:.attachments/%EC%82%AC%EC%A7%84%201.png");
+    expect(result).toEqual({ ok: true, relPath: ".attachments/사진 1.png" });
+  });
+  it("an uppercase extension still passes the (lowercased) extension gate", () => {
+    expect(parseVaultImageRef("vault:PIC.PNG")).toEqual({ ok: true, relPath: "PIC.PNG" });
+  });
+});
+
+describe("parseVaultImageRef — rejected (reason asserted individually)", () => {
+  const rejectionReason = (raw: string): VaultImageRejectionReason | undefined => {
+    const result = parseVaultImageRef(raw);
+    return result.ok ? undefined : result.reason;
+  };
+
+  it("`..` at the start of the path is traversal", () => {
+    expect(rejectionReason("vault:../escape.png")).toBe("traversal");
+  });
+  it("`..` buried inside the path is traversal", () => {
+    expect(rejectionReason("vault:a/../../b.png")).toBe("traversal");
+  });
+  it("a filesystem-absolute path is rooted-path", () => {
+    expect(rejectionReason("vault:/abs/a.png")).toBe("rooted-path");
+  });
+  it("a remote URL disguised behind the vault: prefix is not-an-image (scheme treated as ordinary text, fails the extension gate)", () => {
+    expect(rejectionReason("vault:https://x/a.png")).toBe("not-an-image");
+  });
+  it("a backslash makes the separators mixed", () => {
+    expect(rejectionReason("vault:a\\b.png")).toBe("mixed-separators");
+  });
+  it("a malformed percent-escape fails to decode", () => {
+    expect(rejectionReason("vault:pic%zz.png")).toBe("malformed-escape");
+  });
+  it("a NUL byte (from %00) is rejected", () => {
+    expect(rejectionReason("vault:pic%00.png")).toBe("nul");
+  });
+  it("a non-image document extension fails the extension gate", () => {
+    expect(rejectionReason("vault:note.md")).toBe("not-an-image");
+  });
+  it("an empty path (nothing after vault:) is empty-path", () => {
+    expect(rejectionReason("vault:")).toBe("empty-path");
+  });
+  it("a trailing slash leaves an empty final segment — empty-path", () => {
+    expect(rejectionReason("vault:.attachments/")).toBe("empty-path");
+  });
+  it("a leading double slash reads as a UNC-shaped path, not a plain relative one", () => {
+    expect(rejectionReason("vault://escape.png")).toBe("unc-path");
+  });
+  it("a Windows drive prefix is drive-path", () => {
+    expect(rejectionReason("vault:C:\\pic.png")).toBe("drive-path");
+  });
+});
+
+describe("encodeVaultImagePath ↔ decodeOnceStrict round trip", () => {
+  it("round-trips a Korean filename with a space", () => {
+    const encoded = encodeVaultImagePath(".attachments/사진 1.png");
+    expect(decodeOnceStrict(encoded)).toBe(".attachments/사진 1.png");
+  });
+  it("round-trips parentheses in a filename", () => {
+    const encoded = encodeVaultImagePath(".attachments/a(b).png");
+    expect(decodeOnceStrict(encoded)).toBe(".attachments/a(b).png");
+  });
+  it("leaves an already-safe path unchanged (identity encode)", () => {
+    expect(encodeVaultImagePath(".attachments/pic-1.png")).toBe(".attachments/pic-1.png");
+  });
+});
+
+describe("vaultAttachmentMarkdown", () => {
+  it("builds `![stem](vault:.attachments/<fileName>)` for a name needing no encoding", () => {
+    expect(vaultAttachmentMarkdown("pic-1.png")).toBe("![pic-1](vault:.attachments/pic-1.png)");
+  });
+  it("percent-encodes a space-containing name in the link destination", () => {
+    expect(vaultAttachmentMarkdown("사진 1.png")).toBe(
+      `![사진 1](vault:${encodeVaultImagePath(".attachments/사진 1.png")})`,
+    );
+  });
+});
+
+describe("VAULT_ATTACHMENT_MESSAGES / VAULT_IMAGE_REJECTION_MESSAGES — full coverage", () => {
+  const allRejectionReasons: VaultImageRejectionReason[] = [
+    "not-vault-ref",
+    "empty-path",
+    "malformed-escape",
+    "drive-path",
+    "unc-path",
+    "rooted-path",
+    "nul",
+    "mixed-separators",
+    "traversal",
+    "not-an-image",
+    "no-permanent-vault",
+    "vault-root-unavailable",
+    "missing-target",
+    "outside-vault",
+    "not-a-regular-file",
+  ];
+  const allAttachmentFailureKinds: AttachmentFailureKind[] = [
+    "no-permanent-vault",
+    "no-document",
+    "cancelled",
+    "invalid-image",
+    "copy-failed",
+    "dir-invalid",
+    "escape",
+    "insertion-failed",
+    "rollback-changed",
+    "rollback-io",
+    "rollback-unknown",
+  ];
+
+  it("every VaultImageRejectionReason has a non-empty Korean message", () => {
+    for (const reason of allRejectionReasons) {
+      expect(VAULT_IMAGE_REJECTION_MESSAGES[reason]).toBeTruthy();
+    }
+  });
+  it("every AttachmentFailureKind has a non-empty Korean message", () => {
+    for (const kind of allAttachmentFailureKinds) {
+      expect(VAULT_ATTACHMENT_MESSAGES[kind]).toBeTruthy();
+    }
+  });
+});
+
+describe("attachmentFailureMessage", () => {
+  it("maps ATTACH_COPY: to the copy-failure message", () => {
+    expect(attachmentFailureMessage("ATTACH_COPY: disk full")).toBe(VAULT_ATTACHMENT_MESSAGES["copy-failed"]);
+  });
+  it("maps ATTACH_INVALID_IMAGE: to the invalid-image message", () => {
+    expect(attachmentFailureMessage("ATTACH_INVALID_IMAGE: not an image")).toBe(
+      VAULT_ATTACHMENT_MESSAGES["invalid-image"],
+    );
+  });
+  it("maps ATTACH_DIR_INVALID: to the dir-invalid message", () => {
+    expect(attachmentFailureMessage("ATTACH_DIR_INVALID: symlink")).toBe(VAULT_ATTACHMENT_MESSAGES["dir-invalid"]);
+  });
+  it("maps ATTACH_ESCAPE: to the escape message", () => {
+    expect(attachmentFailureMessage("ATTACH_ESCAPE: bad basename")).toBe(VAULT_ATTACHMENT_MESSAGES["escape"]);
+  });
+  it("maps ROLLBACK_CHANGED: to the rollback-changed message", () => {
+    expect(attachmentFailureMessage("ROLLBACK_CHANGED: /a/b")).toBe(VAULT_ATTACHMENT_MESSAGES["rollback-changed"]);
+  });
+  it("maps ROLLBACK_IO: to the rollback-io message", () => {
+    expect(attachmentFailureMessage("ROLLBACK_IO: /a/b")).toBe(VAULT_ATTACHMENT_MESSAGES["rollback-io"]);
+  });
+  it("maps ROLLBACK_UNKNOWN: to the rollback-unknown message", () => {
+    expect(attachmentFailureMessage("ROLLBACK_UNKNOWN: 7")).toBe(VAULT_ATTACHMENT_MESSAGES["rollback-unknown"]);
+  });
+  it("falls back to the copy-failure message for an unrecognized error string", () => {
+    expect(attachmentFailureMessage("some unexpected native error")).toBe(VAULT_ATTACHMENT_MESSAGES["copy-failed"]);
+  });
+});
+
+describe("vault image context slot (structural global-vault containment)", () => {
+  it("is null before any provider is wired, and reflects whatever the wired provider returns afterward", () => {
+    expect(vaultImageContext()).toBeNull(); // no provider wired yet in this test's execution
+    setVaultImageContext(() => null); // simulates the global vault (no permanent root)
+    expect(vaultImageContext()).toBeNull();
+    setVaultImageContext(() => ({ rootPath: "/vault" }));
+    expect(vaultImageContext()).toEqual({ rootPath: "/vault" });
   });
 });

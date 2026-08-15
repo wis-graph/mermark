@@ -2,6 +2,7 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub mod attachments;
 mod bundle;
 pub mod cli;
 mod commands;
