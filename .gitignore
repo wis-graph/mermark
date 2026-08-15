@@ -40,3 +40,6 @@ docs/superpowers/
 *.njsproj
 *.sln
 *.sw?
+
+# 과거 리뷰 실행 기록 — 결론은 CODE_REVIEW.md와 코드에 반영됨. 로컬 보관용.
+final/
