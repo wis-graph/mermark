@@ -2,6 +2,8 @@
 
 Tauri 2 + CodeMirror 6 + TypeScript Markdown·Mermaid 에디터 (Obsidian식 라이브프리뷰, CLI로 단일 파일 열기).
 
+**릴리스는 `scripts/release.sh`를 따른다** — 빌드까지 그 스크립트가 소유한다. `npm run tauri build`를 직접 쓰면 셸 환경의 `TAURI_SIGNING_PRIVATE_KEY`(다른 프로젝트 키) 로 업데이터가 서명돼 런타임에 거부된다.
+
 ## 하네스: mermark 개발
 
 **목표:** 기능 추가·버그픽스·리팩토링을 설계→구현→검증→감사 파이프라인으로 일관되게 처리한다.
