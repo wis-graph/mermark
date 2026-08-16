@@ -1523,10 +1523,28 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 
 .workspace-header { display: flex; align-items: center; gap: .45em; }
 .workspace-title { flex: 1; }
-.workspace-empty { padding: .35em .75em; color: var(--sidebar-muted); font-size: calc(11em / 13); }
+/* Drops the font-size override this panel used to declare alone (11px-base),
+   so it inherits the ambient 13px-base like outline-empty/recent-empty do.
+   Inline padding is the rows' .4em rather than those panels' .5em because this
+   one renders INSIDE the vault list, under the group heading it belongs to —
+   matching its neighbours' left edge beats matching another panel's number. */
+.workspace-empty { padding: .35em .4em; color: var(--sidebar-muted); }
 .workspace-vault-list { display: flex; flex-direction: column; padding: .25em .4em; }
 .workspace-vault-group { display: flex; flex-direction: column; gap: .1em; }
 .workspace-vault-group + .workspace-vault-group { margin-top: .55em; }
+/* Group heading inside the vault list (the permanent group's "영구 볼트" — the
+   text itself lives in workspace-sidebar.ts with the other UI strings).
+   Typography matches .sidebar-header's tokens (11/13 · 600 · muted, see that
+   rule above) but NOT its padding: that one is a top-of-panel padding, this is
+   a heading mid-list, so it takes the rows' own .4em inline padding and lines
+   up with them. */
+.workspace-group-label {
+  padding: 0 .4em .3em;
+  font-size: calc(11em / 13);
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--sidebar-muted);
+}
 .workspace-vault-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: .15em; min-width: 0; }
 .workspace-vault-select { display: flex; flex: 1; min-width: 0; align-items: center; gap: .45em; border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; padding: .45em .4em; text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
 .workspace-vault-select[aria-current="true"] { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); box-shadow: inset 2px 0 var(--sidebar-accent); }

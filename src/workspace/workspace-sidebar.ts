@@ -30,8 +30,14 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
   const header = create("div", "workspace-header sidebar-header");
   const title = create("span", "workspace-title"); title.textContent = "워크스페이스"; header.append(title);
   const list = create("div", "workspace-vault-list"); list.setAttribute("role", "list");
-  const empty = create("div", "workspace-empty"); empty.textContent = "등록된 영구 볼트가 없습니다";
-  aside.append(header, list, empty);
+  // Names the registration path (the explorer's per-folder bookmark toggle)
+  // instead of ending at "없습니다" with no next step. Text only — an "open the
+  // explorer" button would need a new callback threaded through main.ts.
+  // Lives INSIDE the permanent group (see renderGroup) so it aligns with that
+  // group's label and rows, and so "the permanent group is empty" is what the
+  // DOM actually says rather than something the reader infers from ordering.
+  const empty = create("div", "workspace-empty"); empty.textContent = "등록된 영구 볼트가 없습니다. 탐색기에서 폴더 옆 북마크 아이콘으로 등록할 수 있습니다.";
+  aside.append(header, list);
 
   const renderButton = (): void => renderSidebarButton(button, "list-tree", "워크스페이스", !aside.hidden, "workspace-aside");
   renderButton();
@@ -49,8 +55,19 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
     });
     empty.hidden = permanentVaults.length > 0;
 
-    const renderGroup = (className: string, vaults: readonly Vault[]): void => {
+    // `label` names the group in the DOM (not via CSS `content:`, where the
+    // string would be invisible to a grep of the other UI strings, unselectable,
+    // and unreliably exposed to assistive tech). The global group stays
+    // unlabelled on purpose: it's the single default row, and a second heading
+    // above it would add chrome without adding a distinction.
+    const renderGroup = (className: string, vaults: readonly Vault[], label?: string, emptyState?: HTMLElement): void => {
       const group = create("section", `workspace-vault-group ${className}`);
+      if (label) {
+        const heading = create("div", "workspace-group-label");
+        heading.id = `${className}-label`; heading.textContent = label;
+        group.setAttribute("aria-labelledby", heading.id);
+        group.append(heading);
+      }
       for (const vault of vaults) {
         const row = create("div", "workspace-vault-row"); row.setAttribute("role", "listitem"); row.dataset.vaultId = vault.vaultId;
         const select = create("button", "workspace-vault-select") as HTMLButtonElement; select.type = "button"; select.title = vault.rootPath ?? vault.displayName;
@@ -103,10 +120,11 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
         }
         group.append(row);
       }
+      if (emptyState) group.append(emptyState);
       list.append(group);
     };
     renderGroup("workspace-vault-group--global", [store.getGlobalVault()]);
-    renderGroup("workspace-vault-group--permanent", permanentVaults);
+    renderGroup("workspace-vault-group--permanent", permanentVaults, "영구 볼트", empty);
   };
   store.subscribe(render); render(store.get());
   return { button, aside, close, refresh: () => render(store.get()) };
