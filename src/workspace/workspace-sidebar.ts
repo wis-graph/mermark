@@ -3,6 +3,7 @@ import { renderSidebarButton } from "../sidebar/toggle";
 import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
 import { WorkspaceStateError, type Vault, type WorkspaceState, type WorkspaceStore } from "./workspace-state";
 import type { VaultTabs } from "./vault-tabs";
+import { isVaultCollapsed, setVaultCollapsed } from "./vault-collapse";
 
 export interface WorkspaceSidebar {
   readonly button: HTMLButtonElement;
@@ -23,6 +24,19 @@ export interface WorkspaceSidebarHandlers {
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] => {
   const element = document.createElement(tag); if (className) element.className = className; return element;
 };
+
+/** Sync a vault row's collapse toggle — glyph, aria-expanded, labels, and the
+ *  tab strip's visibility — in one command so the picture and the state can
+ *  never drift apart. Same discipline as the explorer's
+ *  renderFolderGlyph/expandFolder/collapseFolder (explorer-panel.ts). */
+function renderVaultCollapse(toggle: HTMLButtonElement, glyph: HTMLElement, tabList: HTMLElement, displayName: string, collapsed: boolean): void {
+  glyph.replaceChildren(icon(collapsed ? "folder" : "folder-open"));
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  const label = `${displayName} 탭 ${collapsed ? "펼치기" : "접기"}`;
+  toggle.title = label;
+  toggle.setAttribute("aria-label", label);
+  tabList.hidden = collapsed;
+}
 
 export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCloseTab, onOpen, getTabs }: WorkspaceSidebarHandlers): WorkspaceSidebar {
   const button = create("button", "chrome-btn workspace-btn icon-only");
@@ -101,8 +115,17 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
       }
       for (const vault of vaults) {
         const row = create("div", "workspace-vault-row"); row.setAttribute("role", "listitem"); row.dataset.vaultId = vault.vaultId;
+        // Toggle is its own button, not nested inside `select` — a button
+        // inside a button is invalid HTML, and it made the two controls'
+        // hovers bleed into each other. Its click means collapse/expand;
+        // `select`'s click means entry. `folder-open`/`folder` (the same pair
+        // the explorer's directory rows use) now means expanded/collapsed
+        // only — the old global-vs-permanent reading of this glyph is
+        // dropped, since the "영구 볼트" group label already carries that
+        // distinction.
+        const toggle = create("button", "workspace-vault-toggle") as HTMLButtonElement; toggle.type = "button";
+        const glyph = create("span", "workspace-vault-glyph"); toggle.append(glyph);
         const select = create("button", "workspace-vault-select") as HTMLButtonElement; select.type = "button"; select.title = vault.rootPath ?? vault.displayName;
-        const glyph = create("span", "workspace-vault-glyph"); glyph.append(icon(vault.persistenceKind === "global" ? "folder-open" : "folder")); select.append(glyph);
         const name = create("span", "workspace-vault-name"); name.textContent = vault.displayName; select.append(name);
         // Path label only when this vault's name collides with another one
         // currently on screen — the shared left-truncating component
@@ -150,7 +173,19 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
           tabRow.append(tabEl, closeTab); tabList.append(tabRow);
         }
         select.setAttribute("aria-current", workspace.currentVaultId === vault.vaultId ? "true" : "false"); select.addEventListener("click", () => { try { onSelectVault(vault); } catch (error) { showError(error); } });
-        row.append(select);
+        // Collapse state is UI layout, not workspace state — it lives in its
+        // own storage (vault-collapse.ts) and is applied/toggled in place
+        // rather than through a full `render()`, so a keyboard user's focus
+        // stays on the toggle after activating it.
+        let collapsed = isVaultCollapsed(vault.vaultId);
+        renderVaultCollapse(toggle, glyph, tabList, vault.displayName, collapsed);
+        toggle.addEventListener("click", (event) => {
+          event.stopPropagation();
+          collapsed = !collapsed;
+          setVaultCollapsed(vault.vaultId, collapsed);
+          renderVaultCollapse(toggle, glyph, tabList, vault.displayName, collapsed);
+        });
+        row.append(toggle, select);
         if (pathLabel) row.append(pathLabel);
         row.append(tabList);
         if (vault.persistenceKind === "permanent") {

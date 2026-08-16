@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { createWorkspaceSidebar } from "../src/workspace/workspace-sidebar";
 import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore } from "../src/workspace/workspace-state";
 import type { VaultTabs } from "../src/workspace/vault-tabs";
@@ -253,6 +256,104 @@ describe("workspace sidebar", () => {
     expect((captured as Error).message).toBe("boom-unexpected");
     // Not swallowed into the inline error line either.
     expect(sidebar.aside.querySelector<HTMLElement>(".workspace-error")?.hidden).not.toBe(false);
+  });
+
+  // Collapse toggle (P12): clicking the glyph collapses/expands the tab strip
+  // and must never enter the vault — the name (`select`) owns entry, the
+  // glyph (`toggle`) owns collapse, and neither click may trigger the other's
+  // effect. The four tests below assert `tabList.hidden` — that only proves
+  // the JS wrote the attribute it intended to, not that the tab strip is
+  // actually invisible (jsdom doesn't apply styles.css, and `[hidden]` alone
+  // loses to an unconditional `display` in an author rule). The style-contract
+  // test right after this block ("locks the CSS override...") is what actually
+  // guards the visible behavior.
+  it("clicking the collapse toggle hides the tab strip without entering the vault", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const tabs: VaultTabs = { vaultId: vault.vaultId, tabs: [{ tabId: "tab-1", path: "/notes/readme.md" }], activeTabId: "tab-1" };
+    const onSelectVault = vi.fn();
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault, getTabs: () => tabs });
+    document.body.append(sidebar.aside);
+
+    const row = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"]`);
+    const toggle = row?.querySelector<HTMLButtonElement>(".workspace-vault-toggle");
+    const tabList = row?.querySelector<HTMLElement>(".workspace-vault-tabs");
+    expect(tabList?.hidden).toBe(false);
+
+    toggle?.click();
+
+    expect(tabList?.hidden).toBe(true);
+    expect(onSelectVault).not.toHaveBeenCalled();
+  });
+
+  it("clicking the vault name enters the vault without collapsing the tab strip", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const tabs: VaultTabs = { vaultId: vault.vaultId, tabs: [{ tabId: "tab-1", path: "/notes/readme.md" }], activeTabId: "tab-1" };
+    const onSelectVault = vi.fn();
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault, getTabs: () => tabs });
+    document.body.append(sidebar.aside);
+
+    const row = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"]`);
+    row?.querySelector<HTMLButtonElement>(".workspace-vault-select")?.click();
+
+    expect(onSelectVault).toHaveBeenCalledWith(vault);
+    expect(row?.querySelector<HTMLElement>(".workspace-vault-tabs")?.hidden).toBe(false);
+    expect(row?.querySelector<HTMLButtonElement>(".workspace-vault-toggle")?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("persists a vault's collapse state across sidebar instances and defaults to expanded", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const sidebarA = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+    document.body.append(sidebarA.aside);
+    const rowA = sidebarA.aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"]`);
+    expect(rowA?.querySelector<HTMLButtonElement>(".workspace-vault-toggle")?.getAttribute("aria-expanded")).toBe("true");
+    rowA?.querySelector<HTMLButtonElement>(".workspace-vault-toggle")?.click();
+    sidebarA.aside.remove();
+
+    const sidebarB = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+    document.body.append(sidebarB.aside);
+    const rowB = sidebarB.aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"]`);
+    expect(rowB?.querySelector<HTMLButtonElement>(".workspace-vault-toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(rowB?.querySelector<HTMLElement>(".workspace-vault-tabs")?.hidden).toBe(true);
+  });
+
+  it("keeps aria-expanded in sync with the actual collapse state through repeated toggles", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+    document.body.append(sidebar.aside);
+    const toggle = sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-toggle`);
+    const tabList = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-tabs`);
+
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle?.querySelector(".icon-folder-open")).toBeTruthy();
+
+    toggle?.click();
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle?.querySelector(".icon-folder")).toBeTruthy();
+    expect(tabList?.hidden).toBe(true);
+
+    toggle?.click();
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle?.querySelector(".icon-folder-open")).toBeTruthy();
+    expect(tabList?.hidden).toBe(false);
+  });
+
+  // Style contract: `.workspace-vault-tabs` declares `display: flex`
+  // unconditionally, and an author rule always beats the UA's built-in
+  // `[hidden] { display: none }` regardless of matching specificity — so
+  // without its own `[hidden]` override, `tabList.hidden = true` (asserted
+  // above) writes the attribute but a collapsed row still renders its tabs.
+  // jsdom doesn't load styles.css into mounted nodes, so this reads the
+  // stylesheet as text instead (same technique as tests/sidebar-zoom.test.ts's
+  // ruleBlock helper) — the only way in this suite to actually lock the
+  // visible behavior rather than the attribute the JS happens to set.
+  it("locks the [hidden] override that actually hides a collapsed vault's tab strip", () => {
+    const cssPath = resolve(dirname(fileURLToPath(import.meta.url)), "../src/styles.css");
+    const css = readFileSync(cssPath, "utf8");
+    expect(css).toMatch(/\.workspace-vault-tabs\[hidden\]\s*\{\s*display:\s*none;?\s*\}/);
   });
 
   it("closes competing panels when workspace opens", () => {

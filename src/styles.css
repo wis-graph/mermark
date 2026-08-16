@@ -118,6 +118,18 @@
   --sidebar-muted: #a8a29e;
   --sidebar-accent: #a8c8e8;
   --sidebar-border: rgba(255,255,255,.12);
+  /* WORKSPACE TAB WELL (_workspace/design_tabbar_visual.md §2.0): a vault's tab
+     list sits in this static "well" surface so parent/child reads as a
+     container, not just indentation — hover(8%)/selection(accent 16→14%) were
+     the only backgrounds this panel had. Derived from --sidebar-fg/-muted like
+     --surface-veil above is derived from --surface, so a single definition
+     here (not per-theme) tracks all three themes + custom JSON themes
+     automatically — zero new hues. --sidebar-fg-soft is the middle step of a
+     3-tier text scale (fg > fg-soft > muted) the 2-tier one couldn't carry:
+     vault name / active tab (fg) vs. tab filename (fg-soft) vs. folder
+     prefix, group label, muted icon (muted). */
+  --sidebar-well: color-mix(in srgb, var(--sidebar-fg) 5%, transparent);
+  --sidebar-fg-soft: color-mix(in srgb, var(--sidebar-fg) 65%, var(--sidebar-muted));
   /* BLOCK FILL RULE (사용자 리포트 2026-08-05: "인용구·코드블럭 배경이 문서
      배경과 안 구분돼" — light/claude의 --bg vs --surface 차이가 ~4%뿐이라
      사실상 안 보였다): quote/code/note-callout이 공유하는 단일 "면" 톤.
@@ -1538,7 +1550,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    matching its neighbours' left edge beats matching another panel's number. */
 .workspace-empty { padding: .35em .4em; color: var(--sidebar-muted); }
 .workspace-vault-list { display: flex; flex-direction: column; padding: .25em .4em; }
-.workspace-vault-group { display: flex; flex-direction: column; gap: .1em; }
+/* gap .1em → .25em (design_tabbar_visual.md §2.1): once each vault's tabs sit
+   in their own well surface, the block boundary is already told by that
+   surface — the row spacing only needs to keep two well-blocks from touching,
+   not carry the boundary itself. */
+.workspace-vault-group { display: flex; flex-direction: column; gap: .25em; }
 .workspace-vault-group + .workspace-vault-group { margin-top: .55em; }
 /* Group heading inside the vault list (the permanent group's "영구 볼트" — the
    text itself lives in workspace-sidebar.ts with the other UI strings).
@@ -1554,44 +1570,117 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   color: var(--sidebar-muted);
 }
 .workspace-vault-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: .15em; min-width: 0; }
+/* Active vault (design_tabbar_visual.md §2.4): the accent band now belongs to
+   the whole ROW, not just the `select` pill — the pill used to float the
+   glyph/bookmark outside its own highlight and put the left accent bar at the
+   pill's edge (row-middle) instead of the row's true left edge, reading as a
+   bordered text input rather than a selected row. `:has()` keeps this a pure
+   read of `select`'s existing aria-current — no new class, no JS change. */
+.workspace-vault-row:has(.workspace-vault-select[aria-current="true"]) {
+  background: color-mix(in srgb, var(--sidebar-accent) 14%, transparent);
+  box-shadow: inset 2px 0 var(--sidebar-accent);
+}
 .workspace-vault-select { display: flex; flex: 1; min-width: 0; align-items: center; gap: .45em; border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; padding: .45em .4em; text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
-.workspace-vault-select[aria-current="true"] { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); box-shadow: inset 2px 0 var(--sidebar-accent); }
 .workspace-vault-select:hover, .workspace-vault-action:hover { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
 .workspace-vault-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-/* The tab strip DIV is always appended (even with zero tabs, workspace-sidebar.ts)
-   so its own left/bottom padding must not survive when empty — otherwise every
-   vault row leaves a ghost gap below it regardless of tab count. */
-.workspace-vault-tabs { display: flex; flex-direction: column; flex-basis: 100%; order: 2; gap: .1em; min-width: 0; padding: 0 .4em .35em 2.35em; }
-.workspace-vault-tabs:empty { padding: 0; }
+/* Tab well (design_tabbar_visual.md §2.1): a vault's tabs sit inside one
+   `--sidebar-well` surface instead of just being indented text — parent/child
+   reads as "contained in", not "two rows at different sizes". margin (not
+   padding) carries the left offset now: toggle's own 2em box + the row's own
+   .15em gap, so the well's left edge optically lines up with `select`'s
+   left edge above it. The strip DIV is always appended (even with zero tabs,
+   workspace-sidebar.ts) so margin/padding both collapse to 0 when empty —
+   otherwise every vault row would show an empty well. */
+.workspace-vault-tabs { display: flex; flex-direction: column; flex-basis: 100%; order: 2; gap: .1em; min-width: 0; background: var(--sidebar-well); border-radius: var(--radius-sm, 6px); padding: .25em; margin: .15em 0 .35em calc(2em + .15em); }
+.workspace-vault-tabs:empty { padding: 0; margin: 0; }
+/* workspace-sidebar.ts sets `.hidden` when the vault row is collapsed.
+   display:flex is unconditional on the base rule above, so [hidden] needs its
+   own override to actually win (an author rule always beats the UA default
+   regardless of matching specificity) — same trap, same fix, as
+   .workspace-error[hidden] above. */
+.workspace-vault-tabs[hidden] { display: none; }
 .workspace-vault-tab-row { display: flex; align-items: center; min-width: 0; gap: .2em; }
-.workspace-vault-tab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; font-size: calc(10em / 13); padding: .15em .25em; text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
-.workspace-vault-tab[data-active="true"] { color: var(--sidebar-fg); font-weight: 600; }
+/* Tab row grows 21px → ~24px and 10px → 12px font (§2.3): the filename is
+   this panel's body copy, not a caption — it was smaller than the vault name
+   (13px) despite carrying more information. Color steps down to fg-soft
+   (§2.0's 3-tier scale), one notch below the vault name/active-tab fg. */
+.workspace-vault-tab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--sidebar-fg-soft); font: inherit; font-size: calc(12em / 13); padding: .2em .3em; text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
+/* Active tab in an INACTIVE vault: fg color only, no bar/bg/weight — a "come
+   back here" memory marker, deliberately weaker than the row below. Without
+   this split, three simultaneously-open vaults each show a bold active tab
+   and the eye can't tell which one is actually current (§1 진단 4). */
+.workspace-vault-tab[data-active="true"] { color: var(--sidebar-fg); }
+/* Active tab in the ACTIVE vault escalates to the row band's own accent
+   language (bar + tint) instead of bold — same "here" signal, one visual
+   grammar. font-weight 500, not 600: 600 smears at 12px Hangul.
+   The LEFT corners go square: an inset bar follows a rounded corner and
+   renders as an arc, and a tinted pill with an arc down its left edge is
+   exactly the bordered-text-input misread that design_tabbar_visual.md §1
+   진단 3 removed from the vault row. The vault band's bar is a straight
+   line because that band is full-bleed; the tab's has to be straight too,
+   or "accent bar = you are here" is two shapes instead of one. */
+.workspace-vault-row:has(.workspace-vault-select[aria-current="true"]) .workspace-vault-tab[data-active="true"] {
+  font-weight: 500;
+  background: color-mix(in srgb, var(--sidebar-accent) 10%, transparent);
+  box-shadow: inset 2px 0 var(--sidebar-accent);
+  border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
+}
 .workspace-vault-tab:hover, .workspace-vault-tab:focus-visible, .workspace-vault-tab-close:hover, .workspace-vault-tab-close:focus-visible { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
-.workspace-vault-tab-close { flex: none; width: 1.7em; height: 1.7em; border: 0; background: transparent; color: var(--sidebar-muted); padding: .2em; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
-.workspace-vault-action { display: inline-flex; align-items: center; justify-content: center; gap: .35em; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
-.workspace-vault-action { width: 2em; }
+/* Hover-reveal (§2.3, §2.5): the hit target stays reserved at 1.7em always —
+   never display/width toggled — so the filename's ellipsis point never jumps
+   the instant a row is hovered. opacity is the only thing that moves, and a
+   keyboard user tabbing straight to this button still gets it (:focus-within
+   on the tab row below reveals it independent of pointer hover). */
+.workspace-vault-tab-close { flex: none; width: 1.7em; height: 1.7em; border: 0; background: transparent; color: var(--sidebar-muted); padding: .2em; cursor: pointer; border-radius: var(--radius-sm, 6px); opacity: 0; transition: background-color .12s ease, opacity .12s ease; }
+.workspace-vault-tab-row:hover .workspace-vault-tab-close,
+.workspace-vault-tab-row:focus-within .workspace-vault-tab-close {
+  opacity: 1;
+}
+/* The collapse toggle is a structurally new button (glyph moved out of
+   `select`), but visually it reuses .workspace-vault-action's rules verbatim
+   (same selector groups below) rather than inventing its own. It is exempt
+   from the hover-reveal below: it's the only way to see a vault's
+   expand/collapse state, so unlike the bookmark it stays visible always. */
+.workspace-vault-action, .workspace-vault-toggle { display: inline-flex; align-items: center; justify-content: center; gap: .35em; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
+.workspace-vault-action, .workspace-vault-toggle { width: 2em; }
+/* Hover-reveal (§2.3, §2.5): same reserved-space-but-opacity-0 treatment as
+   the tab close button above, scoped to the whole vault row instead of one
+   tab row — this and the tab close button together are what took the
+   "always-on icon column" (§1 진단 2) down to zero icons at rest. */
+.workspace-vault-action { opacity: 0; transition: background-color .12s ease, opacity .12s ease; }
+.workspace-vault-row:hover .workspace-vault-action,
+.workspace-vault-row:focus-within .workspace-vault-action {
+  opacity: 1;
+}
 /* Same hover/focus color promotion as .explorer-vault-toggle below — a muted
    icon that reads as "live" once you're actually pointed at or focused on it. */
-.workspace-vault-action:hover, .workspace-vault-action:focus-visible { color: var(--sidebar-fg); }
-/* focus-visible ring — same idiom as outline-item/recent-item/explorer-vault-toggle.
-   .workspace-vault-select's ACTIVE row already owns an inset accent bar via box-shadow
-   (aria-current rule above); a bare :focus-visible box-shadow would clobber it when both
-   are true at once, so that combination gets its own rule composing both shadows into
-   one list (same technique as .explorer-item.is-selected.is-focused above). */
+.workspace-vault-action:hover, .workspace-vault-action:focus-visible, .workspace-vault-toggle:hover, .workspace-vault-toggle:focus-visible { color: var(--sidebar-fg); }
+/* focus-visible ring — same idiom as outline-item/recent-item/explorer-vault-toggle. */
 .workspace-vault-select:focus-visible,
+.workspace-vault-toggle:focus-visible,
 .workspace-vault-action:focus-visible,
 .workspace-vault-tab:focus-visible,
 .workspace-vault-tab-close:focus-visible {
   outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
 }
-.workspace-vault-select[aria-current="true"]:focus-visible {
+/* The active vault's accent band now lives on the ROW (`:has()` rule above),
+   not on `select` — so `select:focus-visible` and the row's own box-shadow
+   are two different elements' box-shadows and never fight over one list.
+   The active TAB is the one place this composition still applies: an active
+   tab in the active vault carries its own inset accent bar (rule above) AND
+   can itself receive keyboard focus, so — same technique as
+   .explorer-item.is-selected.is-focused elsewhere — those two shadows are
+   composed into one list here instead of the focus ring silently replacing
+   the bar. */
+.workspace-vault-row:has(.workspace-vault-select[aria-current="true"]) .workspace-vault-tab[data-active="true"]:focus-visible {
   box-shadow: inset 2px 0 var(--sidebar-accent), 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
 }
 /* SIDEBAR ZOOM RULE, same fix as .explorer-glyph below: the folder icon's own
    svg width/height="16" attribute doesn't track --font-scale; CSS always wins once
    declared, so this + the .icon fill rule below give it the same 16/13 em box.
-   Colour is deliberately left inherited (--sidebar-fg from the row) — explorer
-   mutes its glyphs because most of them are files; every vault row is a folder. */
+   Colour is inherited from .workspace-vault-toggle (muted by default, promoted
+   to --sidebar-fg on hover/focus above, same as .workspace-vault-action) — the
+   glyph moved out of `select` into its own toggle button. */
 .workspace-vault-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); }
 .workspace-vault-glyph .icon { width: 100%; height: 100%; }
 /* Disambiguation path label (workspace-sidebar.ts appends this — the shared
