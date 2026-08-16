@@ -1603,8 +1603,30 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Tab row grows 21px → ~24px and 10px → 12px font (§2.3): the filename is
    this panel's body copy, not a caption — it was smaller than the vault name
    (13px) despite carrying more information. Color steps down to fg-soft
-   (§2.0's 3-tier scale), one notch below the vault name/active-tab fg. */
-.workspace-vault-tab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--sidebar-fg-soft); font: inherit; font-size: calc(12em / 13); padding: .2em .3em; text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
+   (§2.0's 3-tier scale), one notch below the vault name/active-tab fg —
+   inherited by .workspace-vault-tab-name below; .workspace-vault-tab-prefix
+   overrides it back to muted (its own tier, regardless of active state). Now
+   a flex row (icon + prefix + name in one button, §2.3 — wave C) instead of
+   a single text node; ellipsis moves from the button itself onto the name
+   span, the only child allowed to shrink. */
+.workspace-vault-tab { display: flex; align-items: center; gap: .4em; flex: 1; min-width: 0; border: 0; background: transparent; color: var(--sidebar-fg-soft); font: inherit; font-size: calc(12em / 13); padding: .2em .3em; text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
+/* SIDEBAR ZOOM RULE, same fix as .workspace-vault-glyph/.explorer-glyph
+   above: the file icon's own svg width/height attribute (16, from icons.ts's
+   Lucide fallback and material-icon-glyph.ts's stampSvg alike) doesn't track
+   --font-scale, so this + the .icon fill rule give it the shared 16/13 em
+   box. No color override — Material glyphs carry their own baked fill
+   (file-icons.ts's renderEntryGlyph doc comment), so this container is
+   deliberately colorless, unlike the folder toggle's Lucide stroke glyph. */
+.workspace-vault-tab-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); }
+.workspace-vault-tab-glyph .icon { width: 100%; height: 100%; }
+/* D6's folder prefix — always muted regardless of active state (§2.0's
+   3-tier scale buckets "folder prefix" with the group label and muted icons,
+   not with fg/fg-soft), so this explicit color survives being nested inside
+   an active tab's fg-colored button without needing any extra specificity:
+   an explicit rule on the child always wins over an inherited value from the
+   ancestor, no matter how specific the ancestor's own selector is. */
+.workspace-vault-tab-prefix { flex: none; white-space: nowrap; color: var(--sidebar-muted); }
+.workspace-vault-tab-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Active tab in an INACTIVE vault: fg color only, no bar/bg/weight — a "come
    back here" memory marker, deliberately weaker than the row below. Without
    this split, three simultaneously-open vaults each show a bold active tab
@@ -1642,7 +1664,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    from the hover-reveal below: it's the only way to see a vault's
    expand/collapse state, so unlike the bookmark it stays visible always. */
 .workspace-vault-action, .workspace-vault-toggle { display: inline-flex; align-items: center; justify-content: center; gap: .35em; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
-.workspace-vault-action, .workspace-vault-toggle { width: 2em; }
+/* Fixed hover chip (§2.5), not the row's own stretch: `.workspace-vault-row`
+   sets `align-items: stretch`, so without `align-self: center` these two
+   would grow to the row's full height and read as a tall bar rather than a
+   pressable icon. `.workspace-vault-tab-close` doesn't need this — it lives
+   inside `.workspace-vault-tab-row`, whose own `align-items: center` never
+   stretched it in the first place, so its §2.3 1.7em square stays as-is. */
+.workspace-vault-action, .workspace-vault-toggle { width: 2em; height: calc(24em / 13); align-self: center; }
 /* Hover-reveal (§2.3, §2.5): same reserved-space-but-opacity-0 treatment as
    the tab close button above, scoped to the whole vault row instead of one
    tab row — this and the tab close button together are what took the
@@ -1655,6 +1683,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Same hover/focus color promotion as .explorer-vault-toggle below — a muted
    icon that reads as "live" once you're actually pointed at or focused on it. */
 .workspace-vault-action:hover, .workspace-vault-action:focus-visible, .workspace-vault-toggle:hover, .workspace-vault-toggle:focus-visible { color: var(--sidebar-fg); }
+/* :active darkens one step past the 8% hover fill (§2.5) — the same icon-scope
+   chips (toggle/action/tab-close), all three, so a press reads consistently
+   across the row regardless of which icon it's on. */
+.workspace-vault-toggle:active, .workspace-vault-action:active, .workspace-vault-tab-close:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
 /* focus-visible ring — same idiom as outline-item/recent-item/explorer-vault-toggle. */
 .workspace-vault-select:focus-visible,
 .workspace-vault-toggle:focus-visible,
@@ -1683,6 +1715,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    glyph moved out of `select` into its own toggle button. */
 .workspace-vault-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); }
 .workspace-vault-glyph .icon { width: 100%; height: 100%; }
+/* "찬 폴더" (§2.4/§3 5단계): a COLLAPSED vault that still has tabs inside gets
+   its closed-folder outline filled, so "there's something in here" survives
+   the collapse without a count badge or a dot (both explicitly ruled out —
+   the plan's icon-chrome ban). `.has-tabs` is set/cleared in the same
+   command as the glyph swap (workspace-sidebar.ts's renderVaultCollapse), so
+   fill state and collapse state can never drift apart. currentColor, not a
+   fresh color — it tracks whatever the glyph's own hover/focus color
+   promotion already set (muted at rest, fg on hover/focus). */
+.workspace-vault-glyph.has-tabs .icon path { fill: color-mix(in srgb, currentColor 22%, transparent); }
 /* Disambiguation path label (workspace-sidebar.ts appends this — the shared
    .path-label from src/chrome/path-label.ts — only when two on-screen vaults
    share a displayName). .workspace-vault-row already wraps

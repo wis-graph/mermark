@@ -41,7 +41,11 @@ describe("workspace sidebar", () => {
     const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), getTabs: () => tabs });
     document.body.append(sidebar.aside);
 
-    expect(sidebar.aside.querySelector(".workspace-vault-tab")?.textContent).toBe("readme.md");
+    // D5: the icon already says it's markdown — the label drops the
+    // extension, but the full name/path stays reachable via the tooltip.
+    expect(sidebar.aside.querySelector(".workspace-vault-tab-name")?.textContent).toBe("readme");
+    expect(sidebar.aside.querySelector<HTMLButtonElement>(".workspace-vault-tab")?.title).toBe("/notes/readme.md");
+    expect(sidebar.aside.querySelector(".workspace-vault-tab-glyph")).toBeTruthy();
     expect(sidebar.aside.querySelector(".workspace-vault-tab")?.getAttribute("data-active")).toBe("true");
     expect(sidebar.aside.querySelector(".workspace-vault-tabs-label")).toBeNull();
     expect(sidebar.aside.querySelector(".workspace-vault-tabs")?.getAttribute("role")).toBe("tablist");
@@ -53,10 +57,14 @@ describe("workspace sidebar", () => {
     expect(permanentRow?.querySelector(".workspace-vault-tab")?.getAttribute("aria-current")).toBe("page");
   });
 
-  it("moves the roving tab focus and activates the tab with horizontal keys", () => {
+  it("moves the roving tab focus and activates the tab with horizontal keys, following D7's PATH order (not the stored open order)", () => {
     const store = new WorkspaceStore();
     const vault = store.registerVault("/notes/project", "Project");
     const onSelectTab = vi.fn();
+    // Stored (open) order is one/two/three, but path order is one < three <
+    // two ("three.md" < "two.md" — 'h' < 'w') — deliberately different from
+    // stored order so a test that used stored-order indices would pass for
+    // the wrong reason.
     const tabs: VaultTabs = {
       vaultId: vault.vaultId,
       tabs: [{ tabId: "tab-1", path: "/notes/one.md" }, { tabId: "tab-2", path: "/notes/two.md" }, { tabId: "tab-3", path: "/notes/three.md" }],
@@ -67,13 +75,17 @@ describe("workspace sidebar", () => {
     const tab = sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-1"]`);
     tab?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
 
-    expect(onSelectTab).toHaveBeenCalledWith(vault, tabs.tabs[1]);
-    expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-2"]`)?.tabIndex).toBe(0);
+    // Right from one.md (rendered first) lands on three.md (rendered
+    // second), not the stored-order neighbor two.md.
+    expect(onSelectTab).toHaveBeenCalledWith(vault, tabs.tabs[2]);
+    expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-3"]`)?.tabIndex).toBe(0);
     expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-1"]`)?.tabIndex).toBe(-1);
 
-    sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-2"]`)?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
-    expect(onSelectTab).toHaveBeenLastCalledWith(vault, tabs.tabs[2]);
-    expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-3"]`)?.tabIndex).toBe(0);
+    sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-3"]`)?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    // End lands on the LAST rendered (path-order) tab: two.md.
+    expect(onSelectTab).toHaveBeenLastCalledWith(vault, tabs.tabs[1]);
+    expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-2"]`)?.tabIndex).toBe(0);
+    expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] [data-tab-id="tab-3"]`)?.tabIndex).toBe(-1);
   });
 
   it("keeps the selected tab tabbable when keyboard activation is rejected", async () => {
@@ -354,6 +366,125 @@ describe("workspace sidebar", () => {
     const cssPath = resolve(dirname(fileURLToPath(import.meta.url)), "../src/styles.css");
     const css = readFileSync(cssPath, "utf8");
     expect(css).toMatch(/\.workspace-vault-tabs\[hidden\]\s*\{\s*display:\s*none;?\s*\}/);
+  });
+
+  // D5/D6/D7 (design_tabbar_visual.md §2.3, .omo/plans/workspace-tab-bar.md):
+  // file icon, extension-stripped label with a full-path tooltip, one-level
+  // folder prefix that only appears on a folder change, and path-order
+  // rendering. The stored tab order (VaultTabs.tabs) is never touched by
+  // any of this — only what gets rendered and in what sequence.
+  it("D5: strips the extension from the tab label but keeps the full path in the tooltip", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const tabs: VaultTabs = {
+      vaultId: vault.vaultId,
+      tabs: [{ tabId: "a", path: "/notes/project/README.md" }, { tabId: "b", path: "/notes/project/.gitignore" }],
+      activeTabId: "a",
+    };
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), getTabs: () => tabs });
+    document.body.append(sidebar.aside);
+
+    const tabEls = [...sidebar.aside.querySelectorAll<HTMLButtonElement>(".workspace-vault-tab")];
+    const readme = tabEls.find((el) => el.title === "/notes/project/README.md");
+    const gitignore = tabEls.find((el) => el.title === "/notes/project/.gitignore");
+    expect(readme?.querySelector(".workspace-vault-tab-name")?.textContent).toBe("README");
+    expect(readme?.querySelector(".workspace-vault-tab-glyph")).toBeTruthy();
+    // A dotfile has no extension per extensionOf's contract (the leading dot
+    // isn't one) — nothing to strip, so the label stays the full name.
+    expect(gitignore?.querySelector(".workspace-vault-tab-name")?.textContent).toBe(".gitignore");
+  });
+
+  it("D6: shows the folder prefix only on the first tab after a folder change, omits it on consecutive same-folder tabs, and omits it for root-level files", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const tabs: VaultTabs = {
+      vaultId: vault.vaultId,
+      tabs: [
+        { tabId: "root", path: "/notes/project/index.md" },
+        { tabId: "a1", path: "/notes/project/docs/alpha.md" },
+        { tabId: "a2", path: "/notes/project/docs/beta.md" },
+        { tabId: "b1", path: "/notes/project/scripts/run.md" },
+      ],
+      activeTabId: "root",
+    };
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), getTabs: () => tabs });
+    document.body.append(sidebar.aside);
+
+    const prefixFor = (tabId: string) =>
+      sidebar.aside.querySelector<HTMLElement>(`[data-tab-id="${tabId}"] .workspace-vault-tab-prefix`)?.textContent ?? null;
+    // Path order: index.md (root), docs/alpha.md, docs/beta.md, scripts/run.md.
+    expect(prefixFor("root")).toBeNull(); // directly under the vault root
+    expect(prefixFor("a1")).toBe("docs/"); // folder just changed to docs/
+    expect(prefixFor("a2")).toBeNull(); // still docs/ — same as the row above, omitted
+    expect(prefixFor("b1")).toBe("scripts/"); // folder changed again
+  });
+
+  it("D6: truncates a folder name longer than the character cap and shows only \"…/\" two levels deep", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const tabs: VaultTabs = {
+      vaultId: vault.vaultId,
+      tabs: [
+        { tabId: "long", path: "/notes/project/a-very-long-folder-name/note.md" },
+        { tabId: "deep", path: "/notes/project/a/b/deep.md" },
+      ],
+      activeTabId: "long",
+    };
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), getTabs: () => tabs });
+    document.body.append(sidebar.aside);
+
+    const prefixFor = (tabId: string) =>
+      sidebar.aside.querySelector<HTMLElement>(`[data-tab-id="${tabId}"] .workspace-vault-tab-prefix`)?.textContent ?? null;
+    expect(prefixFor("long")).toBe("a-very-lon…/"); // first 10 real chars of "a-very-long-folder-name" + "…/"
+    expect(prefixFor("deep")).toBe("…/"); // two levels deep (a/b) — depth, not name, collapses
+  });
+
+  it("D7: renders tabs in path order without touching the stored (open) order", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const tabs: VaultTabs = {
+      vaultId: vault.vaultId,
+      // Opened in this order: zebra, apple, mango — deliberately NOT
+      // alphabetical, so a render that just echoed tabs.tabs would fail.
+      tabs: [{ tabId: "z", path: "/notes/project/zebra.md" }, { tabId: "a", path: "/notes/project/apple.md" }, { tabId: "m", path: "/notes/project/mango.md" }],
+      activeTabId: "z",
+    };
+    const sidebar = createWorkspaceSidebar({
+      store,
+      onSelectVault: vi.fn(),
+      getTabs: (vaultId) => (vaultId === vault.vaultId ? tabs : { vaultId, tabs: [], activeTabId: null }),
+    });
+    document.body.append(sidebar.aside);
+
+    const renderedIds = [...sidebar.aside.querySelectorAll<HTMLElement>(".workspace-vault-tab")].map((el) => el.dataset.tabId);
+    expect(renderedIds).toEqual(["a", "m", "z"]);
+    // The stored order (what vaultTabs.ts owns) is untouched by rendering.
+    expect(tabs.tabs.map((tab) => tab.tabId)).toEqual(["z", "a", "m"]);
+  });
+
+  it("fills the closed-folder glyph when a collapsed vault still has tabs, and leaves it unfilled when it doesn't", () => {
+    const store = new WorkspaceStore();
+    const withTabs = store.registerVault("/notes/full", "Full");
+    const empty = store.registerVault("/notes/empty", "Empty");
+    const tabs: VaultTabs = { vaultId: withTabs.vaultId, tabs: [{ tabId: "a", path: "/notes/full/a.md" }], activeTabId: "a" };
+    const sidebar = createWorkspaceSidebar({
+      store,
+      onSelectVault: vi.fn(),
+      getTabs: (vaultId) => (vaultId === withTabs.vaultId ? tabs : { vaultId, tabs: [], activeTabId: null }),
+    });
+    document.body.append(sidebar.aside);
+
+    const glyphFor = (vaultId: string) => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vaultId}"] .workspace-vault-glyph`);
+    // Collapse both — one has a tab, the other doesn't.
+    sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${withTabs.vaultId}"] .workspace-vault-toggle`)?.click();
+    sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${empty.vaultId}"] .workspace-vault-toggle`)?.click();
+
+    expect(glyphFor(withTabs.vaultId)?.classList.contains("has-tabs")).toBe(true);
+    expect(glyphFor(empty.vaultId)?.classList.contains("has-tabs")).toBe(false);
+
+    // Expanding back drops the fill — "찬 폴더" is a COLLAPSED-only signal.
+    sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${withTabs.vaultId}"] .workspace-vault-toggle`)?.click();
+    expect(glyphFor(withTabs.vaultId)?.classList.contains("has-tabs")).toBe(false);
   });
 
   it("closes competing panels when workspace opens", () => {
