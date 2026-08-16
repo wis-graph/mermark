@@ -1528,20 +1528,43 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .workspace-vault-group { display: flex; flex-direction: column; gap: .1em; }
 .workspace-vault-group + .workspace-vault-group { margin-top: .55em; }
 .workspace-vault-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: .15em; min-width: 0; }
-.workspace-vault-select { display: flex; flex: 1; min-width: 0; align-items: center; gap: .45em; border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; padding: .45em .4em; text-align: left; cursor: pointer; }
+.workspace-vault-select { display: flex; flex: 1; min-width: 0; align-items: center; gap: .45em; border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; padding: .45em .4em; text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
 .workspace-vault-select[aria-current="true"] { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); box-shadow: inset 2px 0 var(--sidebar-accent); }
-.workspace-vault-select:hover, .workspace-vault-action:hover, .workspace-action:hover { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
+.workspace-vault-select:hover, .workspace-vault-action:hover { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
 .workspace-vault-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+/* The tab strip DIV is always appended (even with zero tabs, workspace-sidebar.ts)
+   so its own left/bottom padding must not survive when empty — otherwise every
+   vault row leaves a ghost gap below it regardless of tab count. */
 .workspace-vault-tabs { display: flex; flex-direction: column; flex-basis: 100%; order: 2; gap: .1em; min-width: 0; padding: 0 .4em .35em 2.35em; }
+.workspace-vault-tabs:empty { padding: 0; }
 .workspace-vault-tab-row { display: flex; align-items: center; min-width: 0; gap: .2em; }
-.workspace-vault-tab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; font-size: calc(10em / 13); padding: .15em .25em; text-align: left; cursor: pointer; }
+.workspace-vault-tab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; font-size: calc(10em / 13); padding: .15em .25em; text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
 .workspace-vault-tab[data-active="true"] { color: var(--sidebar-fg); font-weight: 600; }
 .workspace-vault-tab:hover, .workspace-vault-tab:focus-visible, .workspace-vault-tab-close:hover, .workspace-vault-tab-close:focus-visible { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
-.workspace-vault-tab-close { flex: none; width: 1.7em; height: 1.7em; border: 0; background: transparent; color: var(--sidebar-muted); padding: .2em; cursor: pointer; }
-.workspace-vault-action, .workspace-action { display: inline-flex; align-items: center; justify-content: center; gap: .35em; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; }
+.workspace-vault-tab-close { flex: none; width: 1.7em; height: 1.7em; border: 0; background: transparent; color: var(--sidebar-muted); padding: .2em; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
+.workspace-vault-action { display: inline-flex; align-items: center; justify-content: center; gap: .35em; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
 .workspace-vault-action { width: 2em; }
-.workspace-actions { border-top: 1px solid var(--sidebar-border); padding: .45em .65em; }
-.workspace-action { padding: .3em .45em; color: var(--sidebar-fg); }
+/* focus-visible ring — same idiom as outline-item/recent-item/explorer-vault-toggle.
+   .workspace-vault-select's ACTIVE row already owns an inset accent bar via box-shadow
+   (aria-current rule above); a bare :focus-visible box-shadow would clobber it when both
+   are true at once, so that combination gets its own rule composing both shadows into
+   one list (same technique as .explorer-item.is-selected.is-focused above). */
+.workspace-vault-select:focus-visible,
+.workspace-vault-action:focus-visible,
+.workspace-vault-tab:focus-visible,
+.workspace-vault-tab-close:focus-visible {
+  outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
+}
+.workspace-vault-select[aria-current="true"]:focus-visible {
+  box-shadow: inset 2px 0 var(--sidebar-accent), 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
+}
+/* SIDEBAR ZOOM RULE, same fix as .explorer-glyph below: the folder icon's own
+   svg width/height="16" attribute doesn't track --font-scale; CSS always wins once
+   declared, so this + the .icon fill rule below give it the same 16/13 em box.
+   Colour is deliberately left inherited (--sidebar-fg from the row) — explorer
+   mutes its glyphs because most of them are files; every vault row is a folder. */
+.workspace-vault-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); }
+.workspace-vault-glyph .icon { width: 100%; height: 100%; }
 
 /* Full-height rail's window-chrome band (title-bar.ts createSidebarTopStrip) —
    same 36px height as .title-bar. sticky + an opaque --sidebar-bg: the

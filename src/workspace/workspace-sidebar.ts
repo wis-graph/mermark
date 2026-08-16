@@ -27,7 +27,7 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
   const button = create("button", "chrome-btn workspace-btn icon-only");
   const aside = create("aside", "workspace-aside sidebar-aside");
   aside.id = "workspace-aside"; aside.hidden = true;
-  const header = create("div", "workspace-header sidebar-header"); header.append(icon("list-tree"));
+  const header = create("div", "workspace-header sidebar-header");
   const title = create("span", "workspace-title"); title.textContent = "워크스페이스"; header.append(title);
   const list = create("div", "workspace-vault-list"); list.setAttribute("role", "list");
   const empty = create("div", "workspace-empty"); empty.textContent = "등록된 영구 볼트가 없습니다";
@@ -53,7 +53,8 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
       const group = create("section", `workspace-vault-group ${className}`);
       for (const vault of vaults) {
         const row = create("div", "workspace-vault-row"); row.setAttribute("role", "listitem"); row.dataset.vaultId = vault.vaultId;
-        const select = create("button", "workspace-vault-select") as HTMLButtonElement; select.type = "button"; select.title = vault.rootPath ?? vault.displayName; select.append(icon(vault.persistenceKind === "global" ? "folder-open" : "folder"));
+        const select = create("button", "workspace-vault-select") as HTMLButtonElement; select.type = "button"; select.title = vault.rootPath ?? vault.displayName;
+        const glyph = create("span", "workspace-vault-glyph"); glyph.append(icon(vault.persistenceKind === "global" ? "folder-open" : "folder")); select.append(glyph);
         const name = create("span", "workspace-vault-name"); name.textContent = vault.displayName; select.append(name);
         const tabList = create("div", "workspace-vault-tabs"); tabList.setAttribute("role", "tablist"); tabList.setAttribute("aria-orientation", "horizontal"); tabList.setAttribute("aria-label", `${vault.displayName} 탭`);
         const tabs = getTabs?.(vault.vaultId) ?? { vaultId: vault.vaultId, tabs: [], activeTabId: null };

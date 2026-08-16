@@ -48,7 +48,7 @@ describe("sidebar font-size zoom integration (style contract)", () => {
   // automatically covered (design decision 1's "실행 가능한 이름": the
   // sweep IS the named rule, not a comment). The `.sidebar-aside` root is the
   // one declared exception (T1 owns its exact calc shape).
-  const SIDEBAR_PREFIX_RE = /(^|[\s,>~+])\.(sidebar-|outline-|explorer-|recent-|path-label)/;
+  const SIDEBAR_PREFIX_RE = /(^|[\s,>~+])\.(sidebar-|outline-|explorer-|recent-|path-label|workspace-|search-)/;
 
   function sweepRuleBlocks(): Array<{ selector: string; block: string }> {
     const rules: Array<{ selector: string; block: string }> = [];
