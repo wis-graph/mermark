@@ -54,11 +54,14 @@ export interface ExplorerPanel {
    *  so the explorer follows the live document's folder. A no-op while hidden. */
   resetToBaseDir(): void;
   /** Jump the tree root to an arbitrary ancestor (the footer breadcrumb's click
-   *  target). Opens the panel first if it's closed (a closed-panel jump means
-   *  "show me that folder", not "wait for it to open on its own") — then
-   *  rebuilds at `absPath` via the same path as `..`/reopen (cache clear +
-   *  renderTree), so onRootChange fires exactly like any other root change.
-   *  Command (void). */
+   *  target, or a workspace-sidebar vault selection). Opens the panel first if
+   *  it's closed (a closed-panel jump means "show me that folder", not "wait
+   *  for it to open on its own") — then rebuilds at `absPath` via the same
+   *  path as `..`/reopen (cache clear + renderTree), so onRootChange fires
+   *  exactly like any other root change. REVEAL-FOLLOWS-FOCUS: focus follows
+   *  into the tree only when this call is the one revealing the panel — an
+   *  already-open panel's jump never steals focus from wherever the caller's
+   *  gesture actually landed. Command (void). */
   jumpToRoot(absPath: string): void;
   /** Hide the sidebar. Idempotent — used by the mutual-exclusion coordinator to
    *  close this when the other left sidebar opens. Command (void). */
@@ -229,6 +232,13 @@ export function createExplorerPanel({
   const tree = create("div", "explorer-tree");
   tree.setAttribute("role", "tree");
   tree.setAttribute("aria-label", "파일 탐색기");
+  // Programmatic-only focus sink (tabIndex -1 never joins the real Tab order —
+  // a user can never land here by pressing Tab). REVEAL-FOLLOWS-FOCUS's
+  // fallback target when a render that owes focus (see jumpToRoot) lands on a
+  // root with nothing focusable inside it (root-locked + empty folder) — so
+  // focus has somewhere better than <body> to go even in that edge case,
+  // without inventing a real focus trap.
+  tree.tabIndex = -1;
   aside.append(header, tree);
   // Per-root cache: a folder's children are read once and reused on re-expand
   // (no re-call). Cleared on root change / panel reopen — MVP has no fs-watch
@@ -489,7 +499,10 @@ export function createExplorerPanel({
   /** (Re)build the tree at `rootPath`: a top `..` entry then the root's sorted
    *  children (level 1). The backend list_dir already sorts (folders first,
    *  name) — we render in the order returned. Seeds the focus cursor on the
-   *  first visible node without stealing DOM focus. Command (void).
+   *  first visible node; moves real DOM focus there too iff `focusOnRender`
+   *  (REVEAL-FOLLOWS-FOCUS — see `jumpToRoot`), otherwise just seeds the
+   *  roving-tabindex cursor without stealing focus (the `open()`/
+   *  `resetToBaseDir()` default). Command (void).
    *
    *  This is the SINGLE canonicalization point: `rootPath` is normalized here,
    *  before anything derives from it. `changeRoot`/`open`/`resetToBaseDir`/
@@ -501,8 +514,16 @@ export function createExplorerPanel({
    *  also the single observation point: `onRootChange` fires here, right
    *  after normalization, so the footer breadcrumb (or any other observer)
    *  always sees the canonical root the tree is actually showing — never a
-   *  stale or pre-normalized value. */
-  const renderTree = async (rootPath: string): Promise<void> => {
+   *  stale or pre-normalized value.
+   *
+   *  `focusOnRender` is honored AFTER `readChildren` resolves below (not at
+   *  call time) — `changeRoot`/`jumpToRoot` are void commands that fire this
+   *  async function and return immediately, so if we moved focus before the
+   *  await, we'd either grab a node that's about to be replaced or grab
+   *  nothing at all. Landing the focus move on the far side of the await is
+   *  what makes a fast Tab/click right after `jumpToRoot` never race a
+   *  still-loading tree. */
+  const renderTree = async (rootPath: string, focusOnRender = false): Promise<void> => {
     rootPath = normalizePath(rootPath);
     const renderId = ++renderGeneration;
     currentRoot = rootPath;
@@ -544,18 +565,26 @@ export function createExplorerPanel({
       else for (const e of result.entries) tree.append(await makeEntry(e, 1));
     } catch (error) {
       if (renderGeneration !== renderId || listingErrors.get(rootPath) !== errorMessage(error)) return;
-      tree.append(
-        makeState("explorer-root-error", `현재 루트를 읽을 수 없습니다: ${errorMessage(error)}`, {
-          className: "explorer-root-reselect",
-          label: "루트 다시 선택",
-          run: () => changeRoot(getBaseDir()),
-        }),
-      );
+      const errorState = makeState("explorer-root-error", `현재 루트를 읽을 수 없습니다: ${errorMessage(error)}`, {
+        className: "explorer-root-reselect",
+        label: "루트 다시 선택",
+        run: () => changeRoot(getBaseDir()),
+      });
+      tree.append(errorState);
+      // A render that owes focus still owes it even when it failed — land on
+      // the retry button (a real, useful action) instead of leaving focus
+      // wherever it was (often nowhere, post-reveal — see jumpToRoot).
+      if (focusOnRender) errorState.querySelector<HTMLButtonElement>(".explorer-root-reselect")?.focus();
       return;
     }
 
     const first = visibleItems()[0];
-    if (first) focusItem(first, false);
+    if (first) focusItem(first, focusOnRender);
+    // Nothing to focus at all (root-locked + genuinely empty folder, no `..`
+    // row either) — still land somewhere better than <body> when this render
+    // owes focus, without inventing a real focus trap (tree.tabIndex=-1, see
+    // its declaration above, is programmatic-only).
+    else if (focusOnRender) tree.focus();
   };
 
   /** Change the tree root to `parentPath` (the `..` target, still carrying its
@@ -563,10 +592,12 @@ export function createExplorerPanel({
    *  — the previous expansion state belongs to the old root context. Command
    *  (void). `renderTree` (not this function, and not the backend) is what
    *  canonicalizes `parentPath` — that single call is the only normalization
-   *  point, so `listDir`/the header/the cache key all end up canonical. */
-  const changeRoot = (parentPath: string): void => {
+   *  point, so `listDir`/the header/the cache key all end up canonical.
+   *  `focusOnRender` just forwards to `renderTree` (REVEAL-FOLLOWS-FOCUS —
+   *  see `jumpToRoot`); every other caller keeps the `false` default. */
+  const changeRoot = (parentPath: string, focusOnRender = false): void => {
     childrenCache.clear();
-    void renderTree(parentPath);
+    void renderTree(parentPath, focusOnRender);
   };
 
   /** The SINGLE activation path, shared by click + Enter (like mermaid's single
@@ -646,17 +677,33 @@ export function createExplorerPanel({
     childrenCache.clear();
     void renderTree(getBaseDir());
   };
-  /** Jump the root to `absPath` (the footer breadcrumb's click target): reveal
-   *  the shell first if it's closed (a click on a hidden breadcrumb still
-   *  means "show me that folder"), then rebuild there. Can't reuse `open()`
-   *  directly — `open()` always renders `getBaseDir()`, which would land on
-   *  the live document's folder instead of the clicked ancestor — so this
-   *  shares only the shell-reveal half via `revealShell`, then calls
-   *  `changeRoot` (cache clear + renderTree) like `..` does. Command (void). */
+  /** Jump the root to `absPath` (the footer breadcrumb's click target, or a
+   *  workspace-sidebar vault selection): reveal the shell first if it's
+   *  closed (a click on a hidden breadcrumb still means "show me that
+   *  folder"), then rebuild there. Can't reuse `open()` directly — `open()`
+   *  always renders `getBaseDir()`, which would land on the live document's
+   *  folder instead of the clicked ancestor — so this shares only the
+   *  shell-reveal half via `revealShell`, then calls `changeRoot` (cache
+   *  clear + renderTree) like `..` does. Command (void).
+   *
+   *  REVEAL-FOLLOWS-FOCUS: DOM focus moves into the tree iff THIS call is the
+   *  one that reveals the shell (`aside` was hidden going in). All three
+   *  callers (breadcrumb click, and the two workspace-sidebar vault-select
+   *  commit paths in main.ts) are user gestures, so "we just opened a panel
+   *  for you, focus goes there" is right in every case — but when the panel
+   *  was ALREADY open, jumping the root must never steal focus from wherever
+   *  the user actually is (a `.workspace-vault-select` button that just
+   *  reselected an already-active vault, say) just because the root
+   *  happened to change underneath. `reveals` is captured before
+   *  `revealShell()` runs (which flips `aside.hidden`), then threaded through
+   *  `changeRoot` to `renderTree`, which is the only place that actually
+   *  knows a focus target exists (post-fetch) — see its doc comment for why
+   *  the move can't happen here, synchronously. */
   const jumpToRoot = (absPath: string): void => {
     if (isRootLocked?.() && normalizePath(absPath) !== normalizePath(getBaseDir())) return;
-    if (aside.hidden) revealShell();
-    changeRoot(absPath);
+    const reveals = aside.hidden;
+    if (reveals) revealShell();
+    changeRoot(absPath, reveals);
   };
 
   /** Re-toggle `.is-nonmd` on every rendered `.explorer-file` row from the

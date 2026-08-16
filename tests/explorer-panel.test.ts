@@ -433,6 +433,66 @@ describe("explorer: jumpToRoot (J)", () => {
     expect(panel.aside.hidden).toBe(false);
     expect(names(panel.aside)).toEqual(["..", "c.md"]);
   });
+
+  // REVEAL-FOLLOWS-FOCUS: jumpToRoot moves DOM focus into the tree iff THIS
+  // call is the one revealing the shell — not on every root change. These two
+  // tests lock that rule down from both directions; the second is the
+  // regression guard (a workspace-sidebar vault reselect on an ALREADY-open
+  // explorer must never yank focus off whatever the user was doing).
+  it("on a CLOSED panel: moves DOM focus into the tree once the target finishes rendering", async () => {
+    const panel = createExplorerPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    host.append(panel.button, panel.aside);
+    expect(panel.aside.hidden).toBe(true);
+
+    panel.jumpToRoot("/root/child");
+    await flush();
+
+    expect(panel.aside.hidden).toBe(false);
+    expect(names(panel.aside)).toEqual(["..", "c.md"]);
+    // The seeded roving-tabindex cursor AND real DOM focus land on the same
+    // node — a closed-panel jump is a reveal, so it owes focus.
+    expect(document.activeElement).toBe(focusedItem(panel.aside));
+    expect(nameOf(focusedItem(panel.aside))).toBe("..");
+  });
+
+  it("on an OPEN panel: never steals focus from wherever the user already is", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    // Simulate the real regression: focus is on some OTHER control entirely
+    // (a workspace-sidebar vault-select button, in the real app) when a vault
+    // reselect fires jumpToRoot against an already-open explorer.
+    const external = document.createElement("button");
+    host.append(external);
+    external.focus();
+    expect(document.activeElement).toBe(external);
+
+    panel.jumpToRoot("/root/child");
+    await flush();
+
+    // The root still changes underneath (jumpToRoot's actual job)...
+    expect(panel.aside.hidden).toBe(false);
+    expect(names(panel.aside)).toEqual(["..", "c.md"]);
+    // ...but DOM focus is untouched, because the panel was already open —
+    // this call did not reveal it.
+    expect(document.activeElement).toBe(external);
+  });
+
+  it("on a CLOSED, root-locked panel with an empty target folder: falls back to the tree container, not <body>", async () => {
+    const listDir = vi.fn(async () => [] as DirEntry[]);
+    const panel = createExplorerPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn(), isRootLocked: () => true });
+    host.append(panel.button, panel.aside);
+    expect(panel.aside.hidden).toBe(true);
+
+    panel.jumpToRoot("/root"); // root-locked jumpToRoot only proceeds when target === baseDir
+    await flush();
+
+    expect(panel.aside.hidden).toBe(false);
+    expect(names(panel.aside)).toEqual([]); // locked (no `..`) + empty (no entries) — nothing to seed
+    // No focusable tree item exists, but this render still owed focus (a
+    // reveal) — land on the tree container itself rather than dropping to
+    // <body> (tree.tabIndex = -1: programmatic-only, never a real Tab stop).
+    expect(document.activeElement).toBe(treeOf(panel.aside));
+  });
 });
 
 // H. Root path stays canonical across up-navigation (bugfix regression) --------
