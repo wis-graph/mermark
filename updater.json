@@ -1,11 +1,11 @@
 {
-  "version": "0.12.1",
-  "notes": "### Fixed\n\n- **사이드바에서 키보드 포커스가 사라지던 문제**: 워크스페이스 패널에서 볼트를 고르면 탐색기가 열리면서 포커스가 아무 데도 없는 상태로 떨어졌다 — 그다음 Tab을 누르면 페이지 맨 처음부터 순회했다. 이제 점프가 패널을 여는 경우 포커스도 그 패널 안으로 따라간다(이미 열려 있던 패널은 포커스를 뺏지 않는다).\n- **이미 선택된 볼트를 다시 클릭할 때의 불필요한 재그리기**: 아무것도 바뀌지 않는 재선택도 매번 상태를 다시 커밋해 볼트 목록 전체를 다시 그렸다.\n- **볼트 해제 버튼의 잘못된 접근성 표시**: 눌렀다 되돌릴 수 있는 토글인 것처럼 표시돼 있었으나 실제로는 한 방향 동작이다. 버튼 설명도 탭 상태가 보존된다는 사실을 알려준다(해제 후 같은 폴더를 다시 등록하면 열려 있던 탭이 그대로 돌아온다).\n- **볼트 관련 오류가 OS 알림창으로 뜨던 문제**: 이제 패널 안에 한 줄로 표시되고 다음 갱신에서 사라진다.\n\n### Changed\n\n- **워크스페이스 사이드바 다듬기**: 키보드 포커스 링·행 모서리·전환 효과를 다른 사이드바 패널과 같은 규칙으로 맞췄고, 폴더 아이콘이 확대/축소(글꼴 배율)를 따라간다. 영구 볼트 그룹에 제목이 붙고, 등록된 볼트가 없을 때는 탐색기의 북마크로 등록한다는 안내가 나온다.\n- **같은 이름의 볼트 구분**: 폴더 이름이 겹치는 볼트가 둘 이상 있을 때만 각 행에 경로를 함께 보여준다. 이름이 겹치지 않으면 지금처럼 이름만 보여준다.",
-  "pub_date": "2026-08-16T17:25:49Z",
+  "version": "0.13.0",
+  "notes": "### Added\n\n- **볼트 접기/펼치기**: 워크스페이스 사이드바에서 볼트의 폴더 아이콘을 누르면 그 볼트의 탭 목록이 접히고 펼쳐진다. 이름을 누르는 것은 지금처럼 그 볼트로 진입하는 동작이라, 한 줄에서 두 가지가 갈린다 — 아이콘에 마우스를 올리면 아이콘만, 이름에 올리면 줄 전체가 밝아져 누르기 전에 구분된다. 접힌 상태는 볼트별로 기억한다. 접었는데 안에 탭이 있으면 닫힌 폴더 아이콘이 옅게 채워져 비어 있지 않다는 걸 알려준다.\n- **파일 종류별 아이콘**: 탐색기·파일 찾기·볼트 탭의 파일 아이콘이 확장자마다 달라진다(Material Icon Theme). 전에는 코드 파일 11종이 모두 같은 아이콘이었고 `.md`와 `.txt`도 구분되지 않았다. `Dockerfile`·`package.json`처럼 이름 자체로 알아보는 파일도 각자 아이콘을 갖는다. 앱 시작 속도에는 영향이 없다 — 아이콘은 화면에 실제로 보일 때만 불러온다.\n\n### Changed\n\n- **볼트 탭 표시 개편**: 탭에 파일 종류 아이콘이 붙고, 아이콘이 종류를 알려주므로 파일명에서 확장자가 빠진다(전체 경로는 툴팁에 그대로). 파일명 앞에 상위 폴더가 흐리게 붙되 **폴더가 바뀌는 줄에만** 나타나고, 길면 줄이고 두 단계 이상 깊으면 `…/`로 접는다. 탭은 연 순서가 아니라 경로순으로 서서 같은 폴더의 파일들이 붙어 보인다(저장된 탭 순서 자체는 바뀌지 않는다).\n- **워크스페이스 사이드바 정리**: 볼트의 탭들이 하나의 밝은 면 안에 담겨 어느 볼트에 속한 탭인지 한눈에 보인다. 파일명이 커졌고, 탭 닫기(×)와 볼트 해제 버튼은 그 줄에 마우스를 올렸을 때만 나타나 평소에는 파일명만 남는다. 지금 보고 있는 볼트와 탭은 같은 방식의 강조로 통일했다 — 전에는 여러 볼트의 활성 탭이 동시에 굵게 표시돼 어느 것이 현재인지 구분되지 않았다.\n\n### Fixed\n\n- **볼트로 진입해도 탐색기가 안 열리던 문제**: 볼트 이름을 눌렀을 때 그 볼트에 열린 탭이 있으면 문서만 열리고 탐색기 사이드바는 닫힌 채였다. 이제 어느 경우든 탐색기가 열리고 그 볼트의 폴더를 보여준다.",
+  "pub_date": "2026-08-16T20:56:36Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzZlL213ZE9NaUEzS0dtSHhGd1FOc2xFMnpQeTM5MTlUdUd6WUxxTklPczREV2pseEdaUVdsNUxSSlpTMXdXNEQ0UTA5dWFHcnFqM0xubWg4cGoxcEFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2OTAxMTI0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ck1xelo4Mk52V1VueE9ZYTJrN3lsRVNJMmlsT0s1Vmp1MFRmMS83ampsbDhMamMwcms1R1ZhcEF0RzNwZVZ1V1M2MWhheTZmMWpTNTc4RUJoak9MMEF3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.12.1/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzVnSVcvMVM3Y0l1cnR0cEZzbTJNQjl6UXg2OGtCTE5YM1R5K3JYK2hKOGZkakhvSG0vVExiYkJsUXZsYi9oS3A5Sy9ZKzlJaXRiOE5rSU13QTJwc2djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2OTEzNzc5CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnVDd0dCVm1tdURBUnhZbHVidFNsSGtnMGdpaTRDZVpuazNnYnBRQWxoa0pBVXZWNk9jTjd0clJyS1M1WnRkTFU2RGNMMk1RSlNvT1UxV2k0a20yQkJRPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.13.0/mermark.app.tar.gz"
     }
   }
 }
