@@ -1523,6 +1523,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 
 .workspace-header { display: flex; align-items: center; gap: .45em; }
 .workspace-title { flex: 1; }
+/* Inline error line (workspace-sidebar.ts's showError) — same shape as
+   .explorer-root-error below (flex-wrap row, muted text, a word-break rule
+   for long messages), not an OS alert. display:flex is unconditional on the
+   base rule, so [hidden] needs its own override to actually win (an author
+   rule always beats the UA default regardless of matching specificity). */
+.workspace-error { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .5em; padding: .5em .4em; color: var(--sidebar-muted); }
+.workspace-error[hidden] { display: none; }
+.workspace-error-message { min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
 /* Drops the font-size override this panel used to declare alone (11px-base),
    so it inherits the ambient 13px-base like outline-empty/recent-empty do.
    Inline padding is the rows' .4em rather than those panels' .5em because this
@@ -1562,6 +1570,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .workspace-vault-tab-close { flex: none; width: 1.7em; height: 1.7em; border: 0; background: transparent; color: var(--sidebar-muted); padding: .2em; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
 .workspace-vault-action { display: inline-flex; align-items: center; justify-content: center; gap: .35em; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
 .workspace-vault-action { width: 2em; }
+/* Same hover/focus color promotion as .explorer-vault-toggle below — a muted
+   icon that reads as "live" once you're actually pointed at or focused on it. */
+.workspace-vault-action:hover, .workspace-vault-action:focus-visible { color: var(--sidebar-fg); }
 /* focus-visible ring — same idiom as outline-item/recent-item/explorer-vault-toggle.
    .workspace-vault-select's ACTIVE row already owns an inset accent bar via box-shadow
    (aria-current rule above); a bare :focus-visible box-shadow would clobber it when both
@@ -1583,6 +1594,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    mutes its glyphs because most of them are files; every vault row is a folder. */
 .workspace-vault-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); }
 .workspace-vault-glyph .icon { width: 100%; height: 100%; }
+/* Disambiguation path label (workspace-sidebar.ts appends this — the shared
+   .path-label from src/chrome/path-label.ts — only when two on-screen vaults
+   share a displayName). .workspace-vault-row already wraps
+   (.workspace-vault-tabs above uses the same flex-basis:100% trick), so this
+   just claims its own line between the name row and the tab strip; the
+   left offset is the same glyph-width-plus-gap approximation
+   .recent-item .path-label uses for the same job. */
+.workspace-vault-row .path-label { flex-basis: 100%; order: 1; padding: 0 .4em 0 calc(16em / 13 + 6px); }
 
 /* Full-height rail's window-chrome band (title-bar.ts createSidebarTopStrip) —
    same 36px height as .title-bar. sticky + an opaque --sidebar-bg: the

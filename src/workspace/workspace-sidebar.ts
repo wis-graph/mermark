@@ -1,5 +1,6 @@
 import { icon } from "../icons";
 import { renderSidebarButton } from "../sidebar/toggle";
+import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
 import { WorkspaceStateError, type Vault, type WorkspaceState, type WorkspaceStore } from "./workspace-state";
 import type { VaultTabs } from "./vault-tabs";
 
@@ -37,23 +38,53 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
   // group's label and rows, and so "the permanent group is empty" is what the
   // DOM actually says rather than something the reader infers from ordering.
   const empty = create("div", "workspace-empty"); empty.textContent = "등록된 영구 볼트가 없습니다. 탐색기에서 폴더 옆 북마크 아이콘으로 등록할 수 있습니다.";
-  aside.append(header, list);
+  // Inline error line (explorer's root-error pattern, not an OS alert — this
+  // panel was the one place still using window.alert). Sits above the list so
+  // it's visible regardless of which row's action triggered it. A persistent
+  // node toggled by `.hidden`, like `empty` above, rather than built fresh —
+  // there's only ever one error showing at a time.
+  const errorMessage = create("span", "workspace-error-message");
+  const errorEl = create("div", "workspace-error"); errorEl.hidden = true; errorEl.append(errorMessage);
+  aside.append(header, errorEl, list);
 
   const renderButton = (): void => renderSidebarButton(button, "list-tree", "워크스페이스", !aside.hidden, "workspace-aside");
   renderButton();
   const close = (): void => { aside.hidden = true; renderButton(); };
   button.addEventListener("click", () => { if (!aside.hidden) close(); else { aside.hidden = false; onOpen?.(); renderButton(); } });
 
-  const showError = (error: unknown): void => { if (error instanceof WorkspaceStateError || typeof error === "string") { window.alert(error instanceof Error ? error.message : error); return; } throw error; };
+  // WorkspaceStateError is a user-facing, expected failure (duplicate root,
+  // missing vault) — shown inline, never thrown further. Anything else is
+  // unexpected and must keep propagating: swallowing it here would hide a
+  // real bug instead of surfacing it. The line clears on the next successful
+  // render (see `render` below), not on a timer — a stale error outliving
+  // the state that caused it would be worse than one that lingers a beat.
+  const showError = (error: unknown): void => {
+    if (error instanceof WorkspaceStateError || typeof error === "string") {
+      errorMessage.textContent = error instanceof Error ? error.message : error;
+      errorEl.hidden = false;
+      return;
+    }
+    throw error;
+  };
   const render = (state: WorkspaceState): void => {
     const workspace = state.workspaces.find((item) => item.workspaceId === state.currentWorkspaceId);
     if (!workspace) return;
+    errorEl.hidden = true;
     list.replaceChildren();
     const permanentVaults = workspace.vaultIds.flatMap((vaultId) => {
       const vault = state.vaults.find((item) => item.vaultId === vaultId);
       return vault ? [vault] : [];
     });
     empty.hidden = permanentVaults.length > 0;
+    // Every vault about to render, global included — a permanent vault named
+    // the same as the global vault (or another permanent vault) is exactly
+    // the case a per-group check would miss, since the two live in separate
+    // groups. Counts, not identities: only a name shared by 2+ vaults gets a
+    // path label; a lone vault reads fine by name alone (240px is no room for
+    // a path nobody needs).
+    const nameCounts = new Map<string, number>();
+    for (const vault of [store.getGlobalVault(), ...permanentVaults]) nameCounts.set(vault.displayName, (nameCounts.get(vault.displayName) ?? 0) + 1);
+    const hasNameCollision = (name: string): boolean => (nameCounts.get(name) ?? 0) > 1;
 
     // `label` names the group in the DOM (not via CSS `content:`, where the
     // string would be invisible to a grep of the other UI strings, unselectable,
@@ -73,6 +104,12 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
         const select = create("button", "workspace-vault-select") as HTMLButtonElement; select.type = "button"; select.title = vault.rootPath ?? vault.displayName;
         const glyph = create("span", "workspace-vault-glyph"); glyph.append(icon(vault.persistenceKind === "global" ? "folder-open" : "folder")); select.append(glyph);
         const name = create("span", "workspace-vault-name"); name.textContent = vault.displayName; select.append(name);
+        // Path label only when this vault's name collides with another one
+        // currently on screen — the shared left-truncating component
+        // (src/chrome/path-label.ts), same as recent-item's disambiguation
+        // row, never a fresh one. The global vault has no rootPath (nothing
+        // to show), so it can never carry this even if its name collides.
+        const pathLabel = vault.rootPath && hasNameCollision(vault.displayName) && !redundantPathLabel(vault.rootPath) ? truncatedPathLabel(vault.rootPath) : null;
         const tabList = create("div", "workspace-vault-tabs"); tabList.setAttribute("role", "tablist"); tabList.setAttribute("aria-orientation", "horizontal"); tabList.setAttribute("aria-label", `${vault.displayName} 탭`);
         const tabs = getTabs?.(vault.vaultId) ?? { vaultId: vault.vaultId, tabs: [], activeTabId: null };
         for (const tab of tabs.tabs) {
@@ -113,9 +150,22 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
           tabRow.append(tabEl, closeTab); tabList.append(tabRow);
         }
         select.setAttribute("aria-current", workspace.currentVaultId === vault.vaultId ? "true" : "false"); select.addEventListener("click", () => { try { onSelectVault(vault); } catch (error) { showError(error); } });
-        row.append(select, tabList);
+        row.append(select);
+        if (pathLabel) row.append(pathLabel);
+        row.append(tabList);
         if (vault.persistenceKind === "permanent") {
-          const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = "영구 볼트 해제"; remove.setAttribute("aria-label", `${vault.displayName} 영구 볼트 해제`); remove.setAttribute("aria-pressed", "true"); remove.append(icon("bookmark-filled")); remove.addEventListener("click", () => { try { store.unregisterVault(vault.vaultId); } catch (error) { showError(error); } });
+          // Reversible, so the title says so instead of reading like a
+          // destructive one-way click: unregisterVault only drops the
+          // vaultId/rootPath pairing from workspace state (workspace-state.ts)
+          // — it never touches `mermark.vaultTabs.<id>`, and vaultId is
+          // derived deterministically from the canonical rootPath
+          // (`vault-${encodeURIComponent(path)}`), so re-registering the same
+          // folder lands on the same id and its saved tabs are still there.
+          // No `aria-pressed` — that promises a real toggle (press again to
+          // undo in place), but this button removes itself on click; it's a
+          // plain one-way action, not a toggle (unlike the explorer's own
+          // bookmark toggle, which really does flip back and forth).
+          const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = "영구 볼트 해제 — 탭 상태는 보존됩니다"; remove.setAttribute("aria-label", `${vault.displayName} 영구 볼트 해제 — 탭 상태는 보존됩니다`); remove.append(icon("bookmark-filled")); remove.addEventListener("click", () => { try { store.unregisterVault(vault.vaultId); } catch (error) { showError(error); } });
           row.append(remove);
         }
         group.append(row);

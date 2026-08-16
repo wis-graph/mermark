@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWorkspaceSidebar } from "../src/workspace/workspace-sidebar";
-import { GLOBAL_VAULT_ID, WorkspaceStore } from "../src/workspace/workspace-state";
+import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore } from "../src/workspace/workspace-state";
 import type { VaultTabs } from "../src/workspace/vault-tabs";
 
 describe("workspace sidebar", () => {
@@ -157,6 +157,102 @@ describe("workspace sidebar", () => {
     expect(store.get().vaults).toEqual([]);
     expect(confirm).not.toHaveBeenCalled();
     expect(sidebar.aside.querySelector(`[data-vault-id="${vault.vaultId}"]`)).toBeNull();
+  });
+
+  // The unregister button is a one-way action (it removes its own row), not a
+  // toggle — aria-pressed promises the wrong contract (a leftover from
+  // copying the explorer's real bookmark toggle). Its title communicates the
+  // one fact that makes the click safe to make lightly: tab state survives.
+  it("the unregister button has no aria-pressed and its title/aria-label say the tab state is kept", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+    document.body.append(sidebar.aside);
+
+    const remove = sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-action`);
+    expect(remove?.hasAttribute("aria-pressed")).toBe(false);
+    expect(remove?.title).toContain("보존");
+    expect(remove?.getAttribute("aria-label")).toContain("보존");
+  });
+
+  // Disambiguation path label (P10): the shared .path-label component
+  // (src/chrome/path-label.ts, same one recent-item uses) only when a
+  // displayName collides with another vault ON SCREEN RIGHT NOW — collision
+  // scope is every rendered vault including the global one, not just
+  // same-group siblings.
+  it("adds a path label only to vaults whose name collides with another on-screen vault", () => {
+    const store = new WorkspaceStore();
+    const dup1 = store.registerVault("/work/notes", "notes");
+    const dup2 = store.registerVault("/home/notes", "notes");
+    const unique = store.registerVault("/home/journal", "journal");
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+    document.body.append(sidebar.aside);
+
+    const rowFor = (vaultId: string) => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vaultId}"]`);
+    expect(rowFor(dup1.vaultId)?.querySelector(".path-label")).toBeTruthy();
+    expect(rowFor(dup2.vaultId)?.querySelector(".path-label")).toBeTruthy();
+    expect(rowFor(unique.vaultId)?.querySelector(".path-label")).toBeNull();
+    // The global vault has no rootPath, so it never gets one even though
+    // nothing here makes its name collide in this test — the row simply
+    // has no path to show.
+    expect(rowFor(GLOBAL_VAULT_ID)?.querySelector(".path-label")).toBeNull();
+  });
+
+  it("does not add a path label when every on-screen vault name is unique", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+    document.body.append(sidebar.aside);
+
+    expect(sidebar.aside.querySelector(".path-label")).toBeNull();
+    // The tooltip stays — the label is a supplement, not a replacement.
+    expect(sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-select`)?.title).toBe("/notes/project");
+  });
+
+  // Inline error line (P11): WorkspaceStateError shows in the panel and
+  // clears on the next successful render; anything else keeps propagating
+  // instead of being silently swallowed. jsdom doesn't let a listener
+  // exception propagate through .click() itself (matches real browsers —
+  // dispatchEvent reports it via the global 'error' event rather than
+  // throwing back at the caller), so that's what this test listens for.
+  it("shows a WorkspaceStateError inline (no window.alert) and clears it on the next successful render", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const onSelectVault = vi.fn(() => { throw new WorkspaceStateError("missing-vault", "그 볼트를 찾을 수 없습니다"); });
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault });
+    document.body.append(sidebar.aside);
+
+    sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-select`)?.click();
+
+    expect(alertSpy).not.toHaveBeenCalled();
+    const errorEl = sidebar.aside.querySelector<HTMLElement>(".workspace-error");
+    expect(errorEl?.hidden).toBe(false);
+    expect(errorEl?.textContent).toContain("그 볼트를 찾을 수 없습니다");
+
+    // Any subsequent successful render (a rename here, unrelated to the
+    // failed selection) clears the stale line.
+    store.renameVault(vault.vaultId, "Renamed");
+    expect(sidebar.aside.querySelector<HTMLElement>(".workspace-error")?.hidden).toBe(true);
+  });
+
+  it("still throws a non-WorkspaceStateError instead of swallowing it", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes/project", "Project");
+    const onSelectVault = vi.fn(() => { throw new Error("boom-unexpected"); });
+    const sidebar = createWorkspaceSidebar({ store, onSelectVault });
+    document.body.append(sidebar.aside);
+
+    let captured: unknown = null;
+    const onWindowError = (event: ErrorEvent) => { captured = event.error; event.preventDefault(); };
+    window.addEventListener("error", onWindowError);
+    sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-select`)?.click();
+    window.removeEventListener("error", onWindowError);
+
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toBe("boom-unexpected");
+    // Not swallowed into the inline error line either.
+    expect(sidebar.aside.querySelector<HTMLElement>(".workspace-error")?.hidden).not.toBe(false);
   });
 
   it("closes competing panels when workspace opens", () => {
