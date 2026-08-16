@@ -89,6 +89,17 @@ const readState = (): WorkspaceState => {
 const saveState = (state: WorkspaceState): void => { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); };
 const makeVaultId = (rootPath: string): string => `vault-${encodeURIComponent(rootPath)}`;
 
+/** True when selecting `vaultId` would leave every field that selection WRITES
+ *  unchanged — i.e. the commit selectVault is about to make is a genuine
+ *  no-op. Global selection only ever writes currentVaultId; permanent
+ *  selection writes both currentVaultId AND lastSelectedPermanentVaultId, so
+ *  a permanent reselect must check both — a state where currentVaultId
+ *  already matches but lastSelectedPermanentVaultId drifted (restored state,
+ *  or a permanent -> global -> same-permanent round trip) is NOT a no-op and
+ *  must still commit to repair the drift. */
+const selectionIsNoop = (workspace: Workspace, vaultId: string, touchesLastSelected: boolean): boolean =>
+  workspace.currentVaultId === vaultId && (!touchesLastSelected || workspace.lastSelectedPermanentVaultId === vaultId);
+
 export class WorkspaceStore {
   private state: WorkspaceState;
   private readonly listeners = new Set<(state: WorkspaceState) => void>();
@@ -112,12 +123,14 @@ export class WorkspaceStore {
     const workspace = this.currentWorkspace();
     if (vaultId === GLOBAL_VAULT_ID) {
       const global = this.getGlobalVault();
+      if (selectionIsNoop(workspace, GLOBAL_VAULT_ID, false)) return global;
       this.state = { ...this.state, workspaces: this.state.workspaces.map((item) => item.workspaceId === workspace.workspaceId ? { ...item, currentVaultId: GLOBAL_VAULT_ID } : item) };
       this.notify();
       return global;
     }
     const vault = this.vaultById(vaultId);
     if (!vault || vault.persistenceKind !== "permanent" || vault.workspaceId !== workspace.workspaceId) throw new WorkspaceStateError("missing-vault", `Unknown vault: ${vaultId}`);
+    if (selectionIsNoop(workspace, vaultId, true)) return vault;
     this.commit({ ...this.state, workspaces: this.state.workspaces.map((item) => item.workspaceId === vault.workspaceId ? { ...item, currentVaultId: vaultId, lastSelectedPermanentVaultId: vaultId } : item) });
     return vault;
   }

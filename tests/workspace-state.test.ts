@@ -94,6 +94,60 @@ describe("WorkspaceStore", () => {
     expect(restartedStore.get()).not.toHaveProperty("sessionTemporaryVaults");
   });
 
+  // selectVault no-op guard (selectionIsNoop, workspace-state.ts): reselecting
+  // a vault that's already fully selected must not commit/notify — a click on
+  // an already-active workspace-sidebar row was blowing away DOM focus
+  // because selectVault always committed, unconditionally re-rendering the
+  // list on every click regardless of whether anything changed.
+  it("reselecting the already-active permanent vault is a no-op: no notify, same vault returned", () => {
+    const store = new WorkspaceStore();
+    const vault = store.registerVault("/notes", "Notes");
+    let notifyCount = 0;
+    store.subscribe(() => { notifyCount++; });
+
+    const reselected = store.selectVault(vault.vaultId);
+
+    expect(notifyCount).toBe(0);
+    expect(reselected.vaultId).toBe(vault.vaultId);
+  });
+
+  it("reselecting the global vault while already global is a no-op", () => {
+    const store = new WorkspaceStore();
+    store.registerVault("/notes", "Notes");
+    store.selectVault(GLOBAL_VAULT_ID);
+    let notifyCount = 0;
+    store.subscribe(() => { notifyCount++; });
+
+    const reselected = store.selectVault(GLOBAL_VAULT_ID);
+
+    expect(notifyCount).toBe(0);
+    expect(reselected.vaultId).toBe(GLOBAL_VAULT_ID);
+  });
+
+  it("still commits (and repairs lastSelectedPermanentVaultId) when currentVaultId already matches but lastSelectedPermanentVaultId has drifted", () => {
+    // Craft a desynced restored state: currentVaultId already equals vaultA,
+    // but lastSelectedPermanentVaultId still points at vaultB — the exact
+    // shape a naive `currentVaultId === vaultId` guard would wrongly treat as
+    // a no-op, silently swallowing the lastSelectedPermanentVaultId repair.
+    const seedStore = new WorkspaceStore();
+    const vaultA = seedStore.registerVault("/a", "A");
+    const vaultB = seedStore.registerVault("/b", "B");
+    const raw = JSON.parse(localStorage.getItem(workspaceStorageKey) ?? "null") as { workspaces: Array<{ currentVaultId: string | null; lastSelectedPermanentVaultId: string | null }> };
+    raw.workspaces[0]!.currentVaultId = vaultA.vaultId;
+    raw.workspaces[0]!.lastSelectedPermanentVaultId = vaultB.vaultId;
+    localStorage.setItem(workspaceStorageKey, JSON.stringify(raw));
+
+    const store = new WorkspaceStore();
+    let notifyCount = 0;
+    store.subscribe(() => { notifyCount++; });
+
+    const reselected = store.selectVault(vaultA.vaultId);
+
+    expect(notifyCount).toBe(1); // NOT a no-op — must commit to repair the drift
+    expect(reselected.vaultId).toBe(vaultA.vaultId);
+    expect(store.get().workspaces[0]?.lastSelectedPermanentVaultId).toBe(vaultA.vaultId);
+  });
+
   it("unregisters metadata only and leaves the filesystem path represented nowhere else", () => {
     const store = new WorkspaceStore();
     const vault = store.registerVault("/user/content", "Content");
