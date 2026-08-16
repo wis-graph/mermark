@@ -986,12 +986,31 @@ describe("explorer: ⌘/Ctrl+click and ⌘+Enter open in a new window when injec
 
 // G. Folder/file icons: extension glyphs + folder open/close swap --------------
 // The row glyph reflects the entry KIND (folder / file family), the folder glyph
-// swaps with open state, and the `..` glyph is untouched. SVGs carry the
-// `icon icon-<name>` class from icons.ts, so we assert by that selector.
+// swaps with open state, and the `..` glyph is untouched. Folders stay Lucide
+// (`icon icon-<name>` class from icons.ts). Files resolve through the Material
+// Icon Theme (material-icon-glyph.ts): by the time `openPanel`'s real-timer
+// `flush()` has settled, the per-extension icon chunk has loaded and
+// `renderMaterialFileGlyph` has stamped `data-material-icon="<id>"` on the
+// glyph container — see that module's `materialIconIdFor` for the id lookup
+// this test's expected ids are drawn from (verified against the vendored
+// material-icons.generated.ts, e.g. md→"markdown", png→"image", json→"json",
+// ts→"typescript").
 const glyphIcon = (item: HTMLElement) =>
   item.querySelector(":scope > .explorer-label > .explorer-glyph > svg");
+const glyphMaterialId = (item: HTMLElement) =>
+  item.querySelector(":scope > .explorer-label > .explorer-glyph")?.getAttribute("data-material-icon");
+/** A vitest worker's FIRST-ever dynamic import of a given
+ *  ./material-icons/*.svg chunk (material-icon-glyph.ts's import.meta.glob)
+ *  goes through real transform + module registration, which isn't always
+ *  done within one `flush()` tick — unlike production, where it's a fetch of
+ *  an already-built chunk. Poll (bounded, real timers) instead of assuming a
+ *  single flush suffices; see tests/material-icon-glyph.test.ts for the same
+ *  idiom applied directly to renderMaterialFileGlyph. */
+async function waitForMaterialIcon(item: HTMLElement, tries = 20): Promise<void> {
+  for (let i = 0; i < tries && !glyphMaterialId(item); i++) await flush();
+}
 describe("explorer: file/folder icons + open-state swap (G)", () => {
-  it("file rows carry an extension-specific glyph; folder is closed by default", async () => {
+  it("file rows carry an extension-specific Material glyph; folder is closed by default (Lucide)", async () => {
     const listDir = vi.fn((path: string) =>
       Promise.resolve(
         path === "/root"
@@ -1001,11 +1020,15 @@ describe("explorer: file/folder icons + open-state swap (G)", () => {
     );
     const panel = await openPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn() });
     const at = (n: string) => items(panel.aside).find((e) => nameOf(e) === n) as HTMLElement;
+    await waitForMaterialIcon(at("a.md"));
+    await waitForMaterialIcon(at("pic.png"));
+    await waitForMaterialIcon(at("data.json"));
+    await waitForMaterialIcon(at("app.ts"));
 
-    expect(glyphIcon(at("a.md"))?.classList.contains("icon-file-text")).toBe(true);
-    expect(glyphIcon(at("pic.png"))?.classList.contains("icon-file-image")).toBe(true);
-    expect(glyphIcon(at("data.json"))?.classList.contains("icon-braces")).toBe(true);
-    expect(glyphIcon(at("app.ts"))?.classList.contains("icon-file-code")).toBe(true);
+    expect(glyphMaterialId(at("a.md"))).toBe("markdown");
+    expect(glyphMaterialId(at("pic.png"))).toBe("image");
+    expect(glyphMaterialId(at("data.json"))).toBe("json");
+    expect(glyphMaterialId(at("app.ts"))).toBe("typescript");
     expect(glyphIcon(at("sub"))?.classList.contains("icon-folder")).toBe(true);
   });
 
@@ -1019,7 +1042,8 @@ describe("explorer: file/folder icons + open-state swap (G)", () => {
     const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
     const png = panel.aside.querySelector(".explorer-file.is-nonmd") as HTMLElement;
     expect(nameOf(png)).toBe("pic.png");
-    expect(glyphIcon(png)?.classList.contains("icon-file-image")).toBe(true);
+    await waitForMaterialIcon(png);
+    expect(glyphMaterialId(png)).toBe("image");
   });
 
   it("folder glyph swaps folder → folder-open on expand and back on collapse (click)", async () => {

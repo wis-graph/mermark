@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "gen:material-icons": "node scripts/generate-material-icons.mjs",
     "release:build": "TAURI_SIGNING_PRIVATE_KEY=\"$HOME/.tauri/mermark.key\" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=\"\" tauri build",
     "test": "vitest run"
   },
@@ -36,6 +37,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "jsdom": "^29.1.1",
+    "material-icon-theme": "^5.37.0",
     "playwright": "^1.60.0",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",

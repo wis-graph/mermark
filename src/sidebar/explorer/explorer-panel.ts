@@ -1,5 +1,5 @@
 import { icon } from "../../icons";
-import { iconNameForEntry, isEditableTextFile } from "./file-icons";
+import { renderEntryGlyph, isEditableTextFile } from "./file-icons";
 import { basename, normalizePath } from "../../document/path";
 import { renderSidebarButton } from "../toggle";
 
@@ -172,7 +172,7 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => 
  *  icon id comes from the file-icons SSOT (folders ignore the name). */
 function renderFolderGlyph(node: HTMLElement, expanded: boolean): void {
   const glyph = node.querySelector(":scope > .explorer-label > .explorer-glyph");
-  if (glyph) glyph.replaceChildren(icon(iconNameForEntry("", true, expanded)));
+  if (glyph) renderEntryGlyph(glyph as HTMLElement, "", true, expanded);
 }
 
 /** Sync a folder's permanent-vault toggle without changing the tree row. */
@@ -396,7 +396,7 @@ export function createExplorerPanel({
     const chevron = create("span", e.is_dir ? "explorer-chevron" : "explorer-chevron explorer-chevron-empty");
     if (e.is_dir) chevron.append(icon("chevron-right"));
     const glyph = create("span", "explorer-glyph");
-    glyph.append(icon(iconNameForEntry(e.name, e.is_dir, false)));
+    renderEntryGlyph(glyph, e.name, e.is_dir, false);
     const name = create("span", "explorer-name");
     name.textContent = e.name;
     name.title = e.name;

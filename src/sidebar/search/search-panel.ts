@@ -1,5 +1,4 @@
-import { icon } from "../../icons";
-import { iconNameForEntry, isEditableTextFile } from "../explorer/file-icons";
+import { renderEntryGlyph, isEditableTextFile } from "../explorer/file-icons";
 import { renderSidebarButton } from "../toggle";
 import { rankHits, MAX_RESULTS, type FuzzyMatch } from "./fuzzy";
 
@@ -248,7 +247,7 @@ export function createSearchPanel({
       row.setAttribute("role", "option");
       row.dataset.path = hit.path;
       const glyph = create("span", "search-item-glyph");
-      glyph.append(icon(iconNameForEntry(hit.name, false, false)));
+      renderEntryGlyph(glyph, hit.name, false, false);
       const label = create("span", "search-item-label");
       appendHighlighted(label, hit.rel_path, match);
       row.append(glyph, label);

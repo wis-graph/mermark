@@ -1,4 +1,4 @@
-import type { IconName } from "../../icons";
+import { icon, type IconName } from "../../icons";
 
 // ---------------------------------------------------------------------------
 // Explorer file/folder icon resolution — a PURE lookup, not a setting. The
@@ -66,11 +66,16 @@ export function isEditableTextFile(name: string): boolean {
   return EDITABLE_TEXT_EXTENSIONS.has(extensionOf(name));
 }
 
-/** Extension → curated icon id. A tight set (one shared icon per file family)
- *  so the explorer reads at a glance; anything not listed falls back to the
- *  generic `file`. Keyed by the lowercased extension `extensionOf` returns.
- *  Image extensions are spread in from IMAGE_EXTENSIONS so the icon map and
- *  the open-policy set can never drift apart. */
+/** Extension → curated Lucide icon id. Originally the ONLY file glyph source;
+ *  since the Material Icon Theme adoption (renderEntryGlyph below) it's the
+ *  FALLBACK glyph — painted instantly for files while that entry's Material
+ *  icon chunk is still loading (material-icon-glyph.ts), and it's still the
+ *  only glyph folders ever get. A tight set (one shared icon per file family)
+ *  so even the fallback frame reads at a glance; anything not listed falls
+ *  back to the generic `file`. Keyed by the lowercased extension
+ *  `extensionOf` returns. Image extensions are spread in from
+ *  IMAGE_EXTENSIONS so the icon map and the open-policy set can never drift
+ *  apart. */
 const EXT_ICON: Readonly<Record<string, IconName>> = {
   md: "file-text",
   markdown: "file-text",
@@ -97,4 +102,62 @@ const EXT_ICON: Readonly<Record<string, IconName>> = {
 export function iconNameForEntry(name: string, isDir: boolean, expanded: boolean): IconName {
   if (isDir) return expanded ? "folder-open" : "folder";
   return EXT_ICON[extensionOf(name)] ?? "file";
+}
+
+type MaterialGlyphModule = typeof import("./material-icon-glyph");
+
+/** Once the FIRST file glyph anywhere has needed it, holds the resolved
+ *  material-icon-glyph.ts module so every render after that can call it
+ *  synchronously — no fallback repaint, no flicker, once warm. */
+let materialGlyphModule: MaterialGlyphModule | null = null;
+let materialGlyphLoader: Promise<MaterialGlyphModule> | null = null;
+
+/** Lazily `import()` the Material Icon Theme runtime — material-icon-glyph.ts
+ *  PLUS the ext/filename lookup tables it statically imports
+ *  (material-icons.generated.ts, ~1300+2100 entries) — exactly once. Mirrors
+ *  math-widget.ts's katexLoader / mermaid-widget.ts's mermaidLoader: a
+ *  module-level cached Promise so app boot (before the sidebar has ever
+ *  drawn a file row) never pays for this feature. file-icons.ts is imported
+ *  by explorer-panel.ts/search-panel.ts, both part of the main bundle, so
+ *  keeping THIS import dynamic (not a top-level `import … from`) is what
+ *  keeps the ~100KB generated table and the 585-entry svg-loader glob table
+ *  (material-icon-glyph.ts's `import.meta.glob`) out of the cold-load path —
+ *  a top-level import here would defeat the whole point of vendoring the
+ *  icon set as lazy per-id chunks. */
+function loadMaterialGlyph(): Promise<MaterialGlyphModule> {
+  if (!materialGlyphLoader) {
+    materialGlyphLoader = import("./material-icon-glyph").then((m) => {
+      materialGlyphModule = m;
+      return m;
+    });
+  }
+  return materialGlyphLoader;
+}
+
+/** THE single entry point for painting a tree/list-row glyph — explorer,
+ *  search, and (next) workspace tabs all call this instead of hand-rolling
+ *  `container.append(icon(iconNameForEntry(...)))` themselves, so the
+ *  Lucide-vs-Material split (and the lazy-load boundary above) lives in
+ *  exactly one place. Folders are unaffected by the Material Icon Theme
+ *  adoption (2026-08, see _workspace/03_frontend_material_icons.md) and keep
+ *  resolving through iconNameForEntry's Lucide folder/folder-open glyphs,
+ *  synchronously, forever. Files resolve iconNameForEntry's EXT_ICON entry
+ *  as the FALLBACK glyph (painted instantly, same 16x16 box), then hand off
+ *  to renderMaterialFileGlyph for the real per-extension/per-filename
+ *  Material glyph — synchronously once material-icon-glyph.ts is warm this
+ *  session, asynchronously (fallback-then-upgrade, no layout jump) the first
+ *  time any file glyph is requested. Command (void): mutates `container`,
+ *  not a query. */
+export function renderEntryGlyph(container: HTMLElement, name: string, isDir: boolean, expanded: boolean): void {
+  const fallback = iconNameForEntry(name, isDir, expanded);
+  if (isDir) {
+    container.replaceChildren(icon(fallback));
+    return;
+  }
+  if (materialGlyphModule) {
+    materialGlyphModule.renderMaterialFileGlyph(container, name, fallback);
+    return;
+  }
+  container.replaceChildren(icon(fallback));
+  void loadMaterialGlyph().then((m) => m.renderMaterialFileGlyph(container, name, fallback));
 }
