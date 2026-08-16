@@ -268,6 +268,44 @@ export function createExplorerPanel({
    *  move this, but only Enter/click activates. Reset on every renderTree. */
   let focused: HTMLElement | null = null;
 
+  /** A focus obligation that has NOT yet been paid to the tree. A render can be
+   *  superseded (its own generation check below fails) before it ever reaches
+   *  the point where it would move focus — main.ts's vault-entry-with-open-
+   *  document path does exactly this: jumpToRoot's reveal render is still
+   *  awaiting `readChildren` when openInWindow's resetToBaseDir fires a SECOND
+   *  render at the same root, in the same synchronous tick. Without this flag,
+   *  the discarded render's focus intent is discarded right along with it —
+   *  REVEAL-FOLLOWS-FOCUS (see `jumpToRoot`) promises "we just opened a panel
+   *  for you, focus goes there", and silently dropping that promise because a
+   *  second render happened to win the race makes the rule a lie. Living
+   *  outside any one render's closure is the point: whichever render actually
+   *  reaches the finish line — not necessarily the one that raised the flag —
+   *  is the one that discharges it.
+   *
+   *  Supersession (`renderGeneration !== renderId`) is the ONLY early exit
+   *  allowed to leave this flag standing — it's the only one with a
+   *  guaranteed successor (the very render that superseded it) to inherit the
+   *  debt. Every other early exit in `renderTree` (a request/error mismatch
+   *  at an otherwise-current generation) has no such guarantee, so it must
+   *  discharge the flag itself before returning — otherwise a stale
+   *  obligation sits armed until some LATER, unrelated render pays it off by
+   *  yanking focus into the tree out of nowhere (e.g. mid-keystroke in the
+   *  editor), which is worse than the focus loss this flag exists to fix.
+   *
+   *  No caller reaches that mismatch branch TODAY, which is why it has no
+   *  test: `readChildren`'s only callers are `renderTree` — which bumps the
+   *  generation and records its own request in one synchronous stretch, so a
+   *  loser always fails the generation check first — and `expandFolder`,
+   *  which only ever acts on a descendant path, and a descendant can't also
+   *  be the root being rendered (the root has no row of its own; `..` is the
+   *  parent and everything else is below it). That is a fact about today's
+   *  callers, not a guarantee: add a third `readChildren` caller, or split
+   *  `renderTree`'s generation bump from its request write, and the branch
+   *  goes live. Which is the reason these two conditions stay separate —
+   *  folding them back into one `||` reads as a harmless tidy-up and
+   *  silently re-arms the stale obligation. */
+  let focusOwed = false;
+
   const allItems = (): HTMLElement[] =>
     [...tree.querySelectorAll(".explorer-item")] as HTMLElement[];
 
@@ -522,10 +560,19 @@ export function createExplorerPanel({
    *  await, we'd either grab a node that's about to be replaced or grab
    *  nothing at all. Landing the focus move on the far side of the await is
    *  what makes a fast Tab/click right after `jumpToRoot` never race a
-   *  still-loading tree. */
+   *  still-loading tree.
+   *
+   *  `focusOnRender` only ever RAISES `focusOwed` (never clears it) — the
+   *  render that actually reaches a discharge point below reads and clears
+   *  the shared flag, not its own local parameter. That's what lets an
+   *  obligation survive being superseded: this call's own generation check
+   *  can fail and bail out below without ever un-raising the flag it set, so
+   *  the very next render to actually finish (whichever call that is) still
+   *  pays it. */
   const renderTree = async (rootPath: string, focusOnRender = false): Promise<void> => {
     rootPath = normalizePath(rootPath);
     const renderId = ++renderGeneration;
+    if (focusOnRender) focusOwed = true;
     currentRoot = rootPath;
     onRootChange?.(rootPath);
     tree.replaceChildren();
@@ -560,11 +607,18 @@ export function createExplorerPanel({
 
     try {
       const result = await readChildren(rootPath);
-      if (renderGeneration !== renderId || listingRequests.get(rootPath) !== result.request) return;
+      // Superseded by a later render — leave `focusOwed` for it to inherit.
+      if (renderGeneration !== renderId) return;
+      // Still the current generation, but this particular result is stale for
+      // an unrelated reason (see readChildren's request-dedup) — there is no
+      // guaranteed later render to inherit the obligation, so it must not
+      // survive past this return.
+      if (listingRequests.get(rootPath) !== result.request) { focusOwed = false; return; }
       if (result.entries.length === 0) tree.append(makeEmptyState());
       else for (const e of result.entries) tree.append(await makeEntry(e, 1));
     } catch (error) {
-      if (renderGeneration !== renderId || listingErrors.get(rootPath) !== errorMessage(error)) return;
+      if (renderGeneration !== renderId) return; // superseded — same as above
+      if (listingErrors.get(rootPath) !== errorMessage(error)) { focusOwed = false; return; } // current generation, stale error — discharge, don't carry forward
       const errorState = makeState("explorer-root-error", `현재 루트를 읽을 수 없습니다: ${errorMessage(error)}`, {
         className: "explorer-root-reselect",
         label: "루트 다시 선택",
@@ -573,18 +627,26 @@ export function createExplorerPanel({
       tree.append(errorState);
       // A render that owes focus still owes it even when it failed — land on
       // the retry button (a real, useful action) instead of leaving focus
-      // wherever it was (often nowhere, post-reveal — see jumpToRoot).
-      if (focusOnRender) errorState.querySelector<HTMLButtonElement>(".explorer-root-reselect")?.focus();
+      // wherever it was (often nowhere, post-reveal — see jumpToRoot). Reads
+      // the shared flag, not this call's own `focusOnRender` — see that
+      // parameter's doc comment above for why.
+      const owesFocus = focusOwed;
+      focusOwed = false;
+      if (owesFocus) errorState.querySelector<HTMLButtonElement>(".explorer-root-reselect")?.focus();
       return;
     }
 
+    // Discharge point: whichever call reaches here — its own generation, not
+    // necessarily the one that raised `focusOwed` — pays the obligation.
+    const owesFocus = focusOwed;
+    focusOwed = false;
     const first = visibleItems()[0];
-    if (first) focusItem(first, focusOnRender);
+    if (first) focusItem(first, owesFocus);
     // Nothing to focus at all (root-locked + genuinely empty folder, no `..`
     // row either) — still land somewhere better than <body> when this render
     // owes focus, without inventing a real focus trap (tree.tabIndex=-1, see
     // its declaration above, is programmatic-only).
-    else if (focusOnRender) tree.focus();
+    else if (owesFocus) tree.focus();
   };
 
   /** Change the tree root to `parentPath` (the `..` target, still carrying its
@@ -698,7 +760,22 @@ export function createExplorerPanel({
    *  `revealShell()` runs (which flips `aside.hidden`), then threaded through
    *  `changeRoot` to `renderTree`, which is the only place that actually
    *  knows a focus target exists (post-fetch) — see its doc comment for why
-   *  the move can't happen here, synchronously. */
+   *  the move can't happen here, synchronously.
+   *
+   *  The promise ("we just opened a panel for you, focus goes there") has to
+   *  survive this call's OWN render losing a race. main.ts's vault-entry path
+   *  that opens a document calls this, then — same synchronous tick, no
+   *  await between them — `resetToBaseDir()` fires a second `renderTree` at
+   *  the same root. `renderTree`'s generation guard discards this call's
+   *  render before it reaches its focus-move code, and without more, the
+   *  promise this call made would be discarded right along with it (focus
+   *  would fall to `<body>`, or wherever destroying the clicked
+   *  `.workspace-vault-select` button — the workspace panel's own re-render
+   *  removes it from the DOM — happens to leave it). `focusOwed` (see
+   *  `renderTree`) is what prevents that: the obligation lives outside any
+   *  one render's closure, so the SECOND render — the one that actually wins
+   *  — inherits and pays it, even though it never asked to reveal anything
+   *  itself. */
   const jumpToRoot = (absPath: string): void => {
     if (isRootLocked?.() && normalizePath(absPath) !== normalizePath(getBaseDir())) return;
     const reveals = aside.hidden;

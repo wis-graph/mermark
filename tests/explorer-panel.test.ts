@@ -493,6 +493,38 @@ describe("explorer: jumpToRoot (J)", () => {
     // <body> (tree.tabIndex = -1: programmatic-only, never a real Tab stop).
     expect(document.activeElement).toBe(treeOf(panel.aside));
   });
+
+  // Focus-obligation succession (2026-08-17 bugfix): main.ts's vault-entry
+  // path that ALSO opens a document calls jumpToRoot, then — same
+  // synchronous tick, no await between them — resetToBaseDir fires a SECOND
+  // renderTree at the same root. Reproduced directly here without main.ts:
+  // jumpToRoot (reveal, owes focus) immediately followed by resetToBaseDir
+  // (no reveal, doesn't itself ask for focus) before either has settled.
+  // Before the fix, jumpToRoot's own render loses the renderGeneration race
+  // and never reaches its focus-move code, and resetToBaseDir's render (the
+  // one that actually wins) never asked for focus either — so the obligation
+  // evaporates and focus lands on <body>. After the fix, the SECOND render
+  // inherits and pays the first one's obligation.
+  it("a reveal's focus obligation survives its own render losing the generation race to a same-tick resetToBaseDir", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = createExplorerPanel({ listDir, getBaseDir: () => "/root/child", onOpenFile: vi.fn() });
+    host.append(panel.button, panel.aside);
+    expect(panel.aside.hidden).toBe(true);
+
+    panel.jumpToRoot("/root/child"); // reveals — synchronously flips aside.hidden, owes focus
+    panel.resetToBaseDir(); // fires immediately after, same root, same tick — no await in between
+    await flush();
+
+    expect(panel.aside.hidden).toBe(false);
+    expect(names(panel.aside)).toEqual(["..", "c.md"]);
+    // The obligation jumpToRoot raised is paid by whichever render actually
+    // finishes — not lost, and not double-paid (exactly one call worth of
+    // listDir per root: renderTree clears the tree at the start of each
+    // call, so a leftover DOM fragment from the discarded render can't
+    // masquerade as a second focus target either).
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(focusedItem(panel.aside));
+  });
 });
 
 // H. Root path stays canonical across up-navigation (bugfix regression) --------

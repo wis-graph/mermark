@@ -329,6 +329,106 @@ describe("main workspace wiring", () => {
     expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: /P");
   });
 
+  // Vault-name click = enter the vault = Explorer opens (2026-08-17 fix): the
+  // breadcrumb-only assertion above is not proof the Explorer panel is
+  // actually visible — breadcrumb.render runs unconditionally inside
+  // openInWindow regardless of whether the panel is open, so it stayed green
+  // through the whole regression. These three tests lock the panel's actual
+  // `hidden` state across all three onSelectVault branches so they can never
+  // drift apart again: a vault with an open tab (the branch that was missing
+  // explorer.jumpToRoot), a vault with no tabs (the welcome branch, already
+  // correct), and re-clicking the already-active vault+doc (the synchronous
+  // same-doc branch, already correct).
+  it("opens the Explorer for a name click on a permanent vault THAT HAS an open tab (the fixed branch)", async () => {
+    localStorage.setItem("mermark.workspaceState", JSON.stringify({
+      workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FP"], currentVaultId: "vault-global", lastSelectedPermanentVaultId: "vault-%2FP" }],
+      vaults: [{ vaultId: "vault-%2FP", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent", explorerRoot: "/P" }],
+      currentWorkspaceId: "workspace-default",
+    }));
+    localStorage.setItem("mermark.vaultTabs.vault-%2FP", JSON.stringify({
+      vaultId: "vault-%2FP",
+      tabs: [{ tabId: "vault-%2FP-tab-%2FP%2Fdoc.md", path: "/P/doc.md" }],
+      activeTabId: "vault-%2FP-tab-%2FP%2Fdoc.md",
+    }));
+    await import("../src/main");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(document.querySelector<HTMLElement>(".explorer-aside")?.hidden).toBe(true);
+    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    document.querySelector<HTMLElement>('[data-vault-id="vault-%2FP"] .workspace-vault-select')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(document.querySelector<HTMLElement>(".explorer-aside")?.hidden).toBe(false);
+    // Panel mutual exclusion is the intended side effect of opening the
+    // Explorer from the Workspace panel, not a bug to guard against.
+    expect(document.querySelector<HTMLElement>(".workspace-aside")?.hidden).toBe(true);
+    // REVEAL-FOLLOWS-FOCUS obligation succession (2026-08-17 follow-up): this
+    // branch's jumpToRoot call races openInWindow's resetToBaseDir (same
+    // synchronous tick, same target root) — without the succession fix, the
+    // reveal's own render loses that race and its focus obligation is
+    // discarded with it, dropping focus to <body> (the .workspace-vault-select
+    // button that was clicked no longer exists either, since selecting it
+    // re-rendered the whole workspace panel). Real click, not `.focus()` —
+    // scripted focus doesn't reliably reproduce the same browser focus-move
+    // path a click does.
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.closest(".explorer-aside")).not.toBeNull();
+  });
+
+  it("opens the Explorer for a name click on a permanent vault with no open tabs (welcome branch)", async () => {
+    localStorage.setItem("mermark.workspaceState", JSON.stringify({
+      workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FQ"], currentVaultId: "vault-global", lastSelectedPermanentVaultId: "vault-%2FQ" }],
+      vaults: [{ vaultId: "vault-%2FQ", workspaceId: "workspace-default", displayName: "Q", rootPath: "/Q", persistenceKind: "permanent", explorerRoot: "/Q" }],
+      currentWorkspaceId: "workspace-default",
+    }));
+    // No mermark.vaultTabs.vault-%2FQ entry at all — VaultTabStore.get()
+    // defaults to an empty tab list, so selectVaultView reports "welcome".
+    await import("../src/main");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(document.querySelector<HTMLElement>(".explorer-aside")?.hidden).toBe(true);
+    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    document.querySelector<HTMLElement>('[data-vault-id="vault-%2FQ"] .workspace-vault-select')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(document.querySelector<HTMLElement>(".explorer-aside")?.hidden).toBe(false);
+    expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: /Q");
+    // Regression guard: this branch never raced resetToBaseDir (no document
+    // opens on a welcome-branch entry), so it was never broken — but the
+    // succession fix above must not change its outcome either.
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.closest(".explorer-aside")).not.toBeNull();
+  });
+
+  it("opens the Explorer on a re-click of the already-active vault+document (synchronous same-doc branch)", async () => {
+    documentContents.set("/P/a.md", "# A");
+    localStorage.setItem("mermark.workspaceState", JSON.stringify({
+      workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FP"], currentVaultId: "vault-%2FP", lastSelectedPermanentVaultId: "vault-%2FP" }],
+      vaults: [{ vaultId: "vault-%2FP", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent", explorerRoot: "/P" }],
+      currentWorkspaceId: "workspace-default",
+    }));
+    localStorage.setItem("mermark.vaultTabs.vault-%2FP", JSON.stringify({ vaultId: "vault-%2FP", tabs: [{ tabId: "a", path: "/P/a.md" }], activeTabId: "a" }));
+    vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
+
+    expect(document.querySelector<HTMLElement>(".explorer-aside")?.hidden).toBe(true);
+    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    // Already the active vault AND already the open document — this is the
+    // `commitSelection()` (no openDocumentSafely) branch.
+    document.querySelector<HTMLElement>('[data-vault-id="vault-%2FP"] .workspace-vault-select')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(document.querySelector<HTMLElement>(".explorer-aside")?.hidden).toBe(false);
+    expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: /P");
+    // Regression guard: this branch never opens a document (same vault, same
+    // doc), so resetToBaseDir never fires alongside it — was never broken,
+    // must stay that way.
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.closest(".explorer-aside")).not.toBeNull();
+  });
+
   it("keeps the active tab and watcher while an inactive tab is still being read", async () => {
     let resolveB: ((value: unknown) => void) | undefined;
     const bRead = new Promise<unknown>((resolve) => { resolveB = resolve; });

@@ -842,12 +842,22 @@ async function boot() {
       const previousVaultId = currentVault()?.vaultId;
       const selection = selectVaultView(vaultTabs.get(selectedVault.vaultId));
       if (selection.kind === "document") {
+        // Entering a vault by name always means "open the explorer on this
+        // vault" (team-lead diagnosis, 2026-08-17) — jumpToRoot lives INSIDE
+        // commitSelection, not bolted on beside it, so both call sites below
+        // (the async open-a-different-doc path via onCommit, and the
+        // synchronous same-doc reclick path) get it exactly once. Placed
+        // AFTER routedVault is reassigned so jumpToRoot's own isRootLocked
+        // check (explorer-panel.ts) reads the NEW vault, not the one being
+        // left — a locked (permanent) vault would otherwise compare its OLD
+        // root against the new target and silently refuse to move.
         const commitSelection = (): void => {
           workspaceStore.selectVault(selectedVault.vaultId);
           routedVault = selectedVault;
+          explorer.jumpToRoot(explorerRootForVault(selectedVault));
         };
         if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path, commitSelection);
-        else { commitSelection(); explorer.jumpToRoot(explorerRootForVault(selectedVault)); }
+        else commitSelection();
       } else {
         const requestId = beginLifecycleRequest();
         const sourceEditor = current;
