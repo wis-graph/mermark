@@ -9,6 +9,7 @@ import {
   ensureReadableStreamAsyncIterator,
   reconcile,
   renderPdfPage,
+  sharpenPdfPage,
   pagePlaceholder,
   pageIndexOf,
   aspectRatioOf,
@@ -16,6 +17,8 @@ import {
   FALLBACK_PAGE_ASPECT,
   MAX_RENDERED_PAGES,
   MAX_CONCURRENT_RENDERS,
+  DRAFT_OUTPUT_SCALE,
+  draftIsFullQuality,
   type PageRenderState,
   type PdfDocumentProxy,
   type PdfjsModule,
@@ -252,7 +255,25 @@ describe("PDF viewer: reconcile-based render scheduler (distance rank + concurre
       textLayerRendered: new Set(),
       textLayerFailed: new Set(),
       textLayers: new Map(),
+      fullQuality: new Set(),
+      sharpenPending: new Set(),
+      sharpenFailed: new Set(),
+      sharpenTasks: new Map(),
     };
+  }
+
+  /** Temporarily stub `window.devicePixelRatio` for one test, restoring the
+   *  original value afterward regardless of pass/fail — the sharpen tests
+   *  (f)-(i) below all need to simulate either a Retina (2) or non-Retina
+   *  (1) runtime, and jsdom's own default must not leak between tests. */
+  async function withDpr<T>(dpr: number, fn: () => T | Promise<T>): Promise<T> {
+    const original = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", { value: dpr, configurable: true });
+    try {
+      return await fn(); // awaited so the stub stays in place through async test bodies, not just until `fn()` returns a pending Promise
+    } finally {
+      Object.defineProperty(window, "devicePixelRatio", { value: original, configurable: true });
+    }
   }
 
   /** A pdfDoc/pdfjs pair whose `render()` task resolves ONLY when the test
@@ -475,5 +496,137 @@ describe("PDF viewer: reconcile-based render scheduler (distance rank + concurre
     );
 
     expect(startedText).toEqual([1]);
+  });
+
+  // 재호출 (team-lead spec, 2026-08-17): progressive draft-then-sharp raster.
+  // Fails against the pre-change file for a structural reason first — none
+  // of `sharpenPdfPage`/`DRAFT_OUTPUT_SCALE`/`draftIsFullQuality` existed as
+  // exports yet (a TS/import-resolution failure, not just a wrong runtime
+  // value — confirmed against this task's starting commit `f74af01`, which
+  // has no such exports and unconditionally rasters every canvas at
+  // `window.devicePixelRatio`), and at the runtime-behavior level: every
+  // canvas rendered at full `devicePixelRatio` resolution on its FIRST
+  // paint, `fullQuality`/`sharpenPending`/`sharpenFailed` didn't exist on
+  // `PageRenderState` at all, and `reconcile` had no sharpen step to gate.
+  it("(f) the FIRST canvas for a page renders at DRAFT_OUTPUT_SCALE, never at devicePixelRatio", async () => {
+    await withDpr(2, async () => {
+      const state = makeState();
+      const el = pagePlaceholder(1);
+      const { pdfDoc, pdfjs, resolvePage } = makeControllablePdf();
+
+      renderPdfPage(1, el, pdfDoc, pdfjs, state, pagesEl, 1, () => {});
+      await flush(); // let the async chain reach pdfPage.render() before resolving it
+      resolvePage(1);
+      await flush();
+
+      const canvas = el.querySelector("canvas") as HTMLCanvasElement;
+      expect(canvas).toBeTruthy();
+      // Fake pdf: unscaled width 100pt, pageTargetWidth falls back to 600px
+      // (jsdom clientWidth 0) -> fit-width scale 6 -> viewport.width 600 CSS
+      // px. Draft backing store must be 600 * DRAFT_OUTPUT_SCALE(1) = 600,
+      // NOT 600 * devicePixelRatio(2) = 1200 (the pre-change formula).
+      expect(DRAFT_OUTPUT_SCALE).toBe(1);
+      expect(canvas.width).toBe(600);
+      expect(canvas.height).toBe(840); // 140 * scale(6) * DRAFT_OUTPUT_SCALE(1)
+      // dpr=2 -> the draft is NOT yet full quality; a sharpen pass is owed.
+      expect(state.fullQuality.has(1)).toBe(false);
+    });
+  });
+
+  it("(g) sharpen never starts while a draft render is pending; once drafts are idle, the nearest page sharpens first", () => {
+    const state = makeState();
+    const pageEls = fivePageEls(); // distances from center 220: 3(30) < 2(70) < 4(130) < 1(170) < 5(230)
+    state.pending.add(5); // a draft is in flight (page identity irrelevant to the sharpen gate)
+    state.rendered.add(2);
+    state.rendered.add(3); // both already have a draft canvas; neither is fullQuality yet
+    const inBand = new Set([2, 3]);
+
+    const blockedByDraft: number[] = [];
+    reconcile(
+      state,
+      inBand,
+      pageEls,
+      VIEWPORT_CENTER,
+      () => {
+        throw new Error("no draft candidate expected — 2 and 3 are already `rendered`");
+      },
+      undefined,
+      { startSharpen: (page) => blockedByDraft.push(page) },
+    );
+    expect(blockedByDraft).toEqual([]); // draft (page 5) still pending -> sharpen withheld entirely
+
+    state.pending.delete(5); // the draft settles
+    const startedSharpen: number[] = [];
+    reconcile(
+      state,
+      inBand,
+      pageEls,
+      VIEWPORT_CENTER,
+      () => {
+        throw new Error("no draft candidate expected");
+      },
+      undefined,
+      { startSharpen: (page) => startedSharpen.push(page) },
+    );
+    // Both 2 and 3 need sharpening, but MAX_CONCURRENT_SHARPEN_RENDERS is 1
+    // and page 3 (distance 30) is nearer the viewport center than page 2
+    // (distance 70) — same nearest-first ranking canvas/text-layer
+    // scheduling already use.
+    expect(startedSharpen).toEqual([3]);
+  });
+
+  it("(h) sharpening swaps the canvas wrap in place and preserves the sibling text layer untouched", async () => {
+    await withDpr(2, async () => {
+      const state = makeState();
+      const el = pagePlaceholder(1);
+      const draftWrap = document.createElement("div");
+      draftWrap.className = "pdf-viewer-canvas-wrap";
+      draftWrap.appendChild(document.createElement("canvas"));
+      const textLayerEl = document.createElement("div");
+      textLayerEl.className = "textLayer";
+      el.replaceChildren(draftWrap, textLayerEl); // mirrors renderPdfPage + renderTextLayer's real DOM shape
+      state.rendered.add(1); // sharpen only ever targets an already-drafted page
+
+      const { pdfDoc, resolvePage } = makeControllablePdf();
+      sharpenPdfPage(1, el, pdfDoc, state, pagesEl, 1, () => {});
+      await flush(); // let the async chain reach pdfPage.render() before resolving it
+      resolvePage(1);
+      await flush();
+
+      expect(el.querySelector(".textLayer")).toBe(textLayerEl); // same node — never touched by the swap
+      expect(el.querySelector(".pdf-viewer-canvas-wrap")).not.toBe(draftWrap); // the draft wrap WAS replaced
+      expect(el.children.length).toBe(2); // still exactly [canvasWrap, textLayer] — nothing extra, nothing lost
+      expect(state.fullQuality.has(1)).toBe(true);
+      expect(state.sharpenPending.has(1)).toBe(false);
+    });
+  });
+
+  it("(i) devicePixelRatio === 1: sharpening never starts — the draft alone counts as full quality", async () => {
+    await withDpr(1, async () => {
+      expect(draftIsFullQuality()).toBe(true);
+
+      const state = makeState();
+      const el = pagePlaceholder(1);
+      const { pdfDoc, pdfjs, resolvePage } = makeControllablePdf();
+      renderPdfPage(1, el, pdfDoc, pdfjs, state, pagesEl, 1, () => {});
+      await flush(); // let the async chain reach pdfPage.render() before resolving it
+      resolvePage(1);
+      await flush();
+      expect(state.fullQuality.has(1)).toBe(true); // draft settle already marked it full quality
+
+      const startedSharpen: number[] = [];
+      reconcile(
+        state,
+        new Set([1]),
+        new Map([[1, el]]),
+        50,
+        () => {
+          throw new Error("no draft candidate expected — page 1 is already `rendered`");
+        },
+        undefined,
+        { startSharpen: (page) => startedSharpen.push(page) },
+      );
+      expect(startedSharpen).toEqual([]); // fullQuality already true -> never a sharpenCandidates hit
+    });
   });
 });

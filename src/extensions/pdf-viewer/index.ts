@@ -327,8 +327,10 @@ export interface PageRenderState {
   /** `pending`/`rendered`/`failed` now track the CANVAS only (재호출,
    *  2026-08-17: text-layer bookkeeping split into its own three sets below
    *  — see `renderTextLayer`'s comment for why canvas and text layer are no
-   *  longer one atomic step). `rendered` means "canvas is on screen", not
-   *  "page fully done" — the text layer is separate follow-up work. */
+   *  longer one atomic step). `rendered` means "a DRAFT (or better) canvas
+   *  is on screen", not "page fully done" — text layer AND full-resolution
+   *  sharpening are separate follow-up work (see `fullQuality`/
+   *  `sharpenPending`/`sharpenFailed` below). */
   pending: Set<number>;
   rendered: Set<number>;
   /** Terminal render failures — never retried (mirrors hwp-viewer's "a
@@ -352,6 +354,24 @@ export interface PageRenderState {
   textLayerRendered: Set<number>;
   textLayerFailed: Set<number>;
   textLayers: Map<number, { cancel(): void }>;
+  /** SHARPEN bookkeeping (재호출, 2026-08-17: progressive draft-then-sharp
+   *  raster — see `DRAFT_OUTPUT_SCALE`'s own comment for the full "왜"). A
+   *  page enters `fullQuality` the moment its ON-SCREEN canvas is rendered
+   *  at `fullOutputScale()` resolution — either because `sharpenPdfPage`
+   *  upgraded it, or because `renderPdfPage`'s draft pass already WAS full
+   *  quality (`draftIsFullQuality()`, non-Retina). `sharpenPending`/
+   *  `sharpenFailed` mirror the text-layer trio's disjointness contract
+   *  (see `needsSharpening`) — `sharpenFailed` is terminal only WITHIN one
+   *  canvas render's lifetime, same asymmetry as `textLayerFailed`
+   *  (`evictPage` resets it on a full re-earn). A sharpen failure is NEVER
+   *  shown to the reader (team-lead spec: the draft canvas already on
+   *  screen stays exactly as it was) — contrast canvas `failed`, which
+   *  blanks the page and shows an error because there'd otherwise be
+   *  nothing on screen at all. */
+  fullQuality: Set<number>;
+  sharpenPending: Set<number>;
+  sharpenFailed: Set<number>;
+  sharpenTasks: Map<number, { cancel(): void }>;
 }
 
 /** How many rendered pages a single open PDF keeps as live canvases before
@@ -407,6 +427,18 @@ const MAX_CONCURRENT_TEXT_LAYERS = 1;
  *  slot count, unaware of the pdf.js-worker reasoning above. */
 export const MAX_CONCURRENT_RENDERS = 1;
 
+/** How many `sharpenPdfPage` calls run at once — 1, same reasoning as
+ *  `MAX_CONCURRENT_RENDERS`: pdf.js serializes ALL real work (draft AND
+ *  sharpen rasters alike) on the ONE `PDFWorker` a document gets, so this
+ *  only bounds how many sharpen requests `reconcile` has outstanding, not
+ *  how fast any of them resolve. Named separately from
+ *  `MAX_CONCURRENT_RENDERS` (rather than reusing it) so a future tuning pass
+ *  can raise/lower either slot count independently — they already run at
+ *  different priorities (see `reconcile`'s sharpen step, gated on
+ *  `state.pending.size === 0`), so there's no reason they'd need to share
+ *  one number. */
+export const MAX_CONCURRENT_SHARPEN_RENDERS = 1;
+
 /** Clear a rendered page's canvas/text-layer DOM and drop its render-state
  *  bookkeeping so `shouldRenderPage` treats it as never-rendered again — the
  *  page re-earns a render the next time `reconcile` decides it belongs in
@@ -427,6 +459,16 @@ function evictPage(pageNum: number, el: HTMLElement | undefined, state: PageRend
   // scratch), so the next text-layer attempt deserves a fresh try rather
   // than inheriting a failure from a render this page no longer has.
   state.textLayerFailed.delete(pageNum);
+  // SHARPEN bookkeeping — same "full re-earn" reasoning as the text-layer
+  // reset just above: the draft canvas this eviction just threw away is
+  // gone, so the page's NEXT draft render deserves a fresh
+  // `fullQuality`/sharpen attempt rather than inheriting either from a
+  // canvas that no longer exists.
+  state.sharpenTasks.get(pageNum)?.cancel();
+  state.sharpenTasks.delete(pageNum);
+  state.sharpenPending.delete(pageNum);
+  state.sharpenFailed.delete(pageNum);
+  state.fullQuality.delete(pageNum);
   if (el) {
     el.replaceChildren();
     el.style.removeProperty("--scale-factor");
@@ -559,12 +601,36 @@ function pagesNearestCenter(
  *  spec: "reconcile이 계속 단일 수렴 지점이어야 한다"). `textLayerOptions` is
  *  optional and skipped entirely when omitted — tests/pdf-viewer.test.ts's
  *  canvas-only scheduler tests (a)-(c) call the 5-arg form and never touch
- *  text-layer state at all. The text-layer step ONLY runs when
- *  `state.pending` is empty (no canvas render in flight, and none was just
- *  started this same call) — "캔버스 작업이 남아 있으면 텍스트 레이어보다
- *  캔버스를 먼저" (team-lead spec): filling a visible page with pixels always
- *  outranks building spans for a page that already has them. See
- *  `textLayerCandidates` for the near-viewport distance filter itself.
+ *  text-layer state at all. The text-layer step ONLY runs when BOTH
+ *  `state.pending` AND `state.sharpenPending` are empty (no draft render
+ *  and no sharpen render in flight) — "캔버스 작업이 남아 있으면 텍스트
+ *  레이어보다 캔버스를 먼저" (team-lead spec) extended to sharpen: filling a
+ *  visible page with pixels (draft OR sharp) always outranks building spans
+ *  for a page that already has them. See `textLayerCandidates` for the
+ *  near-viewport distance filter itself.
+ *
+ *  SHARPEN (재호출, 2026-08-17, progressive draft→sharp raster — see
+ *  `DRAFT_OUTPUT_SCALE`'s comment for the full "왜"): folded in via the
+ *  optional `sharpenOptions`, same "one convergence point" reasoning as
+ *  `textLayerOptions` above, and placed between the draft step and the
+ *  text-layer step in this function's BODY — the actual priority order this
+ *  one call enforces is **[evict → draft → sharpen → text layer]**. The
+ *  sharpen step is entirely skipped while ANY draft render is
+ *  pending/queued (`state.pending.size === 0` gate) — a fast scroll that
+ *  keeps drafts landing back-to-back never competes with them for the
+ *  single pdf.js worker; the moment drafts catch up, the NEXT `reconcile`
+ *  call (triggered by `renderPdfPage`'s `onSettled`, same convergence
+ *  mechanism as everything else here) picks sharpening back up
+ *  automatically, no separate scheduler required. Candidates come from
+ *  `sharpenCandidates` (nearest-viewport-center first, same ranking as
+ *  everything else in this file) and are capped at
+ *  `MAX_CONCURRENT_SHARPEN_RENDERS`, mirroring the draft step's own
+ *  concurrency gate. `sharpenOptions` parameter is placed AFTER
+ *  `textLayerOptions` (not between draft and text-layer, despite that being
+ *  the execution order) so tests/pdf-viewer.test.ts's existing (e) — a
+ *  6-positional-arg call passing `textLayerOptions` as the 6th argument —
+ *  keeps compiling and behaving unchanged; a function's parameter order and
+ *  its body's execution order are independent choices.
  *
  *  Exported (along with `renderPdfPage` below) so tests/pdf-viewer.test.ts
  *  can drive the scheduler directly — concurrency cap, distance-based
@@ -578,6 +644,7 @@ export function reconcile(
   viewportCenter: number,
   startRender: (page: number, el: HTMLElement) => void,
   textLayerOptions?: { panelHeight: number; startTextLayer: (page: number, el: HTMLElement) => void },
+  sharpenOptions?: { startSharpen: (page: number, el: HTMLElement) => void },
 ): void {
   const eligible = new Set(Array.from(inBand).filter((page) => !state.failed.has(page)));
   const target = new Set(pagesNearestCenter(eligible, pageEls, viewportCenter, MAX_RENDERED_PAGES));
@@ -597,7 +664,18 @@ export function reconcile(
     }
   }
 
-  if (!textLayerOptions || state.pending.size > 0) return;
+  if (sharpenOptions && state.pending.size === 0) {
+    const sharpenFreeSlots = MAX_CONCURRENT_SHARPEN_RENDERS - state.sharpenPending.size;
+    if (sharpenFreeSlots > 0) {
+      const wantingSharp = sharpenCandidates(state, target, pageEls, viewportCenter, sharpenFreeSlots);
+      for (const page of wantingSharp) {
+        const el = pageEls.get(page);
+        if (el) sharpenOptions.startSharpen(page, el);
+      }
+    }
+  }
+
+  if (!textLayerOptions || state.pending.size > 0 || state.sharpenPending.size > 0) return;
   const textFreeSlots = MAX_CONCURRENT_TEXT_LAYERS - state.textLayerPending.size;
   if (textFreeSlots <= 0) return;
   const wantingText = textLayerCandidates(state, inBand, pageEls, viewportCenter, textLayerOptions.panelHeight, textFreeSlots);
@@ -639,6 +717,147 @@ function textLayerCandidates(
   return pagesNearestCenter(eligible, pageEls, viewportCenter, limit);
 }
 
+/** The device-pixel-ratio a FULL-quality (sharpened) canvas should render
+ *  at — `window.devicePixelRatio` when a `window` exists (guards the same
+ *  jsdom/non-browser gap `renderPdfPage`'s pre-existing inline check
+ *  already handled), `1` otherwise. Exported so scheduler tests can assert
+ *  against the exact resolution `sharpenPdfPage` targets without
+ *  duplicating this `window` guard. Pure query. */
+export function fullOutputScale(): number {
+  return typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+}
+
+/** True when the DRAFT raster (`DRAFT_OUTPUT_SCALE`) is ALREADY full
+ *  quality for this runtime — i.e. `fullOutputScale() <= DRAFT_OUTPUT_SCALE`
+ *  (non-Retina, `devicePixelRatio` 1). `renderPdfPage` marks a page
+ *  `fullQuality` immediately when this is true, so it never becomes a
+ *  `sharpenCandidates` hit — sharpening would re-render pixel-identical
+ *  output for zero visible gain (team-lead spec: "devicePixelRatio가 1이면
+ *  선명화 자체를 건너뛴다"). Pure query. */
+export function draftIsFullQuality(): boolean {
+  return fullOutputScale() <= DRAFT_OUTPUT_SCALE;
+}
+
+/** Whether `page` still deserves a sharpen pass — false once it's already
+ *  `fullQuality`, a sharpen for it is already `sharpenPending`, or it
+ *  `sharpenFailed` terminally (mirrors `shouldRenderPage`/
+ *  `shouldBuildTextLayer`'s disjoint-set shape). Pure query. Exported so
+ *  tests can assert a page's sharpen eligibility directly instead of
+ *  re-deriving it from three separate set memberships. */
+export function needsSharpening(state: PageRenderState, page: number): boolean {
+  return !state.fullQuality.has(page) && !state.sharpenPending.has(page) && !state.sharpenFailed.has(page);
+}
+
+/** Pages `reconcile`'s sharpen step should upgrade next, nearest-viewport-
+ *  center first (`pagesNearestCenter`, the SAME ranking canvas/text-layer
+ *  scheduling already use), capped at `limit`. Candidates are drawn from
+ *  `target` — THIS reconcile call's own render-target set, already bounded
+ *  by `MAX_RENDERED_PAGES` — filtered to pages whose DRAFT canvas is
+ *  already on screen (`state.rendered`) and that `needsSharpening`. Unlike
+ *  `textLayerCandidates`, there's no separate viewport-distance threshold:
+ *  sharpening only ever touches a page the reader is already being shown a
+ *  canvas for, so `target` itself is already the right boundary — there's
+ *  no wider "prefetch band" analog to narrow further. Pure query. */
+function sharpenCandidates(
+  state: PageRenderState,
+  target: ReadonlySet<number>,
+  pageEls: ReadonlyMap<number, HTMLElement>,
+  viewportCenter: number,
+  limit: number,
+): number[] {
+  const eligible = new Set(
+    Array.from(target).filter((page) => state.rendered.has(page) && needsSharpening(state, page)),
+  );
+  return pagesNearestCenter(eligible, pageEls, viewportCenter, limit);
+}
+
+/** The CSS class name of the DOM node `rasterPageCanvas` wraps a page's
+ *  `<canvas>` in — a named constant (not a repeated string literal) because
+ *  BOTH `rasterPageCanvas` (builds one) and `sharpenPdfPage`
+ *  (`el.querySelector`s the existing one to replace it) must agree on the
+ *  exact same class, and a typo in either copy would silently break the
+ *  no-flicker swap. Matches the CSS rule this file injects
+ *  (`ensureStyleInjected`'s `.pdf-viewer-page .pdf-viewer-canvas-wrap`),
+ *  which is a template-literal `<style>` block rather than something this
+ *  constant can interpolate into without complicating that block for no
+ *  functional gain. */
+const CANVAS_WRAP_CLASS = "pdf-viewer-canvas-wrap";
+
+/** Stage 1 of the two-stage raster ("초안 → 선명화", 재호출 2026-08-17,
+ *  team-lead spec): every page's FIRST canvas renders at this backing-store
+ *  resolution regardless of `devicePixelRatio` — 1 device px per CSS px,
+ *  the cheapest raster pdf.js can produce for a given fit-width viewport.
+ *  On Retina (`devicePixelRatio` 2) this is 1/4 the pixels — and 1/4 the
+ *  memory — of the OLD single-pass `outputScale = devicePixelRatio` render
+ *  this file used to do unconditionally for EVERY render (see
+ *  `MAX_RENDERED_PAGES`'s own ≈19MB/page comment for that math). A cheaper
+ *  draft finishes faster, which narrows the window a `.pdf-viewer-page`'s
+ *  white placeholder background (`.pdf-viewer-page { background: #fff }`)
+ *  sits empty during a fast scroll — 사용자 리포트 (2026-08-17): "갑자기
+ *  로드돼서 깜빡이는 현상이 없진 않아", "빠르게 스크롤하면 채워지는 게
+ *  간헐적으로 보인다". `sharpenPdfPage` upgrades a draft to
+ *  `fullOutputScale()` afterward, once no draft render is competing for the
+ *  worker (see `reconcile`'s sharpen step) — see `draftIsFullQuality` for
+ *  the non-Retina case where this stage IS already full quality and
+ *  sharpening never runs at all. */
+export const DRAFT_OUTPUT_SCALE = 1;
+
+/** Raster ONE page's canvas at `outputScale` device pixels per CSS pixel —
+ *  the geometry (fit-width scale, viewport, canvas backing-store size vs
+ *  CSS size) is IDENTICAL between the DRAFT pass (`renderPdfPage`,
+ *  `DRAFT_OUTPUT_SCALE`) and the SHARPEN pass (`sharpenPdfPage`,
+ *  `fullOutputScale()`) — only the resolution differs — so this is the ONE
+ *  place that math lives rather than two near-duplicate copies free to
+ *  drift apart.
+ *
+ *  Returns a DETACHED `.pdf-viewer-canvas-wrap` (never touches `el` or any
+ *  live DOM) so callers decide separately WHEN and HOW to attach it —
+ *  `renderPdfPage` always replaces `el`'s children outright (first paint,
+ *  nothing to preserve), `sharpenPdfPage` swaps only the existing canvas
+ *  wrap in place so a sibling text layer survives (see that function's own
+ *  comment on why).
+ *
+ *  `registerTask` is called synchronously, right after `pdfPage.render()`
+ *  returns and BEFORE this function awaits its promise — the same timing
+ *  the pre-split `renderPdfPage` had, so a caller's `evictPage` can still
+ *  cancel a render that's genuinely mid-flight rather than racing to
+ *  register it after the fact. Command (async IO; does not mutate `state` —
+ *  the caller does that after this resolves, choosing which sets to update
+ *  for its own stage). */
+async function rasterPageCanvas(
+  pdfPage: PdfPageProxy,
+  pagesEl: HTMLElement,
+  zoomFactor: number,
+  outputScale: number,
+  registerTask: (task: { cancel(): void }) => void,
+): Promise<{ canvasWrap: HTMLElement; viewport: PdfViewport; scale: number }> {
+  const unscaled = pdfPage.getViewport({ scale: 1 });
+  const scale = fitWidthScale(unscaled.width, pageTargetWidth(pagesEl), zoomFactor);
+  const viewport = pdfPage.getViewport({ scale });
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
+  canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
+  canvas.style.width = `${viewport.width}px`;
+  canvas.style.height = `${viewport.height}px`;
+
+  const renderTask = pdfPage.render({
+    canvas,
+    viewport,
+    transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined,
+  });
+  registerTask(renderTask);
+  await renderTask.promise;
+
+  const canvasWrap = document.createElement("div");
+  canvasWrap.className = CANVAS_WRAP_CLASS;
+  canvasWrap.style.width = `${viewport.width}px`;
+  canvasWrap.style.height = `${viewport.height}px`;
+  canvasWrap.appendChild(canvas);
+
+  return { canvasWrap, viewport, scale };
+}
+
 /** Request + swap in one page's rendered CANVAS (or an error message on
  *  failure) — the TEXT layer is now a separate step, see `renderTextLayer`
  *  below.
@@ -677,7 +896,17 @@ function textLayerCandidates(
  *  functions take the same `(page, el, pdfDoc, pdfjs, state, pagesEl,
  *  zoomFactor, onSettled)` shape and every call site (`openPdfViewer`'s
  *  `runReconcile`, tests/pdf-viewer.test.ts's scheduler tests) can pass the
- *  same argument list to either one without reshuffling. */
+ *  same argument list to either one without reshuffling.
+ *
+ *  STAGE 1 OF 2 — DRAFT (재호출, 2026-08-17): this is now the DRAFT pass
+ *  only, rastering at `DRAFT_OUTPUT_SCALE` regardless of
+ *  `devicePixelRatio` — see that constant's own comment for the full "왜".
+ *  `sharpenPdfPage` below is the follow-up stage that upgrades this same
+ *  page's canvas to `fullOutputScale()` once no draft is competing for the
+ *  worker. The canvas-building math itself (fit-width scale, viewport,
+ *  backing-store sizing) is shared with `sharpenPdfPage` via
+ *  `rasterPageCanvas` so the two passes can never silently disagree about
+ *  what "this page's viewport" means. */
 export function renderPdfPage(
   page: number,
   el: HTMLElement,
@@ -692,42 +921,33 @@ export function renderPdfPage(
   state.pending.add(page);
   (async () => {
     const pdfPage = await pdfDoc.getPage(page);
-    const unscaled = pdfPage.getViewport({ scale: 1 });
-    const scale = fitWidthScale(unscaled.width, pageTargetWidth(pagesEl), zoomFactor);
-    const viewport = pdfPage.getViewport({ scale });
-
-    const outputScale = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
-    canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-
-    const renderTask = pdfPage.render({
-      canvas,
-      viewport,
-      transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined,
-    });
-    state.renderTasks.set(page, renderTask);
-    await renderTask.promise;
-
-    const canvasWrap = document.createElement("div");
-    canvasWrap.className = "pdf-viewer-canvas-wrap";
-    canvasWrap.style.width = `${viewport.width}px`;
-    canvasWrap.style.height = `${viewport.height}px`;
-    canvasWrap.appendChild(canvas);
+    const { canvasWrap, viewport, scale } = await rasterPageCanvas(
+      pdfPage,
+      pagesEl,
+      zoomFactor,
+      DRAFT_OUTPUT_SCALE,
+      (task) => state.renderTasks.set(page, task),
+    );
 
     // `--scale-factor`/`--total-scale-factor` drive pdfjs-dist's own
     // `pdf_viewer.css` (`.textLayer`'s font-size/position calc chain) — set
     // on the page element so they inherit into the text layer child
     // `renderTextLayer` appends later, without needing pdfjs-dist's full
-    // `.pdfViewer .page` framework markup.
+    // `.pdfViewer .page` framework markup. Unaffected by `sharpenPdfPage`
+    // later swapping the canvas — `scale` (the FIT-WIDTH scale) is identical
+    // between the draft and sharpened rasters, only the backing-store
+    // resolution (`outputScale`) differs, so these never need re-setting.
     el.style.setProperty("--scale-factor", String(scale));
     el.style.setProperty("--total-scale-factor", String(scale));
     el.style.aspectRatio = "";
     el.style.width = `${viewport.width}px`;
     el.style.height = `${viewport.height}px`;
     el.replaceChildren(canvasWrap);
+
+    // A non-Retina runtime's draft IS full quality already — mark it so
+    // `sharpenCandidates` never picks this page up (see
+    // `draftIsFullQuality`'s own comment).
+    if (draftIsFullQuality()) state.fullQuality.add(page);
 
     state.pending.delete(page);
     state.rendered.add(page);
@@ -739,6 +959,101 @@ export function renderPdfPage(
     el.style.aspectRatio = "";
     el.classList.add("pdf-viewer-page-error");
     el.textContent = `페이지를 불러올 수 없습니다: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`;
+    onSettled();
+  });
+}
+
+/** Re-raster an ALREADY-drafted page's canvas at full `fullOutputScale()`
+ *  resolution and swap it in — STAGE 2 OF 2 of the progressive raster (see
+ *  `DRAFT_OUTPUT_SCALE`'s comment for the full "왜", `renderPdfPage`'s own
+ *  comment for stage 1). Only ever requested for a page whose draft canvas
+ *  is already on screen (`sharpenCandidates` reads `state.rendered`), so
+ *  this recomputes the SAME fit-width viewport `renderPdfPage` used via the
+ *  shared `rasterPageCanvas` helper (mirrors `renderTextLayer`'s own
+ *  comment on why recomputing beats caching — a resize/zoom that would make
+ *  the two disagree evicts the draft canvas FIRST via
+ *  `rerenderVisiblePages`, which clears `state.rendered` and cancels this
+ *  task too).
+ *
+ *  NO-FLICKER SWAP (team-lead spec, "선명화는 화면을 비우면 안 된다"):
+ *  `rasterPageCanvas` builds the new canvas wrap OFF-DOM and never touches
+ *  `el` while doing it. Only once it's FULLY rendered does this function
+ *  find `el`'s EXISTING `.pdf-viewer-canvas-wrap` child and `replaceWith`
+ *  the new one — `el`'s OTHER child, the text layer (`renderTextLayer`
+ *  appends it as `el`'s SECOND child, a sibling of the canvas wrap, never a
+ *  descendant of it), is never touched by this replace, so
+ *  selection/search built on it survives the swap untouched. Contrast
+ *  `renderPdfPage`'s DRAFT swap, which is allowed to `el.replaceChildren()`
+ *  wholesale because there is nothing yet on screen worth preserving.
+ *
+ *  FAILURE IS SILENT (team-lead spec): a sharpen failure never shows the
+ *  reader anything — the draft canvas this page already has stays exactly
+ *  as it was; only `state.sharpenFailed` is marked, so the page
+ *  permanently stops being a `sharpenCandidates` hit (mirrors canvas
+ *  `failed`'s "terminal, never retried" contract, minus the visible-error
+ *  UI `renderPdfPage`'s own catch shows — losing supplementary resolution
+ *  silently is strictly better than surfacing an error for a page the
+ *  reader can already read fine).
+ *
+ *  Guards against the page having left `state.rendered` (evicted) while
+ *  this was in flight, same reasoning and same "cancellation vs genuine
+ *  failure" disambiguation as `renderTextLayer`'s own guard (`evictPage`
+ *  resets `sharpenFailed` synchronously, so a rejection that arrives AFTER
+ *  `rendered` is already false is a cancellation, not a real error).
+ *  Command (void) — kicks off async IO and mutates `el`/the tracking sets.
+ *  Exported (along with `MAX_CONCURRENT_SHARPEN_RENDERS`/`fullOutputScale`/
+ *  `draftIsFullQuality`/`needsSharpening`/`DRAFT_OUTPUT_SCALE` above) so
+ *  tests/pdf-viewer.test.ts's scheduler tests can drive the sharpen stage
+ *  directly. */
+export function sharpenPdfPage(
+  page: number,
+  el: HTMLElement,
+  pdfDoc: PdfDocumentProxy,
+  state: PageRenderState,
+  pagesEl: HTMLElement,
+  zoomFactor: number,
+  onSettled: () => void,
+): void {
+  if (!needsSharpening(state, page)) return;
+  state.sharpenPending.add(page);
+  (async () => {
+    const pdfPage = await pdfDoc.getPage(page);
+    const { canvasWrap } = await rasterPageCanvas(
+      pdfPage,
+      pagesEl,
+      zoomFactor,
+      fullOutputScale(),
+      (task) => state.sharpenTasks.set(page, task),
+    );
+
+    if (!state.rendered.has(page)) {
+      // Evicted (draft canvas gone) while this sharpen was mid-flight — `el`
+      // may already belong to a different page's render by now. Drop the
+      // result rather than swapping it into anything. `onSettled` still
+      // fires: this attempt held one of `MAX_CONCURRENT_SHARPEN_RENDERS`
+      // slots, and `reconcile` is the only thing that hands the freed slot
+      // to the next candidate (same shape as `renderTextLayer`'s own
+      // eviction guard).
+      state.sharpenPending.delete(page);
+      onSettled();
+      return;
+    }
+    const oldWrap = el.querySelector(`.${CANVAS_WRAP_CLASS}`);
+    if (oldWrap) oldWrap.replaceWith(canvasWrap);
+    // No `else` branch needed in the normal case: a page only ever reaches
+    // here after its DRAFT swap already put a `.pdf-viewer-canvas-wrap` in
+    // `el` (`state.rendered.has(page)` just confirmed it). If it were
+    // somehow missing, silently dropping the sharpened canvas is safer than
+    // guessing where to insert it.
+    state.sharpenPending.delete(page);
+    state.fullQuality.add(page);
+    onSettled();
+  })().catch(() => {
+    state.sharpenPending.delete(page);
+    // Only a GENUINE failure marks the page — see this function's own
+    // "FAILURE IS SILENT" comment above and `renderTextLayer`'s identical
+    // cancellation-vs-failure guard for why `state.rendered` is the marker.
+    if (state.rendered.has(page)) state.sharpenFailed.add(page);
     onSettled();
   });
 }
@@ -962,6 +1277,10 @@ function openPdfViewer(absPath: string): ViewerHandle {
     textLayerRendered: new Set(),
     textLayerFailed: new Set(),
     textLayers: new Map(),
+    fullQuality: new Set(),
+    sharpenPending: new Set(),
+    sharpenFailed: new Set(),
+    sharpenTasks: new Map(),
   };
   // The band-membership set `reconcile` reads every time it runs — mutated
   // ONLY by the `observePages` callback below (entries add, exits delete),
@@ -973,6 +1292,7 @@ function openPdfViewer(absPath: string): ViewerHandle {
   shell.onTeardown(() => {
     for (const task of rawState.renderTasks.values()) task.cancel();
     for (const layer of rawState.textLayers.values()) layer.cancel();
+    for (const task of rawState.sharpenTasks.values()) task.cancel();
   });
   shell.onTeardown(() => {
     loadingTask?.destroy().catch(() => {});
@@ -1072,6 +1392,11 @@ function openPdfViewer(absPath: string): ViewerHandle {
           panelHeight: content.getBoundingClientRect().height,
           startTextLayer: (page, el) =>
             renderTextLayer(page, el, doc, pdfjs, rawState, content, shell.zoom.get(), runReconcile),
+        },
+        {
+          // No `pdfjs` needed here (unlike text layer) — sharpening only
+          // ever re-rasters a canvas, never touches `TextLayer`.
+          startSharpen: (page, el) => sharpenPdfPage(page, el, doc, rawState, content, shell.zoom.get(), runReconcile),
         },
       );
     };
