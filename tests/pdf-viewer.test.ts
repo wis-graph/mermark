@@ -159,6 +159,22 @@ describe("pdf viewer: flat page-column layout (no page-frame shadow, full-width 
   it("PDF_PAGE_WIDTH_FRACTION is 1 (fills the column, no reading margin either side)", () => {
     expect(src).toMatch(/const PDF_PAGE_WIDTH_FRACTION = 1;/);
   });
+
+  // 사용자 리포트 2026-08-17 ("스크롤이 아주 지멋대로", 122쪽 A4 자습서 PDF).
+  // `.pdf-viewer-pages` is a COLUMN flex container, so the default
+  // `flex-shrink: 1` on a page applies to its HEIGHT. The container's height
+  // is definite while the column overflows it enormously, so pages get
+  // squashed to `min-height: auto` — a minimum that DIFFERS BY RENDER STATE
+  // (a rendered page holds its canvas; an empty placeholder collapses toward
+  // zero). Total column height then lurched every time a page rendered or was
+  // evicted, dragging the scroll position with it. styles.css's
+  // `.hwp-viewer-page` — the page-render viewer this file's own comments call
+  // the standard precedent — has carried `flex: none` all along; the PDF
+  // viewer simply never copied it. Source-level lock (same technique as the
+  // two assertions above) because no jsdom test can observe flex layout.
+  it(".pdf-viewer-page declares flex: none (a page in a scrolling column must never shrink)", () => {
+    expect(src).toMatch(/\.pdf-viewer-page\s*\{[^}]*flex:\s*none/);
+  });
 });
 
 // 재호출 (team-lead spec, 2026-08-17, 실측): a real 1134-page/174MB book

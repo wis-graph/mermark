@@ -50,6 +50,23 @@ function ensureStyleInjected(): void {
   display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 8px 0;
 }
 .pdf-viewer-page {
+  /* flex: none is LOAD-BEARING, not tidiness. \`.pdf-viewer-pages\` above is a
+     COLUMN flex container, so the main axis is vertical and the default
+     \`flex-shrink: 1\` applies to HEIGHT. The container's height is definite
+     (\`flex: 1\` from the panel) while the page column overflows it by orders
+     of magnitude (a 122-page A4 document is ~240,000px of content in a
+     ~900px box), so every page gets squashed down toward its
+     \`min-height: auto\` — and that minimum DIFFERS BY RENDER STATE: a
+     rendered page contains a canvas and cannot shrink below it, while an
+     empty placeholder has no content and collapses toward zero. The column's
+     total height therefore lurched by thousands of px every time a page
+     rendered or was evicted, yanking the scrollbar and the scroll position
+     with it (사용자 리포트 2026-08-17: "스크롤이 아주 지멋대로", on a file whose
+     pages are already A4 so \`documentPageAspect\` bought it nothing). Pages in
+     a scrolling column must never flex; their size comes from the aspect
+     ratio (placeholder) or the rendered viewport (canvas), never from the
+     leftover space in a container they are supposed to overflow. */
+  flex: none;
   position: relative; background: #fff; box-shadow: none;
 }
 .pdf-viewer-page .pdf-viewer-canvas-wrap { position: relative; display: block; }
