@@ -11,6 +11,9 @@ import {
   renderPdfPage,
   pagePlaceholder,
   pageIndexOf,
+  aspectRatioOf,
+  documentPageAspect,
+  FALLBACK_PAGE_ASPECT,
   MAX_RENDERED_PAGES,
   MAX_CONCURRENT_RENDERS,
   type PageRenderState,
@@ -155,6 +158,56 @@ describe("pdf viewer: flat page-column layout (no page-frame shadow, full-width 
   });
 });
 
+// 재호출 (team-lead spec, 2026-08-17, 실측): a real 1134-page/174MB book
+// (Gödel, Escher, Bach) measures 1840x2650 CSS px per page — aspect ratio
+// 0.6943 — against this file's OLD hardcoded A4 guess of 210/297 = 0.7071.
+// Every canvas swap grew that page ~1.85% taller and pushed the rest of the
+// column down mid-scroll ("페이지가 급변해" 사용자 리포트). (d) below pins
+// `documentPageAspect` reading the REAL page-1 viewport instead of guessing
+// A4; it fails against the pre-change file because `documentPageAspect`,
+// `aspectRatioOf`, and `FALLBACK_PAGE_ASPECT` did not exist as exports yet
+// (a TS compile error, not just a wrong runtime value) and `pagePlaceholder`
+// took no `aspect` argument at all — every placeholder was hardcoded to
+// `"210 / 297"` regardless of the document (`git show
+// b17262c:src/extensions/pdf-viewer/index.ts` — the commit this task
+// started from — confirms both: no such exports, `pagePlaceholder(n:
+// number)` single-arg, `el.style.aspectRatio = "210 / 297"` unconditional).
+describe("PDF viewer: placeholder aspect ratio comes from the document itself, not an A4 guess", () => {
+  function fakeSinglePageDoc(width: number, height: number): PdfDocumentProxy {
+    return {
+      numPages: 1,
+      getPage: async (): Promise<PdfPageProxy> => ({
+        getViewport: (): PdfViewport => ({ width, height }),
+        getTextContent: async () => ({}),
+        render: () => ({ promise: Promise.resolve(), cancel: () => {} }),
+      }),
+    };
+  }
+
+  it("(d) documentPageAspect reads page 1's real viewport (1840x2650 book), and pagePlaceholder uses it verbatim", async () => {
+    const doc = fakeSinglePageDoc(1840, 2650);
+
+    const aspect = await documentPageAspect(doc);
+    expect(aspect).toBe(aspectRatioOf({ width: 1840, height: 2650 }));
+    expect(aspect).toBe("1840 / 2650");
+    expect(aspect).not.toBe(FALLBACK_PAGE_ASPECT); // NOT the A4 guess
+
+    const ph = pagePlaceholder(1, aspect);
+    expect(ph.style.aspectRatio).toBe("1840 / 2650");
+  });
+
+  it("falls back to FALLBACK_PAGE_ASPECT (A4) when page 1 itself can't be read", async () => {
+    const brokenDoc: PdfDocumentProxy = {
+      numPages: 1,
+      getPage: async (): Promise<PdfPageProxy> => {
+        throw new Error("boom");
+      },
+    };
+    expect(await documentPageAspect(brokenDoc)).toBe(FALLBACK_PAGE_ASPECT);
+    expect(FALLBACK_PAGE_ASPECT).toBe("210 / 297");
+  });
+});
+
 // reconcile scheduler (team-lead spec, 2026-08-17): pending Set only ever
 // blocked a SAME-page double-request, never bounded how many DIFFERENT pages
 // rendered at once, and eviction was renderOrder FIFO — oldest push-order,
@@ -190,7 +243,16 @@ describe("PDF viewer: reconcile-based render scheduler (distance rank + concurre
   }
 
   function makeState(): PageRenderState {
-    return { pending: new Set(), rendered: new Set(), failed: new Set(), renderTasks: new Map(), textLayers: new Map() };
+    return {
+      pending: new Set(),
+      rendered: new Set(),
+      failed: new Set(),
+      renderTasks: new Map(),
+      textLayerPending: new Set(),
+      textLayerRendered: new Set(),
+      textLayerFailed: new Set(),
+      textLayers: new Map(),
+    };
   }
 
   /** A pdfDoc/pdfjs pair whose `render()` task resolves ONLY when the test
@@ -303,20 +365,20 @@ describe("PDF viewer: reconcile-based render scheduler (distance rank + concurre
     return page === 1 ? 5000 : page * 100;
   }
 
-  it("(b) MAX_RENDERED_PAGES eviction: with 21 in-band pages already rendered, the FARTHEST is evicted and the NEAREST survives", () => {
+  it("(b) MAX_RENDERED_PAGES eviction: with 11 in-band pages already rendered, the FARTHEST is evicted and the NEAREST survives", () => {
     const state = makeState();
     const pageEls = new Map<number, HTMLElement>();
     const inBand = new Set<number>();
-    for (let i = 0; i <= 20; i += 1) {
+    for (let i = 0; i <= 10; i += 1) {
       const el = pagePlaceholder(i);
       stubGeom(el, farApartTop(i), 100);
       pageEls.set(i, el);
       inBand.add(i);
-      state.rendered.add(i); // pretend every one of the 21 already rendered
+      state.rendered.add(i); // pretend every one of the 11 already rendered
     }
 
     reconcile(state, inBand, pageEls, VIEWPORT_CENTER_B, () => {
-      throw new Error("no page should be a render candidate — all 21 were already `rendered`");
+      throw new Error("no page should be a render candidate — all 11 were already `rendered`");
     });
 
     // Page 1 is the FARTHEST but the SECOND-oldest; page 0 is the NEAREST but
@@ -325,14 +387,18 @@ describe("PDF viewer: reconcile-based render scheduler (distance rank + concurre
     // the one evicted and page 1 would survive, i.e. exactly inverted from
     // both assertions below. A distance-monotonic layout (page i at i*100
     // with the center at page 0) could not tell the two rules apart at all.
+    // (재호출 2026-08-17: cap dropped 20 -> 10, MAX_RENDERED_PAGES's own
+    // comment for why; the scenario shrank from 21 to 11 pages to keep the
+    // "exactly 1 over cap, evict exactly the farthest" shape, same
+    // discriminating power.)
     expect(state.rendered.has(1)).toBe(false); // farthest -> evicted
     expect(state.rendered.has(0)).toBe(true); // nearest (on screen) -> kept despite being oldest
-    expect(state.rendered.has(20)).toBe(true); // second-farthest still makes the MAX_RENDERED_PAGES=20 cut
-    expect(MAX_RENDERED_PAGES).toBe(20);
+    expect(state.rendered.has(10)).toBe(true); // second-farthest still makes the MAX_RENDERED_PAGES=10 cut
+    expect(MAX_RENDERED_PAGES).toBe(10);
   });
 
   it("(c) a page evicted while still in-band is re-queued by reconcile ALONE — no IntersectionObserver re-fire for that page", () => {
-    // Continues directly from (b)'s scenario: 21 pages, page 20 (farthest)
+    // Continues directly from (b)'s scenario: 11 pages, page 1 (farthest)
     // just got evicted while remaining in `inBand` the whole time (it never
     // left the 200%-margin band — this is the "on screen but evicted" case
     // the old FIFO scheduler could never recover from without a fresh
@@ -340,7 +406,7 @@ describe("PDF viewer: reconcile-based render scheduler (distance rank + concurre
     const state = makeState();
     const pageEls = new Map<number, HTMLElement>();
     const inBand = new Set<number>();
-    for (let i = 0; i <= 20; i += 1) {
+    for (let i = 0; i <= 10; i += 1) {
       const el = pagePlaceholder(i);
       stubGeom(el, farApartTop(i), 100);
       pageEls.set(i, el);
@@ -351,18 +417,63 @@ describe("PDF viewer: reconcile-based render scheduler (distance rank + concurre
     reconcile(state, inBand, pageEls, VIEWPORT_CENTER_B, () => {}); // (b)'s eviction: page 1 dropped
     expect(state.rendered.has(1)).toBe(false);
 
-    // Simulate the band shrinking somewhere ELSE (page 20 scrolls out — a
-    // real IntersectionObserver entry, but NOT for page 1, whose own
+    // Simulate the band shrinking somewhere ELSE (page 10 — the
+    // second-farthest, still inside the MAX_RENDERED_PAGES=10 cut — scrolls
+    // out: a real IntersectionObserver entry, but NOT for page 1, whose own
     // intersection state never changes: it stayed on screen throughout).
-    inBand.delete(20);
+    inBand.delete(10);
     const started: number[] = [];
     reconcile(state, inBand, pageEls, VIEWPORT_CENTER_B, (page) => started.push(page));
 
     // The regression this guards: page 1 comes back into the target (band now
-    // has exactly 20 eligible pages, all of which fit under
+    // has exactly 10 eligible pages, all of which fit under
     // MAX_RENDERED_PAGES) and gets queued for render — purely because
-    // `reconcile` re-ran, triggered by page 20's unrelated band-exit, with NO
+    // `reconcile` re-ran, triggered by page 10's unrelated band-exit, with NO
     // IntersectionObserver event ever touching page 1 itself.
     expect(started).toEqual([1]);
+  });
+
+  // 재호출 (team-lead spec, 2026-08-17): text-layer construction split out of
+  // renderPdfPage into its own step (renderTextLayer), scheduled by
+  // reconcile's optional 6th arg ONLY for pages close to the viewport —
+  // never for a page that merely sits in the wider 200%-margin canvas
+  // prefetch band. This pins that split at the scheduler level, the same
+  // way (a)-(c) pin the canvas half, without touching pdf.js/Worker/fetch.
+  it("(e) a page merely in the prefetch band gets a canvas but NOT a text layer; a page near the viewport gets both", () => {
+    const state = makeState();
+    const pageEls = new Map<number, HTMLElement>();
+
+    // near: rect center sits exactly AT the viewport center (distance 0) ->
+    // within TEXT_LAYER_DISTANCE_FRACTION of ANY plausible panelHeight.
+    const near = pagePlaceholder(1);
+    stubGeom(near, 0, 100);
+    pageEls.set(1, near);
+
+    // far: rect center sits 5000px from the viewport center — still "in
+    // band" (canvas prefetch's 200%-margin observer would report this as
+    // intersecting on a tall document), but far outside ANY sane fraction
+    // of a 100px panelHeight, so it must be excluded regardless of the
+    // exact TEXT_LAYER_DISTANCE_FRACTION value.
+    const far = pagePlaceholder(2);
+    stubGeom(far, 5000, 100);
+    pageEls.set(2, far);
+
+    const inBand = new Set([1, 2]);
+    state.rendered.add(1); // both canvases already rendered — text-layer
+    state.rendered.add(2); // eligibility only ever looks at rendered pages
+
+    const startedText: number[] = [];
+    reconcile(
+      state,
+      inBand,
+      pageEls,
+      50, // viewport center — matches `near`'s rect center exactly
+      () => {
+        throw new Error("no canvas candidate expected — both pages already rendered");
+      },
+      { panelHeight: 100, startTextLayer: (page) => startedText.push(page) },
+    );
+
+    expect(startedText).toEqual([1]);
   });
 });

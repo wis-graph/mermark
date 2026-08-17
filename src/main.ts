@@ -434,6 +434,21 @@ async function boot() {
     onOpen: async (raw) => {
       const target = resolveOpenPath(raw, currentBaseDir);
       if (!target) throw new Error("경로를 입력하세요");
+      // A file a registered viewer claims (pdf/epub/hwp/image/xlsx/docx/
+      // sqlite/…) goes to that viewer, NOT through `openDocument` — the same
+      // `viewerForEntry` gate the explorer and the search results already
+      // apply before opening anything. Without it this entry point was the
+      // ONE way into the app that ignored the viewer registry: `openDocument`
+      // read the bytes as a text document, so typing a PDF's path failed with
+      // `stream did not contain valid UTF-8` (사용자 리포트 2026-08-17) while
+      // clicking the very same file in the explorer opened it fine. Viewers
+      // own the viewer slot rather than replacing the document, so there is
+      // no unsaved-work guard to run here — that is `openDocument`'s job and
+      // this branch never reaches it.
+      if (viewerForEntry(basename(target))) {
+        openWithViewer(target);
+        return;
+      }
       try {
         await openDocument(target);
       } catch (error: unknown) {

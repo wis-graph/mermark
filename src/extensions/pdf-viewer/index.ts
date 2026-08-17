@@ -149,10 +149,80 @@ export function pageIndexOf(el: HTMLElement): number {
   return Number(el.dataset.page ?? "-1");
 }
 
-/** Build one page's placeholder element — an empty column slot, A4-ish
- *  aspect ratio, swapped for a canvas+text-layer pair by `renderPdfPage`.
- *  Pure query (constructs and returns; no side effect beyond the detached
- *  node).
+/** A page's aspect ratio as a CSS `aspect-ratio` value (`"width / height"`),
+ *  derived from a real `getViewport({scale:1})` reading — never simplified
+ *  or rounded, since CSS `aspect-ratio` accepts any two numbers as-is. Pure
+ *  query. Exported (along with `documentPageAspect`/`FALLBACK_PAGE_ASPECT`
+ *  below) so tests/pdf-viewer.test.ts's placeholder-aspect regression can
+ *  assert the exact ratio a real book's page produces, instead of
+ *  hand-computing "width/height" inline and hoping it matches this file's
+ *  own formatting. */
+export function aspectRatioOf(viewport: PdfViewport): string {
+  return `${viewport.width} / ${viewport.height}`;
+}
+
+/** A4 portrait (210mm x 297mm) — the placeholder aspect ratio used ONLY when
+ *  page 1's own viewport can't be read (`documentPageAspect`'s catch below).
+ *  Exported so the fallback path has one named value to assert against in
+ *  tests, instead of a bare `"210 / 297"` string duplicated between source
+ *  and test. */
+export const FALLBACK_PAGE_ASPECT = "210 / 297";
+
+/** The aspect ratio EVERY placeholder in this document is built with — read
+ *  ONCE from page 1, right after `getDocument()` resolves and before any
+ *  placeholder exists. `getPage(1)` + `getViewport({scale:1})` only parses
+ *  that page's dictionary (its bounding box), not its content stream, so
+ *  this is far cheaper than a real `renderPdfPage` call.
+ *
+ *  WHY THIS EXISTS (실측, not a guess): a real 1134-page/174MB book (Gödel,
+ *  Escher, Bach) measures 1840x2650 CSS px per page — aspect ratio 0.6943 —
+ *  against this file's OLD hardcoded A4 guess of 210/297 = 0.7071. Every
+ *  time a placeholder was swapped for its real canvas (`renderPdfPage`
+ *  clearing `el.style.aspectRatio` and setting real width/height), that
+ *  ONE page grew ~1.85% taller — about 23px at a 900px column width — and
+ *  every page below it in the column got shoved down by that amount. The
+ *  200%-margin prefetch band (`observePages`) reaches ABOVE the viewport
+ *  too, so pages rendering there pushed the content the reader was
+ *  actually looking at DOWN, and several renders landing close together
+ *  compounded it — 사용자 리포트 (2026-08-17): "스크롤보다 로드가 느려서
+ *  한번에 파파박 다급하게 로드되면서 페이지가 급변해". Reading the
+ *  document's OWN page 1 instead of guessing A4 makes a placeholder's
+ *  height already correct for a UNIFORM-page-size document, so the later
+ *  canvas swap changes width/height by ~0.
+ *
+ *  LIMITATION (by design, not missed): a document whose pages are NOT all
+ *  the same size is only PARTIALLY fixed by this — page 1's ratio becomes
+ *  every OTHER page's placeholder guess too, so a page whose real box
+ *  genuinely differs from page 1's still jumps when its own canvas swaps
+ *  in. Fixing that fully would mean reading every page's dictionary up
+ *  front before rendering anything, which the actual reported case (a
+ *  uniform-page book) does not need — this targets "every page jumps",
+ *  not the rarer mixed-page-size edge case, which keeps falling back to
+ *  the existing "a page corrects to its own real box when it renders"
+ *  behavior.
+ *
+ *  Falls back to `FALLBACK_PAGE_ASPECT` when page 1 itself can't be read
+ *  (defensive — should not normally happen for a document that already
+ *  resolved `getDocument()`). Exported for the same reason as
+ *  `aspectRatioOf`. Command (async IO; no mutation). */
+export async function documentPageAspect(doc: PdfDocumentProxy): Promise<string> {
+  try {
+    const page1 = await doc.getPage(1);
+    return aspectRatioOf(page1.getViewport({ scale: 1 }));
+  } catch {
+    return FALLBACK_PAGE_ASPECT;
+  }
+}
+
+/** Build one page's placeholder element — an empty column slot, swapped for
+ *  a canvas+text-layer pair by `renderPdfPage`/`renderTextLayer`. Pure query
+ *  (constructs and returns; no side effect beyond the detached node).
+ *
+ *  `aspect` defaults to `FALLBACK_PAGE_ASPECT` (A4) so every existing
+ *  scheduler test in tests/pdf-viewer.test.ts that calls `pagePlaceholder(n)`
+ *  for pure geometry (distance/eviction — aspect ratio is irrelevant there)
+ *  keeps working unchanged; `openPdfViewer` always passes the real
+ *  `documentPageAspect(doc)` result explicitly.
  *
  *  `width` here is REQUIRED, not cosmetic — a real bug this file shipped
  *  with initially (caught by viewer-golden's G14, not assumed): `.pdf-viewer-pages`
@@ -170,12 +240,12 @@ export function pageIndexOf(el: HTMLElement): number {
  *  missing). A concrete percentage width gives `aspect-ratio` a real box to
  *  compute a real height from, so only placeholders ACTUALLY within
  *  `rootMargin`'s extended window report `isIntersecting`. */
-export function pagePlaceholder(n: number): HTMLElement {
+export function pagePlaceholder(n: number, aspect: string = FALLBACK_PAGE_ASPECT): HTMLElement {
   const el = document.createElement("div");
   el.className = "pdf-viewer-page";
   el.dataset.page = String(n);
   el.style.width = `${PDF_PAGE_WIDTH_FRACTION * 100}%`;
-  el.style.aspectRatio = "210 / 297";
+  el.style.aspectRatio = aspect;
   return el;
 }
 
@@ -186,6 +256,20 @@ export function pagePlaceholder(n: number): HTMLElement {
  *  re-running on every settle) never double-requests it and never retries a
  *  page that already failed. Pure query. */
 function shouldRenderPage(
+  page: number,
+  pending: ReadonlySet<number>,
+  rendered: ReadonlySet<number>,
+  failed: ReadonlySet<number>,
+): boolean {
+  return !pending.has(page) && !rendered.has(page) && !failed.has(page);
+}
+
+/** `shouldRenderPage`'s text-layer counterpart — same three-set disjointness
+ *  contract (`textLayerPending`/`textLayerRendered`/`textLayerFailed`
+ *  instead of the canvas trio), reused rather than duplicated inline so both
+ *  guards read as the same rule applied to two different tracks. Pure
+ *  query. */
+function shouldBuildTextLayer(
   page: number,
   pending: ReadonlySet<number>,
   rendered: ReadonlySet<number>,
@@ -240,6 +324,11 @@ function observePages(
  *  scheduler state and assert against these exact caps, instead of
  *  duplicating the numbers or the shape by hand. */
 export interface PageRenderState {
+  /** `pending`/`rendered`/`failed` now track the CANVAS only (재호출,
+   *  2026-08-17: text-layer bookkeeping split into its own three sets below
+   *  — see `renderTextLayer`'s comment for why canvas and text layer are no
+   *  longer one atomic step). `rendered` means "canvas is on screen", not
+   *  "page fully done" — the text layer is separate follow-up work. */
   pending: Set<number>;
   rendered: Set<number>;
   /** Terminal render failures — never retried (mirrors hwp-viewer's "a
@@ -251,6 +340,17 @@ export interface PageRenderState {
    *  secretly also means. */
   failed: Set<number>;
   renderTasks: Map<number, { cancel(): void }>;
+  /** Text-layer counterpart of `pending`/`rendered`/`failed` — a page only
+   *  ever enters these sets AFTER its canvas is in `rendered` (see
+   *  `textLayerCandidates`'s `state.rendered` filter), and never both
+   *  `pending` and `rendered` at once (same disjointness contract as the
+   *  canvas trio, see `shouldBuildTextLayer`). `textLayerFailed` is
+   *  terminal only WITHIN one canvas render's lifetime — `evictPage` resets
+   *  it on a full re-earn, unlike canvas `failed` (see that function's own
+   *  comment for the asymmetry). */
+  textLayerPending: Set<number>;
+  textLayerRendered: Set<number>;
+  textLayerFailed: Set<number>;
   textLayers: Map<number, { cancel(): void }>;
 }
 
@@ -261,8 +361,37 @@ export interface PageRenderState {
  *  view, same "no retry needed, just re-earn it" shape as hwp-viewer's
  *  in-flight guard). Eviction order is DISTANCE-based, not FIFO — see
  *  `reconcile`'s own comment for why a push-order queue silently blanked
- *  onscreen pages in a tall/zoomed panel. */
-export const MAX_RENDERED_PAGES = 20;
+ *  onscreen pages in a tall/zoomed panel.
+ *
+ *  20 → 10 (team-lead spec, 2026-08-17, 실측): on Retina a canvas backs its
+ *  CSS pixels at `devicePixelRatio` (2), so a 900 CSS-px-wide page renders a
+ *  ~1800x2590 device-px canvas — ≈4.7M pixels, ≈19MB of backing store at 4
+ *  bytes/pixel (RGBA). 20 live canvases was therefore ≈370MB for one open
+ *  document. The 200%-margin prefetch band (`observePages`) only ever holds
+ *  roughly 5-7 pages at typical panel heights/zoom, so 20 was headroom far
+ *  past what the band ever asks for; 10 (≈190MB worst case) still leaves
+ *  room for a shrunk/zoomed panel to widen the eligible set (test (b)/(c)
+ *  below) without approaching the old ceiling. */
+export const MAX_RENDERED_PAGES = 10;
+
+/** How close (as a fraction of the pages panel's own on-screen height) a
+ *  CANVAS-rendered page's center must sit to the viewport's center before
+ *  it's worth paying for a text layer — half the panel height either side,
+ *  i.e. roughly "on screen or one screen-height away", a much tighter
+ *  window than the 200%-margin prefetch band that decides canvas
+ *  eligibility. Reuses `distanceFromViewportCenter`, the SAME ranking
+ *  `reconcile` already uses for canvas priority, so "close" means one thing
+ *  in this file (see `textLayerCandidates`). Named per §7 — a reader
+ *  shouldn't have to infer "half the panel" from a bare `0.5`. */
+const TEXT_LAYER_DISTANCE_FRACTION = 0.5;
+
+/** How many `renderTextLayer` calls run at once — kept at 1, same reasoning
+ *  as `MAX_CONCURRENT_RENDERS`: building hundreds of absolutely-positioned
+ *  spans is main-thread work, and letting several pages' text layers build
+ *  simultaneously would recreate the exact "several heavy DOM ops land in
+ *  one frame" burst this whole change exists to avoid — just for text
+ *  layers instead of canvases. */
+const MAX_CONCURRENT_TEXT_LAYERS = 1;
 
 /** How many `renderPdfPage` calls this viewer lets run at once. pdf.js hands
  *  `getDocument()` a SINGLE `PDFWorker` per open document — every render
@@ -289,6 +418,15 @@ function evictPage(pageNum: number, el: HTMLElement | undefined, state: PageRend
   state.renderTasks.delete(pageNum);
   state.textLayers.get(pageNum)?.cancel();
   state.textLayers.delete(pageNum);
+  state.textLayerPending.delete(pageNum);
+  state.textLayerRendered.delete(pageNum);
+  // Unlike canvas `failed` (a TRUE terminal outcome — a failed page is
+  // excluded from `reconcile`'s target set entirely and never evicted
+  // again), a text-layer failure is only terminal for THIS canvas render.
+  // This eviction is a full re-earn (the caller re-requests the canvas from
+  // scratch), so the next text-layer attempt deserves a fresh try rather
+  // than inheriting a failure from a render this page no longer has.
+  state.textLayerFailed.delete(pageNum);
   if (el) {
     el.replaceChildren();
     el.style.removeProperty("--scale-factor");
@@ -413,6 +551,21 @@ function pagesNearestCenter(
  *  makes a freed slot or a newly-eligible target get picked up without
  *  waiting on another IntersectionObserver event.
  *
+ *  TEXT LAYERS (재호출, 2026-08-17): after the canvas half above, this
+ *  function ALSO reconciles text-layer bookkeeping via `textLayerOptions` —
+ *  folded INTO this same call rather than a second exported scheduler
+ *  function with its own trigger wiring, so "call `reconcile`" is still the
+ *  ONE thing that needs to happen after any band-change/settle event (팀리드
+ *  spec: "reconcile이 계속 단일 수렴 지점이어야 한다"). `textLayerOptions` is
+ *  optional and skipped entirely when omitted — tests/pdf-viewer.test.ts's
+ *  canvas-only scheduler tests (a)-(c) call the 5-arg form and never touch
+ *  text-layer state at all. The text-layer step ONLY runs when
+ *  `state.pending` is empty (no canvas render in flight, and none was just
+ *  started this same call) — "캔버스 작업이 남아 있으면 텍스트 레이어보다
+ *  캔버스를 먼저" (team-lead spec): filling a visible page with pixels always
+ *  outranks building spans for a page that already has them. See
+ *  `textLayerCandidates` for the near-viewport distance filter itself.
+ *
  *  Exported (along with `renderPdfPage` below) so tests/pdf-viewer.test.ts
  *  can drive the scheduler directly — concurrency cap, distance-based
  *  eviction, and the "evicted-but-still-in-band page gets re-queued with no
@@ -424,6 +577,7 @@ export function reconcile(
   pageEls: ReadonlyMap<number, HTMLElement>,
   viewportCenter: number,
   startRender: (page: number, el: HTMLElement) => void,
+  textLayerOptions?: { panelHeight: number; startTextLayer: (page: number, el: HTMLElement) => void },
 ): void {
   const eligible = new Set(Array.from(inBand).filter((page) => !state.failed.has(page)));
   const target = new Set(pagesNearestCenter(eligible, pageEls, viewportCenter, MAX_RENDERED_PAGES));
@@ -433,24 +587,80 @@ export function reconcile(
   }
 
   const freeSlots = MAX_CONCURRENT_RENDERS - state.pending.size;
-  if (freeSlots <= 0) return;
+  if (freeSlots > 0) {
+    const wanting = new Set(
+      Array.from(target).filter((page) => shouldRenderPage(page, state.pending, state.rendered, state.failed)),
+    );
+    for (const page of pagesNearestCenter(wanting, pageEls, viewportCenter, freeSlots)) {
+      const el = pageEls.get(page);
+      if (el) startRender(page, el);
+    }
+  }
 
-  const wanting = new Set(
-    Array.from(target).filter((page) => shouldRenderPage(page, state.pending, state.rendered, state.failed)),
-  );
-  for (const page of pagesNearestCenter(wanting, pageEls, viewportCenter, freeSlots)) {
+  if (!textLayerOptions || state.pending.size > 0) return;
+  const textFreeSlots = MAX_CONCURRENT_TEXT_LAYERS - state.textLayerPending.size;
+  if (textFreeSlots <= 0) return;
+  const wantingText = textLayerCandidates(state, inBand, pageEls, viewportCenter, textLayerOptions.panelHeight, textFreeSlots);
+  for (const page of wantingText) {
     const el = pageEls.get(page);
-    if (el) startRender(page, el);
+    if (el) textLayerOptions.startTextLayer(page, el);
   }
 }
 
-/** Request + swap in one page's rendered canvas + text layer (or an error
- *  message on failure), guarded by `shouldRenderPage` (redundant with
- *  `reconcile`'s own `shouldRenderPage` filter on its candidates, kept here
- *  too so this function stays safe to call directly — e.g. from a test —
- *  without going through `reconcile` first). Re-entrant by design (a window
- *  resize OR a zoom change calls this again for an already-rendered page
- *  after `evictPage` clears its bookkeeping) — always reads the CURRENT
+/** The pages `reconcile`'s text-layer step should build next, ranked nearest
+ *  first (same `pagesNearestCenter` sort canvas scheduling uses) and capped
+ *  at `limit`. A page qualifies only if its CANVAS already rendered
+ *  (`state.rendered` — never build text ahead of the pixels it overlays),
+ *  it's still in-band, it doesn't already have a text layer pending/built/
+ *  terminally-failed (`shouldBuildTextLayer`), AND its distance from the
+ *  viewport center is within `TEXT_LAYER_DISTANCE_FRACTION` of `panelHeight`
+ *  — a page merely inside the wider 200%-margin prefetch band gets a canvas
+ *  but not necessarily a text layer; only a page actually near what's on
+ *  screen does. Pure query. */
+function textLayerCandidates(
+  state: PageRenderState,
+  inBand: ReadonlySet<number>,
+  pageEls: ReadonlyMap<number, HTMLElement>,
+  viewportCenter: number,
+  panelHeight: number,
+  limit: number,
+): number[] {
+  const threshold = panelHeight * TEXT_LAYER_DISTANCE_FRACTION;
+  const eligible = new Set(
+    Array.from(state.rendered).filter((page) => {
+      if (!inBand.has(page)) return false;
+      if (!shouldBuildTextLayer(page, state.textLayerPending, state.textLayerRendered, state.textLayerFailed)) {
+        return false;
+      }
+      const el = pageEls.get(page);
+      return !!el && distanceFromViewportCenter(el, viewportCenter) <= threshold;
+    }),
+  );
+  return pagesNearestCenter(eligible, pageEls, viewportCenter, limit);
+}
+
+/** Request + swap in one page's rendered CANVAS (or an error message on
+ *  failure) — the TEXT layer is now a separate step, see `renderTextLayer`
+ *  below.
+ *
+ *  재호출 (2026-08-17, 사용자 리포트 "스크롤보다 로드가 느려서 한번에 파파박
+ *  다급하게 로드되면서 페이지가 급변해"): this function used to build the
+ *  text layer inline, in the SAME async chain, before ever swapping the
+ *  canvas into `el`. A dense book page's text layer is hundreds of
+ *  absolutely-positioned spans built by `TextLayer.render()` on the MAIN
+ *  thread — nothing the reader needs to see the page, but something that
+ *  delayed the moment a scrolled-to page actually became visible by however
+ *  long that DOM construction took. A page counts as "visible" the instant
+ *  its canvas lands; `reconcile`'s separate text-layer step
+ *  (`textLayerCandidates`) decides afterward, independently, whether THIS
+ *  page is close enough to the viewport to deserve a text layer at all.
+ *
+ *  Guarded by `shouldRenderPage` (redundant with `reconcile`'s own
+ *  `shouldRenderPage` filter on its candidates, kept here too so this
+ *  function stays safe to call directly — e.g. from a test — without going
+ *  through `reconcile` first). Re-entrant by design (a window resize OR a
+ *  zoom change calls this again for an already-rendered page after
+ *  `evictPage` clears its bookkeeping) — always reads the CURRENT
  *  `pageTargetWidth(pagesEl)` AND the caller-supplied `zoomFactor` at call
  *  time (`shell.zoom.get()`, design §B's per-viewer BEHAVIOR table: PDF is a
  *  "재래스터" viewer, never a CSS transform), so a page rendered mid-resize/
@@ -460,12 +670,19 @@ export function reconcile(
  *  `reconcile` so a freed concurrency slot or a newly-terminal page gets
  *  picked up immediately, without waiting on another IntersectionObserver
  *  event. Command (void) — kicks off async IO and mutates `el`/the tracking
- *  sets. */
+ *  sets.
+ *
+ *  `_pdfjs` is unused now that `TextLayer` construction moved to
+ *  `renderTextLayer` — kept in the signature (rather than dropped) so both
+ *  functions take the same `(page, el, pdfDoc, pdfjs, state, pagesEl,
+ *  zoomFactor, onSettled)` shape and every call site (`openPdfViewer`'s
+ *  `runReconcile`, tests/pdf-viewer.test.ts's scheduler tests) can pass the
+ *  same argument list to either one without reshuffling. */
 export function renderPdfPage(
   page: number,
   el: HTMLElement,
   pdfDoc: PdfDocumentProxy,
-  pdfjs: PdfjsModule,
+  _pdfjs: PdfjsModule,
   state: PageRenderState,
   pagesEl: HTMLElement,
   zoomFactor: number,
@@ -502,25 +719,15 @@ export function renderPdfPage(
 
     // `--scale-factor`/`--total-scale-factor` drive pdfjs-dist's own
     // `pdf_viewer.css` (`.textLayer`'s font-size/position calc chain) — set
-    // on the page element so they inherit into the text layer child below,
-    // without needing pdfjs-dist's full `.pdfViewer .page` framework markup.
+    // on the page element so they inherit into the text layer child
+    // `renderTextLayer` appends later, without needing pdfjs-dist's full
+    // `.pdfViewer .page` framework markup.
     el.style.setProperty("--scale-factor", String(scale));
     el.style.setProperty("--total-scale-factor", String(scale));
     el.style.aspectRatio = "";
     el.style.width = `${viewport.width}px`;
     el.style.height = `${viewport.height}px`;
-
-    const textLayerEl = document.createElement("div");
-    textLayerEl.className = "textLayer";
-    textLayerEl.style.width = `${viewport.width}px`;
-    textLayerEl.style.height = `${viewport.height}px`;
-
-    el.replaceChildren(canvasWrap, textLayerEl);
-
-    const textContent = await pdfPage.getTextContent();
-    const textLayer = new pdfjs.TextLayer({ textContentSource: textContent, container: textLayerEl, viewport });
-    state.textLayers.set(page, textLayer);
-    await textLayer.render();
+    el.replaceChildren(canvasWrap);
 
     state.pending.delete(page);
     state.rendered.add(page);
@@ -532,6 +739,95 @@ export function renderPdfPage(
     el.style.aspectRatio = "";
     el.classList.add("pdf-viewer-page-error");
     el.textContent = `페이지를 불러올 수 없습니다: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`;
+    onSettled();
+  });
+}
+
+/** Build ONE page's text layer — split out of `renderPdfPage` (see that
+ *  function's comment for the full "왜"). Only ever requested for a page
+ *  whose canvas has ALREADY rendered (`textLayerCandidates` reads
+ *  `state.rendered`), so this recomputes the SAME fit-width viewport
+ *  `renderPdfPage` used (same `pageTargetWidth`/`zoomFactor` inputs, not a
+ *  cached one) rather than threading the canvas step's viewport through
+ *  `state` — a resize/zoom that would make the two disagree ALSO evicts the
+ *  canvas via `rerenderVisiblePages` (which clears this page's `rendered`
+ *  membership too), so a stale viewport here can't happen without the
+ *  canvas being fully re-earned first.
+ *
+ *  A text-layer failure does NOT touch the already-visible canvas — unlike
+ *  `renderPdfPage`'s catch, which is allowed to blank the whole page element
+ *  because canvas and text layer used to be one atomic attempt there. Text
+ *  is supplementary (selection/search); losing it silently is strictly
+ *  better than wiping a page the reader is currently looking at. Guards
+ *  against a page that left `state.rendered` (evicted) while this was
+ *  in flight — appending a stray `.textLayer` div onto an element some OTHER
+ *  page may already be using would be a worse bug than just not building it.
+ *  Command (void) — kicks off async IO and mutates `el`/the tracking sets. */
+function renderTextLayer(
+  page: number,
+  el: HTMLElement,
+  pdfDoc: PdfDocumentProxy,
+  pdfjs: PdfjsModule,
+  state: PageRenderState,
+  pagesEl: HTMLElement,
+  zoomFactor: number,
+  onSettled: () => void,
+): void {
+  if (!shouldBuildTextLayer(page, state.textLayerPending, state.textLayerRendered, state.textLayerFailed)) return;
+  state.textLayerPending.add(page);
+  (async () => {
+    const pdfPage = await pdfDoc.getPage(page);
+    const unscaled = pdfPage.getViewport({ scale: 1 });
+    const scale = fitWidthScale(unscaled.width, pageTargetWidth(pagesEl), zoomFactor);
+    const viewport = pdfPage.getViewport({ scale });
+
+    const textLayerEl = document.createElement("div");
+    textLayerEl.className = "textLayer";
+    textLayerEl.style.width = `${viewport.width}px`;
+    textLayerEl.style.height = `${viewport.height}px`;
+
+    const textContent = await pdfPage.getTextContent();
+    const textLayer = new pdfjs.TextLayer({ textContentSource: textContent, container: textLayerEl, viewport });
+    state.textLayers.set(page, textLayer);
+    await textLayer.render();
+
+    if (!state.rendered.has(page)) {
+      // Evicted (canvas gone) while this text layer was mid-flight — `el`
+      // may already belong to a different page's render by now. Drop the
+      // result rather than appending it anywhere. `onSettled` STILL fires:
+      // this attempt held one of `MAX_CONCURRENT_TEXT_LAYERS` slots, and
+      // `reconcile` is the only thing that hands the freed slot to the next
+      // candidate. Returning without it frees the slot but schedules
+      // nothing, so the text-layer chain stalls until some UNRELATED event
+      // (a band change, a canvas settle) happens to re-run `reconcile` —
+      // and at rest, by definition, none does: the near-viewport pages just
+      // silently never become selectable.
+      state.textLayerPending.delete(page);
+      onSettled();
+      return;
+    }
+    el.appendChild(textLayerEl);
+    state.textLayerPending.delete(page);
+    state.textLayerRendered.add(page);
+    onSettled();
+  })().catch(() => {
+    state.textLayerPending.delete(page);
+    // Only a GENUINE failure marks the page. An eviction also lands here:
+    // `evictPage` calls `state.textLayers.get(page)?.cancel()`, which
+    // rejects the `textLayer.render()` above — and that rejection is
+    // delivered asynchronously, i.e. AFTER `evictPage` synchronously ran
+    // its own `textLayerFailed.delete(page)`. Marking unconditionally would
+    // therefore re-add the flag right after the reset that exists to clear
+    // it, and `shouldBuildTextLayer` would then refuse to rebuild the text
+    // layer for the page's NEXT canvas render — the exact opposite of what
+    // `evictPage`'s comment promises ("a full re-earn deserves a fresh
+    // try"). `rendered` is deleted first by `evictPage`, so its absence is
+    // the marker that this rejection is a cancellation, not a real error.
+    // (Narrow residual: if the page were evicted AND fully re-rendered
+    // before this rejection arrives, `rendered` is true again and a stale
+    // cancellation would mark a live render as failed — that costs one
+    // page's text layer until its next eviction, never a wrong pixel.)
+    if (state.rendered.has(page)) state.textLayerFailed.add(page);
     onSettled();
   });
 }
@@ -662,6 +958,9 @@ function openPdfViewer(absPath: string): ViewerHandle {
     rendered: new Set(),
     failed: new Set(),
     renderTasks: new Map(),
+    textLayerPending: new Set(),
+    textLayerRendered: new Set(),
+    textLayerFailed: new Set(),
     textLayers: new Map(),
   };
   // The band-membership set `reconcile` reads every time it runs — mutated
@@ -725,8 +1024,13 @@ function openPdfViewer(absPath: string): ViewerHandle {
     });
     loadingTask = task;
     const doc = await task.promise;
+    // Read page 1's real aspect ratio BEFORE building any placeholder — see
+    // `documentPageAspect`'s own comment for why (실측: A4's hardcoded guess
+    // was off by 1.85% on a real book, growing every page at canvas-swap
+    // time and pushing the rest of the column down mid-scroll).
+    const pageAspect = await documentPageAspect(doc);
 
-    const placeholders = Array.from({ length: doc.numPages }, (_, i) => pagePlaceholder(i + 1));
+    const placeholders = Array.from({ length: doc.numPages }, (_, i) => pagePlaceholder(i + 1, pageAspect));
     const pageEls = new Map(placeholders.map((el) => [pageIndexOf(el), el]));
 
     content.className = "pdf-viewer-pages";
@@ -753,8 +1057,22 @@ function openPdfViewer(absPath: string): ViewerHandle {
     // own "what should render now" logic (see `reconcile`'s own comment for
     // the full why).
     const runReconcile = (): void => {
-      reconcile(rawState, inBand, pageEls, viewportCenterOf(content), (page, el) =>
-        renderPdfPage(page, el, doc, pdfjs, rawState, content, shell.zoom.get(), runReconcile),
+      reconcile(
+        rawState,
+        inBand,
+        pageEls,
+        viewportCenterOf(content),
+        (page, el) => renderPdfPage(page, el, doc, pdfjs, rawState, content, shell.zoom.get(), runReconcile),
+        {
+          // `content`'s own on-screen height — the panel-height half of
+          // `TEXT_LAYER_DISTANCE_FRACTION`'s "half the panel either side"
+          // rule (see `textLayerCandidates`). Read fresh each call, same as
+          // `viewportCenterOf(content)` above — cheap relative to how often
+          // this runs (event-driven, not per-frame).
+          panelHeight: content.getBoundingClientRect().height,
+          startTextLayer: (page, el) =>
+            renderTextLayer(page, el, doc, pdfjs, rawState, content, shell.zoom.get(), runReconcile),
+        },
       );
     };
 
