@@ -67,8 +67,13 @@ function ensureStyleInjected(): void {
 /** A minimal shape of the pdfjs-dist module surface this file actually calls
  *  — kept local rather than depending on `pdfjs-dist`'s own types at the call
  *  sites below, so the dynamic `import("pdfjs-dist")` return value has a name
- *  worth reading in this file's signatures. */
-interface PdfjsModule {
+ *  worth reading in this file's signatures. Exported (along with
+ *  `PdfViewport`/`PdfPageProxy`/`PdfDocumentProxy` below) ONLY so
+ *  tests/pdf-viewer.test.ts's scheduler tests can type a hand-built,
+ *  fully-controllable fake pdfDoc/pdfjs pair (render-task resolution timing
+ *  under direct test control) without depending on `pdfjs-dist`'s own types
+ *  — nothing else in the app imports these. */
+export interface PdfjsModule {
   getDocument(params: Record<string, unknown>): PdfLoadingTask;
   PDFWorker: new (params: { port: Worker }) => { destroy(): void };
   TextLayer: new (params: {
@@ -77,11 +82,11 @@ interface PdfjsModule {
     viewport: PdfViewport;
   }) => { render(): Promise<unknown>; cancel(): void };
 }
-interface PdfViewport {
+export interface PdfViewport {
   width: number;
   height: number;
 }
-interface PdfPageProxy {
+export interface PdfPageProxy {
   getViewport(params: { scale: number }): PdfViewport;
   getTextContent(): Promise<unknown>;
   render(params: {
@@ -90,7 +95,7 @@ interface PdfPageProxy {
     transform?: number[];
   }): { promise: Promise<void>; cancel(): void };
 }
-interface PdfDocumentProxy {
+export interface PdfDocumentProxy {
   numPages: number;
   getPage(n: number): Promise<PdfPageProxy>;
 }
@@ -136,8 +141,11 @@ function pageTargetWidth(pagesEl: HTMLElement): number {
  *  hwp-viewer.ts's `pageIndexOf` (single place `data-page` is read back so
  *  the observer callback and the render swap agree on the parse). Pure
  *  query. 1-indexed (pdf.js's own page numbering) so it can be handed
- *  straight to `pdfDoc.getPage`. */
-function pageIndexOf(el: HTMLElement): number {
+ *  straight to `pdfDoc.getPage`. Exported (along with `pagePlaceholder`
+ *  below) so tests/pdf-viewer.test.ts's scheduler tests can build the same
+ *  page-number ⇄ element pairing this file uses internally, rather than
+ *  re-deriving `data-page` parsing/writing by hand. */
+export function pageIndexOf(el: HTMLElement): number {
   return Number(el.dataset.page ?? "-1");
 }
 
@@ -162,7 +170,7 @@ function pageIndexOf(el: HTMLElement): number {
  *  missing). A concrete percentage width gives `aspect-ratio` a real box to
  *  compute a real height from, so only placeholders ACTUALLY within
  *  `rootMargin`'s extended window report `isIntersecting`. */
-function pagePlaceholder(n: number): HTMLElement {
+export function pagePlaceholder(n: number): HTMLElement {
   const el = document.createElement("div");
   el.className = "pdf-viewer-page";
   el.dataset.page = String(n);
@@ -173,28 +181,41 @@ function pagePlaceholder(n: number): HTMLElement {
 
 /** "Should a render request go out for this page right now" — mirrors
  *  hwp-viewer.ts's `shouldRenderPage`: false when a request is already in
- *  flight or the page already carries a rendered result, so IntersectionObserver
- *  re-firing on scroll jitter never double-requests it. Pure query. */
-function shouldRenderPage(page: number, pending: ReadonlySet<number>, rendered: ReadonlySet<number>): boolean {
-  return !pending.has(page) && !rendered.has(page);
+ *  flight, already carries a rendered result, OR already failed terminally,
+ *  so IntersectionObserver re-firing on scroll jitter (or `reconcile`
+ *  re-running on every settle) never double-requests it and never retries a
+ *  page that already failed. Pure query. */
+function shouldRenderPage(
+  page: number,
+  pending: ReadonlySet<number>,
+  rendered: ReadonlySet<number>,
+  failed: ReadonlySet<number>,
+): boolean {
+  return !pending.has(page) && !rendered.has(page) && !failed.has(page);
 }
 
-/** Wire up lazy rendering — real `IntersectionObserver` when the runtime has
- *  one, an eager "render every page immediately" fallback when it doesn't
- *  (jsdom, mirrors hwp-viewer.ts's `observePages`). `onVisible` is the SAME
- *  function either path calls, so there is exactly one "what happens when a
- *  page becomes visible" rule. Command (returns a disconnect handle). */
+/** Wire up band tracking — real `IntersectionObserver` when the runtime has
+ *  one, an eager "every page is in the band immediately" fallback when it
+ *  doesn't (jsdom, mirrors hwp-viewer.ts's `observePages`). Unlike the
+ *  pre-reconcile version, `onBandChange` is told about BOTH entering AND
+ *  leaving the band (`entry.isIntersecting` forwarded either way, not
+ *  filtered to entries only) — the caller needs the full "currently in the
+ *  200%-margin band" set (`inBand`), not just a one-shot "became visible"
+ *  event, so `reconcile` can recompute its target from a set that shrinks as
+ *  well as grows. `onBandChange` is still the SAME function either runtime
+ *  path calls, so there is exactly one "what does band membership just
+ *  become" rule regardless of which branch runs. Command (returns a
+ *  disconnect handle). */
 function observePages(
   root: HTMLElement,
   placeholders: readonly HTMLElement[],
-  onVisible: (page: number, el: HTMLElement) => void,
+  onBandChange: (page: number, el: HTMLElement, inBand: boolean) => void,
 ): { disconnect(): void } {
   if (typeof IntersectionObserver === "function") {
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          onVisible(pageIndexOf(entry.target as HTMLElement), entry.target as HTMLElement);
+          onBandChange(pageIndexOf(entry.target as HTMLElement), entry.target as HTMLElement, entry.isIntersecting);
         }
       },
       { root, rootMargin: "200% 0px" },
@@ -202,33 +223,66 @@ function observePages(
     for (const ph of placeholders) observer.observe(ph);
     return observer;
   }
-  for (const ph of placeholders) onVisible(pageIndexOf(ph), ph);
+  for (const ph of placeholders) onBandChange(pageIndexOf(ph), ph, true);
   return { disconnect() {} };
 }
 
 /** Render bookkeeping for one open() call — grouped so close()/zoom/eviction
- *  never have to thread five separate maps through function signatures. */
-interface PageRenderState {
+ *  never have to thread five separate maps through function signatures.
+ *  `rendered`/`failed` are disjoint terminal outcomes (a page is in at most
+ *  one); `pending` overlaps neither — see `shouldRenderPage`. There is no
+ *  render-order queue here (contrast the pre-reconcile version's FIFO
+ *  `renderOrder`): `reconcile` below recomputes who deserves a render slot
+ *  FRESH from current geometry every time it runs, so a persisted queue
+ *  would just be a second source of truth to keep in sync with `inBand`.
+ *  Exported (along with `MAX_RENDERED_PAGES`/`MAX_CONCURRENT_RENDERS` below)
+ *  so tests/pdf-viewer.test.ts's scheduler tests can construct real
+ *  scheduler state and assert against these exact caps, instead of
+ *  duplicating the numbers or the shape by hand. */
+export interface PageRenderState {
   pending: Set<number>;
   rendered: Set<number>;
-  /** FIFO of currently-rendered page numbers — the render-cap eviction order
-   *  (design §"대용량 PDF에서 페이지 캔버스가 무한히 쌓이지 않게"). */
-  renderOrder: number[];
+  /** Terminal render failures — never retried (mirrors hwp-viewer's "a
+   *  failed page is terminal" rule). Split out from `rendered` (재호출: used
+   *  to be lumped into `rendered` to mark it "settled") purely so a reader
+   *  doesn't have to infer "rendered OR failed" from one boolean-ish set —
+   *  `reconcile`'s target computation and `shouldRenderPage`'s guard both
+   *  read this directly instead of a comment explaining what `rendered`
+   *  secretly also means. */
+  failed: Set<number>;
   renderTasks: Map<number, { cancel(): void }>;
   textLayers: Map<number, { cancel(): void }>;
 }
 
 /** How many rendered pages a single open PDF keeps as live canvases before
- *  evicting the oldest — bounds memory on a large document instead of
- *  accumulating one full-resolution canvas per page forever (MVP cap,
- *  eviction re-renders lazily if scrolled back into view, same "no retry
- *  needed, just re-earn it" shape as hwp-viewer's in-flight guard). */
-const MAX_RENDERED_PAGES = 20;
+ *  evicting the FARTHEST-from-viewport-center one — bounds memory on a
+ *  large document instead of accumulating one full-resolution canvas per
+ *  page forever (MVP cap; eviction re-renders lazily if scrolled back into
+ *  view, same "no retry needed, just re-earn it" shape as hwp-viewer's
+ *  in-flight guard). Eviction order is DISTANCE-based, not FIFO — see
+ *  `reconcile`'s own comment for why a push-order queue silently blanked
+ *  onscreen pages in a tall/zoomed panel. */
+export const MAX_RENDERED_PAGES = 20;
+
+/** How many `renderPdfPage` calls this viewer lets run at once. pdf.js hands
+ *  `getDocument()` a SINGLE `PDFWorker` per open document — every render
+ *  (raster AND, after it, text-layer build) queues on that ONE worker thread
+ *  regardless of how many `renderPdfPage` calls are in flight, so firing
+ *  several at once never makes them finish sooner; it only lets an
+ *  IntersectionObserver callback that sees 5-10 pages enter the band in one
+ *  frame (`observePages`' 200% rootMargin × a tall panel) dispatch all of
+ *  them simultaneously, and the worker resolves them in a burst instead of
+ *  one at a time nearest-to-farthest (사용자 리포트: "스크롤하다 갑자기 연달아
+ *  로드된다"). A named constant (not inlined `1`) so a future multi-worker
+ *  pdf.js setup has one place to raise it — `reconcile` reads it as a plain
+ *  slot count, unaware of the pdf.js-worker reasoning above. */
+export const MAX_CONCURRENT_RENDERS = 1;
 
 /** Clear a rendered page's canvas/text-layer DOM and drop its render-state
  *  bookkeeping so `shouldRenderPage` treats it as never-rendered again — the
- *  page re-earns a render the next time it scrolls into view. Command
- *  (void). */
+ *  page re-earns a render the next time `reconcile` decides it belongs in
+ *  the target set again (never called on a `failed` page — a failure is
+ *  terminal, not something to re-earn). Command (void). */
 function evictPage(pageNum: number, el: HTMLElement | undefined, state: PageRenderState): void {
   state.rendered.delete(pageNum);
   state.renderTasks.get(pageNum)?.cancel();
@@ -242,38 +296,182 @@ function evictPage(pageNum: number, el: HTMLElement | undefined, state: PageRend
   }
 }
 
-/** Enforce `MAX_RENDERED_PAGES` after a page finishes rendering — evicts the
- *  single oldest entry in `renderOrder` if the cap is now exceeded (called
- *  once per successful render, so it can never fall more than one page
- *  behind the cap). Command (void). */
-function enforceRenderCap(state: PageRenderState, pageEls: ReadonlyMap<number, HTMLElement>): void {
-  while (state.renderOrder.length > MAX_RENDERED_PAGES) {
-    const oldest = state.renderOrder.shift();
-    if (oldest !== undefined && state.rendered.has(oldest)) evictPage(oldest, pageEls.get(oldest), state);
+/** The pages column's current vertical center, in VIEWPORT coordinates
+ *  (`getBoundingClientRect()`, not `offsetTop`/`scrollTop`). Read ONCE per
+ *  `reconcile` call and threaded through rather than re-read per page inside
+ *  a sort comparator — ranking N in-band pages by distance then costs one
+ *  layout read, not up to N of them. See `distanceFromViewportCenter`'s
+ *  comment for why viewport coordinates, not `offsetTop`. Pure query. */
+function viewportCenterOf(pagesEl: HTMLElement): number {
+  const rect = pagesEl.getBoundingClientRect();
+  return rect.top + rect.height / 2;
+}
+
+/** How far a page element's own center sits from the viewport's current
+ *  center (`viewportCenterOf`, computed once per `reconcile` call and passed
+ *  in here — see that function's comment on why). This is the ONE ranking
+ *  `reconcile` uses for both halves of its job: which currently-rendered
+ *  pages survive the `MAX_RENDERED_PAGES` cap, and which not-yet-rendered
+ *  page earns the next render slot — using the same number both times means
+ *  the two decisions can never disagree about what "close" means.
+ *
+ *  Uses `getBoundingClientRect()` (viewport coordinates), NOT
+ *  `offsetTop`/`offsetHeight` (coordinates relative to the element's
+ *  `offsetParent`) — a real coordinate-space bug this scheduler shipped
+ *  with initially: this file's injected `.pdf-viewer-pages` rule (the CSS
+ *  for `pagesEl`) declares no `position`, so `pagesEl` is never a page
+ *  element's `offsetParent`, and `offsetTop` measured from whatever
+ *  ancestor actually IS positioned — unrelated to `pagesEl`'s own content
+ *  box that `viewportCenterOf` was reading. The two functions were silently
+ *  comparing numbers from two different coordinate origins, off by a
+ *  constant equal to "nearest positioned ancestor's top → `pagesEl`'s
+ *  content top" (small today, roughly a header's height — but an ancestor
+ *  CSS change that adds or removes a `position` declaration anywhere above
+ *  `pagesEl` would move that constant arbitrarily, in the worst case all
+ *  the way out to `document.body`). `getBoundingClientRect()` is always
+ *  viewport-relative regardless of any ancestor's `position`, so both
+ *  functions now agree on the same coordinate space with no `offsetParent`
+ *  assumption at all — and `pagesEl.scrollTop` is no longer needed either;
+ *  scroll position is already baked into `getBoundingClientRect()`. Pure
+ *  query. */
+function distanceFromViewportCenter(el: HTMLElement, viewportCenter: number): number {
+  const rect = el.getBoundingClientRect();
+  return Math.abs(rect.top + rect.height / 2 - viewportCenter);
+}
+
+/** Rank `pages` by `distanceFromViewportCenter` (nearest first) and return at
+ *  most `limit` of them — the single sort `reconcile` uses for BOTH "which
+ *  in-band pages deserve to stay in the render target" and "which
+ *  not-yet-rendered target page gets the next free render slot", so there is
+ *  never a second, subtly different idea of "closest" between the two. A
+ *  page number with no matching element (should not happen — defensive) is
+ *  dropped rather than sorted as though it were distance 0. Pure query. */
+function pagesNearestCenter(
+  pages: ReadonlySet<number>,
+  pageEls: ReadonlyMap<number, HTMLElement>,
+  viewportCenter: number,
+  limit: number,
+): number[] {
+  return Array.from(pages)
+    .flatMap((page) => {
+      const el = pageEls.get(page);
+      return el ? [{ page, distance: distanceFromViewportCenter(el, viewportCenter) }] : [];
+    })
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, limit)
+    .map((x) => x.page);
+}
+
+/** The scheduler's single "make reality match intent" step. Call it after
+ *  ANY event that can change either half of that match: a page entering or
+ *  leaving the 200%-margin band (`observePages`'s callback), or a render
+ *  settling — success OR failure (`renderPdfPage`'s `onSettled`). It
+ *  recomputes the target set FRESH from `inBand` every call instead of
+ *  trusting a previously computed order, so there is no separate queue
+ *  object that can drift out of sync with "what's actually in the band right
+ *  now": a page that leaves the band before its turn simply stops being a
+ *  candidate next time this runs, and a page evicted while STILL in the band
+ *  gets picked back up the very next call that runs `reconcile` for any
+ *  reason — no re-fire of ITS OWN IntersectionObserver entry required (see
+ *  the eviction-order note below for why that distinction matters).
+ *
+ *  WHY DISTANCE, NOT FIFO (this scheduler used to track a push-order
+ *  `renderOrder` queue and evict the single oldest entry once a render
+ *  finished): shrink the panel — zoom in, or a narrower window — so MORE
+ *  than `MAX_RENDERED_PAGES` pages sit inside the 200%-margin band at once,
+ *  and FIFO evicts whichever page happened to render FIRST, which on a
+ *  document tall enough to fill the panel is very often a page still ON
+ *  SCREEN. Because that page's element never stops intersecting (it's still
+ *  inside the band), its OWN IntersectionObserver entry never re-fires, so
+ *  nothing was left to re-request its render under the old "render on
+ *  observer entry" rule — a permanently blank page until the user actually
+ *  scrolled it out of the (200%-wide) band and back in. Ranking by distance
+ *  from the viewport's real center instead means the FARTHEST in-band page
+ *  is always the one evicted, so a page genuinely on screen is the very last
+ *  thing this function ever gives up — and even if it IS evicted (a
+ *  temporary ranking loss to a nearer page), the next `reconcile` call
+ *  (triggered by some OTHER page's observer event or render settling, which
+ *  keeps happening as the user scrolls) re-evaluates it fresh rather than
+ *  waiting on an observer entry that may never come.
+ *
+ *  WHY CONCURRENCY 1 (`MAX_CONCURRENT_RENDERS`), NOT "however many pages
+ *  entered the band this frame": see that constant's own comment — pdf.js's
+ *  single worker serializes the real work anyway, so this only controls how
+ *  many `renderPdfPage` calls are in flight at once, closest-first, instead
+ *  of bursting every band-entrant out simultaneously.
+ *
+ *  Failed pages (`state.failed`) are excluded from the target computation
+ *  itself, not just from the render-candidate filter — otherwise a
+ *  terminally-failed page could still occupy one of the `MAX_RENDERED_PAGES`
+ *  ranked slots and crowd out a real, renderable page that happens to sit
+ *  just past it.
+ *
+ *  Command (void) — mutates `state` via `evictPage` and fires `startRender`
+ *  for however many pages currently have a free slot. `startRender` is
+ *  expected to eventually call `reconcile` again on settle (wired in
+ *  `openPdfViewer` below via `renderPdfPage`'s `onSettled`), which is what
+ *  makes a freed slot or a newly-eligible target get picked up without
+ *  waiting on another IntersectionObserver event.
+ *
+ *  Exported (along with `renderPdfPage` below) so tests/pdf-viewer.test.ts
+ *  can drive the scheduler directly — concurrency cap, distance-based
+ *  eviction, and the "evicted-but-still-in-band page gets re-queued with no
+ *  observer re-fire" regression guard — without mocking pdf.js's dynamic
+ *  import, Worker, or fetch, none of which this scheduler logic touches. */
+export function reconcile(
+  state: PageRenderState,
+  inBand: ReadonlySet<number>,
+  pageEls: ReadonlyMap<number, HTMLElement>,
+  viewportCenter: number,
+  startRender: (page: number, el: HTMLElement) => void,
+): void {
+  const eligible = new Set(Array.from(inBand).filter((page) => !state.failed.has(page)));
+  const target = new Set(pagesNearestCenter(eligible, pageEls, viewportCenter, MAX_RENDERED_PAGES));
+
+  for (const page of Array.from(state.rendered)) {
+    if (!target.has(page)) evictPage(page, pageEls.get(page), state);
+  }
+
+  const freeSlots = MAX_CONCURRENT_RENDERS - state.pending.size;
+  if (freeSlots <= 0) return;
+
+  const wanting = new Set(
+    Array.from(target).filter((page) => shouldRenderPage(page, state.pending, state.rendered, state.failed)),
+  );
+  for (const page of pagesNearestCenter(wanting, pageEls, viewportCenter, freeSlots)) {
+    const el = pageEls.get(page);
+    if (el) startRender(page, el);
   }
 }
 
 /** Request + swap in one page's rendered canvas + text layer (or an error
- *  message on failure), guarded by `shouldRenderPage`. Re-entrant by design
- *  (a window resize OR a zoom change calls this again for an already-rendered
- *  page after `evictPage` clears its bookkeeping) — always reads the CURRENT
+ *  message on failure), guarded by `shouldRenderPage` (redundant with
+ *  `reconcile`'s own `shouldRenderPage` filter on its candidates, kept here
+ *  too so this function stays safe to call directly — e.g. from a test —
+ *  without going through `reconcile` first). Re-entrant by design (a window
+ *  resize OR a zoom change calls this again for an already-rendered page
+ *  after `evictPage` clears its bookkeeping) — always reads the CURRENT
  *  `pageTargetWidth(pagesEl)` AND the caller-supplied `zoomFactor` at call
  *  time (`shell.zoom.get()`, design §B's per-viewer BEHAVIOR table: PDF is a
  *  "재래스터" viewer, never a CSS transform), so a page rendered mid-resize/
  *  mid-zoom fits the latest panel width and zoom rather than a stale one
- *  captured earlier. Command (void) — kicks off async IO and mutates `el`/the
- *  tracking sets. */
-function renderPdfPage(
+ *  captured earlier. `onSettled` fires exactly once, on EITHER outcome
+ *  (success or the catch below) — `openPdfViewer` wires it to re-run
+ *  `reconcile` so a freed concurrency slot or a newly-terminal page gets
+ *  picked up immediately, without waiting on another IntersectionObserver
+ *  event. Command (void) — kicks off async IO and mutates `el`/the tracking
+ *  sets. */
+export function renderPdfPage(
   page: number,
   el: HTMLElement,
   pdfDoc: PdfDocumentProxy,
   pdfjs: PdfjsModule,
   state: PageRenderState,
   pagesEl: HTMLElement,
-  pageEls: ReadonlyMap<number, HTMLElement>,
   zoomFactor: number,
+  onSettled: () => void,
 ): void {
-  if (!shouldRenderPage(page, state.pending, state.rendered)) return;
+  if (!shouldRenderPage(page, state.pending, state.rendered, state.failed)) return;
   state.pending.add(page);
   (async () => {
     const pdfPage = await pdfDoc.getPage(page);
@@ -326,46 +524,41 @@ function renderPdfPage(
 
     state.pending.delete(page);
     state.rendered.add(page);
-    state.renderOrder.push(page);
-    enforceRenderCap(state, pageEls);
+    onSettled();
   })().catch((err: unknown) => {
     state.pending.delete(page);
-    state.rendered.add(page); // a failed page is terminal — never retried
+    state.failed.add(page); // terminal — never retried; excluded from reconcile's target AND eviction
     el.replaceChildren();
     el.style.aspectRatio = "";
     el.classList.add("pdf-viewer-page-error");
     el.textContent = `페이지를 불러올 수 없습니다: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`;
+    onSettled();
   });
 }
 
-/** Re-render every currently-rendered (not in-flight) page to fit the new
- *  panel width and/or zoom factor — called by `refitPages` below on a window
+/** Evict every currently-rendered page so `reconcile` re-requests each one at
+ *  the CURRENT panel width/zoom — called by `refitPages` below on a window
  *  resize OR a viewer-local zoom change (design §B: "resize 핸들러와 동일
  *  가드로 refitPages에 합류" — one re-raster rule regardless of trigger).
- *  Clears each page's render bookkeeping via `evictPage` first so
- *  `renderPdfPage`'s own `shouldRenderPage` guard treats it as fresh, then
- *  re-requests it — a full re-raster rather than a CSS transform, so the
- *  canvas and its text layer are always computed from the SAME viewport and
- *  stay pixel-aligned (a CSS-only scale would need the canvas and text layer
- *  scaled by an identical transform to stay aligned, and re-deriving that
- *  from two independently updated boxes is a bigger source of drift than
- *  re-rendering a static document's pages, which — unlike HWP's raster-only
- *  page images — is cheap relative to a human's resize/zoom-click cadence).
- *  Command (void). */
-function rerenderVisiblePages(
-  pdfDoc: PdfDocumentProxy,
-  pdfjs: PdfjsModule,
-  state: PageRenderState,
-  pagesEl: HTMLElement,
-  pageEls: ReadonlyMap<number, HTMLElement>,
-  zoomFactor: number,
-): void {
-  const toRerender = state.renderOrder.filter((p) => state.rendered.has(p) && !state.pending.has(p));
-  for (const page of toRerender) {
-    const el = pageEls.get(page);
-    evictPage(page, el, state);
-    state.renderOrder = state.renderOrder.filter((p) => p !== page);
-    if (el) renderPdfPage(page, el, pdfDoc, pdfjs, state, pagesEl, pageEls, zoomFactor);
+ *  Deliberately does NOT re-render anything itself (contrast the pre-
+ *  reconcile version, which called `renderPdfPage` for every evicted page
+ *  right here, all at once, unbounded): eviction only clears bookkeeping via
+ *  `evictPage`; the CALLER runs `reconcile` immediately after, which re-
+ *  requests the evicted pages through the SAME one-in-flight
+ *  (`MAX_CONCURRENT_RENDERS`) queue a scroll does, nearest-to-viewport-center
+ *  first — so a resize/zoom on a large open document re-rasters gradually
+ *  instead of firing every visible page's re-render simultaneously. A full
+ *  re-raster rather than a CSS transform, so the canvas and its text layer
+ *  are always computed from the SAME viewport and stay pixel-aligned (a
+ *  CSS-only scale would need the canvas and text layer scaled by an
+ *  identical transform to stay aligned, and re-deriving that from two
+ *  independently updated boxes is a bigger source of drift than re-rendering
+ *  a static document's pages, which — unlike HWP's raster-only page images —
+ *  is cheap relative to a human's resize/zoom-click cadence). Command
+ *  (void). */
+function rerenderVisiblePages(state: PageRenderState, pageEls: ReadonlyMap<number, HTMLElement>): void {
+  for (const page of Array.from(state.rendered)) {
+    evictPage(page, pageEls.get(page), state);
   }
 }
 
@@ -467,10 +660,15 @@ function openPdfViewer(absPath: string): ViewerHandle {
   const rawState: PageRenderState = {
     pending: new Set(),
     rendered: new Set(),
-    renderOrder: [],
+    failed: new Set(),
     renderTasks: new Map(),
     textLayers: new Map(),
   };
+  // The band-membership set `reconcile` reads every time it runs — mutated
+  // ONLY by the `observePages` callback below (entries add, exits delete),
+  // so "what's in the band right now" always matches the observer's most
+  // recent word regardless of how many pages have rendered/evicted since.
+  const inBand = new Set<number>();
 
   shell.onTeardown(() => observerHandle?.disconnect());
   shell.onTeardown(() => {
@@ -547,9 +745,24 @@ function openPdfViewer(absPath: string): ViewerHandle {
     // effect) forces the browser to resolve that box first.
     void content.clientHeight;
 
-    observerHandle = observePages(content, placeholders, (page, el) =>
-      renderPdfPage(page, el, doc, pdfjs, rawState, content, pageEls, shell.zoom.get()),
-    );
+    // The single "make reality match intent" entry point for this open()
+    // call — everything that can change either half of that match
+    // (band membership OR a render settling) funnels through this one
+    // closure, which is what lets `reconcile` recompute from CURRENT
+    // geometry/state every time instead of each call site duplicating its
+    // own "what should render now" logic (see `reconcile`'s own comment for
+    // the full why).
+    const runReconcile = (): void => {
+      reconcile(rawState, inBand, pageEls, viewportCenterOf(content), (page, el) =>
+        renderPdfPage(page, el, doc, pdfjs, rawState, content, shell.zoom.get(), runReconcile),
+      );
+    };
+
+    observerHandle = observePages(content, placeholders, (page, _el, nowInBand) => {
+      if (nowInBand) inBand.add(page);
+      else inBand.delete(page);
+      runReconcile();
+    });
 
     // A page is fit to the panel width INDEPENDENT of the editor's body-text
     // zoom (fontScale) — a document viewer should show the whole page, not
@@ -559,10 +772,13 @@ function openPdfViewer(absPath: string): ViewerHandle {
     // `refitPages` is the single "when does a page need to be redrawn at a
     // new scale" rule, triggered by EITHER a window resize (panel width
     // changed) or a zoom-ladder click (shell.zoom.bind, factor changed),
-    // never by fontScale.
+    // never by fontScale. Evicts through `rerenderVisiblePages`, then hands
+    // off to `runReconcile` — a resize/zoom never re-renders more than
+    // `MAX_CONCURRENT_RENDERS` page(s) at once, same as scroll.
     const refitPages = (): void => {
       if (content.classList.contains("pdf-viewer-pages")) {
-        rerenderVisiblePages(doc, pdfjs, rawState, content, pageEls, shell.zoom.get());
+        rerenderVisiblePages(rawState, pageEls);
+        runReconcile();
       }
     };
     if (typeof window !== "undefined") {
