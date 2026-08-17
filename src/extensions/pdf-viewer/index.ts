@@ -49,6 +49,36 @@ function ensureStyleInjected(): void {
   flex: 1; min-height: 0; overflow: auto;
   display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 8px 0;
 }
+/* Themed scrollbar for the page column (사용자 리포트 2026-08-17: "스크롤바가
+   잘 안 보여... 다크모드일 때는 잘 보이는데 화이트일 때는 거의 구분이 안 돼").
+   styles.css themes only \`.cm-scroller\` and the autocomplete popup, so this
+   column fell back to the macOS overlay scrollbar — which auto-hides AND, in
+   the light themes, draws a pale thumb directly on top of a #fff page, the
+   one background it cannot contrast against.
+
+   The thumb color is DERIVED from \`--fg\` via color-mix rather than picked
+   per theme, so all three built-in themes AND user JSON themes follow with no
+   per-theme table to keep in sync (the same technique the sidebar's derived
+   tokens use): in a light theme \`--fg\` is near-black, giving a dark
+   translucent thumb that reads clearly on white paper; in a dark theme it is
+   near-white, giving a light thumb on the dark panel. Contrast is therefore a
+   property of the derivation, not of any one palette.
+
+   Styling the scrollbar also makes it CLASSIC (space-taking) instead of
+   overlay, so \`pageTargetWidth\`'s \`clientWidth\` read already excludes it and
+   a fit-width page can no longer sit under the bar. Width/radius match
+   \`.cm-scroller\`'s existing 11px/6px so the viewer and the editor do not
+   disagree about what a scrollbar looks like. */
+.pdf-viewer-pages { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 38%, transparent) transparent; }
+.pdf-viewer-pages::-webkit-scrollbar { width: 11px; height: 11px; }
+.pdf-viewer-pages::-webkit-scrollbar-track { background: transparent; }
+.pdf-viewer-pages::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 38%, transparent);
+  border-radius: 6px; border: 2px solid transparent; background-clip: padding-box;
+}
+.pdf-viewer-pages::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 60%, transparent); background-clip: padding-box;
+}
 .pdf-viewer-page {
   /* flex: none is LOAD-BEARING, not tidiness. \`.pdf-viewer-pages\` above is a
      COLUMN flex container, so the main axis is vertical and the default
