@@ -1165,6 +1165,19 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    content, not shared shell chrome — they stay keyed to `.image-viewer*`
    (the modalClass shell.ts still adds alongside `.viewer-panel`). */
 .image-viewer-stage {
+  /* flex: 1 + min-height: 0 is LOAD-BEARING, not tidiness — the same sizing
+     contract `.pdf-viewer-pages`/`.hwp-viewer-pages` already carry, which this
+     stage never got in the full-pane rewrite. `openViewerShell` mounts this as
+     the content child of `.viewer-panel-body`, a COLUMN flex container, so the
+     main axis is vertical: with no `flex` of its own the stage takes its
+     CONTENT height (16px for a 16x16 favicon) and never grows, while the cross
+     axis stretches it to full width. The checkerboard therefore rendered as a
+     full-width strip pinned to the top of the pane, and the `align-items`/
+     `justify-content` below only centered the image inside that 16px strip —
+     centering that was real but scoped to a box the size of the image itself
+     (사용자 리포트 2026-08-19). Growing to fill the pane is what makes the
+     centering below actually mean "centered in the viewer". */
+  flex: 1; min-height: 0;
   position: relative;
   display: flex; align-items: center; justify-content: center;
   /* checkerboard: two theme-neutral tones so transparent PNG edges are visible

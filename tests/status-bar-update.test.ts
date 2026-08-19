@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { formatDownloadProgress } from "../src/update/update-progress";
+import { downloadStat } from "../src/update/update-progress";
 
 // The footer update button is a persistent chrome sink subscribed to the real
 // update-flow SSOT (not a mock of the flow itself — only the underlying Tauri
@@ -81,13 +81,52 @@ describe("makeUpdateButton (footer)", () => {
     const btn = el.querySelector<HTMLButtonElement>("button")!;
     btn.click();
     expect(update.download).toHaveBeenCalledTimes(1);
+    expect(btn.textContent).toBe("다운로드 중...");
 
+    // Regression guard for the real-app duplication bug (스크린샷으로 확인:
+    // "다운로드 중...   다운로드 중... 53% (...)"): the caption must be the
+    // prefix-free numeric readout only — the button already carries the state
+    // word, so the caption must never repeat it.
     const caption = el.querySelector(".status-update-caption");
-    expect(caption?.textContent).toBe(formatDownloadProgress(50, 100));
+    expect(caption?.textContent).toBe(downloadStat(50, 100));
+    expect(caption?.textContent).not.toContain("다운로드 중");
 
     resolveDownload();
     await flush();
     expect(btn.textContent).toContain("설치하고 재시작");
+  });
+
+  it("does not repeat a state word in the Finished caption either (버튼=상태, 캡션=부연)", async () => {
+    let resolveDownload!: () => void;
+    const update = {
+      version: "2.0.0",
+      date: undefined as string | undefined,
+      body: undefined as string | undefined,
+      download: vi.fn((onEvent?: (ev: unknown) => void) => {
+        onEvent?.({ event: "Started", data: { contentLength: 100 } });
+        onEvent?.({ event: "Finished" });
+        return new Promise<void>((resolve) => {
+          resolveDownload = resolve;
+        });
+      }),
+      install: vi.fn(() => Promise.resolve()),
+    };
+    check.mockResolvedValue(update);
+    const { statusBarUpdate, flow } = await freshModules();
+    const { el } = statusBarUpdate.makeUpdateButton();
+    await flow.ensureCheckedOnce();
+
+    const btn = el.querySelector<HTMLButtonElement>("button")!;
+    btn.click();
+    const caption = el.querySelector(".status-update-caption");
+    // Finished fires while the button still reads "다운로드 중..." (download()
+    // hasn't resolved yet) — the caption must not ALSO claim "설치 중...".
+    expect(btn.textContent).toBe("다운로드 중...");
+    expect(caption?.textContent).not.toContain("설치 중");
+    expect(caption?.textContent).not.toContain("다운로드 중");
+
+    resolveDownload();
+    await flush();
   });
 
   it("clicking a downloaded update installs and relaunches", async () => {

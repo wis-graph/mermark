@@ -8,7 +8,7 @@ import {
   installAndRelaunch,
   type UpdatePhase,
 } from "../../update/update-flow";
-import { formatDownloadProgress } from "../../update/update-progress";
+import { downloadStat } from "../../update/update-progress";
 import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 
 /** Footer update button — a persistent chrome sink over update-flow's phase
@@ -19,6 +19,13 @@ import type { DownloadEvent } from "@tauri-apps/plugin-updater";
  *  download -> install -> relaunch on click — a single control surface for
  *  the whole flow, no separate confirm dialog (wry's window.confirm is a
  *  silent no-op — see version-pane.ts's header comment).
+ *
+ *  Once a download reaches "downloaded", main.ts's phase subscriber installs
+ *  and relaunches automatically (사용자 요청 2026-08-19) — this button's own
+ *  "설치하고 재시작" click path stays wired below as the manual fallback for
+ *  when that auto-attempt fails (see main.ts's autoInstallArmed comment), so
+ *  the phase usually passes through "downloaded" too briefly for a click here
+ *  to matter, but must still work if it doesn't.
  *
  *  Not in the editor measure tree (footer chrome) -> zoom-guard holds. */
 export function makeUpdateButton(): { el: HTMLElement } {
@@ -69,14 +76,21 @@ export function makeUpdateButton(): { el: HTMLElement } {
     }
   }
 
+  // Role split: the BUTTON carries the state word ("다운로드 중...", "설치
+  // 중..." — see render() above), the CAPTION next to it carries only the
+  // number/detail the button doesn't already say. Using formatDownloadProgress
+  // (which prefixes its own "다운로드 중...") here used to print the state word
+  // twice ("다운로드 중...   다운로드 중... 53% (...)" — 실사용 스크린샷으로 확인),
+  // so this sink uses the prefix-free downloadStat instead. Same reasoning for
+  // "Finished": don't restate "설치 중..." (the button's install-phase label).
   function onDownloadEvent(ev: DownloadEvent): void {
     if (ev.event === "Started") {
       total = ev.data.contentLength ?? null;
     } else if (ev.event === "Progress") {
       downloaded += ev.data.chunkLength;
-      caption.textContent = formatDownloadProgress(downloaded, total);
+      caption.textContent = downloadStat(downloaded, total);
     } else if (ev.event === "Finished") {
-      caption.textContent = "설치 중... 곧 재시작됩니다";
+      caption.textContent = "곧 재시작됩니다";
     }
   }
 

@@ -283,3 +283,30 @@ describe("viewer content roots declare no size envelope (shell .viewer-panel is 
     expect(findEnvelopeOffenders(chrome)).toEqual([]);
   });
 });
+
+// 사용자 리포트 2026-08-19 (16x16 favicon.png 스크린샷): 이미지 뷰어의 체커보드
+// 스테이지가 폭만 꽉 찬 띠로 패널 최상단에 붙고, 이미지가 세로 중앙에 오지 않았다.
+//
+// `openViewerShell`은 각 뷰어의 콘텐츠를 `.viewer-panel-body`(COLUMN flex)의
+// 자식으로 마운트한다. 주축이 세로이므로, 콘텐츠 루트가 자기 `flex`를 선언하지
+// 않으면 높이가 CONTENT 크기(16px 이미지면 16px)에 머물고 절대 늘어나지 않는다 —
+// 교차축은 stretch라 폭만 꽉 찬다. `.image-viewer-stage`가 이미 갖고 있던
+// `align-items/justify-content: center`는 그 16px 상자 안에서만 동작해서 무의미
+// 했다. 다른 다섯 뷰어는 처음부터 `flex: 1`을 갖고 있었고 이미지 뷰어만 빠져
+// 있었다(풀페인 재작성 때 누락). 이건 `.pdf-viewer-page`의 `flex: none`과 같은
+// 부류 — 컬럼 플렉스 안에서 아이템 크기 계약을 빠뜨린 것 — 이고, jsdom은 레이아웃을
+// 돌리지 않으므로 소스 수준으로 잠근다(이 파일의 다른 게이트와 같은 기법).
+describe("viewer content stages fill the pane (column-flex sizing contract)", () => {
+  const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+  it(".image-viewer-stage declares flex: 1 so it grows to the pane instead of hugging the image", () => {
+    const css = readFileSync(join(ROOT, "src", "styles.css"), "utf8");
+    const rule = /\.image-viewer-stage\s*\{[\s\S]*?\}/.exec(css)?.[0] ?? "";
+    expect(rule).not.toBe("");
+    expect(rule).toMatch(/flex:\s*1/);
+    expect(rule).toMatch(/min-height:\s*0/);
+    // The centering the flex sizing exists to make meaningful.
+    expect(rule).toMatch(/align-items:\s*center/);
+    expect(rule).toMatch(/justify-content:\s*center/);
+  });
+});
