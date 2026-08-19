@@ -1,11 +1,11 @@
 {
-  "version": "0.14.0",
-  "notes": "### Added\n\n- **터미널에서 PDF·EPUB·이미지 등 열기**: `mermark 파일.pdf`처럼 터미널로 넘긴 파일이 이제 그 형식의 뷰어로 열린다. 전에는 어떤 파일이든 글 문서로 읽으려 해서, 같은 파일을 앱 안 탐색기에서 클릭하면 멀쩡히 열리는데 터미널로 열면 실패했다. 설정에서 그 뷰어를 꺼두었다면 앱 안에서 클릭했을 때와 똑같이 맥 기본 앱으로 넘어간다.\n\n### Changed\n\n- **없는 파일은 만들지 않는다**: `mermark 없는파일.md`는 예전에 그 파일을 새로 만들어 주었지만(내용으로 `# 제목` 한 줄이 들어갔다), 이제 만들지 않고 터미널에 \"그런 파일이 없다\"고 알린다. 폴더 경로를 넘겼을 때와 같은 방식이며, 다른 창이 이미 떠 있어도 터미널에서 바로 확인된다. 문서 안에서 위키링크로 새 문서를 만드는 기능은 그대로다.",
-  "pub_date": "2026-08-19T06:32:33Z",
+  "version": "0.14.1",
+  "notes": "### Changed\n\n- **업데이트가 끝나면 자동으로 재시작한다**: 다운로드가 완료되면 \"설치하고 재시작\"을 누르지 않아도 알아서 설치하고 재시작한다. 재시작하기 전에 편집 중이던 내용을 먼저 저장하며, 저장이 안 되면(다른 곳에서 파일이 바뀌었다든가) 재시작하지 않고 멈춘다 — 편집한 것을 버리고 재시작하는 일은 없다. 설치가 실패하면 기존 \"설치하고 재시작\" 버튼이 그대로 남아 직접 누를 수 있다.\n\n### Fixed\n\n- **업데이트 중 문구가 겹쳐 보이던 문제**: 하단에 `다운로드 중...  다운로드 중... 53% (10.4 / 19.6 MB)`처럼 같은 말이 두 번 나왔다. 이제 버튼이 상태를, 옆 문구가 진행률을 맡는다.\n- **이미지 뷰어에서 이미지가 위쪽에 붙던 문제**: 작은 이미지를 열면 화면 맨 위에 얇은 띠처럼 붙었다. 이제 화면 가운데에 놓인다.",
+  "pub_date": "2026-08-19T07:00:33Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzM1Q2htZWlsN01jV3NKNm5pTURXeUlKNW5wS3dNOGU1M2lhc0ErZTE3MzhvS2t0bTBoTEJtWGF0Qk1iSm54QXRUQUh5ZkJWU2lPYWFRN2NIUk9uQkFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MTIwODU4CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ci9OazhrWTVsT3k5U3haTU96VjBGU2Y1NERsNURjVG9MbVdrUk9tb1R0aGI1S29yUWxYMGVTY0tPbHpBUFIvN2VOWHlHWkUxa20zV29NM3JlS1FJZURBPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.14.0/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzlKMERPbGtnalhpQ0I1akNzY3BEWEZOMzBjR21FZTVreHF2SkpuYk9wZ2gyN0hCUjB4Q2IvODFBcmVCNk9lQ3pNRVFEVy9udFIzc0FnUnhHbDNjYUFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MTIyODAxCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmkzNHdVMU1naUczMFF3bEpTUm5uMHZIWDVQaG9YZEVDcWNrR0RLdWtTT05JM0piLzJ5WktUTHhiY3J5MjBRTmRneTh0MExsUEhMNmQxY3d2U2tDb0JnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.14.1/mermark.app.tar.gz"
     }
   }
 }
