@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "mermark"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "arboard",
  "getrandom 0.3.4",
