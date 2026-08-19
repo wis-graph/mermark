@@ -794,7 +794,20 @@ mod tests {
 
     #[test]
     fn secondary_invocation_skips_argv0_and_never_opens_invalid() {
-        let cwd = std::env::temp_dir();
+        // `cli::resolve_target` now rejects a missing path (`CliError::NotFound`)
+        // instead of resolving it for on-launch creation, so a target that's
+        // meant to prove *routing* behavior (argv0-skip, --right staying
+        // Isolated) has to be a file that actually exists — otherwise a
+        // `None` here would be ambiguous between "routed correctly and this
+        // class doesn't open" and "rejected before routing even ran because
+        // the file was missing". The missing-target case gets its own test,
+        // `secondary_invocation_rejects_missing_target`, below.
+        let dir = std::env::temp_dir()
+            .join(format!("mermark_secondary_invocation_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "# hi").unwrap();
+        let cwd = dir.clone();
+
         // argv[0] is the program path; skipping it means classification runs
         // on "--version" alone, landing on Headless -> no open.
         assert!(secondary_route_decision(&["mermark".to_string(), "--version".to_string()], &cwd)
@@ -815,5 +828,26 @@ mod tests {
         // A bare launch (argv[0] only) resolves to FocusOnly, not a file open.
         let bare = secondary_route_decision(&["mermark".to_string()], &cwd);
         assert!(matches!(bare, Some(SecondaryOpen::FocusOnly)));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn secondary_invocation_rejects_missing_target() {
+        // Sibling of the test above: a target that doesn't exist on disk is
+        // rejected by `cli::resolve_target` as `CliError::NotFound`, and
+        // that rejection must propagate all the way through
+        // `secondary_route_decision` — which only ever matches
+        // `Ok(LaunchClass::SingletonRouted(_))`, so any `Err` (NotFound
+        // included) falls into its `_ => None` arm, the same as an invalid
+        // or `Isolated` class. This locks down that the new "missing path is
+        // an error, not a create-on-launch intent" rule reaches this layer,
+        // not just `cli::resolve_target`'s own unit tests.
+        let cwd = std::env::temp_dir();
+        let decision = secondary_route_decision(
+            &["mermark".to_string(), "definitely_missing_xyz.md".to_string()],
+            &cwd,
+        );
+        assert!(decision.is_none());
     }
 }

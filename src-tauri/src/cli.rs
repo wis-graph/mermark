@@ -1,9 +1,18 @@
 use std::path::{Path, PathBuf};
 
+/// `Missing` (no positional at all) is absorbed by `classify_launch` into
+/// "join the singleton, no document" and never reaches a terminal as an
+/// error. `IsDirectory` and `NotFound` both *do* propagate all the way to
+/// `run()`, which reports them and exits before any window opens — a
+/// directory can't be opened as a document, and (since mermark's primary
+/// surface is the viewer, not a file-creation tool) neither can a path that
+/// doesn't exist. See `resolve_target`'s doc comment for why `NotFound`
+/// replaced the old "resolve it anyway, `lib.rs` creates it" behavior.
 #[derive(Debug, PartialEq)]
 pub enum CliError {
     Missing,
     IsDirectory(PathBuf),
+    NotFound(PathBuf),
 }
 
 /// Where the editor should read its document from. `parse_args` classifies the
@@ -62,8 +71,8 @@ pub fn is_version_flag(args: &[String]) -> bool {
 /// arguments, then classify the first positional. If it is the stdin token
 /// (`-`) the target is `Target::Stdin` and `resolve_target` is *not* called (no
 /// filesystem access for a token that isn't a real path); otherwise the first
-/// positional is resolved to a file path (existing or to-be-created; a directory
-/// is rejected). The flag may appear anywhere
+/// positional is resolved to a file path that must already exist (a directory
+/// or a missing path is rejected). The flag may appear anywhere
 /// (`mermark --right f.md` and `mermark f.md --right` are equivalent); unknown
 /// `--xxx` flags are dropped silently so the scope stays limited to `--right`.
 /// This stays a pure query (no I/O) — stdin reading is the caller's effect in
@@ -133,12 +142,16 @@ impl LaunchClass {
         matches!(self, LaunchClass::SingletonRouted(_))
     }
 
-    /// The file path this class wants opened/created *before* any window
-    /// exists, if any. `Isolated(File)` and `SingletonRouted(Some)` share
-    /// this pre-builder "create on launch" step (vim's `:e newfile.md`
-    /// convention, performed by `lib.rs::ensure_file_target`); every other
-    /// variant — `Isolated(Stdin)`, `SingletonRouted(None)`, and all of
-    /// `Headless` — has no file to create ahead of the window.
+    /// The file path this class wants opened, if any. `Isolated(File)` and
+    /// `SingletonRouted(Some)` share this fact: both already carry a path
+    /// that `resolve_target` verified exists *before* this `LaunchClass` was
+    /// ever constructed (a missing path is rejected as `CliError::NotFound`
+    /// upstream, in `resolve_target` — see its doc comment). There is no
+    /// "create it on launch" step anymore (that was the old vim `:e
+    /// newfile.md` convention, dropped because mermark's primary surface is
+    /// the viewer, not a file-creation tool), so nothing here ever writes to
+    /// the path. Every other variant — `Isolated(Stdin)`,
+    /// `SingletonRouted(None)`, and all of `Headless` — has no file at all.
     pub fn file_target(&self) -> Option<&Path> {
         match self {
             LaunchClass::Isolated(LaunchArgs { target: Target::File(p), .. }) => Some(p),
@@ -154,9 +167,10 @@ impl LaunchClass {
 /// priority), then delegates the rest to `parse_args`. A missing argument
 /// (`CliError::Missing`) is *not* propagated as an error here — a bare
 /// `mermark` launch is a valid intent ("join the singleton, no document"),
-/// so it's absorbed into `SingletonRouted(None)`. Only `IsDirectory`
-/// propagates, since the caller (`run()`, or the primary process's secondary
-/// invocation handler) is the one with a terminal/exit code to report it to.
+/// so it's absorbed into `SingletonRouted(None)`. `IsDirectory` and
+/// `NotFound` both propagate, since the caller (`run()`, or the primary
+/// process's secondary invocation handler) is the one with a terminal/exit
+/// code to report them to.
 pub fn classify_launch(args: &[String], cwd: &Path) -> Result<LaunchClass, CliError> {
     if is_version_flag(args) {
         return Ok(LaunchClass::Headless(Headless::Version));
@@ -176,17 +190,30 @@ pub fn classify_launch(args: &[String], cwd: &Path) -> Result<LaunchClass, CliEr
 }
 
 /// Resolve the first positional argument to an absolute *file* path to open.
-/// The path may already exist or be created on launch (vim's `:e newfile`
-/// convention), so a missing path is a valid target — only a directory is
-/// rejected, since a directory can't be opened as a document. `cwd` is injected
-/// for testability. No file is created here; `lib.rs` performs that effect after
-/// resolution, keeping this a pure (read-only) classification.
+/// A missing path is *not* a valid target — only a path that already exists
+/// on disk, and is a file rather than a directory, resolves. This reverses
+/// the earlier vim `:e newfile.md` convention (where a missing path flowed
+/// through so `lib.rs` could create it before the window opened): mermark's
+/// primary surface is the viewer, not a file-creation tool, so "no one
+/// hand-creates files anymore" — a typo'd or stale path should surface as an
+/// error, not silently birth a new document. The rule applies regardless of
+/// extension (markdown included); creating new documents is still possible
+/// through the wikilink flow (`commands::create_markdown_file`), just not
+/// from a bare CLI launch. `cwd` is injected for testability. This performs
+/// only `Path::is_dir`/`exists` reads and never writes, so it stays a pure
+/// (read-only) classification — and as a consequence, a target this
+/// function resolves to `Ok` is guaranteed byte-for-byte untouched by launch
+/// classification. Directory rejection is checked *before* the existence
+/// check so a directory (which always "exists") is reported as
+/// `IsDirectory`, not `NotFound`.
 pub fn resolve_target(args: &[String], cwd: &Path) -> Result<PathBuf, CliError> {
     let raw = args.first().ok_or(CliError::Missing)?;
     let p = Path::new(raw);
     let abs = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
     if abs.is_dir() {
         Err(CliError::IsDirectory(abs))
+    } else if !abs.exists() {
+        Err(CliError::NotFound(abs))
     } else {
         Ok(abs)
     }
@@ -217,19 +244,35 @@ mod tests {
     }
 
     #[test]
-    fn nonexistent_file_resolves_for_creation() {
-        // vim `:e newfile.md`: a path that doesn't exist yet is a valid target;
-        // lib.rs creates it on launch. resolve_target must return the absolute
-        // path (joined against cwd) rather than erroring.
+    fn nonexistent_file_is_not_found() {
+        // mermark's primary surface is the viewer, not a file-creation tool:
+        // a path that doesn't exist on disk is rejected rather than resolved
+        // for lib.rs to create (reverses the old vim `:e newfile.md`
+        // "resolve it anyway" behavior).
         let cwd = std::env::temp_dir();
-        let got = resolve_target(&["nope_xyz.md".into()], &cwd).unwrap();
-        assert_eq!(got, cwd.join("nope_xyz.md"));
+        let want = cwd.join("nope_xyz.md");
+        assert_eq!(resolve_target(&["nope_xyz.md".into()], &cwd), Err(CliError::NotFound(want)));
+    }
+
+    #[test]
+    fn relative_nonexistent_path_is_not_found_at_the_resolved_location() {
+        // The relative path is joined against cwd *before* the existence
+        // check runs — the NotFound path carries the resolved absolute
+        // location, not the raw relative token.
+        let dir = std::env::temp_dir().join("mermark_test_notfound_rel");
+        fs::create_dir_all(&dir).unwrap();
+        let want = dir.join("also_missing.md");
+        assert_eq!(
+            resolve_target(&["also_missing.md".into()], &dir),
+            Err(CliError::NotFound(want))
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn existing_file_resolves() {
-        // An existing file stays a valid target (no regression): it resolves to
-        // its absolute path so lib.rs's create call no-ops and opens it as-is.
+        // An existing file stays a valid target (no regression): it resolves
+        // to its absolute path and opens as-is.
         let dir = std::env::temp_dir().join("mermark_test_existing");
         fs::create_dir_all(&dir).unwrap();
         let f = dir.join("here.md");
@@ -240,8 +283,10 @@ mod tests {
 
     #[test]
     fn directory_is_rejected() {
-        // A directory can't be opened as a document, so it's the one path kind
-        // resolve_target refuses (the temp dir itself always exists as a dir).
+        // A directory can't be opened as a document, so it's rejected as
+        // IsDirectory — and *not* shadowed by the NotFound check, since a
+        // directory always "exists" and is checked first (order matters: see
+        // resolve_target's doc comment).
         let cwd = std::env::temp_dir();
         match resolve_target(&[cwd.to_string_lossy().into_owned()], &cwd) {
             Err(CliError::IsDirectory(_)) => {}
@@ -302,24 +347,27 @@ mod tests {
     }
 
     #[test]
-    fn nonexistent_positional_is_a_file_target() {
-        // A to-be-created file flows through parse_args as a File target (lib.rs
-        // creates it on launch); it is no longer a fatal error.
+    fn nonexistent_positional_is_not_found() {
+        // A path that doesn't exist is rejected — mermark's primary surface
+        // is the viewer, not a file-creation tool (reverses the old vim `:e
+        // newfile.md` "resolve it for creation" behavior).
         let cwd = std::env::temp_dir();
-        let got = parse_args(&["nope_xyz.md".into()], &cwd).unwrap();
-        assert_eq!(got.target, Target::File(cwd.join("nope_xyz.md")));
-        assert!(!got.right);
+        match parse_args(&["nope_xyz.md".into()], &cwd) {
+            Err(CliError::NotFound(_)) => {}
+            other => panic!("expected NotFound, got {other:?}"),
+        }
     }
 
     #[test]
-    fn nonexistent_positional_with_right_flag() {
-        // `mermark --right newfile.md`: window geometry is orthogonal to whether
-        // the file already exists, so --right rides along with a to-be-created
-        // File target.
+    fn nonexistent_positional_with_right_flag_is_not_found() {
+        // `mermark --right newfile.md`: window geometry is orthogonal to
+        // whether the target exists, but --right grants no exemption — a
+        // missing target is still rejected.
         let cwd = std::env::temp_dir();
-        let got = parse_args(&["--right".into(), "nope_xyz.md".into()], &cwd).unwrap();
-        assert_eq!(got.target, Target::File(cwd.join("nope_xyz.md")));
-        assert!(got.right);
+        match parse_args(&["--right".into(), "nope_xyz.md".into()], &cwd) {
+            Err(CliError::NotFound(_)) => {}
+            other => panic!("expected NotFound, got {other:?}"),
+        }
     }
 
     #[test]
@@ -473,12 +521,15 @@ mod tests {
     }
 
     #[test]
-    fn classify_missing_file_is_singleton_routed() {
-        // vim `:e newfile.md` convention extends to the classifier: a
-        // to-be-created path still joins the singleton with a file target.
+    fn classify_missing_file_is_not_found() {
+        // A path that doesn't exist is rejected before any `LaunchClass` is
+        // produced — it no longer joins the singleton with a "create it"
+        // intent (reverses the old vim `:e newfile.md` behavior).
         let cwd = std::env::temp_dir();
-        let got = classify_launch(&["nope_classify_xyz.md".into()], &cwd).unwrap();
-        assert_eq!(got, LaunchClass::SingletonRouted(Some(cwd.join("nope_classify_xyz.md"))));
+        match classify_launch(&["nope_classify_xyz.md".into()], &cwd) {
+            Err(CliError::NotFound(_)) => {}
+            other => panic!("expected NotFound, got {other:?}"),
+        }
     }
 
     #[test]
@@ -542,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn file_target_exposes_creatable_paths() {
+    fn file_target_exposes_the_wrapped_path() {
         let cwd = std::env::temp_dir();
         let p = cwd.join("target.md");
         assert_eq!(

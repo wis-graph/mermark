@@ -89,6 +89,11 @@ const cliAcks: { id: number; outcome: string }[] = [];
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => invokeMock(command, args),
+  // The built-in image viewer (exercised by the viewer-vs-document CLI
+  // tests below) resolves a local path's src through convertFileSrc —
+  // stubbed identically to the browser mock (src/mocks/tauri-core.ts) so
+  // those tests don't need their own asset-protocol double.
+  convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }));
 
 const listenMock = vi.fn(
@@ -833,6 +838,52 @@ describe("main workspace wiring", () => {
       { id: 2, outcome: "opened" },
     ]);
     expect(document.querySelector(".cm-content")?.textContent).toBe("Two");
+  });
+
+  // Viewer-vs-document unification (사용자 리포트 2026-08-17): the CLI cold
+  // launch and the cli-open-request listener used to skip the viewer
+  // registry entirely and hand every path straight to the text-document
+  // path, so `mermark foo.pdf` (or a routed `mermark foo.pdf` into an
+  // already-open window) failed trying to read the file as UTF-8 text — the
+  // very same file opened fine from the Explorer. Both now funnel through
+  // `openPathEntry`, the single viewer-vs-document judgment every
+  // path-opening entry point shares. `.png` exercises the built-in image
+  // viewer (registered unconditionally at boot), so no extra viewer setup
+  // is needed to prove the routing.
+  it("opens a viewer-claimed CLI cold launch through the viewer, never as a text document", async () => {
+    vi.stubGlobal("location", { search: "?file=/A/pic.png" });
+
+    await import("../src/main");
+
+    await vi.waitFor(() => expect(document.querySelector(".viewer-panel")).not.toBeNull());
+    expect(invokeMock.mock.calls.some(([command, args]) => command === "read_file" && pathArg(args) === "/A/pic.png")).toBe(false);
+  });
+
+  it("opens a viewer-claimed cli-open-request through the viewer and acknowledges it as opened", async () => {
+    documentContents.set("/A/start.md", "# start");
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("start"));
+    await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+    invokeMock.mockClear();
+
+    emitEvent("cli-open-request", { id: 11, path: "/A/pic.png" });
+
+    await vi.waitFor(() => expect(document.querySelector(".viewer-panel")).not.toBeNull());
+    await vi.waitFor(() => expect(cliAcks).toEqual([{ id: 11, outcome: "opened" }]));
+    expect(invokeMock.mock.calls.some(([command, args]) => command === "read_file" && pathArg(args) === "/A/pic.png")).toBe(false);
+    // The viewer occupies its own slot rather than replacing the document —
+    // no unsaved-work guard runs on this branch, and the document behind it
+    // stays mounted untouched.
+    expect(document.querySelector(".cm-content")?.textContent).toBe("start");
+  });
+
+  it("still opens a markdown CLI cold launch as a document, not a viewer (regression guard)", async () => {
+    documentContents.set("/A/start.md", "# start");
+    await import("../src/main");
+
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("start"));
+    expect(document.querySelector(".viewer-panel")).toBeNull();
+    expect(invokeMock.mock.calls.some(([command, args]) => command === "read_file" && pathArg(args) === "/A/start.md")).toBe(true);
   });
 
   // Document-open seam wiring (single-window-opening Todo 3, Phase F): the

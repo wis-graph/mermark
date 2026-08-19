@@ -434,27 +434,24 @@ async function boot() {
     onOpen: async (raw) => {
       const target = resolveOpenPath(raw, currentBaseDir);
       if (!target) throw new Error("경로를 입력하세요");
-      // A file a registered viewer claims (pdf/epub/hwp/image/xlsx/docx/
-      // sqlite/…) goes to that viewer, NOT through `openDocument` — the same
-      // `viewerForEntry` gate the explorer and the search results already
-      // apply before opening anything. Without it this entry point was the
-      // ONE way into the app that ignored the viewer registry: `openDocument`
-      // read the bytes as a text document, so typing a PDF's path failed with
-      // `stream did not contain valid UTF-8` (사용자 리포트 2026-08-17) while
-      // clicking the very same file in the explorer opened it fine. Viewers
-      // own the viewer slot rather than replacing the document, so there is
-      // no unsaved-work guard to run here — that is `openDocument`'s job and
-      // this branch never reaches it.
-      if (viewerForEntry(basename(target))) {
-        openWithViewer(target);
-        return;
-      }
-      try {
-        await openDocument(target);
-      } catch (error: unknown) {
-        showOpenRecovery(target, String(error));
-        throw error;
-      }
+      // Viewer-vs-document is decided once, in `openPathEntry` (see its
+      // comment for the bug this consolidation fixes — this used to be a
+      // third hand-copied copy of that branch, right here). The document
+      // branch stays prompt-specific: path-prompt.ts's onOpen contract needs
+      // a failed open to both surface the recovery modal AND rethrow, so the
+      // bar itself stays in editing with an inline error the user can act on
+      // immediately — `openDocumentSafely` alone only does the former (it
+      // swallows the error after showing recovery), so this branch calls
+      // `openDocument` directly and does both itself.
+      await openPathEntry(target, async (path) => {
+        try {
+          await openDocument(path);
+          return true;
+        } catch (error: unknown) {
+          showOpenRecovery(path, String(error));
+          throw error;
+        }
+      });
     },
   });
 
@@ -593,6 +590,48 @@ async function boot() {
     handle.onClose(() => breadcrumb.render(currentBaseDir));
   }
 
+  /** Open `path` the way anything OUTSIDE the live editor is allowed to —
+   *  an explorer row, a file-finder result, the open-path prompt, a CLI
+   *  launch/routed request. This is the ONE place the "viewer or document"
+   *  judgment happens: a filename a registered, enabled viewer claims
+   *  (pdf/epub/hwp/image/xlsx/docx/sqlite/…) goes to that viewer via
+   *  `openWithViewer`, NOT through `openDoc` — the same `viewerForEntry`
+   *  gate the explorer and search results already apply before opening
+   *  anything. Before this function existed, the CLI cold-launch mount and
+   *  the `cli-open-request` listener were the two entry points that skipped
+   *  this gate entirely and read every file as a text document: launching
+   *  `mermark foo.pdf` (or routing a second `mermark foo.pdf` into an
+   *  already-open window) failed with `stream did not contain valid UTF-8`
+   *  (사용자 리포트 2026-08-17), while clicking the very same file in the
+   *  explorer opened it fine. Every path-opening entry point now funnels
+   *  through here so none can drift onto its own hand-copied branch again.
+   *
+   *  A viewer open never runs `openDoc`'s unsaved-work guard: the viewer
+   *  occupies its own don't-stack slot rather than replacing the live
+   *  document, so there is nothing to guard and no failure mode for this
+   *  function to report on that branch. `openDoc` stays each caller's own
+   *  document-open strategy — `openDocumentSafely`'s safe transaction for
+   *  every caller except the open-path prompt, which supplies its own
+   *  rethrowing variant so a failed open both surfaces the recovery modal
+   *  AND keeps the bar itself in editing with an inline error. This
+   *  function only picks the branch; it never changes how a caller's own
+   *  failure handling behaves. Resolves "opened" once a branch has been
+   *  dispatched (viewer: always; document: iff `openDoc` reports success)
+   *  or "recovered" when the document branch fails but stays visibly
+   *  reported (never silently dropped) — the exact vocabulary
+   *  `acknowledge_open_request` needs, reused by every other caller as a
+   *  plain success/fail signal. */
+  async function openPathEntry(
+    path: string,
+    openDoc: (path: string) => Promise<boolean>,
+  ): Promise<"opened" | "recovered"> {
+    if (viewerForEntry(basename(path))) {
+      openWithViewer(path);
+      return "opened";
+    }
+    return (await openDoc(path)) ? "opened" : "recovered";
+  }
+
   /** Wired to image.ts's `requestImageOpen` (via `setImageOpenHandler`,
    *  below) — what actually happens when a clicked image widget in the
    *  editor asks to open. Mirrors the explorer's own gating
@@ -646,6 +685,14 @@ async function boot() {
         openDocumentSafely(absPath);
       }
     },
+    // SAME RULE as `openPathEntry` above, expressed as a predicate + a command
+    // instead of one call. The panels need the QUESTION ("is this row even
+    // openable?") separately from the ACT of opening — a row's clickability is
+    // decided at tree-render time, long before anyone clicks — so they cannot
+    // be served by `openPathEntry` alone. Both spellings bottom out in the same
+    // `viewerForEntry`/`openWithViewer` pair, which is what keeps them from
+    // drifting; if you add a new way to open a path, reach for `openPathEntry`,
+    // not for a third copy of this branch.
     canOpenWithViewer: (name) => viewerForEntry(name) != null,
     onOpenWithViewer: openWithViewer,
     // ⌘/Ctrl+click or ⌘+Enter on a markdown row: open it in a brand-new window.
@@ -701,18 +748,23 @@ async function boot() {
   // recipient-scoped via `emit_to(WebviewWindow{label})`. The listener MUST be
   // registered before `register_window_ready` is invoked — once the backend
   // sees this window as ready, it emits immediately, and a request emitted
-  // before the listener exists is lost. openDocumentSafely already surfaces a
-  // visible recovery state on failure/supersede (resolves false rather than
-  // throwing), so `opened` alone tells the backend whether to retain the
-  // request as "recovered" (still-visible, not silently dropped) or drop it
-  // as delivered ("opened").
+  // before the listener exists is lost. `openPathEntry` decides viewer vs
+  // document first (see its comment — this listener used to skip that
+  // judgment entirely and hand every routed path straight to
+  // `openDocumentSafely`, so a routed `mermark foo.pdf` tried to read the
+  // PDF as text and failed). A viewer open always reports "opened" (no
+  // unsaved-work guard to fail); the document branch still resolves through
+  // `openDocumentSafely`, which already surfaces a visible recovery state on
+  // failure/supersede (resolves false rather than throwing) — so `outcome`
+  // alone tells the backend whether to retain the request as "recovered"
+  // (still-visible, not silently dropped) or drop it as delivered ("opened").
   const registerCliOpenRouting = async (): Promise<void> => {
     const label = getCurrentWindow().label;
     await listen<{ id: number; path: string }>(
       "cli-open-request",
       async (e) => {
-        const opened = await openDocumentSafely(e.payload.path);
-        void invoke("acknowledge_open_request", { id: e.payload.id, outcome: opened ? "opened" : "recovered" });
+        const outcome = await openPathEntry(e.payload.path, openDocumentSafely);
+        void invoke("acknowledge_open_request", { id: e.payload.id, outcome });
       },
       { target: label },
     );
@@ -981,6 +1033,14 @@ async function boot() {
         console.error("Failed to open in a new window", err);
       });
     },
+    // SAME RULE as `openPathEntry` above, expressed as a predicate + a command
+    // instead of one call. The panels need the QUESTION ("is this row even
+    // openable?") separately from the ACT of opening — a row's clickability is
+    // decided at tree-render time, long before anyone clicks — so they cannot
+    // be served by `openPathEntry` alone. Both spellings bottom out in the same
+    // `viewerForEntry`/`openWithViewer` pair, which is what keeps them from
+    // drifting; if you add a new way to open a path, reach for `openPathEntry`,
+    // not for a third copy of this branch.
     canOpenWithViewer: (name) => viewerForEntry(name) != null,
     onOpen: () => closeOtherSidebarPanels("search"),
   });
@@ -1561,15 +1621,23 @@ async function boot() {
     return;
   }
 
-  // First load: read + mount. A read failure here means the launch file is
-  // gone — show the error in place of the editor (the bar stays).
-  try {
-    const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: initialFile });
-    openInWindow(initialFile, fresh);
-  } catch (e) {
-    host.replaceChildren();
-    showOpenRecovery(initialFile, String(e));
-  }
+  // First load: route through `openPathEntry` — the same viewer-vs-document
+  // judgment every other entry point uses (see its comment). `initialFile`
+  // here is either a CLI-launch argument (`file`, above — any extension, so
+  // this was exactly the entry point 사용자 리포트 2026-08-17 found missing
+  // the viewer check: a cold `mermark foo.pdf` tried to read the PDF as
+  // text) or a session-restored tab path (`restoredTab`, above). A restored
+  // tab can never be a viewer file: `vaultTabs.open` — the only thing that
+  // ever creates a tab — is called exclusively from `openInWindow` (the
+  // document branch), never from `openWithViewer`, so a restored tab is by
+  // construction always a document path. Routing both sources through the
+  // same check is therefore always correct, not just convenient — a
+  // restored tab simply never matches a viewer and falls straight to the
+  // document branch below. The document branch reuses `openDocumentSafely`
+  // (a read failure means the launch file is gone; it already shows the
+  // error in place of the editor via `showOpenRecovery` — the same recovery
+  // call this used to make by hand, not a second copy of it).
+  await openPathEntry(initialFile, openDocumentSafely);
   await registerCliOpenRouting();
 }
 
