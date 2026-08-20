@@ -27,6 +27,7 @@ const SHIPPED_INLINE_NAMES = [
   "hr",
   "codeLines",
   "inlineMath",
+  "fencedMarkdownBlockLines",
 ];
 const SHIPPED_BLOCK_NAMES = ["mermaid", "codeBlock", "table", "blockMath", "frontmatter"];
 
@@ -35,7 +36,7 @@ describe("feature-registry", () => {
     expect(currentBlockFeatures().length).toBe(SHIPPED_BLOCK_NAMES.length);
   });
 
-  it("seeds the shipped inline features in shipped order (15)", () => {
+  it("seeds the shipped inline features in shipped order (16)", () => {
     expect(currentInlineFeatures().length).toBe(SHIPPED_INLINE_NAMES.length);
   });
 

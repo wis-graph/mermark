@@ -64,7 +64,12 @@ export function clickLandsOnLink(target: EventTarget | null): boolean {
   return (target as HTMLElement)?.closest?.("[data-href]") != null;
 }
 
-function treeChanged(a: EditorState, b: EditorState): boolean {
+/** True when the syntax tree object identity changed between two states —
+ *  the standard "does this StateField need to re-walk the tree" gate shared
+ *  by every field that recomputes structural state on docChanged (this
+ *  module's `blockPreview` field and fenced-markdown-block.ts's
+ *  `fenceConcealField` both key off it). Pure query. */
+export function treeChanged(a: EditorState, b: EditorState): boolean {
   return syntaxTree(a) !== syntaxTree(b);
 }
 

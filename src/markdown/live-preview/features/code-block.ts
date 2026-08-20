@@ -1,5 +1,6 @@
 import { fencedInfo, type BlockFeature, type InlineFeature } from "../core";
 import { CodeBlockWidget } from "../../code-widget";
+import { resolveFence } from "../../fence-types";
 
 /** Line backgrounds for fenced code (including mermaid's ```mermaid source).
  *  Only visible when the block is revealed for editing — otherwise the block
@@ -21,7 +22,10 @@ export const codeBlock: BlockFeature = {
   nodes: ["FencedCode"],
   match(node, ctx) {
     const lang = fencedInfo(ctx.state, node);
-    if (lang === "mermaid") return null;
+    // fence-types.ts is the SSOT for info-string classification: this catch-all
+    // only claims fences that resolve to the "code" kind (everything not
+    // claimed by a "widget" spec like mermaid).
+    if (resolveFence(lang).kind !== "code") return null;
     const body = ctx.fencedBody(node).join("\n");
     return {
       kind: "code",

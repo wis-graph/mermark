@@ -1,5 +1,6 @@
 import { fencedInfo, type BlockFeature } from "../core";
 import { MermaidWidget } from "../../mermaid-widget";
+import { resolveFence } from "../../fence-types";
 
 /** Pixel dimensions declared on a diagram's first line, plus the diagram body
  *  with that declaration stripped. `null` means "not declared" (use natural). */
@@ -41,7 +42,10 @@ function toDimension(part: string | undefined): number | null {
 export const mermaid: BlockFeature = {
   nodes: ["FencedCode"],
   match(node, ctx) {
-    if (fencedInfo(ctx.state, node) !== "mermaid") return null;
+    // fence-types.ts is the SSOT for info-string classification (design
+    // _workspace/01_architect_design.md §1.4) — this feature just checks
+    // whether it's the one that claims this fence's key.
+    if (resolveFence(fencedInfo(ctx.state, node)).key !== "mermaid") return null;
     const full = ctx.fencedBody(node).join("\n");
     const { width, height, body } = parseDimensions(full);
     // src is the render body (size declaration stripped) so the SVG cache / eq

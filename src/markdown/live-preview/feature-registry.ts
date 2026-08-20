@@ -40,7 +40,10 @@ export function registerInlineFeature(f: InlineFeature, opts?: { prepend?: boole
  *  every FencedCode node that isn't mermaid (features/code-block.ts) — a new
  *  fenced-language widget (the most likely extension use case) must be tried
  *  BEFORE codeBlock or codeBlock claims the node first under first-claim-wins
- *  (core.ts's computeSpecs). Returns an unregister closure. Command. */
+ *  (core.ts's computeSpecs). Which info strings mermaid vs. codeBlock claim is
+ *  itself decided by one table, `resolveFence` (markdown/fence-types.ts) — the
+ *  SSOT for fence info-string classification. Returns an unregister closure.
+ *  Command. */
 export function registerBlockFeature(f: BlockFeature, opts?: { prepend?: boolean }): () => void {
   if (opts?.prepend) block.unshift(f);
   else block.push(f);

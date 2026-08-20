@@ -1,6 +1,7 @@
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import type { BlockContext, InlineContext, Line, MarkdownConfig } from "@lezer/markdown";
+import { markdownBlockFences, resolveFence, type MarkdownBlockFenceSpec } from "./fence-types";
 
 // ---------------------------------------------------------------------------
 // Custom syntax as real Lezer nodes so every decorator works off the parse
@@ -293,6 +294,118 @@ const highlightExt: MarkdownConfig = {
   ],
 };
 
+/** True at the start of a fenced-code opening line: 3+ backticks followed by a
+ *  SINGLE info token (no embedded whitespace) and nothing else on the line.
+ *  This is a narrower shape than CommonMark's actual fenced-code-opener rule
+ *  (which also allows an EMPTY info string, `~~~`-style fences, and — for
+ *  backtick fences — extra space-separated attribute text after the first
+ *  token), not "the same as lezer's own FencedCode matcher" as an earlier
+ *  version of this comment overclaimed. That's fine here: every case this
+ *  regex doesn't match (empty info, `~~~...`, ```highlight title=x, …) is
+ *  meant to fall through to `return false` below and land on FencedCode via
+ *  the normal `resolveFence` code-fallback — the narrower match is exactly
+ *  the "kind: markdown-block info strings only" gate this parser needs. */
+const FENCE_OPEN = /^(`{3,})\s*(\S+)\s*$/;
+
+/** The number of backticks that CLOSE a fence at `pos` (a backtick run with
+ *  nothing but trailing whitespace after it), or 0 if this line isn't one. */
+function closingFenceLength(text: string, pos: number): number {
+  const m = /^(`{3,})\s*$/.exec(text.slice(pos));
+  return m ? m[1].length : 0;
+}
+
+/**
+ * Builds the MarkdownConfig for ONE `kind: "markdown-block"` fence entry
+ * (design `_workspace/01_architect_design.md` §3): its body is parsed as
+ * real markdown child nodes (not swallowed as an opaque widget string), via
+ * a Lezer *composite* block — the same mechanism blockquote uses to own its
+ * `>` markers each line.
+ *
+ * The hard part is the closing fence (design §3.2): it must be consumed by
+ * THIS composite (`line.addMarker` + `line.moveBase(line.text.length)`,
+ * `return false`) rather than left for the outer parser to see. Lezer's
+ * `readLine` then bumps the composite's end to that marker's `to` and pops
+ * the context — so the line after the close is never re-offered to us or to
+ * FencedCode as an orphan opener. Skipping either call (or returning `false`
+ * without a marker) is exactly the bug this function exists to prevent: the
+ * block would keep absorbing lines to EOF, swallowing the rest of the
+ * document (the "closing fence" regression this feature was built against).
+ *
+ * Which info strings open this node is resolved through `resolveFence`, not
+ * a literal check — `fence-types.ts` stays the single source of truth for
+ * info-string classification (no `info === "highlight"` here). The block's
+ * node name AND its shared open/close fence-line node name (`spec.node` /
+ * `spec.fenceNode`) both come straight off the SAME fence-types.ts table
+ * row — there's no derived-naming-convention function (e.g. stripping a
+ * "Block" suffix) for this and the renderer to drift apart on;
+ * `features/fenced-markdown-block.ts` reads the identical `spec.fenceNode`
+ * off `markdownBlockFences()` instead of importing anything from parser.ts.
+ */
+function markdownBlockFenceExt(spec: MarkdownBlockFenceSpec): MarkdownConfig {
+  const { node: blockNode, fenceNode } = spec;
+
+  return {
+    defineNodes: [
+      {
+        name: blockNode,
+        block: true,
+        composite(cx: BlockContext, line: Line, openFenceLen: number): boolean {
+          const closeLen = closingFenceLength(line.text, line.pos);
+          if (closeLen < openFenceLen) return true; // body line — block continues
+          line.addMarker(
+            cx.elt(fenceNode, cx.lineStart + line.pos, cx.lineStart + line.text.length),
+          );
+          line.moveBase(line.text.length); // consume the whole closing line
+          return false; // composite ends HERE — the line is never re-parsed
+        },
+      },
+      { name: fenceNode },
+    ],
+    parseBlock: [
+      {
+        name: blockNode,
+        before: "FencedCode",
+        parse(cx: BlockContext, line: Line): boolean | null {
+          const m = FENCE_OPEN.exec(line.text.slice(line.pos));
+          const claimed = m && resolveFence(m[2]);
+          if (!claimed || claimed.kind !== "markdown-block" || claimed.node !== blockNode) {
+            return false; // → FencedCode
+          }
+          cx.startComposite(blockNode, line.pos, m[1].length);
+          cx.addElement(
+            cx.elt(fenceNode, cx.lineStart + line.pos, cx.lineStart + line.text.length),
+          );
+          // moveBase, NOT cx.nextLine(): the opening line is entirely the fence
+          // marker, so consuming it via moveBase (blockquote's own idiom for a
+          // fully-consumed marker line) lets the surrounding block-parser loop
+          // advance naturally. Calling cx.nextLine() ourselves here instead
+          // (the design sketch's original approach) is exactly what
+          // BlockContext.nextLine's own doc comment warns against — "should
+          // only be called by NON-composite parsers" — and for good reason:
+          // when the very next line is ALSO the closer (a zero-body block like
+          // ```highlight\n```), our own nextLine() call lands composite() on
+          // that closing line WHILE we're still inside this composite's own
+          // still-on-stack, not-yet-popped opening turn. The dispatch loop
+          // then retries the (now-exhausted) line, manufactures a phantom
+          // empty leaf, and that leaf's OWN nextLine() call re-invokes
+          // composite() a second time on the FOLLOWING line — which no longer
+          // looks like a close, so the block never stops absorbing lines
+          // (reproduced empirically: a zero-body ```highlight block swallowed
+          // the rest of the document). moveBase avoids ever calling nextLine
+          // ourselves, so composite() is invoked exactly once per real line.
+          line.moveBase(line.text.length);
+          return null; // startComposite contract: always return null
+        },
+      },
+    ],
+  };
+}
+
+/** One MarkdownConfig per `kind: "markdown-block"` fence-types.ts entry
+ *  (currently just ```highlight — design §0/§3). Table-driven: a second
+ *  markdown-block entry needs no parser.ts edit, only a fence-types.ts row. */
+const markdownBlockFenceExts: MarkdownConfig[] = markdownBlockFences().map(markdownBlockFenceExt);
+
 export const mermarkExtensions: MarkdownConfig[] = [
   frontmatterExt,
   wikilinkExt,
@@ -300,6 +413,7 @@ export const mermarkExtensions: MarkdownConfig[] = [
   blockMathExt,
   footnoteExt,
   highlightExt,
+  ...markdownBlockFenceExts,
 ];
 
 /** Markdown language: GFM (tables/strikethrough/tasklists) + mermark syntax. */

@@ -1066,3 +1066,84 @@ describe("mode toggle", () => {
     ed.view.destroy();
   });
 });
+
+describe("```highlight markdown-block (design §4 — generic fenced-markdown-block feature)", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+
+  it("renders body lines with cm-highlight-block and conceals both fence lines off-line", () => {
+    const doc = "intro\n\n```highlight\nbody one\nbody two\n```\n\ntail";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const lines = view.contentDOM.querySelectorAll(".cm-highlight-block");
+    expect(lines.length).toBeGreaterThan(0);
+    expect(view.contentDOM.textContent).toContain("body one");
+    expect(view.contentDOM.textContent).toContain("body two");
+    // fence lines hidden as block-replace decorations
+    expect(view.contentDOM.textContent).not.toContain("```highlight");
+    expect(view.contentDOM.textContent).not.toMatch(/body two\s*```/);
+    // never claimed by the code-box path (fence-types.ts SSOT keeps these mutually exclusive)
+    expect(view.contentDOM.querySelector(".cm-code-line")).toBeNull();
+    expect(view.contentDOM.querySelector(".cm-codeblock")).toBeNull();
+    view.destroy();
+  });
+
+  it("reveals both fence lines when the caret enters the body, re-conceals on leave", () => {
+    const doc = "intro\n\n```highlight\nbody one\n```\n\ntail";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toContain("```highlight");
+    view.dispatch({ selection: { anchor: doc.indexOf("body one") } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("```highlight");
+    // closing fence line reveals too (design §4.2 — reveal is BLOCK-level, not per-fence-line)
+    expect(view.contentDOM.querySelectorAll(".cm-highlight-block").length).toBeGreaterThanOrEqual(3);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).not.toContain("```highlight");
+    view.destroy();
+  });
+
+  it("never reveals fences in read mode, even with the selection inside the body", () => {
+    const doc = "```highlight\nbody one\n```";
+    const ed = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" });
+    ed.view.dispatch({ selection: { anchor: doc.indexOf("body one") } });
+    (ed.view as unknown as { measure(): void }).measure();
+    expect(ed.view.contentDOM.textContent).not.toContain("```highlight");
+    ed.view.destroy();
+  });
+
+  it("keeps both fences visible when the block has no body lines", () => {
+    const doc = "intro\n\n```highlight\n```\n\ntail";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.textContent).toContain("```highlight");
+    view.destroy();
+  });
+
+  it("renders inline markdown inside the block body (bold, highlight, links)", () => {
+    const doc = "```highlight\n**b** and ==m== and [x](https://y.test)\n```";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-strong")).not.toBeNull();
+    expect(view.contentDOM.querySelector(".cm-highlight")).not.toBeNull();
+    expect(view.contentDOM.querySelector(".cm-link")).not.toBeNull();
+    view.destroy();
+  });
+
+  it("renders a mermaid widget nested inside a longer-fenced highlight block", () => {
+    const doc = "````highlight\nsee this diagram\n```mermaid\ngraph TD\n  A-->B\n```\n````";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    expect(view.contentDOM.querySelector(".cm-mermaid")).not.toBeNull();
+    view.destroy();
+  });
+});

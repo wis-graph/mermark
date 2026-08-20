@@ -301,3 +301,74 @@ describe("list nesting depends on indent width (indentUnit = 4sp decision)", () 
     expect(nestedOrderedLists).toBe(0);
   });
 });
+
+describe("highlight block parsing (```highlight — kind markdown-block, stage 2)", () => {
+  it("parses the body as real markdown children, not an opaque string", () => {
+    const doc = "```highlight\n**b** and [x](y)\n```";
+    expect(nodesOf(doc, "HighlightBlock").length).toBe(1);
+    expect(nodesOf(doc, "StrongEmphasis")).toEqual([["StrongEmphasis", "**b**"]]);
+    expect(nodesOf(doc, "Link").length).toBe(1);
+    expect(nodesOf(doc, "HighlightFence")).toEqual([
+      ["HighlightFence", "```highlight"],
+      ["HighlightFence", "```"],
+    ]);
+  });
+
+  it("does NOT swallow the document after the closing fence", () => {
+    const doc = "```highlight\nbody\n```\n\nafter paragraph\n\n```js\ncode\n```";
+    expect(nodesOf(doc, "HighlightBlock")).toEqual([
+      ["HighlightBlock", "```highlight\nbody\n```"],
+    ]);
+    const paras = nodesOf(doc, "Paragraph").map(([, text]) => text);
+    expect(paras).toContain("after paragraph");
+    expect(nodesOf(doc, "FencedCode")).toEqual([["FencedCode", "```js\ncode\n```"]]);
+  });
+
+  it("unclosed fence absorbs to EOF without crashing", () => {
+    expect(() => nodesOf("```highlight\nbody", "HighlightBlock")).not.toThrow();
+    expect(nodesOf("```highlight\nbody", "HighlightBlock")).toEqual([
+      ["HighlightBlock", "```highlight\nbody"],
+    ]);
+    expect(() => nodesOf("```highlight", "HighlightBlock")).not.toThrow();
+    expect(nodesOf("```highlight", "HighlightBlock")).toEqual([["HighlightBlock", "```highlight"]]);
+  });
+
+  it("parses inside a blockquote", () => {
+    const doc = "> ```highlight\n> **b**\n> ```";
+    expect(nodesOf(doc, "HighlightBlock").length).toBe(1);
+    expect(nodesOf(doc, "StrongEmphasis")).toEqual([["StrongEmphasis", "**b**"]]);
+  });
+
+  it("==mark== still parses inside the body", () => {
+    const doc = "```highlight\nsee ==mark== here\n```";
+    expect(nodesOf(doc, "Highlight")).toEqual([["Highlight", "==mark=="]]);
+  });
+
+  it("a longer outer fence protects a nested code fence", () => {
+    const doc = "````highlight\n```js\ncode\n```\n````\nafter";
+    expect(nodesOf(doc, "HighlightBlock")).toEqual([
+      ["HighlightBlock", "````highlight\n```js\ncode\n```\n````"],
+    ]);
+    expect(nodesOf(doc, "FencedCode")).toEqual([["FencedCode", "```js\ncode\n```"]]);
+    const paras = nodesOf(doc, "Paragraph").map(([, text]) => text);
+    expect(paras).toContain("after");
+  });
+
+  it("[characterized] an equal-length nested fence closes the highlight early", () => {
+    // Documented, intended limitation (design §3.5) — same class of "author
+    // didn't close a fence properly" as any other fence-length mismatch.
+    // Nest with a LONGER outer fence (````highlight) to avoid this.
+    const doc = "```highlight\n```js\ncode\n```\nrest";
+    expect(nodesOf(doc, "HighlightBlock")).toEqual([["HighlightBlock", "```highlight\n```js\ncode\n```"]]);
+    const paras = nodesOf(doc, "Paragraph").map(([, text]) => text);
+    expect(paras).toContain("rest");
+  });
+
+  it("```highlighting is NOT a HighlightBlock (info must match exactly)", () => {
+    expect(nodesOf("```highlighting\nx\n```", "HighlightBlock")).toEqual([]);
+  });
+
+  it("```HIGHLIGHT is a HighlightBlock (case-insensitive info)", () => {
+    expect(nodesOf("```HIGHLIGHT\nx\n```", "HighlightBlock").length).toBe(1);
+  });
+});
