@@ -614,6 +614,50 @@ describe("full-editor render smoke", () => {
     view.destroy();
   });
 
+  // ── blockquote first/last structural boundary (design §4.2) ────────────
+  it("a 3-line blockquote gets -first on line 1, -last on line 3, neither on the middle line", () => {
+    const doc = "intro\n\n> line one\n> line two\n> line three";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const lines = Array.from(view.contentDOM.querySelectorAll(".cm-blockquote"));
+    expect(lines.length).toBe(3);
+    expect(lines[0]!.classList.contains("cm-blockquote-first")).toBe(true);
+    expect(lines[0]!.classList.contains("cm-blockquote-last")).toBe(false);
+    expect(lines[1]!.classList.contains("cm-blockquote-first")).toBe(false);
+    expect(lines[1]!.classList.contains("cm-blockquote-last")).toBe(false);
+    expect(lines[2]!.classList.contains("cm-blockquote-first")).toBe(false);
+    expect(lines[2]!.classList.contains("cm-blockquote-last")).toBe(true);
+    view.destroy();
+  });
+
+  it("a 1-line blockquote gets BOTH -first and -last on its only line", () => {
+    const doc = "intro\n\n> solo line";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const line = view.contentDOM.querySelector(".cm-blockquote")!;
+    expect(line.classList.contains("cm-blockquote-first")).toBe(true);
+    expect(line.classList.contains("cm-blockquote-last")).toBe(true);
+    view.destroy();
+  });
+
+  it("a nested `>>` blockquote never puts -first/-last on the INNER boundary (outermost only)", () => {
+    const doc = "intro\n\n> outer top\n>> inner one\n>> inner two\n> outer bottom";
+    const view = mount(host, doc);
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const firsts = view.contentDOM.querySelectorAll(".cm-blockquote-first");
+    const lasts = view.contentDOM.querySelectorAll(".cm-blockquote-last");
+    // exactly one -first, one -last in the whole run (the outermost run's own
+    // real first/last source line) — a nested run must not add a second pair.
+    expect(firsts.length).toBe(1);
+    expect(lasts.length).toBe(1);
+    expect(firsts[0]!.textContent).toContain("outer top");
+    expect(lasts[0]!.textContent).toContain("outer bottom");
+    view.destroy();
+  });
+
   // ── blockquote copy button ───────────────────────────────────────────────
   it("renders exactly one quote-copy button on a plain blockquote", () => {
     const doc = "intro\n\n> a\n> b";
@@ -1145,5 +1189,110 @@ describe("```highlight markdown-block (design §4 — generic fenced-markdown-bl
     (view as unknown as { measure(): void }).measure();
     expect(view.contentDOM.querySelector(".cm-mermaid")).not.toBeNull();
     view.destroy();
+  });
+
+  // ── first/last visible-edge classes (design §4.2) ───────────────────────
+  describe("first/last visible-edge classes", () => {
+    it("resting: -first/-last land on the first/last BODY line (fence lines are concealed, not in the DOM)", () => {
+      const doc = "intro\n\n```highlight\nbody one\nbody two\nbody three\n```\n\ntail";
+      const view = mount(host, doc);
+      view.dispatch({ selection: { anchor: 0 } });
+      (view as unknown as { measure(): void }).measure();
+      const lines = Array.from(view.contentDOM.querySelectorAll(".cm-highlight-block"));
+      expect(lines.length).toBe(3); // fence lines hidden — only 3 body lines in the DOM
+      expect(lines[0]!.classList.contains("cm-highlight-block-first")).toBe(true);
+      expect(lines[0]!.textContent).toContain("body one");
+      expect(lines[1]!.classList.contains("cm-highlight-block-first")).toBe(false);
+      expect(lines[1]!.classList.contains("cm-highlight-block-last")).toBe(false);
+      expect(lines[2]!.classList.contains("cm-highlight-block-last")).toBe(true);
+      expect(lines[2]!.textContent).toContain("body three");
+      view.destroy();
+    });
+
+    it("revealed: -first moves to the OPENING fence line, -last to the CLOSING fence line", () => {
+      const doc = "intro\n\n```highlight\nbody one\nbody two\n```\n\ntail";
+      const view = mount(host, doc);
+      view.dispatch({ selection: { anchor: doc.indexOf("body one") } });
+      (view as unknown as { measure(): void }).measure();
+      const lines = Array.from(view.contentDOM.querySelectorAll(".cm-highlight-block"));
+      // 4 lines now visible: open fence, body one, body two, close fence.
+      expect(lines.length).toBe(4);
+      expect(lines[0]!.textContent).toContain("```highlight");
+      expect(lines[0]!.classList.contains("cm-highlight-block-first")).toBe(true);
+      expect(lines[3]!.textContent?.trim()).toBe("```");
+      expect(lines[3]!.classList.contains("cm-highlight-block-last")).toBe(true);
+      // re-conceal → edges move back to the body lines
+      view.dispatch({ selection: { anchor: 0 } });
+      (view as unknown as { measure(): void }).measure();
+      const rested = Array.from(view.contentDOM.querySelectorAll(".cm-highlight-block"));
+      expect(rested.length).toBe(2);
+      expect(rested[0]!.classList.contains("cm-highlight-block-first")).toBe(true);
+      expect(rested[1]!.classList.contains("cm-highlight-block-last")).toBe(true);
+      view.destroy();
+    });
+
+    it("a 1-body-line block gets BOTH -first and -last on its single body line at rest", () => {
+      const doc = "intro\n\n```highlight\nonly line\n```\n\ntail";
+      const view = mount(host, doc);
+      view.dispatch({ selection: { anchor: 0 } });
+      (view as unknown as { measure(): void }).measure();
+      const line = view.contentDOM.querySelector(".cm-highlight-block")!;
+      expect(line.classList.contains("cm-highlight-block-first")).toBe(true);
+      expect(line.classList.contains("cm-highlight-block-last")).toBe(true);
+      view.destroy();
+    });
+
+    it("an unclosed block (no closing fence): revealed -last falls back to the block's own last line", () => {
+      const doc = "```highlight\nbody one\nbody two";
+      const view = mount(host, doc);
+      view.dispatch({ selection: { anchor: doc.indexOf("body one") } });
+      (view as unknown as { measure(): void }).measure();
+      const lines = Array.from(view.contentDOM.querySelectorAll(".cm-highlight-block"));
+      expect(lines.length).toBe(3); // open fence + 2 body lines, no closer to hide
+      expect(lines[0]!.classList.contains("cm-highlight-block-first")).toBe(true);
+      expect(lines[2]!.classList.contains("cm-highlight-block-last")).toBe(true);
+      expect(lines[2]!.textContent).toContain("body two");
+      view.destroy();
+    });
+
+    it("a 0-body-line block (opener immediately followed by closer) still gets -first/-last on its two fence lines", () => {
+      // concealableFenceLines deliberately returns [] here (design's edit-lock-trap
+      // guard — see fenced-markdown-block.ts) so BOTH fence lines stay visible.
+      // That must not also suppress the corner classes: the block still has a
+      // "shape" (the two fence lines it renders as), so it should round like any
+      // other highlight block.
+      const doc = "intro\n\n```highlight\n```\n\ntail";
+      const view = mount(host, doc);
+      view.dispatch({ selection: { anchor: 0 } });
+      (view as unknown as { measure(): void }).measure();
+      const lines = Array.from(view.contentDOM.querySelectorAll(".cm-highlight-block"));
+      expect(lines.length).toBe(2); // both fence lines render — nothing to conceal
+      expect(lines[0]!.textContent).toContain("```highlight");
+      expect(lines[0]!.classList.contains("cm-highlight-block-first")).toBe(true);
+      expect(lines[1]!.textContent?.trim()).toBe("```");
+      expect(lines[1]!.classList.contains("cm-highlight-block-last")).toBe(true);
+      view.destroy();
+    });
+
+    // Audit follow-up (`_workspace/04_audit_report.md` 🟡#1): this module's
+    // own doc comment promises "a second markdown-block entry needs a
+    // fence-types.ts row only" — that promise used to be false for corner
+    // classes (hardcoded `cm-highlight-block-first/-last` consts). Locks the
+    // fix: `cornerDecos` derives the classnames from WHATEVER lineClass it's
+    // given, not a literal. Registering a full second fake Lezer node just to
+    // exercise this would need parser.ts changes too (out of scope for a
+    // regression test) — this pins the exact function `buildDeco` calls.
+    it("cornerDecos derives -first/-last from the lineClass argument generically, not a highlight-only literal", async () => {
+      const { cornerDecos } = await import("../src/markdown/live-preview/features/fenced-markdown-block");
+      const highlight = cornerDecos("cm-highlight-block");
+      expect((highlight.first.spec as { class: string }).class).toBe("cm-highlight-block-first");
+      expect((highlight.last.spec as { class: string }).class).toBe("cm-highlight-block-last");
+      // A hypothetical SECOND markdown-block entry (e.g. a future ```callout)
+      // gets its own corner classes for free — no highlight-specific literal
+      // leaks onto it.
+      const callout = cornerDecos("cm-callout-block");
+      expect((callout.first.spec as { class: string }).class).toBe("cm-callout-block-first");
+      expect((callout.last.spec as { class: string }).class).toBe("cm-callout-block-last");
+    });
   });
 });

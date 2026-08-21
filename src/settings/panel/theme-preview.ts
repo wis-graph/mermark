@@ -35,6 +35,11 @@ import "./theme-panel.css";
  *    on the blockquote CONTAINER separately (see `paintQuoteContainerBg`),
  *    not on this button — the container and the text button are different
  *    elements, so `paint` can't fold both onto one `el` here.
+ *  - `"block-bg"` (highlight block target) — the ```highlight markdown-block:
+ *    colorVar paints the button's own BACKGROUND (there is no separate text
+ *    color key — `.cm-highlight-block` only ever declares `background`, see
+ *    styles.css), text stays `--fg` so the two sample body lines stay legible
+ *    against any preset.
  *
  *  `colorFallback`/`bgFallback` are the CSS fallback values `paintTarget`
  *  composes into `var(--x, <fallback>)`. Round-1 targets never needed one
@@ -57,7 +62,7 @@ export interface ThemeTarget {
   bgKey?: keyof Theme["colors"];
   bgVar?: string;
   bgFallback?: string;
-  paint?: "color" | "surface-card" | "hr-line" | "quote-bar" | "quote-text";
+  paint?: "color" | "surface-card" | "hr-line" | "quote-bar" | "quote-text" | "block-bg";
 }
 
 /** The single source of "which things can be clicked, and what do they
@@ -143,6 +148,19 @@ export const THEME_TARGETS: readonly ThemeTarget[] = [
     bgVar: "--codeblock-bg",
     bgFallback: "var(--block-fill)",
   },
+  // ── highlight block (2026-08 round 3: "```highlight 블록이 테마 대상에서
+  // 빠졌다" — codeBlock 바로 뒤·comment 바로 앞, 문서 자연 순서상 코드블럭 다음
+  // 자리). No bgKey pair: `.cm-highlight-block` only ever declares a
+  // `background` (no distinct text color key), so this target's OWN colorVar
+  // IS that background — `paint: "block-bg"` routes it there instead of text.
+  {
+    id: "highlightBlock",
+    label: "하이라이트 블록 (Highlight Block)",
+    colorKey: "highlightBlockBg",
+    colorVar: "--highlightblock-bg",
+    colorFallback: "color-mix(in srgb, var(--highlight-bg) 22%, transparent)",
+    paint: "block-bg",
+  },
   { id: "comment", label: "주석 (Comment)", colorKey: "comment", colorVar: "--comment-color", colorFallback: "var(--muted)", bgKey: "commentBg", bgVar: "--comment-bg", bgFallback: "transparent" },
   { id: "h1", label: "제목 1 (H1)", colorKey: "h1", colorVar: "--h1-color", colorFallback: "var(--fg)", bgKey: "h1Bg", bgVar: "--h1-bg", bgFallback: "transparent" },
   { id: "h2", label: "제목 2 (H2)", colorKey: "h2", colorVar: "--h2-color", colorFallback: "var(--fg)", bgKey: "h2Bg", bgVar: "--h2-bg", bgFallback: "transparent" },
@@ -210,6 +228,13 @@ function paintTarget(el: HTMLElement, t: ThemeTarget): void {
       // BACKGROUND is painted on the CONTAINER by `paintQuoteContainerBg`,
       // not here — this button and that container are different elements.
       el.style.color = cssVar(t.colorVar, t.colorFallback);
+      break;
+    case "block-bg":
+      // ```highlight block: colorVar paints the button's own fill, text stays
+      // legible ink (matches the real editor — `.cm-highlight-block` never
+      // overrides text color, only background).
+      el.style.background = cssVar(t.colorVar, t.colorFallback);
+      el.style.color = "var(--fg)";
       break;
     default:
       el.style.color = cssVar(t.colorVar, t.colorFallback);
@@ -292,7 +317,12 @@ function fgRun(text: string, opts: { focusable: boolean } = { focusable: false }
  *    규칙의 적용 대상이 아니라 애초에 실앱이 그렇게 안 보여준다.
  *  - **코드블럭**: 펜스(```) 마커를 표기하지 않는다. 코드블럭은 atomic 블록
  *    위젯이라 편집 모드에서도 커서가 밖에 있으면 펜스 없는 위젯 형태로
- *    렌더된다 — 인용구와 같은 이유(실앱이 그렇게 안 보여준다). */
+ *    렌더된다 — 인용구와 같은 이유(실앱이 그렇게 안 보여준다).
+ *  - **하이라이트 블록**(2026-08 round 3): ```highlight 펜스 마커를 표기하지
+ *    않는다. `fenceConcealField`가 커서가 블록 밖(resting)일 때 두 펜스 줄을
+ *    conceal하므로 — 코드블럭·인용구와 같은 이유(실앱이 그렇게 안 보여준다).
+ *    본문은 여러 줄이라는 것만 보이면 충분하므로 2줄로 압축한다(코드블럭과
+ *    동일한 "본문 몇 줄 span" 관용구). */
 const EDIT_MODE_SAMPLE_TEXT = {
   h1: "# 제주 여행 준비",
   h2: "## 사흘째 아침",
@@ -440,6 +470,19 @@ export function buildThemePreview(onSelect: (t: ThemeTarget | null, el?: HTMLEle
   codeBlockLine2.textContent = "bag.weigh();";
   codeBlockBtn.append(codeBlockLine1, codeBlockLine2);
   doc.appendChild(codeBlockBtn);
+
+  // 하이라이트 블록(round 3): 블록 전체가 버튼 1개(codeBlock과 동일한 관용구
+  // — 내부 분할 없음, 글자색 키가 없으므로 인스펙터 탭도 없다). 펜스(```)
+  // 마커는 표기하지 않는다(EDIT_MODE_SAMPLE_TEXT doc comment 예외 4).
+  const highlightBlockBtn = targetButton(themeTarget("highlightBlock")!, "", "theme-highlightblock");
+  const highlightBlockLine1 = document.createElement("span");
+  highlightBlockLine1.className = "theme-highlightblock-line";
+  highlightBlockLine1.textContent = "환전은 출발 전에 끝내둔다.";
+  const highlightBlockLine2 = document.createElement("span");
+  highlightBlockLine2.className = "theme-highlightblock-line";
+  highlightBlockLine2.textContent = "공항 환전소는 환율이 나쁘다.";
+  highlightBlockBtn.append(highlightBlockLine1, highlightBlockLine2);
+  doc.appendChild(highlightBlockBtn);
 
   const comment = targetButton(themeTarget("comment")!, EDIT_MODE_SAMPLE_TEXT.comment, "theme-line theme-comment-line");
   doc.appendChild(comment);

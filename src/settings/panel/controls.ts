@@ -5,7 +5,7 @@
 // (the bind round-trip). Returns a labeled row element ready to append.
 import type { Setting, Control } from "../store";
 import type { Theme } from "../theme-schema";
-import { parseTheme, serializeTheme } from "../theme-schema";
+import { parseTheme, serializeTheme, type GeometryKey } from "../theme-schema";
 import { allActions, effectiveBinding, findConflict, suppressDispatcher } from "../../shortcuts/registry";
 import { eventToChord, displayChord } from "../../shortcuts/keys";
 import { listViewers, type Viewer } from "../../chrome/viewer/registry";
@@ -198,6 +198,137 @@ export function tryDismissNested(): boolean {
   return activeEscapeConsumer?.() ?? false;
 }
 
+// ---------------------------------------------------------------------------
+// Block geometry sliders (design §5, Phase 2) — the theme editor's "블록 모양"
+// section, sitting between the preview frame/inspector and the JSON accordion
+// (renderJson wires it in below). NOT a `defineSetting` control: geometry is
+// part of the Theme document (design §5.1 — a standalone setting would split
+// the theme's SSOT and drop geometry from import/export), so every write is a
+// read-modify-write through the SAME `Setting<Theme>` the frame/inspector
+// already use. The visual idiom (`.settings-slider`/`.settings-slider-value`)
+// mirrors renderSlider's markup deliberately — same look, different plumbing.
+// ---------------------------------------------------------------------------
+
+interface GeometrySliderSpec {
+  key: GeometryKey;
+  label: string;
+  unit: string;
+  min: number;
+  max: number;
+  step: number;
+  /** Knob position while the key is absent ("자동") — a representative
+   *  current value (design §5.4: radius 8 / padding 0.7), purely cosmetic
+   *  since the auto state is what the value text/aria-valuetext actually say. */
+  autoKnob: number;
+}
+
+const GEOMETRY_SLIDER_SPECS: readonly GeometrySliderSpec[] = [
+  { key: "blockRadius", label: "모서리 둥글기", unit: "px", min: 0, max: 24, step: 1, autoKnob: 8 },
+  { key: "blockPadding", label: "안쪽 여백", unit: "em", min: 0, max: 2, step: 0.1, autoKnob: 0.7 },
+];
+
+/** Parse a geometry value (`"12px"`) back to its numeric knob position, ONLY
+ *  when it ends in this slider's fixed unit — anything else (wrong unit, a
+ *  hand-edited JSON value like `"1rem"` or `".5em 1em"`, absence) is not this
+ *  slider's number to show, so it's treated as auto rather than guessed at.
+ *  Pure query, named per design §5's plan (`geometryValueNumber`). */
+function geometryValueNumber(v: string | undefined, unit: string): number | null {
+  if (v === undefined || !v.endsWith(unit)) return null;
+  const n = Number(v.slice(0, -unit.length));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Read-modify-write one geometry key, dropping the whole `geometry` object
+ *  once both keys are gone — mirrors parseTheme's own round-trip rule (design
+ *  §3: a legacy/plain theme with no geometry section serializes with none),
+ *  so a slider drag-then-auto-both round-trips byte-identically instead of
+ *  leaving a stray `"geometry": {}` behind. Pure query — the caller sets. */
+function nextGeometry(cur: Theme["geometry"], key: GeometryKey, value: string | undefined): Theme["geometry"] {
+  const next: Record<string, string> = { ...cur };
+  if (value === undefined) delete next[key];
+  else next[key] = value;
+  return Object.keys(next).length ? (next as Theme["geometry"]) : undefined;
+}
+
+/** One slider row: range input + value/aria-valuetext + "자동" chip, all
+ *  driven by `setting`'s `geometry.<key>`. Registers its subscription into
+ *  `unsubs` for the caller to fold into attachTeardown — same collection
+ *  pattern renderJson already uses for preview/inspector. */
+function geometrySliderRow(setting: Setting<Theme>, spec: GeometrySliderSpec, unsubs: Array<() => void>): HTMLElement {
+  const r = document.createElement("div");
+  r.className = "theme-geometry-row";
+
+  const label = document.createElement("span");
+  label.className = "theme-geometry-row-label";
+  label.textContent = spec.label;
+
+  const input = document.createElement("input");
+  input.type = "range";
+  input.className = "settings-slider";
+  input.min = String(spec.min);
+  input.max = String(spec.max);
+  input.step = String(spec.step);
+  input.setAttribute("aria-label", spec.label);
+
+  const out = document.createElement("span");
+  out.className = "settings-slider-value";
+
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "theme-chip theme-chip-auto";
+  chip.textContent = "자동";
+  chip.setAttribute("aria-label", `${spec.label} 자동 (요소별 현재값)`);
+
+  const format = (n: number) => `${n}${spec.unit}`;
+
+  const reflect = (t: Theme): void => {
+    const n = geometryValueNumber(t.geometry?.[spec.key], spec.unit);
+    const isAuto = n === null;
+    input.value = String(n ?? spec.autoKnob);
+    input.classList.toggle("is-auto", isAuto);
+    input.setAttribute("aria-valuetext", isAuto ? "자동" : format(n));
+    out.textContent = isAuto ? "자동" : format(n);
+    chip.setAttribute("aria-pressed", String(isAuto));
+  };
+
+  input.addEventListener("input", () => {
+    const cur = setting.get();
+    setting.set({ ...cur, geometry: nextGeometry(cur.geometry, spec.key, format(Number(input.value))) });
+  });
+  chip.addEventListener("click", () => {
+    const cur = setting.get();
+    setting.set({ ...cur, geometry: nextGeometry(cur.geometry, spec.key, undefined) });
+  });
+
+  reflect(setting.get());
+  unsubs.push(setting.subscribe(reflect));
+
+  r.append(label, input, out, chip);
+  return r;
+}
+
+/** The "블록 모양" section — two `geometrySliderRow`s sharing one `unsubs`
+ *  array (folded into the caller's attachTeardown). Deliberately NOT part of
+ *  the frame click grammar (design §5.1: a shared key has no single "which
+ *  element did I click" answer) — no `data-target` anywhere in this subtree. */
+function buildGeometrySection(setting: Setting<Theme>): { el: HTMLElement; unsubs: Array<() => void> } {
+  const el = document.createElement("div");
+  el.className = "theme-geometry";
+
+  const heading = document.createElement("div");
+  heading.className = "theme-geometry-heading";
+  heading.textContent = "블록 모양";
+  const sub = document.createElement("div");
+  sub.className = "theme-geometry-sub";
+  sub.textContent = "코드블럭·인용구·하이라이트 블록 공통";
+  el.append(heading, sub);
+
+  const unsubs: Array<() => void> = [];
+  for (const spec of GEOMETRY_SLIDER_SPECS) el.appendChild(geometrySliderRow(setting, spec, unsubs));
+
+  return { el, unsubs };
+}
+
 /** The JSON control owns import (parse-on-적용) and export (copy/download), plus
  *  (2026-08 redesign) the live mini-frame preview + docked color inspector that
  *  replaced the old 18-swatch grid (design: `_workspace/01_ui_design.md` 결정 1).
@@ -281,6 +412,11 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
   };
 
   reflect(setting.get());
+
+  // Part C (design §5.1): "블록 모양" sliders sit between the frame/inspector
+  // and the JSON accordion — same Setting<Theme>, no fan-out.
+  const geometry = buildGeometrySection(setting);
+
   // Collect the unsubscribe so the modal can tear this control down on swap/close
   // (avoids stale reflect closures writing into detached DOM, and leaks in the
   // preview/inspector's own listeners).
@@ -288,12 +424,13 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
     setting.subscribe(reflect),
     preview.teardown,
     inspector.teardown,
+    ...geometry.unsubs,
     () => {
       activeEscapeConsumer = null;
     },
   ]);
 
-  cell.append(preview.el, inspector.el, details);
+  cell.append(preview.el, inspector.el, geometry.el, details);
   return r;
 }
 

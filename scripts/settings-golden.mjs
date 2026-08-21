@@ -647,6 +647,238 @@ await page.waitForTimeout(200);
 
 const themeEditorState = { states: themeEditorStates };
 
+// ── Block geometry (design `_workspace/01_architect_design.md` §2–§5, Part
+// A/B/C): highlight-block rounded corners (incl. the 0-body-line edge case),
+// the first/last conceal/reveal edge migration, and the geometry sliders'
+// round-trip. Permanent home for the scenarios qa2 verified with a throwaway
+// CDP script (`_workspace/03_qa_report.md` "임시 CDP 검증") — team-lead asked
+// for these to become a real regression fence instead of a one-off check.
+// Drives a purpose-built document via `window.__mermark` (the same dev-only
+// controller hook `scripts/nav-trace.mjs` reads) rather than x.md, since x.md
+// has no ```highlight block and no 0-body-line case to exercise.
+const blockGeometryStates = [];
+
+async function setEditorDoc(text) {
+  await page.evaluate((text) => {
+    const C = window.__mermark;
+    if (!C) throw new Error("window.__mermark missing — is import.meta.env.DEV true?");
+    C.setMode("edit");
+    const len = C.view.state.doc.length;
+    C.view.dispatch({ changes: { from: 0, to: len, insert: text } });
+  }, text);
+  await page.waitForTimeout(200);
+}
+
+async function putCursorOnLineContaining(substr) {
+  await page.evaluate((substr) => {
+    const C = window.__mermark;
+    const d = C.view.state.doc;
+    let target = null;
+    for (let n = 1; n <= d.lines; n++) {
+      const L = d.line(n);
+      if (L.text.includes(substr)) {
+        target = L;
+        break;
+      }
+    }
+    if (!target) throw new Error(`no line containing "${substr}"`);
+    C.view.focus();
+    C.view.dispatch({ selection: { anchor: target.from } });
+  }, substr);
+  await page.waitForTimeout(150);
+}
+
+// Block 1: 3 body lines (exercises resting first/last on body lines, then
+// revealed first/last on the fence lines). Block 2: 0 body lines back-to-back
+// (concealableFenceLines' edit-lock-trap guard — both fences stay
+// permanently visible; the fix under test is that they STILL get corner
+// classes). Also carries a fenced ```ts code block and a 3-line blockquote
+// so scenario 4 (fallback byte-identity) can measure all three block kinds
+// from one document.
+const BLOCK_GEOM_DOC = [
+  "intro",
+  "",
+  "```highlight",
+  "line one",
+  "line two",
+  "line three",
+  "```",
+  "",
+  "```highlight",
+  "```",
+  "",
+  "```ts",
+  "const x = 1;",
+  "```",
+  "",
+  "> quote line 1",
+  "> quote line 2",
+  "> quote line 3",
+  "",
+  "tail",
+].join("\n");
+
+await setEditorDoc(BLOCK_GEOM_DOC);
+await putCursorOnLineContaining("intro"); // outside every block — resting state
+
+async function measureHighlightBlocks() {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll(".cm-highlight-block")).map((el) => ({
+      text: el.textContent,
+      first: el.classList.contains("cm-highlight-block-first"),
+      last: el.classList.contains("cm-highlight-block-last"),
+      borderRadius: getComputedStyle(el).borderRadius,
+    })),
+  );
+}
+
+// ── 1) rounded corners: multi-line / 1-line-worth-of-mid / 0-body-line ────
+const resting = await measureHighlightBlocks();
+const TOP_ROUNDED = "6px 6px 0px 0px"; // --block-radius unset → var(--radius-sm, 6px), top corners only
+const BOTTOM_ROUNDED = "0px 0px 6px 6px";
+blockGeometryStates.push({
+  label: "highlight-block-corners-resting",
+  count: resting.length, // 3 (block 1 body) + 2 (block 2's two always-visible fences)
+  lines: resting,
+  block1FirstTopRounded: resting[0]?.first === true && resting[0]?.borderRadius === TOP_ROUNDED,
+  block1MidFlat: resting[1]?.first === false && resting[1]?.last === false && resting[1]?.borderRadius === "0px",
+  block1LastBottomRounded: resting[2]?.last === true && resting[2]?.borderRadius === BOTTOM_ROUNDED,
+  // The 0-body-line block (design intent: never conceal its fences — see
+  // fenced-markdown-block.ts's concealableFenceLines doc comment) must STILL
+  // round its two always-rendered fence lines (the bug team-lead flagged).
+  block2ZeroLineOpenFenceRounded: resting[3]?.first === true && resting[3]?.borderRadius === TOP_ROUNDED,
+  block2ZeroLineCloseFenceRounded: resting[4]?.last === true && resting[4]?.borderRadius === BOTTOM_ROUNDED,
+});
+
+// ── 2) cursor entry moves -first/-last to the fence lines, exit reverts ───
+await putCursorOnLineContaining("line two"); // inside block 1 → revealed
+const revealed = await measureHighlightBlocks();
+blockGeometryStates.push({
+  label: "highlight-block-corners-revealed",
+  count: revealed.length, // 5 (block 1: open + 3 body + close) + 2 (block 2, unaffected)
+  lines: revealed,
+  openFenceIsFirst: revealed[0]?.text?.includes("```highlight") && revealed[0]?.first === true,
+  closeFenceIsLast: revealed[4]?.text?.trim() === "```" && revealed[4]?.last === true,
+  midLinesHaveNeitherClass: revealed.slice(1, 4).every((l) => !l.first && !l.last),
+});
+
+await putCursorOnLineContaining("intro"); // exit block 1 → re-conceal
+const afterExit = await measureHighlightBlocks();
+blockGeometryStates.push({
+  label: "highlight-block-corners-after-exit",
+  count: afterExit.length,
+  revertsToResting: JSON.stringify(afterExit) === JSON.stringify(resting),
+});
+
+// ── 3) codeblock/blockquote geometry-ABSENT fallback: round-trip identity ─
+// Not a hardcoded pixel literal (padding is em-based, font-size dependent) —
+// instead, snapshot before any geometry edit and again after a full
+// set-then-auto-revert round trip (scenario 4 below); byte-identical proves
+// "unset == untouched" still holds (the regression the plan's step 11 asked
+// for, done here against COMPUTED style instead of the CSS text vitest
+// already covers).
+async function measureBlockFallback() {
+  return page.evaluate(() => {
+    const cb = document.querySelector(".cm-content .cm-codeblock");
+    const bq = document.querySelector(".cm-content .cm-blockquote");
+    return {
+      codeBlockRadius: cb ? getComputedStyle(cb).borderRadius : null,
+      codeBlockPadding: cb ? getComputedStyle(cb).padding : null,
+      blockquotePaddingLeft: bq ? getComputedStyle(bq).paddingLeft : null,
+    };
+  });
+}
+const fallbackBefore = await measureBlockFallback();
+
+// ── 4) geometry sliders: drag → immediate reflect (frame + real editor) →
+//    자동 chip → value "자동" restored → `geometry` key FULLY gone (an empty
+//    `{}` left behind counts as failure too — nextGeometry's whole point). ──
+await openThemeCategory();
+const geometryRowMeta = await page.evaluate(() => {
+  const section = document.querySelector(".theme-geometry");
+  const radius = section?.querySelector('input[aria-label="모서리 둥글기"]');
+  const padding = section?.querySelector('input[aria-label="안쪽 여백"]');
+  return {
+    sectionExists: !!section,
+    radius: radius ? { min: radius.min, max: radius.max, step: radius.step } : null,
+    padding: padding ? { min: padding.min, max: padding.max, step: padding.step } : null,
+  };
+});
+blockGeometryStates.push({ label: "geometry-section-shape", ...geometryRowMeta });
+
+async function dragGeometrySlider(ariaLabel, value) {
+  await page.evaluate(
+    ({ ariaLabel, value }) => {
+      const input = document.querySelector(`.theme-geometry input[aria-label="${ariaLabel}"]`);
+      input.value = String(value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    { ariaLabel, value },
+  );
+  await page.waitForTimeout(150);
+}
+
+async function clickGeometryAutoChip(ariaLabel) {
+  await page.evaluate((ariaLabel) => {
+    const input = document.querySelector(`.theme-geometry input[aria-label="${ariaLabel}"]`);
+    input.closest(".theme-geometry-row").querySelector("button").click();
+  }, ariaLabel);
+  await page.waitForTimeout(150);
+}
+
+await dragGeometrySlider("모서리 둥글기", 20);
+await dragGeometrySlider("안쪽 여백", 1.2);
+const afterDrag = await page.evaluate(() => {
+  const cb = document.querySelector(".theme-codeblock");
+  const cmFirst = document.querySelector(".cm-content .cm-highlight-block-first");
+  return {
+    lsThemeJson: localStorage.getItem("mermark.themeJson"),
+    miniFrameCodeblockRadius: cb ? getComputedStyle(cb).borderRadius : null,
+    realHighlightFirstRadius: cmFirst ? getComputedStyle(cmFirst).borderRadius : null,
+  };
+});
+blockGeometryStates.push({
+  label: "geometry-sliders-after-drag",
+  lsHasBlockRadius20: (afterDrag.lsThemeJson ?? "").includes('"blockRadius": "20px"'),
+  lsHasBlockPadding12: (afterDrag.lsThemeJson ?? "").includes('"blockPadding": "1.2em"'),
+  miniFrameReflects20px: afterDrag.miniFrameCodeblockRadius === "20px",
+  realEditorReflects20pxTop: afterDrag.realHighlightFirstRadius === "20px 20px 0px 0px",
+});
+
+await clickGeometryAutoChip("모서리 둥글기");
+await clickGeometryAutoChip("안쪽 여백");
+const afterAuto = await page.evaluate(() => {
+  const section = document.querySelector(".theme-geometry");
+  const radiusRow = section.querySelector('input[aria-label="모서리 둥글기"]').closest(".theme-geometry-row");
+  const paddingRow = section.querySelector('input[aria-label="안쪽 여백"]').closest(".theme-geometry-row");
+  return {
+    lsThemeJson: localStorage.getItem("mermark.themeJson"),
+    radiusValueText: radiusRow.querySelector(".settings-slider-value")?.textContent ?? null,
+    paddingValueText: paddingRow.querySelector(".settings-slider-value")?.textContent ?? null,
+  };
+});
+blockGeometryStates.push({
+  label: "geometry-sliders-after-auto-chip",
+  radiusShowsAuto: afterAuto.radiusValueText === "자동",
+  paddingShowsAuto: afterAuto.paddingValueText === "자동",
+  // catches a stray `"geometry": {}` left behind, not just a missing key —
+  // the exact leak nextGeometry (controls.ts) exists to close.
+  geometryKeyFullyGone: !(afterAuto.lsThemeJson ?? "").includes('"geometry"'),
+});
+
+await page.click(".settings-close");
+await page.waitForTimeout(200);
+
+const fallbackAfter = await measureBlockFallback();
+blockGeometryStates.push({
+  label: "codeblock-blockquote-fallback-roundtrip-identity",
+  before: fallbackBefore,
+  after: fallbackAfter,
+  identical: JSON.stringify(fallbackBefore) === JSON.stringify(fallbackAfter),
+});
+
+const blockGeometryState = { states: blockGeometryStates };
+
 // ── showHiddenFilesSetting (_workspace/01_hidden_toggle_design.md) ─────────
 // New "탐색기" category, 3-step round trip (same shape as the conceal/reveal
 // 3-step assertions elsewhere): default OFF (dotfiles absent) → ON (dotfiles
@@ -755,10 +987,18 @@ const hiddenToggleState = {
 
 writeFileSync(
   out,
-  JSON.stringify({ states, headingStates, viewerToggleState, themeEditorState, hiddenToggleState, errors }, null, 2),
+  JSON.stringify(
+    { states, headingStates, viewerToggleState, themeEditorState, blockGeometryState, hiddenToggleState, errors },
+    null,
+    2,
+  ),
 );
 console.log(
-  JSON.stringify({ states, headingStates, viewerToggleState, themeEditorState, hiddenToggleState, errors }, null, 2),
+  JSON.stringify(
+    { states, headingStates, viewerToggleState, themeEditorState, blockGeometryState, hiddenToggleState, errors },
+    null,
+    2,
+  ),
 );
 console.log("\nwrote", out);
 await browser.close();

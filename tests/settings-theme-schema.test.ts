@@ -3,8 +3,10 @@ import {
   absentKind,
   builtInTheme,
   isOptionalKey,
+  isSingleToken,
   parseTheme,
   promoteToExtended,
+  resolveGeometry,
   resolveOptional,
   serializeTheme,
   themeToVars,
@@ -160,10 +162,15 @@ describe("themeToVars maps every field to the right CSS var", () => {
       "--quote-bar": "initial",
       "--codeblock-color": "initial",
       "--codeblock-bg": "initial",
+      // round 3: highlightBlockBg, same always-emit "auto" rule.
+      "--highlightblock-bg": "initial",
       "--radius-md": "8px",
       "--radius-lg": "12px",
       "--radius-xl": "16px",
       "--font-sans": "Inter, sans-serif",
+      // round 3: block geometry, always emitted, absent → "initial".
+      "--block-radius": "initial",
+      "--block-padding": "initial",
     });
   });
 
@@ -485,8 +492,8 @@ describe("upgradePristinePreset: only an untouched preset is upgraded", () => {
 
   it("upgradePristinePreset itself: pure function, direct calls", () => {
     const light = builtInTheme("light");
-    expect(upgradePristinePreset(light, [])).toEqual(light); // no new-gen keys in raw → but already matches itself
-    expect(upgradePristinePreset({ ...light, name: "custom" }, [])).toEqual({ ...light, name: "custom" });
+    expect(upgradePristinePreset(light, [], false)).toEqual(light); // no new-gen keys in raw → but already matches itself
+    expect(upgradePristinePreset({ ...light, name: "custom" }, [], false)).toEqual({ ...light, name: "custom" });
   });
 
   // 2026-08 audit blocker #2 (04_ui_audit.md): pristine judged colors alone, so a
@@ -633,5 +640,157 @@ describe("round-2 optional keys (boldItalic/strike/quote/codeBlock family): pars
       const parsed = parseTheme(JSON.stringify(withKey));
       expect(parsed!.colors[key], `${key} was destroyed by a false-pristine upgrade`).toBe("#abcdef");
     }
+  });
+});
+
+// ── highlightBlockBg (2026-08 round 3, "```highlight 블록이 테마 대상에서
+// 빠졌다") — same OPTIONAL_KEYS "auto" family as quoteBg/codeBlockBg. ──
+describe("highlightBlockBg (round 3): OPTIONAL_KEYS 'auto' family, same contract as quoteBg/codeBlockBg", () => {
+  it("isOptionalKey/absentKind classify it as an 'auto' optional key", () => {
+    expect(isOptionalKey("highlightBlockBg")).toBe(true);
+    expect(absentKind("highlightBlockBg")).toBe("auto");
+  });
+
+  it("resolveOptional: absent → 'initial', explicit value passes through verbatim", () => {
+    expect(resolveOptional("highlightBlockBg", undefined)).toBe("initial");
+    expect(resolveOptional("highlightBlockBg", "#ff00ff")).toBe("#ff00ff");
+  });
+
+  it("themeToVars always emits --highlightblock-bg (absent → 'initial')", () => {
+    const vars = themeToVars(promotedTheme);
+    expect(vars["--highlightblock-bg"]).toBe("initial");
+    const withIt = themeToVars({ ...promotedTheme, colors: { ...promotedTheme.colors, highlightBlockBg: "#00ffaa" } });
+    expect(withIt["--highlightblock-bg"]).toBe("#00ffaa");
+  });
+
+  it("parse/serialize round-trip: presence and absence survive", () => {
+    expect(JSON.parse(serializeTheme(promotedTheme)).colors).not.toHaveProperty("highlightBlockBg");
+    const withIt: Theme = { ...promotedTheme, colors: { ...promotedTheme.colors, highlightBlockBg: "#123123" } };
+    expect(JSON.parse(serializeTheme(withIt)).colors.highlightBlockBg).toBe("#123123");
+    const parsed = parseTheme(serializeTheme(withIt));
+    expect(parsed!.colors.highlightBlockBg).toBe("#123123");
+  });
+
+  it("parseTheme treats a corrupt/empty highlightBlockBg as absent, never rejects the whole theme", () => {
+    const legacy = builtInTheme("dark");
+    const broken = { ...legacy, colors: { ...legacy.colors, highlightBlockBg: "" } };
+    const parsed = parseTheme(JSON.stringify(broken));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.colors.highlightBlockBg).toBeUndefined();
+  });
+
+  it("a legacy 8-key theme (no highlightBlockBg at all) still parses fine (backward compat)", () => {
+    const parsed = parseTheme(JSON.stringify(validTheme));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.colors.highlightBlockBg).toBeUndefined();
+  });
+
+  it("a light-preset JSON with only highlightBlockBg set is NOT misjudged pristine (blocker-#2 regression class)", () => {
+    const legacy = builtInTheme("light");
+    const withKey = { ...legacy, colors: { ...legacy.colors, highlightBlockBg: "#654321" } };
+    const parsed = parseTheme(JSON.stringify(withKey));
+    expect(parsed!.colors.highlightBlockBg).toBe("#654321");
+    expect(parsed!.name).toBe("light");
+  });
+});
+
+// ── Block geometry: Theme.geometry?.blockRadius/blockPadding (design §3) ──
+describe("block geometry (blockRadius/blockPadding): shared 2-key OPTIONAL-mirror section", () => {
+  it("isSingleToken: a single CSS length token is valid, a multi-token value is rejected", () => {
+    expect(isSingleToken("12px")).toBe(true);
+    expect(isSingleToken("0.7em")).toBe(true);
+    expect(isSingleToken(".5em 1em")).toBe(false); // the blockquote padding-left collapse trap
+    expect(isSingleToken("")).toBe(false);
+    expect(isSingleToken("   ")).toBe(false);
+    expect(isSingleToken(undefined)).toBe(false);
+    expect(isSingleToken(42)).toBe(false);
+  });
+
+  it("resolveGeometry: absent → 'initial', explicit value passes through verbatim", () => {
+    expect(resolveGeometry("blockRadius", undefined)).toBe("initial");
+    expect(resolveGeometry("blockRadius", "12px")).toBe("12px");
+    expect(resolveGeometry("blockPadding", undefined)).toBe("initial");
+  });
+
+  it("themeToVars always emits --block-radius/--block-padding (absent → 'initial')", () => {
+    const vars = themeToVars(promotedTheme);
+    expect(vars["--block-radius"]).toBe("initial");
+    expect(vars["--block-padding"]).toBe("initial");
+    const withIt = themeToVars({ ...promotedTheme, geometry: { blockRadius: "12px", blockPadding: "1em" } });
+    expect(withIt["--block-radius"]).toBe("12px");
+    expect(withIt["--block-padding"]).toBe("1em");
+  });
+
+  it("parseTheme accepts a valid single-token geometry value", () => {
+    const withGeo = { ...promotedTheme, geometry: { blockRadius: "12px" } };
+    const parsed = parseTheme(JSON.stringify(withGeo));
+    expect(parsed!.geometry?.blockRadius).toBe("12px");
+    expect(parsed!.geometry?.blockPadding).toBeUndefined();
+  });
+
+  it("parseTheme treats a 2-value (space-containing) blockPadding as ABSENT — never rejects the theme (isSingleToken guard)", () => {
+    const withGeo = { ...promotedTheme, geometry: { blockPadding: ".5em 1em" } };
+    const parsed = parseTheme(JSON.stringify(withGeo));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.geometry?.blockPadding).toBeUndefined();
+  });
+
+  it("parseTheme treats a non-string/empty geometry value as absent, never rejects", () => {
+    const withGeo = { ...promotedTheme, geometry: { blockRadius: "", blockPadding: 12 } };
+    const parsed = parseTheme(JSON.stringify(withGeo));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.geometry).toBeUndefined(); // both keys invalid → no geometry section at all
+  });
+
+  it("serializeTheme omits the whole `geometry` key when both keys are absent (legacy JSON byte round-trip)", () => {
+    expect(JSON.parse(serializeTheme(promotedTheme))).not.toHaveProperty("geometry");
+    const parsed = parseTheme(serializeTheme(promotedTheme));
+    expect(JSON.parse(serializeTheme(parsed!))).not.toHaveProperty("geometry");
+  });
+
+  it("serializeTheme keeps an explicitly-set geometry key, round-trips through parseTheme", () => {
+    const withGeo: Theme = { ...promotedTheme, geometry: { blockRadius: "14px", blockPadding: "1em" } };
+    const json = serializeTheme(withGeo);
+    expect(JSON.parse(json).geometry).toEqual({ blockRadius: "14px", blockPadding: "1em" });
+    const parsed = parseTheme(json);
+    expect(parsed!.geometry).toEqual({ blockRadius: "14px", blockPadding: "1em" });
+  });
+
+  it("a legacy theme JSON with no `geometry` key at all still parses fine (backward compat)", () => {
+    const parsed = parseTheme(JSON.stringify(validTheme));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.geometry).toBeUndefined();
+  });
+
+  // design §3's function-#2 trap: pristine judged colors alone would let a
+  // preset-colors-untouched theme with ONLY geometry.blockRadius set be
+  // misjudged pristine, and the next parse silently drops blockRadius by
+  // replacing the whole theme with the fresh preset (which has no geometry).
+  it("a light-preset JSON with only geometry.blockRadius set is NOT misjudged pristine — geometry survives", () => {
+    const legacy = builtInTheme("light");
+    const withGeo = { ...legacy, geometry: { blockRadius: "12px" } };
+    const parsed = parseTheme(JSON.stringify(withGeo));
+    expect(parsed!.geometry?.blockRadius).toBe("12px"); // NOT destroyed by a false-pristine upgrade
+    expect(parsed!.name).toBe("light");
+  });
+
+  it("upgradePristinePreset itself: rawHasGeometry=true blocks the upgrade even with an otherwise-pristine theme", () => {
+    const light = builtInTheme("light");
+    const { comment: _c, ...oldColors } = light.colors;
+    const pristineColors = { ...light, colors: oldColors };
+    // Without geometry flag: upgrades (gains comment default).
+    expect(upgradePristinePreset(pristineColors, [], false).colors.comment).toBe(light.colors.comment);
+    // With geometry flag: left untouched (colors keep the promoteToExtended fallback, not the preset's).
+    const untouched = upgradePristinePreset(pristineColors, [], true);
+    expect(untouched).toEqual(pristineColors);
+  });
+
+  it("a truly pristine theme (no geometry touched) still upgrades as before — the geometry gate doesn't loosen the existing gates", () => {
+    const legacy = builtInTheme("light");
+    const { comment: _c, ...oldColors } = legacy.colors;
+    const pristine = { ...legacy, colors: oldColors };
+    const parsed = parseTheme(JSON.stringify(pristine));
+    expect(parsed!.colors.comment).toBe("#8f887e");
+    expect(parsed!.geometry).toBeUndefined();
   });
 });

@@ -147,8 +147,8 @@
   align-items: stretch;
   gap: .55em;
   margin: 0 0 .85em;
-  padding: .3em .8em .3em .3em;
-  border-radius: var(--radius-sm, 6px);
+  padding: .3em .8em .3em var(--block-padding, .3em);
+  border-radius: var(--block-radius, var(--radius-sm, 6px));
 }
 /* 12px 히트 폭(design decision 6 요구: "히트 폭 ≥ 12px") 이지만 시각적으로는
    6px만 채워 보이도록 background-clip: content-box + 3px 수평 패딩을 쓴다 —
@@ -169,6 +169,13 @@
 /* round 2 — 코드블럭(codeBlock), 블록 전체가 버튼 1개(설계 결정 1: 내부
    분할 없음). 실앱 `.cm-codeblock`과 같은 모노스페이스·패딩·라운드를 쓰되
    펜스 마커는 표기하지 않는다(EDIT_MODE_SAMPLE_TEXT doc comment 예외 3). */
+/* Block geometry (design §5.5): the SAME --block-radius/--block-padding var
+   chain the real editor consumes (styles.css's .cm-codeblock/.cm-blockquote/
+   .cm-highlight-block) — themeVarsSink is documentElement's single writer of
+   those vars, so this mini frame updates for free on every setting change
+   (slider drag or JSON edit alike), no subscription needed. Each rule's
+   fallback mirrors its real-editor counterpart's CURRENT hardcoded value
+   (zero-drift when geometry is unset). */
 .theme-codeblock {
   display: block;
   width: 100%;
@@ -177,11 +184,39 @@
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: .8em;
   line-height: 1.6;
-  padding: .7em .9em;
-  border-radius: var(--radius-md, 8px);
+  padding: var(--block-padding, .7em) var(--block-padding, .9em);
+  border-radius: var(--block-radius, var(--radius-md, 8px));
   margin-bottom: .7em;
 }
 .theme-codeblock-line { display: block; }
+
+/* 하이라이트 블록(round 3) — codeBlock과 같은 "블록 전체가 버튼 1개" 관용구.
+   색은 인라인 style(paintTarget의 "block-bg" 케이스)이 칠하므로 여기서는
+   레이아웃·기하만: 기본 rounded(§2, 키 부재에도 적용되는 새 기본 룩)를
+   --radius-sm 폴백으로 낸다 — 실앱 .cm-highlight-block-first/-last와 동일한
+   폴백 체인. Padding axis (2026-08 감사 🟢 반영): the real editor puts
+   `--block-padding` on `padding-inline` (`.cm-highlight-block`, styles.css)
+   PLUS `padding-top`/`padding-bottom` on the -first/-last LINE decorations —
+   two properties across two roles because a real block is many `.cm-line`
+   siblings. This mini frame is ONE element playing both the first and the
+   last line's role at once (a single button, not per-line DOM — see
+   theme-preview.ts), so the honest single-element equivalent is the shorthand
+   `padding: var(--block-padding, 0)` on all four sides, not a vertical-only
+   split (the previous version put --block-padding on the vertical axis and
+   masked the real horizontal effect behind a hardcoded `.3em` on -line — a
+   slider drag never visibly moved the frame's horizontal inset, understating
+   what the setting actually does in the real editor). */
+.theme-highlightblock {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: .85em;
+  line-height: 1.6;
+  padding: var(--block-padding, 0);
+  border-radius: var(--block-radius, var(--radius-sm, 6px));
+  margin-bottom: .7em;
+}
+.theme-highlightblock-line { display: block; }
 /* THE `border` target's real anchor (moved here from the quote bar above —
    2026-08 감사 반영, major #3): a bare full-width top border, matching the
    real editor's `.cm-hr` exactly (styles.css:1738, which also just uses
@@ -372,3 +407,31 @@
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
   pointer-events: none;
 }
+
+/* Part C (design §5) — "블록 모양" geometry sliders, sitting between the
+   preview frame/inspector and the JSON accordion (controls.ts's renderJson).
+   Deliberately its own section, not folded into .theme-inspector: it edits
+   a shared 2-key pair via read-modify-write, not a single click-target's
+   color, so it never carries [data-target] (design §5.1 — outside the frame
+   click grammar). Layout only — value formatting/auto state come from
+   controls.ts's reflect(); the .settings-slider/-value classes are the SAME
+   ones renderSlider uses (styles.css), so the track/thumb/value typography
+   is shared automatically, not re-declared here. */
+.theme-geometry {
+  border-top: 1px solid var(--border);
+  margin-top: .8em;
+  padding-top: .8em;
+}
+.theme-geometry-heading { font-size: 13px; font-weight: 600; }
+.theme-geometry-sub { font-size: 11px; color: var(--muted); margin-bottom: .6em; }
+.theme-geometry-row {
+  display: flex;
+  align-items: center;
+  gap: .6em;
+  margin-bottom: .5em;
+}
+.theme-geometry-row-label { flex: none; width: 6em; font-size: 12px; color: var(--muted); }
+/* Auto state: the knob sits at a representative position (controls.ts's
+   `autoKnob`) but isn't the live value, so it's visually damped (design
+   §5.4 — "감쇠") rather than looking like a normal, meaningful reading. */
+.theme-geometry-row .settings-slider.is-auto { opacity: .45; }

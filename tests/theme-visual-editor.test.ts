@@ -66,8 +66,8 @@ describe("Theme mini-frame preview", () => {
     // h1..h6). round 2 adds 5 new CLICK TARGETS (boldItalic/strike/quote/
     // quoteBar/codeBlock — 9 new schema keys, but boldItalic+boldItalicBg
     // share one target, same for strike/quote/codeBlock, and quoteBar has no
-    // bg pair) = 18 + 5 = 23.
-    expect(THEME_TARGETS.length).toBe(23);
+    // bg pair) = 18 + 5 = 23. round 3 adds 1 more (highlightBlock) = 24.
+    expect(THEME_TARGETS.length).toBe(24);
   });
 
   // design plan B1.2: round-2's new rows sit at the array positions the plan
@@ -76,7 +76,9 @@ describe("Theme mini-frame preview", () => {
   // before comment (matching the document's natural quote→code→comment
   // flow). This isn't "table order == full DOM order" (round-1's core rows
   // are grouped by concept, not position) — just these 5 new insertions.
-  it("round-2 targets are inserted where the plan specifies (relative to italic/comment)", () => {
+  // round 3 (highlightBlock) sits right after codeBlock, still before comment
+  // — the plan's "codeBlock 뒤·comment 앞" instruction.
+  it("round-2/round-3 targets are inserted where the plan specifies (relative to italic/comment)", () => {
     const idx = (id: string) => THEME_TARGETS.findIndex((t) => t.id === id);
     const italicIdx = idx("italic");
     expect(idx("boldItalic")).toBe(italicIdx + 1);
@@ -86,9 +88,11 @@ describe("Theme mini-frame preview", () => {
     expect(idx("quote")).toBeLessThan(commentIdx);
     expect(idx("quoteBar")).toBeLessThan(commentIdx);
     expect(idx("codeBlock")).toBeLessThan(commentIdx);
-    expect(idx("quote")).toBe(commentIdx - 3);
-    expect(idx("quoteBar")).toBe(commentIdx - 2);
-    expect(idx("codeBlock")).toBe(commentIdx - 1);
+    expect(idx("highlightBlock")).toBeLessThan(commentIdx);
+    expect(idx("quote")).toBe(commentIdx - 4);
+    expect(idx("quoteBar")).toBe(commentIdx - 3);
+    expect(idx("codeBlock")).toBe(commentIdx - 2);
+    expect(idx("highlightBlock")).toBe(commentIdx - 1);
   });
 
   it("renders the chrome anchors called out by the design (bg/surface/border/accent/muted)", () => {
@@ -229,6 +233,14 @@ describe("Theme mini-frame preview", () => {
     const codeBlock = host.querySelector<HTMLElement>('[data-target="codeBlock"]')!;
     expect(codeBlock.style.color).toBe("var(--codeblock-color, inherit)");
     expect(codeBlock.style.background).toBe("var(--codeblock-bg, var(--block-fill))");
+
+    // round 3: highlightBlock paints its OWN background (paint: "block-bg" —
+    // no separate text color key exists), text stays --fg.
+    const highlightBlock = host.querySelector<HTMLElement>('[data-target="highlightBlock"]')!;
+    expect(highlightBlock.style.background).toBe(
+      "var(--highlightblock-bg, color-mix(in srgb, var(--highlight-bg) 22%, transparent))",
+    );
+    expect(highlightBlock.style.color).toBe("var(--fg)");
   });
 
   // round 2 (design decision 1, item 5 / 감사 major #3의 근본 해결): the
@@ -279,6 +291,28 @@ describe("Theme mini-frame preview", () => {
     expect(block.tagName).toBe("BUTTON");
     expect(block.textContent).toContain('const bag = pack("가볍게");');
     expect(block.textContent).toContain("bag.weigh();");
+  });
+
+  // round 3: highlightBlock mirrors codeBlock's "one button, no internal
+  // split" contract, 2 body-line spans, no fence markers (EDIT_MODE_SAMPLE_TEXT
+  // doc comment exception 4 — the block is atomic like codeBlock/quote).
+  it("highlightBlock is one button covering the whole block, 2 body lines, no fence markers", () => {
+    mount();
+    const block = host.querySelector<HTMLElement>('[data-target="highlightBlock"]')!;
+    expect(block.tagName).toBe("BUTTON");
+    expect(block.classList.contains("theme-highlightblock")).toBe(true);
+    expect(block.querySelectorAll(".theme-highlightblock-line").length).toBe(2);
+    expect(block.textContent).not.toContain("```highlight");
+    expect(block.textContent).not.toContain("```");
+  });
+
+  // Inspector chip: highlightBlock has NO bgKey, so no tab row — but its
+  // colorKey IS an OPTIONAL_KEYS "auto" key, so the inspector still shows the
+  // "자동" chip when nothing is set (generic isOptionalKey/absentKind wiring,
+  // no inspector code change needed).
+  it("highlightBlock has no bgKey (no background tab)", () => {
+    const t = THEME_TARGETS.find((x) => x.id === "highlightBlock")!;
+    expect(t.bgKey).toBeUndefined();
   });
 
   // The hr is the ONLY thing painted with --border now; nothing else in the
@@ -616,6 +650,145 @@ describe("preset sync", () => {
     themeJsonSetting.set(edited);
     syncJsonToPreset("dark");
     expect(themeJsonSetting.get().colors.h1).toBe("#abcdef");
+  });
+});
+
+// Part C (design §5, plan step 13): the geometry slider section sits between
+// the preview frame/inspector and the JSON accordion, and read-modify-writes
+// `Theme.geometry` through the SAME `Setting<Theme>` as the frame/inspector —
+// no new setting, no fan-out (design §5.1/§5.2).
+describe("theme geometry sliders (design §5 — Phase 2)", () => {
+  let host: HTMLElement;
+
+  beforeEach(() => {
+    localStorage.clear();
+    themeJsonSetting.set(builtInTheme("light"));
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+
+  afterEach(() => {
+    runTeardown(el());
+    host.remove();
+    themeJsonSetting.set(builtInTheme("light"));
+  });
+
+  let mounted: HTMLElement | null = null;
+  function el(): HTMLElement {
+    return mounted!;
+  }
+  function mount(): HTMLElement {
+    const row = RENDER.json(themeJsonSetting as any, { kind: "json" } as any);
+    mounted = row;
+    host.appendChild(row);
+    return row;
+  }
+
+  function geometrySection(): HTMLElement {
+    return host.querySelector(".theme-geometry")!;
+  }
+
+  function sliderRow(label: string): { input: HTMLInputElement; value: HTMLElement; chip: HTMLButtonElement } {
+    const section = geometrySection();
+    const input = section.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+    const rowEl = input.closest(".theme-geometry-row") as HTMLElement;
+    const value = rowEl.querySelector(".settings-slider-value") as HTMLElement;
+    const chip = rowEl.querySelector<HTMLButtonElement>("button")!;
+    return { input, value, chip };
+  }
+
+  it("sits between the preview/inspector and the JSON accordion, cell order preview→inspector→geometry→details", () => {
+    const row = mount();
+    const cell = row.querySelector(".settings-row-control")!;
+    const kids = Array.from(cell.children);
+    const geoIdx = kids.findIndex((k) => k.classList.contains("theme-geometry"));
+    const detailsIdx = kids.findIndex((k) => k.tagName === "DETAILS");
+    expect(geoIdx).toBeGreaterThan(-1);
+    expect(detailsIdx).toBeGreaterThan(geoIdx);
+    // preview frame + inspector both precede it
+    expect(geoIdx).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renders two slider rows (radius px, padding em) with the plan's ranges/steps", () => {
+    mount();
+    const radius = sliderRow("모서리 둥글기");
+    expect(radius.input.type).toBe("range");
+    expect(radius.input.classList.contains("settings-slider")).toBe(true);
+    expect(radius.input.min).toBe("0");
+    expect(radius.input.max).toBe("24");
+    expect(radius.input.step).toBe("1");
+
+    const padding = sliderRow("안쪽 여백");
+    expect(padding.input.min).toBe("0");
+    expect(padding.input.max).toBe("2");
+    expect(padding.input.step).toBe("0.1");
+  });
+
+  it("absent geometry shows the 자동 chip pressed and '자동' as the value/aria-valuetext", () => {
+    mount();
+    const { input, value, chip } = sliderRow("모서리 둥글기");
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    expect(value.textContent).toBe("자동");
+    expect(input.getAttribute("aria-valuetext")).toBe("자동");
+  });
+
+  it("dragging the radius slider writes geometry.blockRadius as `${n}px` and clears the auto chip", () => {
+    mount();
+    const { input, value, chip } = sliderRow("모서리 둥글기");
+    input.value = "12";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(themeJsonSetting.get().geometry?.blockRadius).toBe("12px");
+    expect(value.textContent).toBe("12px");
+    expect(chip.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("dragging the padding slider writes geometry.blockPadding as `${n}em`", () => {
+    mount();
+    const { input, value } = sliderRow("안쪽 여백");
+    input.value = "0.5";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(themeJsonSetting.get().geometry?.blockPadding).toBe("0.5em");
+    expect(value.textContent).toBe("0.5em");
+  });
+
+  it("clicking the auto chip deletes that geometry key; both-absent omits `geometry` from serialize", () => {
+    mount();
+    const { input, chip } = sliderRow("모서리 둥글기");
+    input.value = "10";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(themeJsonSetting.get().geometry?.blockRadius).toBe("10px");
+    chip.click();
+    expect(themeJsonSetting.get().geometry?.blockRadius).toBeUndefined();
+    expect(serializeTheme(themeJsonSetting.get())).not.toContain('"geometry"');
+  });
+
+  it("external theme changes (JSON apply / preset swap) reflect into the sliders (bind round-trip)", () => {
+    mount();
+    themeJsonSetting.set({
+      ...themeJsonSetting.get(),
+      geometry: { blockRadius: "16px", blockPadding: "1.2em" },
+    });
+    const radius = sliderRow("모서리 둥글기");
+    expect(radius.input.value).toBe("16");
+    expect(radius.value.textContent).toBe("16px");
+    const padding = sliderRow("안쪽 여백");
+    expect(padding.input.value).toBe("1.2");
+    expect(padding.value.textContent).toBe("1.2em");
+  });
+
+  it("the geometry section carries no [data-target] — it doesn't participate in the frame click grammar", () => {
+    mount();
+    expect(geometrySection().querySelector("[data-target]")).toBeNull();
+  });
+
+  it("teardown unsubscribes the geometry sliders (no stale writes into detached DOM)", () => {
+    const row = mount();
+    runTeardown(row);
+    mounted = document.createElement("div"); // afterEach's runTeardown(el()) becomes a no-op
+    // Re-mounting a fresh set of theme values must not throw or reflect into the old (torn-down) DOM.
+    expect(() =>
+      themeJsonSetting.set({ ...themeJsonSetting.get(), geometry: { blockRadius: "3px" } }),
+    ).not.toThrow();
   });
 });
 

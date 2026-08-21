@@ -102,11 +102,48 @@ export interface Theme {
     /** Fenced code BLOCK background. Absent → follows the derived --block-fill
      *  (same direction-preserving reasoning as quoteBg). */
     codeBlockBg?: string;
+    /** ```highlight markdown-block background (distinct from inline `highlightBg`,
+     *  which is the saturated ==mark== fluorescent tone — this is a full-width
+     *  line fill, toned well below it). Absent → follows the derived
+     *  `color-mix(in srgb, var(--highlight-bg) 22%, transparent)` formula
+     *  (round 2 request: "```highlight 블록만 테마 대상에서 빠졌다" — same OPTIONAL_KEYS
+     *  "auto" family as quoteBg/codeBlockBg, so an unconfigured theme is
+     *  byte-identical to the pre-this-feature derived tone). The derivation
+     *  formula's SSOT stays in styles.css's fallback literal (theme-schema never
+     *  re-derives it) — see resolveOptional/OPTIONAL_INTRINSIC. */
+    highlightBlockBg?: string;
   };
   /** --radius-md/lg/xl. (No --radius-sm: styles.css only fallback-references it.) */
   radii: { md: string; lg: string; xl: string };
   /** --font-sans (a CSS font stack). */
   font: { sans: string };
+  /** Block-element geometry, shared by code block / blockquote / highlight block
+   *  (the --block-fill "one surface family" rule, applied to shape). Optional on
+   *  BOTH sides like OPTIONAL_KEYS — absence is first-class and means "each
+   *  element keeps its current hardcoded geometry" (auto). Extension path: a
+   *  future per-element override slots its own var IN FRONT of the shared var in
+   *  the CSS chain (`var(--codeblock-radius, var(--block-radius, <fallback>))`)
+   *  — no key rename needed. Kept OUT of `colors` on purpose (a length value
+   *  under `colors` would be a naming lie, and the OPTIONAL_KEYS machinery is
+   *  typed to `Theme["colors"]`) — see GEOMETRY_KEYS/GEOMETRY_INTRINSIC/
+   *  resolveGeometry, the small mirror of the OPTIONAL_KEYS mechanism for this
+   *  one extra field. Absent geometry section entirely (both keys unset)
+   *  serializes without a `geometry` key at all (see parseTheme) so a legacy
+   *  theme JSON round-trips byte-identical. */
+  geometry?: {
+    /** Outer corner radius, ONE CSS length token (see `isSingleToken` —
+     *  a multi-token shorthand like `.5em 1em` is treated as absent, since
+     *  `.cm-blockquote-first`'s single-corner properties would reject it at
+     *  computed-value time). Absent → per-element current value (codeBlock:
+     *  var(--radius-md); blockquote: 0; highlightBlock: var(--radius-sm, 6px)). */
+    blockRadius?: string;
+    /** Inner padding, ONE CSS length token (same single-token rule as
+     *  blockRadius — a 2-value shorthand would collapse blockquote's
+     *  single-property `padding-left` to invalid/unset). Absent → per-element
+     *  current value (codeBlock: .7em/.9em; blockquote: left .75em only;
+     *  highlightBlock: none). */
+    blockPadding?: string;
+  };
 }
 
 // The 8 CORE color keys. STRICT: parseTheme rejects a value missing any of these
@@ -142,8 +179,9 @@ export const EXTENDED_KEYS = [
 ] as const;
 export type ExtendedKey = (typeof EXTENDED_KEYS)[number];
 
-/** The 20 OPTIONAL keys (2026-08 round 1: 11 background keys; round 2: +9 more —
- *  boldItalic(Bg), strike(Bg), quote/quoteBg/quoteBar, codeBlock(Bg)). Distinct
+/** The 21 OPTIONAL keys (2026-08 round 1: 11 background keys; round 2: +9 more —
+ *  boldItalic(Bg), strike(Bg), quote/quoteBg/quoteBar, codeBlock(Bg); a later
+ *  round adds +1 more — highlightBlockBg). Distinct
  *  class from EXTENDED_KEYS: extended keys are optional-in/always-filled-out
  *  (promote); optional keys are optional on BOTH sides — `undefined` is a
  *  first-class state that survives parse→serialize round-trips, not a hole to
@@ -173,6 +211,7 @@ export const OPTIONAL_KEYS = [
   "quoteBar",
   "codeBlock",
   "codeBlockBg",
+  "highlightBlockBg",
 ] as const;
 export type OptionalKey = (typeof OPTIONAL_KEYS)[number];
 
@@ -241,6 +280,7 @@ const OPTIONAL_INTRINSIC: Record<OptionalKey, string> = {
   quoteBar: "initial",
   codeBlock: "initial",
   codeBlockBg: "initial",
+  highlightBlockBg: "initial",
 };
 
 /** "부재한 옵셔널 키가 무엇으로 방출되는가" (pure query, renamed from
@@ -268,6 +308,54 @@ export function absentKind(key: OptionalKey): "none" | "auto" {
  *  inspector shows no "없음"/"자동" chip for it at all. */
 export function isOptionalKey(k: string): k is OptionalKey {
   return (OPTIONAL_KEYS as readonly string[]).includes(k);
+}
+
+// ---------------------------------------------------------------------------
+// Block geometry (Theme.geometry?.blockRadius/blockPadding) — a small mirror
+// of the OPTIONAL_KEYS machinery above (GEOMETRY_KEYS/GEOMETRY_INTRINSIC/
+// resolveGeometry ↔ OPTIONAL_KEYS/OPTIONAL_INTRINSIC/resolveOptional), kept as
+// its OWN pair of names rather than folded into the color machinery because
+// its values are CSS lengths, not colors, and `Theme["colors"]`-typed
+// OPTIONAL_KEYS can't hold a `geometry?.blockRadius` key without lying about
+// what it stores.
+// ---------------------------------------------------------------------------
+
+export const GEOMETRY_KEYS = ["blockRadius", "blockPadding"] as const;
+export type GeometryKey = (typeof GEOMETRY_KEYS)[number];
+
+/** Both geometry keys are "auto" family (see OPTIONAL_INTRINSIC) — absence
+ *  means "keep this element's own current hardcoded geometry", which is what
+ *  `initial` (a guaranteed-invalid custom-property value) achieves: the
+ *  consuming `var(--block-radius, <fallback>)` in styles.css falls through to
+ *  its per-element fallback. */
+const GEOMETRY_INTRINSIC: Record<GeometryKey, string> = {
+  blockRadius: "initial",
+  blockPadding: "initial",
+};
+
+/** Mirrors resolveOptional for the geometry pair. Pure query. */
+export function resolveGeometry(key: GeometryKey, v: string | undefined): string {
+  return v ?? GEOMETRY_INTRINSIC[key];
+}
+
+/** "이 값은 공백 없는 단일 토큰인가" (pure query) — a non-empty string with no
+ *  internal whitespace. Named `isSingleToken`, NOT `isSingleLengthToken`
+ *  (2026-08 감사 🟢 반영: the old name promised CSS-length validation that
+ *  the implementation never did — `"red"` or `"foo"` pass just as readily as
+ *  `"12px"` does): this is a whitespace check, nothing more. Named because it
+ *  encodes one deliberate domain rule (design §3): a multi-token shorthand
+ *  (`.5em 1em`, a 4-value radius shorthand) is accepted by `.cm-codeblock`'s
+ *  own shorthand properties but collapses `.cm-blockquote`'s single-property
+ *  `padding-left`/per-corner `border-*-radius` to an INVALID computed value —
+ *  CSS then drops the whole declaration, silently un-setting it instead of
+ *  falling back. Rejecting (treating as absent) any value containing
+ *  whitespace closes that trap structurally, for BOTH keys, rather than
+ *  validating "is this exactly one CSS length" (which would need a
+ *  unit-aware parser this codebase doesn't have and doesn't need — a stray
+ *  non-length single token still can't create the multi-property collapse
+ *  this guards against, so under-validating here is deliberate, not lazy). */
+export function isSingleToken(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0 && !/\s/.test(v.trim());
 }
 
 /** All new-generation color keys (comment + all 20 OPTIONAL_KEYS, round 1's 11 +
@@ -299,11 +387,22 @@ const LEGACY_EXTENDED_KEYS = EXTENDED_KEYS.filter((k) => k !== "comment");
  *  ANY of these fields, or a name the user renamed — takes the untouched branch
  *  and is returned as-is, so a customized theme is never silently overwritten.
  *  Idempotent: once a theme carries a new-gen key (e.g. from a prior upgrade), (b)
- *  is false and it is returned unchanged — no double-upgrade. Pure query, called
- *  once from parseTheme's tail. */
-export function upgradePristinePreset(t: Theme, rawColorKeys: readonly string[]): Theme {
+ *  is false and it is returned unchanged — no double-upgrade. `rawHasGeometry`
+ *  is the SAME (b)-class gate extended to `geometry` (design §3's function-
+ *  #2 trap): `builtInTheme` never sets `geometry`, so upgrading a theme whose
+ *  raw JSON already mentions a geometry key would return the fresh preset and
+ *  silently drop that key on this parse's way out — checked on presence in the
+ *  raw JSON alone (not validity), since even an invalid geometry value the
+ *  caller will drop is still evidence the user touched this theme. Pure query,
+ *  called once from parseTheme's tail. */
+export function upgradePristinePreset(
+  t: Theme,
+  rawColorKeys: readonly string[],
+  rawHasGeometry: boolean,
+): Theme {
   if (t.name !== "dark" && t.name !== "light" && t.name !== "claude") return t;
   if (rawColorKeys.some((k) => NEW_GEN_KEYS.includes(k))) return t;
+  if (rawHasGeometry) return t;
   const preset = builtInTheme(t.name);
   const legacyColorKeys: readonly (keyof Theme["colors"])[] = [...COLOR_KEYS, ...LEGACY_EXTENDED_KEYS];
   const colorsUnchanged = legacyColorKeys.every((k) => t.colors[k] === preset.colors[k]);
@@ -384,15 +483,36 @@ export function parseTheme(raw: string | null): Theme | null {
   const optional: Partial<Record<OptionalKey, string>> = {};
   for (const k of OPTIONAL_KEYS) if (isToken(c[k])) optional[k] = c[k] as string;
 
+  // `geometry` is tolerant like the optional colors above: an invalid/absent
+  // key is dropped silently, never a reject. Unlike `colors`, the WHOLE
+  // section is omitted from the parsed Theme when both keys end up absent —
+  // not left as `{}` — so `serializeTheme` (plain JSON.stringify, which drops
+  // `undefined` fields but NOT an empty object) doesn't reintroduce a
+  // `"geometry": {}` a legacy theme JSON never had (design §3's round-trip
+  // byte-preservation rule).
+  const rawGeometry = t.geometry;
+  const hasRawGeometry =
+    typeof rawGeometry === "object" &&
+    rawGeometry !== null &&
+    GEOMETRY_KEYS.some((k) => k in (rawGeometry as Record<string, unknown>));
+  let geometry: Theme["geometry"];
+  if (typeof rawGeometry === "object" && rawGeometry !== null) {
+    const g = rawGeometry as Record<string, unknown>;
+    const out: Partial<Record<GeometryKey, string>> = {};
+    for (const k of GEOMETRY_KEYS) if (isSingleToken(g[k])) out[k] = g[k];
+    if (out.blockRadius !== undefined || out.blockPadding !== undefined) geometry = out;
+  }
+
   const parsed: Theme = {
     name: t.name,
     colors: { ...coreColors, ...promoteToExtended(coreColors, c), ...optional },
     radii: { md: r.md as string, lg: r.lg as string, xl: r.xl as string },
     font: { sans: (font as { sans: string }).sans },
+    ...(geometry ? { geometry } : {}),
   };
   // Object.keys(c) is the RAW colors object as parsed from JSON (pre-promotion) —
   // exactly what upgradePristinePreset needs to detect "no new-gen key present".
-  return upgradePristinePreset(parsed, Object.keys(c));
+  return upgradePristinePreset(parsed, Object.keys(c), hasRawGeometry);
 }
 
 /** Pretty-printed (2-space) JSON so the textarea is human-editable. Used as the
@@ -457,10 +577,16 @@ export function themeToVars(t: Theme): Record<string, string> {
     "--quote-bar": resolveOptional("quoteBar", t.colors.quoteBar),
     "--codeblock-color": resolveOptional("codeBlock", t.colors.codeBlock),
     "--codeblock-bg": resolveOptional("codeBlockBg", t.colors.codeBlockBg),
+    "--highlightblock-bg": resolveOptional("highlightBlockBg", t.colors.highlightBlockBg),
     "--radius-md": t.radii.md,
     "--radius-lg": t.radii.lg,
     "--radius-xl": t.radii.xl,
     "--font-sans": t.font.sans,
+    // Block geometry (design §3): always-emit, same rule as every optional var
+    // above — absent → "initial" via resolveGeometry, letting styles.css's own
+    // var(--block-radius, <per-element fallback>) decide.
+    "--block-radius": resolveGeometry("blockRadius", t.geometry?.blockRadius),
+    "--block-padding": resolveGeometry("blockPadding", t.geometry?.blockPadding),
   };
 }
 

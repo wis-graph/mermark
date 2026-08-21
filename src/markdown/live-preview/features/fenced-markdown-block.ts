@@ -84,12 +84,29 @@ function lineRange(state: EditorState, pos: number): FenceLine {
   return { from: line.from, to: line.to };
 }
 
-/** One markdown-block instance's reveal range plus its candidate fence
- *  lines — the unit computeCandidates walks the tree for. */
+/** One markdown-block instance's reveal range, its fence-line positions (open
+ *  always present, close only when the block is actually closed), which of
+ *  those fence lines are candidates for HIDING, and its OWN `lineClass` (from
+ *  fence-types.ts, same string `fencedMarkdownBlockLines` above already
+ *  stamps on every body/fence line) — so the corner-class decorations below
+ *  are derived per-block instead of a single hardcoded pair (audit
+ *  `_workspace/04_audit_report.md` 🟡#1: this module's own doc comment
+ *  promises "a second markdown-block entry needs a fence-types.ts row only,
+ *  no new feature file" — a literal `cm-highlight-block-first/-last` would
+ *  have broken that promise the instant a second entry arrived). `open`/
+ *  `close` are tracked separately from `concealLines` so a 0-body-line block
+ *  (concealLines empty by design — see concealableFenceLines) still carries
+ *  enough structure for visibleBlockEdges to give it corner classes on its
+ *  (always-visible) fence lines, instead of dropping out of candidacy
+ *  entirely. Not exported — no consumer outside this module (the render-smoke
+ *  tests assert DOM/classList, not this type). */
 interface BlockCandidate {
   from: number;
   to: number;
-  lines: FenceLine[];
+  open: FenceLine;
+  close: FenceLine | null;
+  concealLines: FenceLine[];
+  lineClass: string;
 }
 
 /** Every markdown-block instance in the document, purely structural (no
@@ -102,11 +119,40 @@ function computeCandidates(state: EditorState): BlockCandidate[] {
     enter(node) {
       const spec = SPEC_BY_NODE.get(node.name);
       if (!spec) return;
-      const lines = concealableFenceLines(state, node.node, spec.fenceNode);
-      if (lines.length) out.push({ from: node.from, to: node.to, lines });
+      const fences = node.node.getChildren(spec.fenceNode);
+      if (fences.length === 0) return; // no fence node at all — nothing to render
+      const open = lineRange(state, fences[0]!.from);
+      const close = fences.length > 1 ? lineRange(state, fences[1]!.from) : null;
+      const concealLines = concealableFenceLines(state, node.node, spec.fenceNode);
+      out.push({ from: node.from, to: node.to, open, close, concealLines, lineClass: spec.lineClass });
     },
   });
   return out;
+}
+
+/** `${lineClass}-first`/`-last` Decoration.line, one per lineClass, built
+ *  once and reused (mirrors the old HIGHLIGHT_BLOCK_FIRST/LAST module-level
+ *  consts — a Decoration object is cheap to intern and CM6 diffs decoration
+ *  IDENTITY, not just class string, so reusing the same object across
+ *  rebuilds avoids pointless reconciliation). Keyed by lineClass so today's
+ *  single ```highlight spec produces the exact byte-identical
+ *  `cm-highlight-block-first`/`-last` classnames as before this refactor —
+ *  this is a generalization, not a behavior change. Exported (a pure query,
+ *  no state/tree dependency) so a test can lock the derivation directly for
+ *  a SECOND lineClass without having to register a whole fake Lezer node in
+ *  the parser just to exercise this line — same "export the pure query for a
+ *  direct unit test" pattern as `concealableFenceLines` above. */
+const CORNER_DECO_CACHE = new Map<string, { first: Decoration; last: Decoration }>();
+export function cornerDecos(lineClass: string): { first: Decoration; last: Decoration } {
+  let pair = CORNER_DECO_CACHE.get(lineClass);
+  if (!pair) {
+    pair = {
+      first: Decoration.line({ class: `${lineClass}-first` }),
+      last: Decoration.line({ class: `${lineClass}-last` }),
+    };
+    CORNER_DECO_CACHE.set(lineClass, pair);
+  }
+  return pair;
 }
 
 /** Reveal is BLOCK-level (design §4.2): if the caret touches any line of the
@@ -116,9 +162,45 @@ function buildDeco(state: EditorState, candidates: BlockCandidate[]): Decoration
   const ranges: Range<Decoration>[] = [];
   for (const block of candidates) {
     if (revealed(state, block.from, block.to)) continue;
-    for (const l of block.lines) ranges.push(Decoration.replace({ block: true }).range(l.from, l.to));
+    for (const l of block.concealLines) ranges.push(Decoration.replace({ block: true }).range(l.from, l.to));
+  }
+  for (const block of candidates) {
+    const edges = visibleBlockEdges(state, block);
+    const { first, last } = cornerDecos(block.lineClass);
+    ranges.push(first.range(edges.first));
+    ranges.push(last.range(edges.last)); // same pos as `first` on a 1-body-line block — CM combines both line decos' classes
   }
   return Decoration.set(ranges, true);
+}
+
+/** "지금 이 블록의 가시적 첫/마지막 줄이 어디인가" (pure query, design §4.2) —
+ *  the corner-class owner. Three regimes, matching which lines are actually IN
+ *  the DOM right now:
+ *  - resting with a body (fences concealed): first/last = the first/last BODY
+ *    line (the fence lines themselves are `Decoration.replace({block:true})`d
+ *    out of the DOM by the loop above, so a corner class on them would never
+ *    paint).
+ *  - revealed (fences visible), OR resting with NO body
+ *    (`block.concealLines` empty — concealableFenceLines' edit-lock-trap
+ *    guard leaves both fences permanently un-hidden for a 0-body-line block):
+ *    first/last = the opening/closing FENCE line, since that's what's
+ *    actually rendered. An unclosed block (no closing fence) falls back to
+ *    the block's own last source line.
+ *  Deliberately NOT plain CSS (`:not(.cm-highlight-block) + .cm-highlight-block`
+ *  / `:has()`, see design's 기각 대안): CM6 only mounts the visible viewport,
+ *  so a sibling-selector "first" would false-positive on whatever body line
+ *  happens to be scrolled to the top. This query works in DOCUMENT
+ *  coordinates, immune to viewport windowing. Not exported — module-private
+ *  like `BlockCandidate` (see that type's doc comment). */
+function visibleBlockEdges(state: EditorState, block: BlockCandidate): { first: number; last: number } {
+  const fencesAlwaysVisible = revealed(state, block.from, block.to) || block.concealLines.length === 0;
+  if (fencesAlwaysVisible) {
+    const lastLine = block.close ? block.close.from : state.doc.lineAt(block.to).from;
+    return { first: block.open.from, last: lastLine };
+  }
+  const bodyFromLine = state.doc.lineAt(block.open.to + 1).from;
+  const bodyToLine = block.close ? state.doc.lineAt(block.close.from - 1).from : state.doc.lineAt(block.to).from;
+  return { first: bodyFromLine, last: bodyToLine };
 }
 
 interface FenceConcealValue {

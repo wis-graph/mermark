@@ -128,6 +128,17 @@ describe("Color inspector", () => {
     expect(host.querySelector(".theme-chip-auto")).toBeTruthy();
   });
 
+  // round 3: highlightBlock (no bg pair, same shape as quoteBar) — the
+  // inspector's generic isOptionalKey/absentKind wiring picks up the new
+  // schema key automatically, no inspector code change required.
+  it("highlightBlock (no bg pair) shows a single '자동' control, no tabs", () => {
+    inspector.setTarget(themeTarget("highlightBlock")!);
+    expect(host.querySelectorAll(".theme-inspector-tab").length).toBe(0);
+    expect(host.querySelector(".theme-chip-auto")).toBeTruthy();
+    expect(host.querySelector(".theme-chip-none")).toBeNull();
+    expect(host.querySelector(".theme-inspector-hex")!.textContent).toBe("자동");
+  });
+
   // design decision 2's "의도된 UX 개선": codeBg's absence used to render as
   // a "없음" chip even though a real fill (--surface-veil) was visible — a
   // label that lied. absentKind(codeBg) is now "auto", so the chip and hex

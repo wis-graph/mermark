@@ -74,7 +74,23 @@ export const blockquote: InlineFeature = {
         ctx.line(lf, `cm-callout cm-callout-${type.key}`),
       );
     } else {
-      ctx.eachLine(node.from, node.to, (lf) => ctx.line(lf, "cm-blockquote"));
+      // Structural first/last boundary (design §4.2): gated on isTopLevelQuote
+      // so a nested `>>` never puts a corner class on its INNER Blockquote
+      // node's edges — only the outermost run's real first/last source line
+      // gets rounded. Tracked in the same eachLine walk that applies the
+      // plain "cm-blockquote" class, so the boundary can never drift from
+      // which lines actually got that class.
+      let firstLineFrom: number | null = null;
+      let lastLineFrom = node.from;
+      ctx.eachLine(node.from, node.to, (lf) => {
+        ctx.line(lf, "cm-blockquote");
+        if (firstLineFrom === null) firstLineFrom = lf;
+        lastLineFrom = lf;
+      });
+      if (isTopLevelQuote(node)) {
+        if (firstLineFrom !== null) ctx.line(firstLineFrom, "cm-blockquote-first");
+        ctx.line(lastLineFrom, "cm-blockquote-last"); // same line as -first on a 1-line quote — combines
+      }
     }
     // descend: quote marks + nested content
   },

@@ -509,7 +509,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    theme keeps the dark-lightens/light-darkens behavior byte-identical. The
    border stays on --block-edge UNCONDITIONALLY (no key of its own — 01_ui2_design
    결정 1: a 1px line has too little visual weight to be worth a 21st target). */
-.cm-codeblock { display: block; margin: 0; position: relative; background: var(--codeblock-bg, var(--block-fill)); color: var(--codeblock-color, inherit); border: 1px solid var(--block-edge); border-radius: var(--radius-md); padding: .7em .9em; overflow-x: auto; font-size: var(--block-font-size); line-height: 1.5; }
+/* --block-radius/--block-padding (design `_workspace/01_architect_design.md`
+   §3/§4, round 3): shared geometry the code block / blockquote / highlight
+   block all consume through the SAME var chain (--block-fill/--block-edge's
+   "one surface family" rule, applied to shape). Absent → each element's own
+   current hardcoded value, so an unconfigured theme is byte-identical to
+   before this feature (the polarity fallback literals below — var(--radius-md),
+   .7em, .9em — ARE that zero-drift baseline; a cross-file regression test
+   pins them). */
+.cm-codeblock { display: block; margin: 0; position: relative; background: var(--codeblock-bg, var(--block-fill)); color: var(--codeblock-color, inherit); border: 1px solid var(--block-edge); border-radius: var(--block-radius, var(--radius-md)); padding: var(--block-padding, .7em) var(--block-padding, .9em); overflow-x: auto; font-size: var(--block-font-size); line-height: 1.5; }
 /* `pre-wrap` preserves whitespace/indentation (like `pre`) but wraps at normal
    break points; `overflow-wrap: anywhere` further breaks inside unbroken
    tokens (long URLs, hashes) so long lines wrap inside the block instead of
@@ -552,7 +560,17 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    so paragraphs of it stay readable. Every source line gets the class — body
    AND the (usually concealed) fence lines — so there's no seam when a fence
    line reveals mid-block. */
-.cm-highlight-block { background: color-mix(in srgb, var(--highlight-bg) 22%, transparent); }
+.cm-highlight-block { background: var(--highlightblock-bg, color-mix(in srgb, var(--highlight-bg) 22%, transparent)); padding-inline: var(--block-padding, 0); }
+/* first/last line classes (design §4.2, owned by fenced-markdown-block.ts's
+   fenceConcealField — a StateField, so a LINE decoration here is legal; the
+   render-smoke ViewPlugin-block-decoration invariant only forbids the ORIGIN
+   being a ViewPlugin, not a StateField emitting Decoration.line). Radius
+   fallback is --radius-sm, NOT 0 — this is the one element where "no geometry
+   key configured" still gets rounded corners (§2's intentional new default
+   look, distinct from codeblock/blockquote's byte-identical-when-absent
+   contract just above). */
+.cm-highlight-block-first { border-top-left-radius: var(--block-radius, var(--radius-sm, 6px)); border-top-right-radius: var(--block-radius, var(--radius-sm, 6px)); padding-top: var(--block-padding, 0); }
+.cm-highlight-block-last { border-bottom-left-radius: var(--block-radius, var(--radius-sm, 6px)); border-bottom-right-radius: var(--block-radius, var(--radius-sm, 6px)); padding-bottom: var(--block-padding, 0); }
 /* Block-widget vertical spacing MUST be padding, not margin: CM measures a
    widget's height via offsetHeight (which excludes margin), so a margin here
    desyncs the height map and makes vertical cursor motion skip lines below. */
@@ -611,7 +629,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    feature. `quoteBar` closes the round-1 audit's Major #3: the left bar
    previously had no key of its own and silently rode --block-edge with no way
    to edit it independently; it now has one while keeping the same fallback. */
-.cm-blockquote { position: relative; border-left: 3px solid var(--quote-bar, var(--block-edge)); background: var(--quote-bg, var(--block-fill)); color: var(--quote-color, inherit); padding-left: .75em; }
+.cm-blockquote { position: relative; border-left: 3px solid var(--quote-bar, var(--block-edge)); background: var(--quote-bg, var(--block-fill)); color: var(--quote-color, inherit); padding-left: var(--block-padding, .75em); }
+/* first/last STRUCTURAL boundary classes (design §4.2, owned by
+   blockquote.ts's isTopLevelQuote gate — a nested `>>` never gets these on
+   its inner Blockquote node, only the outermost run). Fallback 0 for both
+   radius and vertical padding: absent geometry keeps blockquote byte-
+   identical to before this feature (unlike the highlight block's intentional
+   §2 rounded default just above). */
+.cm-blockquote-first { border-top-left-radius: var(--block-radius, 0); border-top-right-radius: var(--block-radius, 0); padding-top: var(--block-padding, 0); }
+.cm-blockquote-last { border-bottom-left-radius: var(--block-radius, 0); border-bottom-right-radius: var(--block-radius, 0); padding-bottom: var(--block-padding, 0); }
 .cm-callout { position: relative; background: var(--surface-veil); border-left: 3px solid var(--accent); padding-left: .75em; }
 .cm-callout-head { font-weight: 700; padding-right: 2.2em; } /* clears the copy button on the head line */
 /* Quote copy button: sized for a text line (not a full code-block chrome),

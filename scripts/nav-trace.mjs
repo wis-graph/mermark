@@ -152,4 +152,46 @@ await trace("MATH — down (want reveal on entry)", "## Math", "ArrowDown", 4);
 await trace("TABLE — down (control)", "## Table", "ArrowDown", 4);
 await trace("UP from Image (want no multi-line leap; reveal math)", "## Image", "ArrowUp", 8);
 
+// ── Block geometry (design `_workspace/01_architect_design.md` §4.2, Part C
+// team-lead follow-up): x.md has no ```highlight block, so this scenario
+// swaps in a purpose-built document via window.__mermark (dispatch, not a
+// file switch — same controller instance __t already closed over) to prove
+// the first/last line-decoration padding (blockquote/highlight-block, both
+// design §4's "line-deco" path, unlike codeblock's single-widget DOM) does
+// NOT perturb CM's height map: every press should still be a plain Δ+1,
+// except the two fence-conceal jumps (Δ+2) which are PRE-EXISTING
+// fenceConcealField behavior, not something this trace's padding touches —
+// see 03_qa_report.md §7's manual run this makes permanent.
+await p.evaluate(() => {
+  const C = window.__mermark;
+  C.setMode("edit");
+  const text = [
+    "before",
+    "```highlight",
+    "hl line one",
+    "hl line two",
+    "hl line three",
+    "```",
+    "",
+    "> quote line 1",
+    "> quote line 2",
+    "> quote line 3",
+    "",
+    "end",
+  ].join("\n");
+  C.view.dispatch({ changes: { from: 0, to: C.view.state.doc.length, insert: text } });
+});
+await p.waitForTimeout(200);
+// Starts OUTSIDE the highlight block (resting — both fence lines concealed),
+// so the trace reproduces the same Δ+2-at-fence / Δ+1-elsewhere shape
+// 03_qa_report.md §7 recorded by hand: before → (skip open fence) → hl1 →
+// hl2 → hl3 → (skip close fence) → blank → quote1 → quote2 → quote3 → blank
+// → end is 9 presses.
+await trace(
+  "HIGHLIGHT BLOCK + BLOCKQUOTE — down (padding must not break Δ+1 per press; Δ+2 only at fence conceal, unrelated to this diff)",
+  "before",
+  "ArrowDown",
+  9,
+);
+
 await b.close();

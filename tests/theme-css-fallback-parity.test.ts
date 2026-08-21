@@ -130,6 +130,7 @@ describe("theme-preview.ts fallback chains match styles.css byte-for-byte (cross
       { selector: ".cm-codeblock", varField: "colorVar", fallbackField: "colorFallback" },
       { selector: ".cm-codeblock", varField: "bgVar", fallbackField: "bgFallback" },
     ],
+    highlightBlock: [{ selector: ".cm-highlight-block", varField: "colorVar", fallbackField: "colorFallback" }],
     comment: [
       { selector: ".cm-comment", varField: "colorVar", fallbackField: "colorFallback" },
       { selector: ".cm-comment", varField: "bgVar", fallbackField: "bgFallback" },
@@ -186,4 +187,83 @@ describe("theme-preview.ts fallback chains match styles.css byte-for-byte (cross
       });
     }
   }
+});
+
+// design `_workspace/01_architect_design.md` §4.1/§4.4 (round 3): block
+// geometry (--block-radius/--block-padding) fallback literals in styles.css
+// ARE the zero-drift baseline — a theme with no geometry key configured must
+// render codeblock/blockquote BYTE-IDENTICAL to before this feature. This is
+// a regression snap, not a coverage gate: it pins the exact fallback literals
+// so an accidental edit to one of them is caught immediately (the highlight
+// block is the one deliberate EXCEPTION — §2's intentional new rounded
+// default, snapped separately below).
+describe("block geometry CSS fallback literals (zero-drift default — round 3)", () => {
+  const cssPath = resolve(dirname(fileURLToPath(import.meta.url)), "../src/styles.css");
+  const css = readFileSync(cssPath, "utf8");
+
+  function ruleBlock(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const strict = css.match(new RegExp(escaped + "\\s*\\{([^}]*)\\}"));
+    if (strict) return strict[1]!;
+    const grouped = css.match(new RegExp(escaped + "[^{}]*\\{([^}]*)\\}"));
+    if (!grouped) throw new Error(`no CSS rule found for selector ${selector}`);
+    return grouped[1]!;
+  }
+
+  it(".cm-codeblock: --block-radius falls back to var(--radius-md), --block-padding to .7em/.9em (unchanged from pre-feature)", () => {
+    const block = ruleBlock(".cm-codeblock");
+    expect(block).toContain("border-radius: var(--block-radius, var(--radius-md))");
+    expect(block).toContain("padding: var(--block-padding, .7em) var(--block-padding, .9em)");
+  });
+
+  it(".cm-blockquote: --block-padding falls back to .75em (unchanged); -first/-last fall back to radius 0 / padding 0 (no prior geometry existed)", () => {
+    const block = ruleBlock(".cm-blockquote");
+    expect(block).toContain("padding-left: var(--block-padding, .75em)");
+    const first = ruleBlock(".cm-blockquote-first");
+    expect(first).toContain("var(--block-radius, 0)");
+    expect(first).toContain("padding-top: var(--block-padding, 0)");
+    const last = ruleBlock(".cm-blockquote-last");
+    expect(last).toContain("var(--block-radius, 0)");
+    expect(last).toContain("padding-bottom: var(--block-padding, 0)");
+  });
+
+  // The ONE deliberate exception (§2): highlight block gets a rounded corner
+  // even with geometry unset — fallback is --radius-sm, not 0.
+  it(".cm-highlight-block-first/-last: --block-radius falls back to var(--radius-sm, 6px) — the intentional new rounded default", () => {
+    const first = ruleBlock(".cm-highlight-block-first");
+    expect(first).toContain("var(--block-radius, var(--radius-sm, 6px))");
+    const last = ruleBlock(".cm-highlight-block-last");
+    expect(last).toContain("var(--block-radius, var(--radius-sm, 6px))");
+  });
+});
+
+// Part C, plan step 15: static proof of design §5.5's "no new subscription"
+// claim — the geometry sliders write through themeVarsSink (the single
+// documentElement writer), and the mini frames consume that SAME var chain
+// via plain CSS, not a listener of their own. Computed-style verification is
+// the golden master's job (settings-golden.mjs scenario 4); this test only
+// pins that theme-panel.css's text still declares the consuming var(...) —
+// if a future edit swaps a mini frame back to a hardcoded literal, this goes
+// red immediately instead of silently breaking live-reflection.
+describe("theme-panel.css mini frames consume --block-radius/--block-padding (design §5.5 static wiring proof)", () => {
+  const cssPath = resolve(dirname(fileURLToPath(import.meta.url)), "../src/settings/panel/theme-panel.css");
+  const css = readFileSync(cssPath, "utf8");
+
+  function ruleBlock(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const strict = css.match(new RegExp(escaped + "\\s*\\{([^}]*)\\}"));
+    if (strict) return strict[1]!;
+    const grouped = css.match(new RegExp(escaped + "[^{}]*\\{([^}]*)\\}"));
+    if (!grouped) throw new Error(`no CSS rule found for selector ${selector}`);
+    return grouped[1]!;
+  }
+
+  it.each([".theme-codeblock", ".theme-quote", ".theme-highlightblock"])(
+    "%s declares var(--block-radius and var(--block-padding",
+    (selector) => {
+      const block = ruleBlock(selector);
+      expect(block).toContain("var(--block-radius");
+      expect(block).toContain("var(--block-padding");
+    },
+  );
 });
