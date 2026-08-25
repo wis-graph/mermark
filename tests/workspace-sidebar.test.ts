@@ -496,4 +496,79 @@ describe("workspace sidebar", () => {
 
     expect(onOpen).toHaveBeenCalledOnce();
   });
+
+  // 볼트 목록 부모-자식 인덴트 (00_request.md #1): a child vault whose root sits
+  // inside a registered parent vault's root renders one level deeper
+  // (--level on the row), immediately after its parent — reusing isPathWithin
+  // (path.ts), not a new predicate.
+  describe("vault parent-child indent", () => {
+    it("indents a child vault under its registered parent and places it immediately after", () => {
+      const store = new WorkspaceStore();
+      const parent = store.registerVault("/notes", "Notes");
+      const child = store.registerVault("/notes/project", "Project");
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+
+      const parentRow = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${parent.vaultId}"]`);
+      const childRow = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${child.vaultId}"]`);
+      expect(parentRow?.style.getPropertyValue("--level")).toBe("1");
+      expect(childRow?.style.getPropertyValue("--level")).toBe("2");
+      // Parent immediately followed by its child.
+      expect(parentRow?.compareDocumentPosition(childRow as Node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      const rows = [...sidebar.aside.querySelectorAll<HTMLElement>(".workspace-vault-group--permanent .workspace-vault-row")];
+      expect(rows.indexOf(childRow as HTMLElement)).toBe(rows.indexOf(parentRow as HTMLElement) + 1);
+    });
+
+    it("attaches a 3-level-deep vault to its NEAREST registered ancestor only, not every ancestor", () => {
+      const store = new WorkspaceStore();
+      const grandparent = store.registerVault("/a", "A");
+      const parent = store.registerVault("/a/b", "B");
+      const child = store.registerVault("/a/b/c", "C");
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+
+      const rowFor = (id: string) => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${id}"]`);
+      expect(rowFor(grandparent.vaultId)?.style.getPropertyValue("--level")).toBe("1");
+      expect(rowFor(parent.vaultId)?.style.getPropertyValue("--level")).toBe("2");
+      expect(rowFor(child.vaultId)?.style.getPropertyValue("--level")).toBe("3");
+    });
+
+    it("does not indent unrelated top-level vaults", () => {
+      const store = new WorkspaceStore();
+      const first = store.registerVault("/work/one", "One");
+      const second = store.registerVault("/home/two", "Two");
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+
+      const rowFor = (id: string) => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${id}"]`);
+      expect(rowFor(first.vaultId)?.style.getPropertyValue("--level")).toBe("1");
+      expect(rowFor(second.vaultId)?.style.getPropertyValue("--level")).toBe("1");
+    });
+
+    it("never lets a collapsed parent hide its child vault's row (child is an independent registration, not nested content)", () => {
+      const store = new WorkspaceStore();
+      const parent = store.registerVault("/notes", "Notes");
+      const child = store.registerVault("/notes/project", "Project");
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+
+      sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${parent.vaultId}"] .workspace-vault-toggle`)?.click();
+
+      const childRow = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${child.vaultId}"]`);
+      expect(childRow).toBeTruthy();
+      expect(childRow?.hidden).toBe(false);
+      // Only the parent's own tab strip collapses — the child row/select stays reachable.
+      expect(childRow?.querySelector<HTMLButtonElement>(".workspace-vault-select")).toBeTruthy();
+    });
+
+    it("keeps the global vault outside the hierarchy (no rootPath, no --level bump)", () => {
+      const store = new WorkspaceStore();
+      store.registerVault("/notes", "Notes");
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+
+      const globalRow = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${GLOBAL_VAULT_ID}"]`);
+      expect(globalRow?.style.getPropertyValue("--level")).toBe("1");
+    });
+  });
 });

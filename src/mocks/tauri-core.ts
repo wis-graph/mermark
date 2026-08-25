@@ -718,8 +718,17 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       return true as T;
     case "directory_exists":
       return true as T;
-    case "canonicalize_path":
-      return normalizeMockPath(String(a.path ?? "")) as T;
+    case "canonicalize_path": {
+      const raw = String(a.path ?? "");
+      // Mirrors the real backend's `expand_home` special-casing a bare `~`
+      // as `$HOME` (commands.rs) before canonicalizing — the browser has no
+      // real home directory, so it stands in with the mock's one real root,
+      // matching what a fresh reader would already expect to land on
+      // (00_request.md #2: clicking the Global Vault jumps to "home").
+      // Anything else falls through to the plain textual normalize as before.
+      if (raw === "~") return "/mock/vault" as T;
+      return normalizeMockPath(raw) as T;
+    }
     case "open_path": {
       // Mirrors the real `open_path(path) -> Result<(), String>`: spawns the
       // file in a brand-new window. Only the EXPLICIT new-window gesture still

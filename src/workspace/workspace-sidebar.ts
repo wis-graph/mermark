@@ -1,7 +1,7 @@
 import { icon } from "../icons";
 import { renderSidebarButton } from "../sidebar/toggle";
 import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
-import { basename, dirOf } from "../document/path";
+import { basename, dirOf, isPathWithin } from "../document/path";
 import { extensionOf, renderEntryGlyph } from "../sidebar/explorer/file-icons";
 import { WorkspaceStateError, type Vault, type WorkspaceState, type WorkspaceStore } from "./workspace-state";
 import type { VaultTabs } from "./vault-tabs";
@@ -68,6 +68,58 @@ function folderPrefixFor(path: string, vaultRoot: string | null): string | null 
   if (segments.length > 1) return "…/";
   const folder = segments[0] ?? "";
   return folder.length > MAX_PREFIX_CHARS ? `${folder.slice(0, MAX_PREFIX_CHARS)}…/` : `${folder}/`;
+}
+
+/** One rendered vault row's nesting depth (1-based, matching the explorer
+ *  tree's `aria-level` convention). */
+interface VaultRow { readonly vault: Vault; readonly level: number }
+
+/** The nearest registered ancestor of `vault` among `all` — the registered
+ *  vault whose root STRICTLY contains `vault`'s root (via `isPathWithin`,
+ *  path.ts — reused, not reinvented) with the LONGEST root path (closest
+ *  wins over a more distant grandparent). Null when `vault` has no root
+ *  (the global vault) or no registered vault contains it (a top-level root).
+ *  Pure query. */
+function nearestRegisteredParent(vault: Vault, all: readonly Vault[]): Vault | null {
+  if (vault.rootPath === null) return null;
+  let best: Vault | null = null;
+  for (const candidate of all) {
+    if (candidate.vaultId === vault.vaultId || candidate.rootPath === null) continue;
+    if (candidate.rootPath === vault.rootPath) continue; // defensive: store forbids duplicate roots
+    if (!isPathWithin(vault.rootPath, candidate.rootPath)) continue;
+    if (!best || best.rootPath === null || candidate.rootPath.length > best.rootPath.length) best = candidate;
+  }
+  return best;
+}
+
+/** Arrange `vaults` into parent-then-children DFS pre-order, each row tagged
+ *  with its nesting `level` — a parent is ALWAYS immediately followed by its
+ *  own children (00_request.md #1), and every vault attaches to its nearest
+ *  registered ancestor only (never every ancestor up the chain). Stable: ties
+ *  (siblings, and top-level roots) keep `vaults`' own relative order, so the
+ *  same input always yields the same output. A child's collapse state is its
+ *  own (vault-collapse.ts) — this function only decides ORDER/LEVEL, never
+ *  visibility, so a collapsed parent can never hide a child row (the
+ *  request's "부모를 접어도 자식은 숨지 않는다" invariant lives structurally
+ *  here: children are sibling rows in the DOM, never nested inside the
+ *  parent's tab strip). Pure query. */
+function arrangeVaultHierarchy(vaults: readonly Vault[]): VaultRow[] {
+  const childrenByParentId = new Map<string, Vault[]>();
+  const roots: Vault[] = [];
+  for (const vault of vaults) {
+    const parent = nearestRegisteredParent(vault, vaults);
+    if (!parent) { roots.push(vault); continue; }
+    const siblings = childrenByParentId.get(parent.vaultId) ?? [];
+    siblings.push(vault);
+    childrenByParentId.set(parent.vaultId, siblings);
+  }
+  const rows: VaultRow[] = [];
+  const visit = (vault: Vault, level: number): void => {
+    rows.push({ vault, level });
+    for (const child of childrenByParentId.get(vault.vaultId) ?? []) visit(child, level + 1);
+  };
+  for (const vault of roots) visit(vault, 1);
+  return rows;
 }
 
 export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCloseTab, onOpen, getTabs }: WorkspaceSidebarHandlers): WorkspaceSidebar {
@@ -137,7 +189,7 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
     // and unreliably exposed to assistive tech). The global group stays
     // unlabelled on purpose: it's the single default row, and a second heading
     // above it would add chrome without adding a distinction.
-    const renderGroup = (className: string, vaults: readonly Vault[], label?: string, emptyState?: HTMLElement): void => {
+    const renderGroup = (className: string, rows: readonly VaultRow[], label?: string, emptyState?: HTMLElement): void => {
       const group = create("section", `workspace-vault-group ${className}`);
       if (label) {
         const heading = create("div", "workspace-group-label");
@@ -145,8 +197,9 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
         group.setAttribute("aria-labelledby", heading.id);
         group.append(heading);
       }
-      for (const vault of vaults) {
+      for (const { vault, level } of rows) {
         const row = create("div", "workspace-vault-row"); row.setAttribute("role", "listitem"); row.dataset.vaultId = vault.vaultId;
+        row.style.setProperty("--level", String(level));
         // Toggle is its own button, not nested inside `select` — a button
         // inside a button is invalid HTML, and it made the two controls'
         // hovers bleed into each other. Its click means collapse/expand;
@@ -275,8 +328,8 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
       if (emptyState) group.append(emptyState);
       list.append(group);
     };
-    renderGroup("workspace-vault-group--global", [store.getGlobalVault()]);
-    renderGroup("workspace-vault-group--permanent", permanentVaults, "영구 볼트", empty);
+    renderGroup("workspace-vault-group--global", [{ vault: store.getGlobalVault(), level: 1 }]);
+    renderGroup("workspace-vault-group--permanent", arrangeVaultHierarchy(permanentVaults), "영구 볼트", empty);
   };
   store.subscribe(render); render(store.get());
   return { button, aside, close, refresh: () => render(store.get()) };

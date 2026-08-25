@@ -1615,7 +1615,17 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   letter-spacing: .02em;
   color: var(--sidebar-muted);
 }
-.workspace-vault-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: .15em; min-width: 0; }
+/* Parent-child vault indent (00_request.md #1): `--level` (1-based) is set
+   inline in workspace-sidebar.ts, same convention as the explorer tree's
+   `.explorer-item` (explorer-panel.ts/styles.css above) — reusing that
+   per-level 14px step rather than inventing a new indent unit. margin (not
+   padding) shifts the WHOLE row, so `.workspace-vault-tabs`'s own
+   `calc(2em + .15em)` offset (measured from the row's left edge) still lines
+   up under `select` regardless of depth. A collapsed parent only hides ITS
+   OWN `.workspace-vault-tabs` (see renderVaultCollapse) — a child vault is a
+   sibling `.workspace-vault-row`, never nested inside it, so indent is
+   purely a visual relationship, never a visibility one. */
+.workspace-vault-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: .15em; min-width: 0; margin-left: calc((var(--level, 1) - 1) * 14px); }
 /* Active vault (design_tabbar_visual.md §2.4): the accent band now belongs to
    the whole ROW, not just the `select` pill — the pill used to float the
    glyph/bookmark outside its own highlight and put the left accent bar at the

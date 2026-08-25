@@ -134,6 +134,26 @@ export function shouldPreserveGlobalExplorerRoot(vault: Pick<Vault, "persistence
   return vault?.persistenceKind === "global";
 }
 
+/** The user's home directory, resolved through the EXISTING `canonicalize_path`
+ *  IPC command (already used by CLI routing above) fed the literal `~` — the
+ *  backend's `expand_home` (src-tauri/src/commands.rs) already special-cases
+ *  a bare `~` as `$HOME`, so this needs no new backend surface. Falls back to
+ *  `fallback` (the historic default root) when canonicalization fails — e.g.
+ *  a headless test/CI environment with no `$HOME` — the same defensive
+ *  posture `routeCliFileResolved`'s own canonicalize wrapper uses just above.
+ *  Named + exported so "how do we get home" lives in one place and is
+ *  independently testable, instead of being inlined at the one call site
+ *  that needs it (00_request.md #2). */
+export async function resolveHomeRoot(canonicalize: (path: string) => Promise<string>, fallback: string): Promise<string> {
+  try {
+    const resolved = await canonicalize("~");
+    return resolved || fallback;
+  } catch (error) {
+    if (error instanceof Error || typeof error === "string") return fallback;
+    throw error;
+  }
+}
+
 /** Every registered PERMANENT vault's canonical root path — the exact input
  *  `owningVaultRoot` (image-search-root.ts) needs. Named so "which vaults
  *  count" (permanent only; the global vault has no `rootPath` to search)
@@ -296,6 +316,10 @@ async function boot() {
     }
   }) : undefined;
   const file = cliRoute?.path ?? requestedFile;
+  // Fixed default for clicking the Global Vault (00_request.md #2) — resolved
+  // once at boot, not re-derived per click, so it can never observe a
+  // mid-session `currentExplorerFolder` drift.
+  const homeRoot = await resolveHomeRoot((path) => invoke<string>("canonicalize_path", { path }), SAFE_EXPLORER_BASE_PATH);
   const vaultTabs = new VaultTabStore();
   const conflictRecovery = createConflictRecovery();
   let routedVault = reloadHandoff.globalExplorerRoot !== null ? workspaceStore.getGlobalVault() : cliRoute?.vault;
@@ -392,7 +416,11 @@ async function boot() {
     const selected = selectedWorkspaceVault();
     return shouldPreserveGlobalExplorerRoot(selected) ? currentExplorerFolder : currentVault()?.explorerRoot ?? currentBaseDir;
   };
-  const explorerRootForVault = (vault: Vault): string => vault.persistenceKind === "global" ? currentExplorerFolder : vault.rootPath;
+  // Entering the Global Vault always lands on HOME (00_request.md #2), never
+  // wherever the explorer was last sitting (`currentExplorerFolder` — that's
+  // still tracked for the reload-restore path and the breadcrumb while
+  // browsing, just not as this button's default anymore).
+  const explorerRootForVault = (vault: Vault): string => vault.persistenceKind === "global" ? homeRoot : vault.rootPath;
   // Document navigation history (⌘[/⌘]) — ephemeral in-memory session state, NOT
   // a setting: starts empty; the first openInWindow records the launch file.
   // Distinct from the recent MRU list (recentDocsSetting) — see nav-history.ts.

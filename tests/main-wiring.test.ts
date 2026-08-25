@@ -241,10 +241,15 @@ describe("main workspace wiring", () => {
     await import("../src/main");
     await new Promise((resolve) => setTimeout(resolve, 100));
 
+    // `.explorer-btn` alone already opens on "/A" — the beforeEach's
+    // `?file=/A/start.md` routes here at boot, before any vault click. A
+    // reclick of the already-active Global Vault row is deliberately NOT
+    // exercised here anymore: since 00_request.md #2, that click always jumps
+    // to HOME (see "jumps the global vault to the resolved home directory"
+    // above), so it would defeat this test's actual point — that folder
+    // navigation + opening a document never drifts the root away from where
+    // it already was.
     document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
-    document.querySelector<HTMLElement>('[data-vault-id="vault-global"] .workspace-vault-select')?.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const folder = document.querySelector<HTMLElement>('.explorer-dir[data-path="/A/B"]');
@@ -254,7 +259,10 @@ describe("main workspace wiring", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: /A");
-    expect(invokeMock.mock.calls.filter(([command, args]) => command === "list_dir" && pathArg(args) === "/A").length).toBeGreaterThan(1);
+    // list_dir("/A") fires at least once (the boot-time open of the root) —
+    // the original ">1" bound counted a second call from a global-vault
+    // reclick this test no longer performs (see comment above).
+    expect(invokeMock.mock.calls.filter(([command, args]) => command === "list_dir" && pathArg(args) === "/A").length).toBeGreaterThanOrEqual(1);
   });
 
   // 2026-08-25 regression: opening a document that lives inside an already-
@@ -299,7 +307,14 @@ describe("main workspace wiring", () => {
     expect(document.querySelector('.explorer-file[data-path="/A/B/doc.md"]')?.classList.contains("is-selected")).toBe(true);
   });
 
-  it("does not let a permanent-vault switch overwrite the closed global root", async () => {
+  // 00_request.md #2 supersedes this test's original premise: the Global
+  // Vault no longer HAS a "closed root" to protect — every entry is a fixed
+  // jump to home, never a remembered position — so switching to a permanent
+  // vault and back now deterministically lands on home instead of wherever
+  // the explorer happened to be before the switch. Kept (renamed) to still
+  // guard the other half of its original intent: a permanent-vault switch
+  // must not leave a stray temporary vault group behind.
+  it("returns to the resolved home root (not a remembered one) after a permanent-vault switch, without leaving a stray temporary group", async () => {
     await import("../src/main");
     await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -314,7 +329,7 @@ describe("main workspace wiring", () => {
     document.querySelector<HTMLElement>('[data-vault-id="vault-global"] .workspace-vault-select')?.click();
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: /A");
+    expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: ~");
     expect(document.querySelector(".workspace-vault-group--temporary")).toBeNull();
   });
 
@@ -337,6 +352,32 @@ describe("main workspace wiring", () => {
     expect(shouldPreserveGlobalExplorerRoot({ persistenceKind: "global" })).toBe(true);
     expect(shouldPreserveGlobalExplorerRoot({ persistenceKind: "permanent" })).toBe(false);
     expect(shouldPreserveGlobalExplorerRoot(undefined)).toBe(false);
+  });
+
+  // 00_request.md #2: clicking the global vault always lands the Explorer on
+  // the user's HOME directory, not wherever the explorer happened to be
+  // sitting (`currentExplorerFolder`) — that varied click to click and was
+  // the bug. Resolved via the EXISTING `canonicalize_path` IPC surface (also
+  // used by CLI routing above) fed the literal `~`, which `expand_home`
+  // (src-tauri) already treats as home — no new backend command. This test's
+  // `canonicalize_path` mock is an identity function (see invokeMock above),
+  // so it returns "~" verbatim; the assertion only needs to show the result
+  // is NOT `currentExplorerFolder`'s prior value ("/"), i.e. the fixed home
+  // path was actually asked for and used, not the stale wander-root.
+  it("jumps the global vault to the resolved home directory, not the last explorer folder", async () => {
+    localStorage.setItem("mermark.workspaceState", JSON.stringify({
+      workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FP"], currentVaultId: "vault-%2FP", lastSelectedPermanentVaultId: "vault-%2FP" }],
+      vaults: [{ vaultId: "vault-%2FP", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent", explorerRoot: "/P" }],
+      currentWorkspaceId: "workspace-default",
+    }));
+    await import("../src/main");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    document.querySelector<HTMLElement>('[data-vault-id="vault-global"] .workspace-vault-select')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: ~");
   });
 
   it("restores transient Global Vault intent after a no-document reload without saving it", async () => {
