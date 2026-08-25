@@ -510,6 +510,14 @@ function renderKeybind(setting: Setting<Record<string, string>>): HTMLElement {
     const chord = document.createElement("span");
     chord.className = "keybind-chord";
 
+    // Secondary aliases (ShortcutAction.secondaryBindings) are static and not
+    // reassignable — shown once at mount, muted, next to the editable primary
+    // chord, so a user sees their familiar chord (e.g. ⌘B) is still alive
+    // alongside a new numbered alias (e.g. ⌘2).
+    const aliases = document.createElement("span");
+    aliases.className = "keybind-alias";
+    if (action.secondaryBindings?.length) aliases.textContent = action.secondaryBindings.map((c) => displayChord(c)).join(" · ");
+
     const warning = document.createElement("span");
     warning.className = "keybind-warning";
     warning.hidden = true;
@@ -583,7 +591,7 @@ function renderKeybind(setting: Setting<Record<string, string>>): HTMLElement {
       };
     });
 
-    item.append(label, chord, capture, reset, warning);
+    item.append(label, chord, aliases, capture, reset, warning);
     list.appendChild(item);
   }
 

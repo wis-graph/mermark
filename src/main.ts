@@ -1593,6 +1593,7 @@ async function boot() {
   //    they fire under non-Latin layouts (e.g. Korean). Zoom handlers are
   //    unchanged (→ --font-scale CSS var); only their trigger moved to the registry.
   registerHandler("mode.toggle", toggleMode);
+  registerHandler("workspace.toggle", () => workspaceSidebar.button.click());
   registerHandler("explorer.toggle", () => explorer.button.click());
   registerHandler("recent.toggle", () => recent.button.click());
   registerHandler("outline.toggle", () => outline.button.click());

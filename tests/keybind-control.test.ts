@@ -151,4 +151,18 @@ describe("keybind control", () => {
     expect(chordText(row, "test.panelRow2")).toBe(displayChord("Mod+K"));
     unregister();
   });
+
+  // Secondary chord aliases (explorer.toggle's Mod+2, search.files's Mod+5):
+  // shown read-only next to the editable primary chord, so a reassignment
+  // capture never targets them.
+  it("shows a secondary alias chord read-only next to the primary, blank when none", () => {
+    const s = keybindSetting("kbc.alias");
+    bindKeybindings(s);
+    const row = RENDER.keybind(s, { kind: "keybind" });
+    const aliasText = (id: string) => rowFor(row, id).querySelector<HTMLElement>(".keybind-alias")!.textContent ?? "";
+    expect(aliasText("explorer.toggle")).toBe(displayChord("Mod+2"));
+    expect(aliasText("search.files")).toBe(displayChord("Mod+5"));
+    expect(aliasText("mode.toggle")).toBe(""); // no secondaries
+    expect(rowFor(row, "explorer.toggle").querySelector(".keybind-alias button")).toBeNull(); // not interactive
+  });
 });

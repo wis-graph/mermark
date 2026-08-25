@@ -2632,7 +2632,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .keybind-capture.is-capturing { border-color: var(--accent); color: var(--accent); }
 .keybind-list { display: flex; flex-direction: column; }
 .keybind-item {
-  display: grid; grid-template-columns: 1fr auto auto auto; align-items: center;
+  display: grid; grid-template-columns: 1fr auto auto auto auto; align-items: center;
   gap: .5em; padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 .keybind-label { color: var(--fg); font-size: 13px; }
@@ -2641,6 +2641,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   min-width: 4ch; text-align: right;
 }
 .keybind-chord.is-unbound { color: var(--muted); }
+/* Read-only secondary-alias chords (ShortcutAction.secondaryBindings) — muted
+ * so the editable primary (.keybind-chord) stays the visual focus; empty
+ * when an action has no aliases (no extra layout ceremony). */
+.keybind-alias { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
 .keybind-warning { grid-column: 1 / -1; color: #dc2626; font-size: 12px; }
 .keybind-warning[hidden] { display: none; }
 

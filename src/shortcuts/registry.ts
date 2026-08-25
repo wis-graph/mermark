@@ -52,9 +52,11 @@ export function registerHandler(id: string, handler: Handler): void {
   handlers.set(id, handler);
 }
 
-/** The effective chord for an action: the user override if present, else the
- *  shipped default (or null if unbound). The override-beats-default rule in one
- *  named place. Pure query. */
+/** The effective PRIMARY chord for an action: the user override if present,
+ *  else the shipped default (or null if unbound). The override-beats-default
+ *  rule in one named place. Secondary aliases (ShortcutAction.secondaryBindings)
+ *  are never overridden — see effectiveBindings for the full firing set. Pure
+ *  query. */
 export function effectiveBinding(id: string): string | null {
   const o = overrides[id];
   if (o != null) return o;
@@ -62,26 +64,39 @@ export function effectiveBinding(id: string): string | null {
   return action ? action.defaultBinding : null;
 }
 
+/** Every chord that currently fires this action: the effective primary
+ *  (above) plus its shipped, non-overridable secondary aliases. This is the
+ *  set both dispatch (rebuildLookup) and conflict detection (findConflict)
+ *  must check — using effectiveBinding alone would miss a chord that's only
+ *  reachable through an alias. Pure query. */
+export function effectiveBindings(id: string): string[] {
+  const primary = effectiveBinding(id);
+  const secondaries = allActions().find((a) => a.id === id)?.secondaryBindings ?? [];
+  return primary ? [primary, ...secondaries] : [...secondaries];
+}
+
 /** The action id already bound to `chord` (ignoring `exceptId`, the row being
- *  edited), or null if free. Compares against effective bindings so a would-be
- *  duplicate is rejected before it shadows another command. Pure query. */
+ *  edited), or null if free. Compares against every effective binding
+ *  (primary + secondaries) so a would-be duplicate — including one that only
+ *  collides with an alias — is rejected before it shadows another command.
+ *  Pure query. */
 export function findConflict(chord: string, exceptId?: string): string | null {
   for (const a of allActions()) {
     if (a.id === exceptId) continue;
-    if (effectiveBinding(a.id) === chord) return a.id;
+    if (effectiveBindings(a.id).includes(chord)) return a.id;
   }
   return null;
 }
 
-/** Rebuild the chord → id reverse map from the current effective bindings.
- *  Command (void). Called on every override change so lookup never drifts from
- *  the SSOT. A later action wins a duplicate chord, but the UI's conflict guard
- *  prevents duplicates from being stored. */
+/** Rebuild the chord → id reverse map from the current effective bindings
+ *  (primary + secondaries — see effectiveBindings). Command (void). Called on
+ *  every override change so lookup never drifts from the SSOT. A later action
+ *  wins a duplicate chord, but the UI's conflict guard prevents duplicates
+ *  from being stored. */
 function rebuildLookup(): void {
   lookup = new Map();
   for (const a of allActions()) {
-    const b = effectiveBinding(a.id);
-    if (b) lookup.set(b, a.id);
+    for (const b of effectiveBindings(a.id)) lookup.set(b, a.id);
   }
 }
 

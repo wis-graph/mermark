@@ -5,6 +5,7 @@ import {
   registerHandler,
   bindKeybindings,
   effectiveBinding,
+  effectiveBindings,
   findConflict,
   dispatchChord,
   allActions,
@@ -121,6 +122,59 @@ describe("shortcut registry", () => {
     expect(doc).toHaveBeenCalledOnce();
     expect(dispatchChord("Mod+Shift+F")).toBe(true);
     expect(files).toHaveBeenCalledOnce();
+  });
+
+  // Multi-binding (secondaryBindings): explorer.toggle keeps its primary
+  // Mod+B and ships a read-only Mod+2 alias; search.files keeps
+  // Mod+Shift+F and ships Mod+5 — both chords must dispatch the same
+  // handler, both must be reported by effectiveBindings, and a reassignment
+  // of the primary must NOT disturb the secondary.
+  describe("secondary chord aliases", () => {
+    it("effectiveBindings lists the primary plus every secondary", () => {
+      bindKeybindings(keybindSetting("kb.secList"));
+      expect(effectiveBindings("explorer.toggle")).toEqual(["Mod+B", "Mod+2"]);
+      expect(effectiveBindings("search.files")).toEqual(["Mod+Shift+F", "Mod+5"]);
+      expect(effectiveBindings("recent.toggle")).toEqual(["Mod+3"]); // no secondaries
+    });
+
+    it("both the primary and the secondary chord dispatch the same handler", () => {
+      bindKeybindings(keybindSetting("kb.secDispatch"));
+      const explorer = vi.fn();
+      registerHandler("explorer.toggle", explorer);
+      expect(dispatchChord("Mod+B")).toBe(true);
+      expect(dispatchChord("Mod+2")).toBe(true);
+      expect(explorer).toHaveBeenCalledTimes(2);
+    });
+
+    it("findConflict catches a chord that only collides with a secondary alias", () => {
+      bindKeybindings(keybindSetting("kb.secConflict"));
+      expect(findConflict("Mod+2")).toBe("explorer.toggle");
+      expect(findConflict("Mod+2", "explorer.toggle")).toBeNull();
+      expect(findConflict("Mod+5")).toBe("search.files");
+    });
+
+    it("reassigning the primary override leaves the secondary alias intact and still dispatching", () => {
+      const s = keybindSetting("kb.secOverride");
+      bindKeybindings(s);
+      const explorer = vi.fn();
+      registerHandler("explorer.toggle", explorer);
+      s.set({ "explorer.toggle": "Mod+L" }); // user rebinds the primary
+      expect(dispatchChord("Mod+B")).toBe(false); // old primary is gone
+      expect(dispatchChord("Mod+L")).toBe(true); // new primary works
+      expect(dispatchChord("Mod+2")).toBe(true); // secondary survives untouched
+      expect(explorer).toHaveBeenCalledTimes(2);
+      expect(effectiveBindings("explorer.toggle")).toEqual(["Mod+L", "Mod+2"]);
+    });
+
+    it("a pre-existing user override (saved before secondaryBindings existed) still resolves without migration", () => {
+      const s = keybindSetting("kb.secLegacy");
+      // Simulates a user's keybindingsSetting persisted before this change —
+      // just the primary override, no knowledge of secondaries.
+      s.set({ "explorer.toggle": "Mod+Shift+B" });
+      bindKeybindings(s);
+      expect(effectiveBinding("explorer.toggle")).toBe("Mod+Shift+B");
+      expect(effectiveBindings("explorer.toggle")).toEqual(["Mod+Shift+B", "Mod+2"]);
+    });
   });
 
   // v0.9.12 real-app defect 2 ("찾아 바꾸기가 없는데?"): search.replace must be

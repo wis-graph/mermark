@@ -1042,6 +1042,25 @@ describe("main workspace wiring", () => {
   // only proves the catalog entry exists and main.ts actually registers a
   // handler wired to it (the gap the CLI-routing header comment above warns
   // about: a handler with no registration is a silent no-op).
+  // Sidebar toggle shortcuts (⌘1..⌘4 for workspace/explorer/recent/outline —
+  // fixed to the action id, not the panel's runtime registration index; see
+  // actions.ts's comment on why). Only the panels that had no default before
+  // this change (workspace/recent/outline) gained one — explorer keeps ⌘B
+  // and doesn't get a second chord here (that's a separate, pending decision).
+  describe("sidebar panel toggle shortcuts", () => {
+    it("gives workspace/recent/outline default number chords, keeps explorer on Mod+B", () => {
+      const byId = (id: string) => SHORTCUT_ACTIONS.find((a) => a.id === id);
+      expect(byId("workspace.toggle")).toEqual({ id: "workspace.toggle", label: "워크스페이스", defaultBinding: "Mod+1" });
+      expect(byId("explorer.toggle")?.defaultBinding).toBe("Mod+B");
+      expect(byId("recent.toggle")?.defaultBinding).toBe("Mod+3");
+      expect(byId("outline.toggle")?.defaultBinding).toBe("Mod+4");
+    });
+
+    it("registers a handler for workspace.toggle wired to the workspace sidebar button", () => {
+      expect(mainSource).toContain('registerHandler("workspace.toggle", () => workspaceSidebar.button.click());');
+    });
+  });
+
   describe("vault image attachment action wiring", () => {
     it("lists image.attach in the shortcut catalog, unbound by default", () => {
       const action = SHORTCUT_ACTIONS.find((a) => a.id === "image.attach");
