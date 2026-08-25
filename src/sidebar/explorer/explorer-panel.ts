@@ -1,6 +1,6 @@
 import { icon } from "../../icons";
 import { renderEntryGlyph, isEditableTextFile } from "./file-icons";
-import { basename, normalizePath } from "../../document/path";
+import { basename, dirOf, isPathWithin, normalizePath } from "../../document/path";
 import { renderSidebarButton } from "../toggle";
 
 /** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
@@ -100,6 +100,29 @@ export interface ExplorerPanel {
    *  state (design §루트 SSOT: "탐색기 루트의 정본은 explorer-panel 내부
    *  currentRoot … 상태를 복제하지 않는다"). Pure query. */
   currentRootPath(): string | null;
+  /** Does the tree, AS CURRENTLY SHOWN, cover `absPath`'s containing folder —
+   *  i.e. is the panel open, has it rendered a root, and does that root sit at
+   *  or above that folder? Domain rule this exists to name ("opening a
+   *  document is not a navigation act — don't reset the tree if it can
+   *  already show the document's folder"): a `false` here is main's signal to
+   *  fall back to `resetToBaseDir()`; a `true` means the caller should leave
+   *  the tree alone. A closed panel is ALWAYS false — never judged against a
+   *  stale `currentRoot` left over from before it closed. Doesn't say whether
+   *  that folder is actually EXPANDED right now (the tree's expand/collapse
+   *  state is DOM-only and this query doesn't walk it) — only that the root
+   *  subtree contains it. Pure query (CQS). */
+  showsFolderOf(absPath: string): boolean;
+  /** Mark `absPath` as the ACTIVE (currently open) document: highlight its row
+   *  (`.is-selected` + `aria-selected`) if the tree has rendered it, clearing
+   *  any previous highlight first. `null` clears the highlight entirely (no
+   *  document open — welcome pane, discarded document). The SINGLE writer of
+   *  the "open file" highlight — `activateItem`'s click/Enter path no longer
+   *  marks selection itself, so main.ts is the one place that decides what
+   *  "active" means (its `currentFile`). Re-applied automatically after every
+   *  `renderTree`/`expandFolder` rebuild, so the mark survives a tree
+   *  reconstruction and a lazily-expanded folder that reveals the active row.
+   *  Command (void). */
+  setActiveFile(absPath: string | null): void;
 }
 
 export interface ExplorerHandlers {
@@ -255,6 +278,15 @@ export function createExplorerPanel({
   let currentRoot: string | null = null;
   let renderGeneration = 0;
 
+  /** The currently ACTIVE (open) document's path, or null — the sink half of
+   *  `setActiveFile`. Normalized so it compares equal to `dataset.path`
+   *  regardless of how the caller spelled the separator. Survives
+   *  `renderTree`/`expandFolder` rebuilds (they call `applyActiveHighlight`
+   *  after rebuilding); `renderTree`'s own `tree.replaceChildren()` does NOT
+   *  reset it — the active file didn't stop being active just because its
+   *  row was momentarily removed from the DOM. */
+  let activePath: string | null = null;
+
   const refreshVaultToggles = async (): Promise<void> => {
     if (!isVaultRegistered) return;
     for (const row of tree.querySelectorAll<HTMLElement>(".explorer-dir")) {
@@ -361,6 +393,34 @@ export function createExplorerPanel({
     item.setAttribute("aria-selected", "true");
     item.classList.add("is-selected");
   };
+
+  /** Re-derive the `.is-selected` highlight from `activePath` against whatever
+   *  rows are CURRENTLY rendered: clear every row's mark, then re-mark the one
+   *  whose `dataset.path` matches (if the tree happens to have rendered it —
+   *  a collapsed/absent folder just means no row is marked, not an error).
+   *  Called after every rebuild (`renderTree`, `expandFolder`) and by
+   *  `setActiveFile` itself, so the tree's DOM never drifts from `activePath`
+   *  no matter which of the two changed. Command (void). */
+  const applyActiveHighlight = (): void => {
+    for (const el of allItems()) {
+      el.removeAttribute("aria-selected");
+      el.classList.remove("is-selected");
+    }
+    if (!activePath) return;
+    const match = allItems().find((el) => el.dataset.path === activePath);
+    if (match) selectItem(match);
+  };
+
+  /** Set the active document and immediately re-derive the highlight — see the
+   *  interface doc comment for the SSOT rule this enforces. Command (void). */
+  const setActiveFile = (absPath: string | null): void => {
+    activePath = absPath ? normalizePath(absPath) : null;
+    applyActiveHighlight();
+  };
+
+  /** See the interface doc comment. Pure query (CQS). */
+  const showsFolderOf = (absPath: string): boolean =>
+    !aside.hidden && currentRoot !== null && isPathWithin(dirOf(absPath), currentRoot);
 
   const errorMessage = (error: unknown): string =>
     error instanceof Error && error.message.length > 0 ? error.message : "알 수 없는 오류";
@@ -484,6 +544,10 @@ export function createExplorerPanel({
         return;
       }
       for (const child of result.entries) kids.append(await makeEntry(child, level));
+      // The active document's row may have just been revealed by this expand
+      // — re-derive the highlight so it lights up without waiting for a
+      // renderTree (setActiveFile's second reapply point, see its doc comment).
+      applyActiveHighlight();
     } catch (error) {
       if (listingErrors.get(path) !== errorMessage(error)) return;
       node.removeAttribute("data-loaded");
@@ -616,6 +680,10 @@ export function createExplorerPanel({
       if (listingRequests.get(rootPath) !== result.request) { focusOwed = false; return; }
       if (result.entries.length === 0) tree.append(makeEmptyState());
       else for (const e of result.entries) tree.append(await makeEntry(e, 1));
+      // renderTree's own tree.replaceChildren() (above) wiped any highlight —
+      // re-derive it against the freshly-built rows (setActiveFile's first
+      // reapply point, see its doc comment).
+      applyActiveHighlight();
     } catch (error) {
       if (renderGeneration !== renderId) return; // superseded — same as above
       if (listingErrors.get(rootPath) !== errorMessage(error)) { focusOwed = false; return; } // current generation, stale error — discharge, don't carry forward
@@ -686,7 +754,11 @@ export function createExplorerPanel({
     if (item.classList.contains("is-nonmd")) return; // non-md/unclaimed is greyed + inert
     const path = item.dataset.path;
     if (!path) return;
-    selectItem(item);
+    // No selectItem() here — the "open file" highlight is owned solely by
+    // setActiveFile (see its interface doc comment). A viewer-claimed row
+    // (image/PDF/etc.) never becomes "active": opening a viewer doesn't
+    // change main's currentFile, so leaving the underlying markdown
+    // document's row highlighted is the CORRECT behavior, not a missed mark.
     if (onOpenWithViewer && canOpenWithViewer?.(basename(path))) onOpenWithViewer(path);
     else if (newWindow && onOpenFileNewWindow) onOpenFileNewWindow(path);
     else onOpenFile(path);
@@ -897,5 +969,7 @@ export function createExplorerPanel({
     refreshListing,
     refreshVaultToggles,
     currentRootPath: () => currentRoot,
+    showsFolderOf,
+    setActiveFile,
   };
 }

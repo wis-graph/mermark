@@ -111,6 +111,47 @@ try {
   await page.keyboard.type(`\n${deletedMarker}`);
   await waitEditor(deletedMarker);
   result.scenarios.recoveryBufferMarker = { present: (await editor.innerText()).includes(deletedMarker), originalPath: path };
+
+  // ---------------------------------------------------------------------
+  // 2026-08-25 explorer regressions/features (folder-collapse-on-open fix +
+  // active-document highlight). Global vaults already preserve their
+  // explorer root unconditionally (shouldPreserveGlobalExplorerRoot), so the
+  // folder-collapse regression only reproduces on a PERMANENT vault — this
+  // registers /mock/vault as one, then reloads fresh.
+  const vaultId = "vault-%2Fmock%2Fvault";
+  await page.evaluate(({ vaultId }) => {
+    localStorage.setItem("mermark.workspaceState", JSON.stringify({
+      workspaces: [{ workspaceId: "workspace-default", vaultIds: [vaultId], currentVaultId: vaultId, lastSelectedPermanentVaultId: vaultId }],
+      vaults: [{ vaultId, workspaceId: "workspace-default", displayName: "vault", rootPath: "/mock/vault", persistenceKind: "permanent", explorerRoot: "/mock/vault" }],
+      currentWorkspaceId: "workspace-default",
+    }));
+  }, { vaultId });
+  await page.goto(`${base}/?file=${encodeURIComponent("/mock/vault/index.md")}`, { waitUntil: "domcontentloaded" });
+  await page.locator(".cm-content").waitFor({ timeout: 10000 });
+  await page.locator(".explorer-btn").click();
+  await page.locator('.explorer-dir[data-path="/mock/vault/notes"]').waitFor({ timeout: 10000 });
+  await page.locator('.explorer-dir[data-path="/mock/vault/notes"]').click(); // expand notes/
+  await page.locator('.explorer-file[data-path="/mock/vault/notes/a.md"]').waitFor({ timeout: 10000 });
+  await page.locator('.explorer-file[data-path="/mock/vault/notes/a.md"]').click(); // open a doc INSIDE the expanded folder
+  await waitEditor("Mermark").catch(() => {}); // best-effort; the assertions below are the real gate
+  await page.waitForTimeout(300);
+  result.scenarios.folderStaysExpandedOnDocumentOpen = {
+    notesExpanded: await page.locator('.explorer-dir[data-path="/mock/vault/notes"]').getAttribute("aria-expanded"),
+    aHighlighted: await page.locator('.explorer-file[data-path="/mock/vault/notes/a.md"]').evaluate((el) => el.classList.contains("is-selected")),
+    treeRootStillVaultRoot: await page.locator(".breadcrumb").getAttribute("aria-label"),
+  };
+  await screenshot("workspace-folder-stays-expanded");
+
+  // Active-document highlight follows the newly-opened document (root-level
+  // index.md), and the previous active row (a.md) loses its highlight.
+  await page.locator('.explorer-file[data-path="/mock/vault/index.md"]').click();
+  await page.waitForTimeout(300);
+  result.scenarios.activeHighlightMoves = {
+    notesStillExpanded: await page.locator('.explorer-dir[data-path="/mock/vault/notes"]').getAttribute("aria-expanded"),
+    aHighlightedAfter: await page.locator('.explorer-file[data-path="/mock/vault/notes/a.md"]').evaluate((el) => el.classList.contains("is-selected")),
+    indexHighlighted: await page.locator('.explorer-file[data-path="/mock/vault/index.md"]').evaluate((el) => el.classList.contains("is-selected")),
+  };
+  await screenshot("workspace-active-highlight-moves");
 } catch (error) {
   result.errors.push(error instanceof Error ? error.stack ?? error.message : String(error));
 }

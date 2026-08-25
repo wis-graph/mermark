@@ -218,7 +218,12 @@ describe("explorer: keyboard ↑↓→←/Enter/Home/End (3)", () => {
 
 // 4. Focus ≠ Selection ---------------------------------------------------------
 describe("explorer: focus is not selection (4)", () => {
-  it("arrowing to a file does not open/select it; Enter then opens + selects", async () => {
+  // 2026-08-25: the "open file" highlight is no longer a side effect of
+  // activateItem's click/Enter path — it's owned solely by `setActiveFile`
+  // (main.ts calls it once a document actually opens). A bare Enter/click
+  // still OPENS the file, but no longer marks it as selected on its own; see
+  // the "setActiveFile" describe below for the highlight's own contract.
+  it("arrowing to a file does not open it; Enter then opens (activation alone no longer selects)", async () => {
     const onOpenFile = vi.fn();
     const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile });
 
@@ -232,23 +237,8 @@ describe("explorer: focus is not selection (4)", () => {
     press(panel.aside, "Enter");
     expect(onOpenFile).toHaveBeenCalledTimes(1);
     expect(onOpenFile).toHaveBeenCalledWith("/root/a.md");
-    expect(md.getAttribute("aria-selected")).toBe("true");
-    expect(md.classList.contains("is-selected")).toBe(true);
-  });
-
-  it("single-selection: selecting another file clears the prior selection", async () => {
-    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
-    const md = items(panel.aside).find((e) => nameOf(e) === "a.md") as HTMLElement;
-    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
-    clickItem(md);
-    await flush();
-    clickItem(sub); // expand sub → b.md appears
-    await flush();
-    const b = items(panel.aside).find((e) => nameOf(e) === "b.md") as HTMLElement;
-    clickItem(b);
-    expect(panel.aside.querySelectorAll('[aria-selected="true"]')).toHaveLength(1);
-    expect(md.hasAttribute("aria-selected")).toBe(false);
-    expect(b.getAttribute("aria-selected")).toBe("true");
+    expect(md.hasAttribute("aria-selected")).toBe(false); // activation alone still doesn't select
+    expect(md.classList.contains("is-selected")).toBe(false);
   });
 });
 
@@ -776,6 +766,97 @@ describe("explorer: currentRootPath (SSOT for the search panel's root)", () => {
   });
 });
 
+// showsFolderOf — the pure query syncExplorerToOpenedDocument (main.ts) reads
+// to decide whether opening a document may leave the tree alone.
+// 2026-08-25 folder-collapse regression fix.
+describe("explorer: showsFolderOf", () => {
+  it("true for a document directly inside the current root", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(panel.showsFolderOf("/root/a.md")).toBe(true);
+  });
+  it("true for a document nested under the current root", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(panel.showsFolderOf("/root/sub/b.md")).toBe(true);
+  });
+  it("false for a document outside the current root", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(panel.showsFolderOf("/other/doc.md")).toBe(false);
+  });
+  it("boundary: a sibling folder whose name merely extends the root's is NOT within it", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(panel.showsFolderOf("/rootx/doc.md")).toBe(false);
+  });
+  it("false once the panel is closed — never judged against a stale root", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(panel.showsFolderOf("/root/a.md")).toBe(true);
+    panel.close();
+    expect(panel.showsFolderOf("/root/a.md")).toBe(false);
+  });
+  it("false before the first render (no root yet)", () => {
+    const panel = createExplorerPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(panel.showsFolderOf("/root/a.md")).toBe(false);
+  });
+});
+
+// setActiveFile — the single writer of the "open document" highlight
+// (`.is-selected` + `aria-selected`), decoupled from activateItem's
+// click/Enter path. 2026-08-25 active-document-highlight feature.
+describe("explorer: setActiveFile (active document highlight)", () => {
+  it("marks the matching row .is-selected + aria-selected, clearing any prior mark", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    const a = items(panel.aside).find((e) => nameOf(e) === "a.md") as HTMLElement;
+
+    panel.setActiveFile("/root/a.md");
+    expect(a.classList.contains("is-selected")).toBe(true);
+    expect(a.getAttribute("aria-selected")).toBe("true");
+
+    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
+    clickItem(sub); // expand sub → b.md appears
+    await flush();
+    const b = items(panel.aside).find((e) => nameOf(e) === "b.md") as HTMLElement;
+    panel.setActiveFile("/root/sub/b.md");
+    expect(b.getAttribute("aria-selected")).toBe("true");
+    expect(a.hasAttribute("aria-selected")).toBe(false);
+    expect(panel.aside.querySelectorAll('[aria-selected="true"]')).toHaveLength(1);
+  });
+
+  it("a path with no rendered row marks nothing (no throw)", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    expect(() => panel.setActiveFile("/elsewhere/doc.md")).not.toThrow();
+    expect(panel.aside.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
+  });
+
+  it("survives a renderTree rebuild (refreshListing) — reapplied against the fresh DOM", async () => {
+    const listDir = vi.fn(fakeTree());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    panel.setActiveFile("/root/a.md");
+    panel.refreshListing();
+    await flush();
+    const a = items(panel.aside).find((e) => nameOf(e) === "a.md") as HTMLElement;
+    expect(a.classList.contains("is-selected")).toBe(true);
+  });
+
+  it("reapplies when a lazily-expanded folder reveals the active row for the first time", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    panel.setActiveFile("/root/sub/b.md"); // not rendered yet — sub is collapsed
+    expect(panel.aside.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
+
+    const sub = panel.aside.querySelector(".explorer-dir") as HTMLElement;
+    clickItem(sub); // expand → b.md row is created
+    await flush();
+    const b = items(panel.aside).find((e) => nameOf(e) === "b.md") as HTMLElement;
+    expect(b.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("null clears every mark", async () => {
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile: vi.fn() });
+    panel.setActiveFile("/root/a.md");
+    expect(panel.aside.querySelectorAll('[aria-selected="true"]')).toHaveLength(1);
+    panel.setActiveFile(null);
+    expect(panel.aside.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
+  });
+});
+
 // 6. Only .md opens ------------------------------------------------------------
 describe("explorer: opens markdown only (6)", () => {
   it("md click → onOpenFile(absPath); non-md click + Enter are no-ops", async () => {
@@ -835,7 +916,7 @@ describe("explorer: .txt opens like .md; .markdown stays out of scope (txt-as-md
 const isPngName = (name: string) => name.endsWith(".png");
 
 describe("explorer: non-md entries open via canOpenWithViewer/onOpenWithViewer when injected (K)", () => {
-  it("injected + claimed: row is NOT .is-nonmd, click selects + calls onOpenWithViewer(absPath), never onOpenFile", async () => {
+  it("injected + claimed: row is NOT .is-nonmd, click calls onOpenWithViewer(absPath), never onOpenFile, and does NOT select", async () => {
     const onOpenFile = vi.fn();
     const onOpenWithViewer = vi.fn();
     const panel = await openPanel({
@@ -853,7 +934,11 @@ describe("explorer: non-md entries open via canOpenWithViewer/onOpenWithViewer w
     expect(onOpenWithViewer).toHaveBeenCalledTimes(1);
     expect(onOpenWithViewer).toHaveBeenCalledWith("/root/pic.png");
     expect(onOpenFile).not.toHaveBeenCalled();
-    expect(png.getAttribute("aria-selected")).toBe("true"); // selectItem still runs
+    // 2026-08-25: a viewer-claimed row (image/PDF/etc.) never becomes
+    // "active" — opening a viewer doesn't change main's currentFile, so the
+    // underlying markdown document's highlight (if any) is left untouched.
+    // Selection is now `setActiveFile`'s job alone, not activateItem's.
+    expect(png.hasAttribute("aria-selected")).toBe(false);
   });
 
   it("injected: Enter on a focused claimed row is equivalent to click (single activateItem path)", async () => {

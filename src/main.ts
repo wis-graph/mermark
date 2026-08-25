@@ -821,6 +821,7 @@ async function boot() {
     closeRecovery();
     teardownCurrent();
     currentFile = "";
+    explorer.setActiveFile(null); // no document open — clear the tree highlight
     const vault = currentVault();
     currentBaseDir = vault?.persistenceKind === "permanent" ? vault.rootPath : currentExplorerFolder;
     host.classList.add("welcome-host");
@@ -1194,12 +1195,56 @@ async function boot() {
    *  mtime baseline, session key) by going through the verified mountEditor
    *  boot path. Tears down any previous editor first. Mode/vim are preserved
    *  from the live settings (a re-open keeps your edit/read + vim state). */
+  /** Reconcile the explorer (tree + breadcrumb) with a document that just
+   *  became `currentFile`, and mark it as the tree's active-highlight target.
+   *  Runs the domain rule "opening a document is not a navigation act" —
+   *  named here because `openInWindow` used to inline it as an unconditional
+   *  `explorer.resetToBaseDir()`, which threw away the tree's expansion state
+   *  (all of it, DOM-only SSOT) on every single-window document open,
+   *  including a plain click on a row already inside the visible tree
+   *  (the 2026-08-25 folder-collapse regression). Three branches, in order:
+   *
+   *  1. Global vault preserving its explorer root (`shouldPreserveGlobalExplorerRoot`)
+   *     — unaffected by this rule; keep the pre-existing behavior exactly
+   *     (no reset, breadcrumb tracks `currentExplorerFolder`).
+   *  2. `explorer.showsFolderOf(file)` — the tree's current root ALREADY
+   *     covers this file's folder (typically: the vault root is locked and
+   *     the user just clicked a row inside the visible tree, or the vault
+   *     was just selected and `jumpToRoot` already rendered this root in the
+   *     same synchronous tick — see main.ts's vault-select commit path).
+   *     Leave the tree alone (expansion/scroll/focus all survive for free)
+   *     and point the breadcrumb at the tree's actual root, not
+   *     `currentBaseDir` (which drifts from the vault root once the open
+   *     document sits in a subfolder — the "harmless double render" this
+   *     branch also fixes).
+   *  3. Anything else (recent list, history, wikilink, or the file-finder
+   *     opening a document outside whatever the tree happens to show right
+   *     now) — the tree genuinely has nothing to show; fall back to the old
+   *     reset-to-the-document's-folder behavior.
+   *
+   *  `explorer.setActiveFile(file)` runs unconditionally after the branch —
+   *  the highlight target changes on every successful open regardless of
+   *  whether the tree itself was touched (branch 2/3 rebuild the DOM and
+   *  reapply it themselves via `renderTree`'s own reapply point; branch 1's
+   *  no-op tree still needs the SSOT (`activePath`) updated so a later
+   *  expand reveals the right row). Command (void). */
+  function syncExplorerToOpenedDocument(file: string): void {
+    if (shouldPreserveGlobalExplorerRoot(selectedWorkspaceVault())) {
+      breadcrumb.render(currentExplorerFolder);
+    } else if (explorer.showsFolderOf(file)) {
+      breadcrumb.render(explorer.currentRootPath() ?? currentBaseDir);
+    } else {
+      explorer.resetToBaseDir();
+      breadcrumb.render(currentBaseDir);
+    }
+    explorer.setActiveFile(file);
+  }
+
   function openInWindow(
     file: string,
     fresh: { text: string; mtime: number },
     opts: { readonly viaHistory?: boolean; readonly watcherReady?: boolean } = {},
   ): void {
-    const preserveExplorerRoot = shouldPreserveGlobalExplorerRoot(selectedWorkspaceVault());
     const selectedVault = routeDocumentPath(file);
     closeConflict();
     closeOpenViewer(); // opening a document closes any open viewer (design §A rule 1)
@@ -1274,15 +1319,10 @@ async function boot() {
     // so an open outline panel would show the previous file's headings. Refresh
     // explicitly here (no-op when the panel is closed) so it tracks the swap.
     outline.refresh();
-    // The explorer's root is the live document's folder — reseed it on a switch
-    // (ephemeral root, not a setting). A no-op when the panel is closed.
-    if (!preserveExplorerRoot) explorer.resetToBaseDir();
-    // Seed the footer breadcrumb for THIS switch too: resetToBaseDir is a no-op
-    // while the explorer panel is closed (so onRootChange won't fire), and the
-    // breadcrumb must still track the live document's folder even with the
-    // panel shut. Idempotent with onRootChange when the panel IS open (both
-    // land on the same currentBaseDir — a harmless double render).
-    breadcrumb.render(preserveExplorerRoot ? currentExplorerFolder : currentBaseDir);
+    // Reconcile the explorer tree/breadcrumb/highlight with the newly-opened
+    // document — see syncExplorerToOpenedDocument's doc comment for the
+    // three-branch rule ("opening a document is not a navigation act").
+    syncExplorerToOpenedDocument(file);
 
     // Record this document as most-recent — the SINGLE write point for the recent
     // list (dedup → front → cap via pushRecent). The recent panel re-renders from

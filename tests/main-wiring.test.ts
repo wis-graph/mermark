@@ -257,6 +257,48 @@ describe("main workspace wiring", () => {
     expect(invokeMock.mock.calls.filter(([command, args]) => command === "list_dir" && pathArg(args) === "/A").length).toBeGreaterThan(1);
   });
 
+  // 2026-08-25 regression: opening a document that lives inside an already-
+  // EXPANDED folder used to unconditionally reset the tree (main.ts's old
+  // unconditional `explorer.resetToBaseDir()` in openInWindow), collapsing
+  // every folder back to `aria-expanded="false"` even though the tree's root
+  // never actually changed. syncExplorerToOpenedDocument's `showsFolderOf`
+  // branch is what's supposed to leave the tree alone here.
+  it("does not collapse an already-expanded folder when opening a document inside it (regression)", async () => {
+    localStorage.setItem("mermark.workspaceState", JSON.stringify({
+      workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FA"], currentVaultId: "vault-%2FA", lastSelectedPermanentVaultId: "vault-%2FA" }],
+      vaults: [{ vaultId: "vault-%2FA", workspaceId: "workspace-default", displayName: "A", rootPath: "/A", persistenceKind: "permanent", explorerRoot: "/A" }],
+      currentWorkspaceId: "workspace-default",
+    }));
+    documentContents.set("/A/start.md", "# start");
+    documentContents.set("/A/B/doc.md", "# doc");
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("start"));
+
+    document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+    await vi.waitFor(() => expect(document.querySelector('.explorer-dir[data-path="/A/B"]')).not.toBeNull());
+    document.querySelector<HTMLElement>('.explorer-dir[data-path="/A/B"]')?.click();
+    await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="/A/B/doc.md"]')).not.toBeNull());
+
+    const listDirCallsForB = () => invokeMock.mock.calls.filter(([command, args]) => command === "list_dir" && pathArg(args) === "/A/B").length;
+    expect(listDirCallsForB()).toBe(1); // one read to populate the folder
+
+    document.querySelector<HTMLElement>('.explorer-file[data-path="/A/B/doc.md"]')?.click();
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("doc"));
+
+    // The folder that CONTAINS the just-opened document must still be expanded
+    // — the tree was never touched, so `expandFolder`'s aria-expanded write
+    // survives verbatim.
+    expect(document.querySelector('.explorer-dir[data-path="/A/B"]')?.getAttribute("aria-expanded")).toBe("true");
+    // childrenCache was preserved (no reset), so /A/B was never re-read.
+    expect(listDirCallsForB()).toBe(1);
+    // The tree's root is unchanged (still the vault root) and the breadcrumb
+    // tracks it, not a re-seeded document-folder root.
+    expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: /A");
+    // The newly-opened document is highlighted as the active row.
+    expect(document.querySelector('.explorer-file[data-path="/A/B/doc.md"]')?.classList.contains("is-selected")).toBe(true);
+  });
+
   it("does not let a permanent-vault switch overwrite the closed global root", async () => {
     await import("../src/main");
     await new Promise((resolve) => setTimeout(resolve, 100));

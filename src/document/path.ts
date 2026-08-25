@@ -14,6 +14,18 @@ export function basename(path: string): string {
   return sep >= 0 ? path.slice(sep + 1) : path;
 }
 
+/** Is `path` equal to `ancestor`, or nested somewhere underneath it? Handles
+ *  both posix (`/`) and windows (`\`) separators (a bare `startsWith(ancestor)`
+ *  would wrongly match a *sibling* whose name extends `ancestor`'s — e.g.
+ *  `/a/bc` must NOT be "within" `/a/b`). Promoted from
+ *  `workspace/cli-routing.ts`'s private `isWithinRoot` (same boundary check,
+ *  now shared with the explorer panel's `showsFolderOf`) — the two callers
+ *  must never drift on what "within" means. Pure query (CQS). */
+export function isPathWithin(path: string, ancestor: string): boolean {
+  if (path === ancestor) return true;
+  return path.startsWith(`${ancestor}/`) || path.startsWith(`${ancestor}\\`);
+}
+
 /** Which separator a path "speaks": `\` only when the path has a backslash and
  *  no forward slash, `/` otherwise (posix default). Shared by `normalizePath`
  *  (to rejoin segments) and `formatRootLabel` (to split them) so the two never

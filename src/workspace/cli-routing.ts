@@ -1,4 +1,5 @@
 import { canonicalRootPath, type PermanentVault, type Vault, type WorkspaceState, WorkspaceStore } from "./workspace-state";
+import { isPathWithin } from "../document/path";
 
 export type CliRouteKind = "permanent" | "global";
 
@@ -8,11 +9,6 @@ export interface CliRoute {
   readonly vault: Vault;
 }
 
-const isWithinRoot = (path: string, root: string): boolean => {
-  if (path === root) return true;
-  return path.startsWith(`${root}/`) || path.startsWith(`${root}\\`);
-};
-
 const currentWorkspace = (state: WorkspaceState) =>
   state.workspaces.find((workspace) => workspace.workspaceId === state.currentWorkspaceId);
 
@@ -21,7 +17,7 @@ const permanentVaultForPath = (state: WorkspaceState, path: string): Vault | und
   if (!workspace) return undefined;
   return state.vaults
     .filter((vault): vault is PermanentVault => vault.workspaceId === workspace.workspaceId && vault.persistenceKind === "permanent")
-    .filter((vault) => isWithinRoot(path, vault.rootPath))
+    .filter((vault) => isPathWithin(path, vault.rootPath))
     .sort((left, right) => right.rootPath.length - left.rootPath.length)[0];
 };
 

@@ -7,6 +7,7 @@ import {
   formatRootLabel,
   normalizePath,
   breadcrumbSegments,
+  isPathWithin,
 } from "../src/document/path";
 
 describe("normalizePath", () => {
@@ -102,6 +103,27 @@ describe("basename", () => {
   it("agrees with dirOf on the split point (dirOf + sep + basename reconstructs the path)", () => {
     const p = "/Users/x/notes/foo.md";
     expect(`${dirOf(p)}/${basename(p)}`).toBe(p);
+  });
+});
+
+// Promoted from workspace/cli-routing.ts's private `isWithinRoot` — same
+// boundary contract, now shared with the explorer panel's `showsFolderOf`
+// (2026-08-25 folder-collapse regression fix).
+describe("isPathWithin", () => {
+  it("is within itself (identical path)", () => {
+    expect(isPathWithin("/a", "/a")).toBe(true);
+  });
+  it("is within a proper ancestor", () => {
+    expect(isPathWithin("/a/b", "/a")).toBe(true);
+  });
+  it("boundary: a sibling whose name merely EXTENDS the ancestor's is NOT within it (/a/bc vs /a/b)", () => {
+    expect(isPathWithin("/a/bc", "/a/b")).toBe(false);
+  });
+  it("a strictly unrelated path is not within it", () => {
+    expect(isPathWithin("/other/doc.md", "/root")).toBe(false);
+  });
+  it("handles windows backslash separators", () => {
+    expect(isPathWithin("C:\\a\\b", "C:\\a")).toBe(true);
   });
 });
 
