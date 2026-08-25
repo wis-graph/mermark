@@ -71,3 +71,15 @@ function fan(event: string, payload: unknown): void {
   console.info("[mock] __mockExternalChange → file-changed", `${payload.text.length} chars`);
   fan("file-changed", payload);
 };
+
+// Dev hook: fire an arbitrary event through the LIVE `listeners` map this
+// module instance holds — an outside driver (Playwright/CDP script) that
+// instead did its own `import("/src/mocks/tauri-event.ts")` would only reach
+// the app's real `listen()` registrations when that import resolves to the
+// exact same URL Vite served the app (querystring included); any HMR
+// invalidation since boot breaks that by versioning the app's copy, leaving
+// the script's `emit()` fanning into an empty, disconnected listener set —
+// same class of bug as __mockInvoke in tauri-core.ts. window.__mockEmit
+// sidesteps it by using this module's own `fan`, whichever instance actually
+// booted the page.
+(window as unknown as { __mockEmit?: typeof emit }).__mockEmit = emit;

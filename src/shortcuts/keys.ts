@@ -73,6 +73,17 @@ function foldsShiftAway(code: string): boolean {
   return code === "Equal";
 }
 
+/** True while an IME composition (e.g. Korean/Japanese) is in progress — an
+ *  Enter that CONFIRMS the composition must not also fire whatever that Enter
+ *  would otherwise trigger (search-panel result activation, explorer row
+ *  activation, ...). Shared here so every keydown listener that treats Enter
+ *  as an activation gesture applies the same rule instead of re-deriving it
+ *  (and risking one call site forgetting the `keyCode === 229` legacy
+ *  fallback some browsers still need). Pure query. */
+export function isImeComposing(e: KeyboardEvent): boolean {
+  return e.isComposing || e.keyCode === 229;
+}
+
 /** The single "read a keydown into a chord" rule. Returns the canonical stored
  *  string, or null when the event is not a complete chord (a lone modifier
  *  press, or a key that carries no bindable token). Pure query. */

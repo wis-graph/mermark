@@ -1,6 +1,7 @@
 import { renderEntryGlyph, isEditableTextFile } from "../explorer/file-icons";
 import { renderSidebarButton } from "../toggle";
 import { rankHits, MAX_RESULTS, type FuzzyMatch } from "./fuzzy";
+import { isImeComposing } from "../../shortcuts/keys";
 
 // ---------------------------------------------------------------------------
 // File-finder LEFT SIDEBAR panel (⌘⇧F) — VS Code ⌘P-style quick open: one
@@ -95,14 +96,6 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => 
   if (cls) e.className = cls;
   return e;
 };
-
-/** True while an IME composition (e.g. Korean) is in progress — an Enter
- *  that CONFIRMS the composition must not also activate the selected row
- *  (mermark-frontend §7: name the domain rule, don't bury it in an inline
- *  `if` inside the keydown handler). Pure query. */
-function isImeComposing(e: KeyboardEvent): boolean {
-  return e.isComposing || e.keyCode === 229;
-}
 
 /** Wrap the character ranges in `match.positions` with `<mark>` inside a text
  *  node's worth of `text`, appended to `parent`. Command (void) — the only

@@ -2,6 +2,7 @@ import { icon } from "../../icons";
 import { renderEntryGlyph, isEditableTextFile } from "./file-icons";
 import { basename, dirOf, isPathWithin, normalizePath } from "../../document/path";
 import { renderSidebarButton } from "../toggle";
+import { isImeComposing } from "../../shortcuts/keys";
 
 /** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
 const EXPLORER_ASIDE_ID = "explorer-aside";
@@ -945,6 +946,7 @@ export function createExplorerPanel({
         arrowCollapseOrParent(item);
         break;
       case "Enter":
+        if (isImeComposing(e)) return; // let the IME confirm; don't also activate
         e.preventDefault();
         activateItem(item, e.metaKey); // ⌘+Enter = open in a new window
         break;

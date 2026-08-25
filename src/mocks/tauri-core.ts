@@ -128,6 +128,24 @@ declare global {
     // cases below for how each is consumed.
     __mockAttachPick?: string | null | (() => string | null);
     __mockRollbackFail?: boolean;
+    // Dev hook (set below, right after `invoke` is defined): lets an outside
+    // driver (Playwright/CDP script) call the mock's REAL `invoke` — the
+    // exact module-scoped `store` the running app itself reads/writes —
+    // instead of doing its own `import("/src/mocks/tauri-core.ts")`. A
+    // dynamic import by URL is only guaranteed to hit the same module
+    // instance the app is using when Vite has served that exact URL
+    // (querystring included) to both; any HMR invalidation since boot makes
+    // Vite serve the app a fresh `?t=...`-versioned copy with its OWN
+    // `store` Map, so a script's unversioned re-import silently talks to a
+    // disconnected copy (writes vanish from its own reads) — that's what
+    // made the workspace-smoke autosave/appCloseEquivalent scenarios look
+    // broken even though the app really did save. window.__mockInvoke sidesteps
+    // the whole versioning question by reusing whichever instance actually
+    // booted the page.
+    __mockInvoke?: typeof invoke;
+    // Same reasoning as __mockInvoke: the live watch session, read off
+    // whichever module instance actually booted the page.
+    __mockCurrentWatchSession?: typeof currentMockWatchSession;
   }
 }
 window.__mockAcks = [];
@@ -153,6 +171,17 @@ function beginMockWatch(path: string): MockWatchSession {
 function clearMockWatch(): void {
   mockWatchedPath = null;
   mockWatchSession = null;
+}
+
+/** The watch session currently armed (path + backend-assigned generation), or
+ *  null if nothing is watched. Exported read-only accessor so smoke/golden
+ *  scripts can build a correctly-shaped `file-unavailable`/`file-changed`
+ *  event payload (createWatcherHandoff.accepts() in file-watch.ts rejects any
+ *  event whose `path`/`generation` don't match the live session — a payload
+ *  missing either field is silently ignored, not an error, which is easy to
+ *  miss from outside). */
+export function currentMockWatchSession(): { readonly path: string; readonly generation: string } | null {
+  return mockWatchSession;
 }
 
 const smokeBridge = new URL(window.location.href).searchParams.get("smokeBridge");
@@ -846,6 +875,9 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       return undefined as T;
   }
 }
+
+window.__mockInvoke = invoke;
+window.__mockCurrentWatchSession = currentMockWatchSession;
 
 export function convertFileSrc(filePath: string, _protocol?: string): string {
   // no asset:// scheme in a browser; just hand back the path (broken img is fine for debugging)

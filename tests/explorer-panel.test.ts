@@ -214,6 +214,20 @@ describe("explorer: keyboard ↑↓→←/Enter/Home/End (3)", () => {
     press(panel.aside, "Home");
     expect(nameOf(focusedItem(panel.aside))).toBe("..");
   });
+
+  it("an Enter that confirms IME composition does not activate the focused row", async () => {
+    const onOpenFile = vi.fn();
+    const panel = await openPanel({ listDir: vi.fn(fakeTree()), getBaseDir: () => "/root", onOpenFile });
+    press(panel.aside, "ArrowDown"); // focus "sub" (a folder) — Enter would toggle it
+    press(panel.aside, "ArrowDown"); // focus "a.md" — Enter would open it
+    expect(nameOf(focusedItem(panel.aside))).toBe("a.md");
+
+    treeOf(panel.aside).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true })
+    );
+    expect(onOpenFile).not.toHaveBeenCalled();
+    expect(nameOf(focusedItem(panel.aside))).toBe("a.md"); // focus untouched, no activation
+  });
 });
 
 // 4. Focus ≠ Selection ---------------------------------------------------------
