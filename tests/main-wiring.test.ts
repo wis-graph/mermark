@@ -15,7 +15,18 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
   // lets a literal `./B/doc.md` join (local-doc-link.ts's candidateAbs, which
   // deliberately does not lexically collapse before canonicalizing — design
   // D3) resolve to a stable path for the Phase F happy-path assertion below).
-  if (command === "canonicalize_path") return Promise.resolve(path.replace(/\/\.\//g, "/"));
+  // `~` is the one deliberate exception: `resolveHomeRoot` (src/main.ts) now
+  // rejects any canonicalize_path("~") result that isn't itself absolute (the
+  // Windows-home fix), so an identity "~" → "~" would be discarded as the
+  // unresolvable-home case and this mock would stop exercising the "home
+  // resolved successfully" path it's meant to. Standing in for a real home
+  // dir here — "/home/mock-user" — both satisfies that guard AND still
+  // renders as the compact "~" breadcrumb label below, via the same
+  // abbreviateHome() rule (document/path.ts) a real "/home/<user>" would hit.
+  if (command === "canonicalize_path") {
+    if (path === "~") return Promise.resolve("/home/mock-user");
+    return Promise.resolve(path.replace(/\/\.\//g, "/"));
+  }
   if (command === "path_exists") return Promise.resolve(pathExistsPaths.has(path));
   if (command === "read_file") {
     if (rejectedReads.has(path)) return Promise.reject(new Error("read failed"));
@@ -329,7 +340,7 @@ describe("main workspace wiring", () => {
     document.querySelector<HTMLElement>('[data-vault-id="vault-global"] .workspace-vault-select')?.click();
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: ~");
+    expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: /home/mock-user");
     expect(document.querySelector(".workspace-vault-group--temporary")).toBeNull();
   });
 
@@ -354,16 +365,49 @@ describe("main workspace wiring", () => {
     expect(shouldPreserveGlobalExplorerRoot(undefined)).toBe(false);
   });
 
+  // Windows-home fix regression lock: when the backend can't resolve a home
+  // directory (real-world case: expand_home's HOME-only home_dir() on a
+  // Windows session — see src-tauri/src/commands.rs), canonicalize_path("~")
+  // used to come back as the literal, non-absolute "~" instead of erroring,
+  // and that got promoted straight to the explorer's root. resolveHomeRoot
+  // must demote ANY non-absolute result to `fallback`, not just a thrown
+  // error — this is what actually closes the reported bug.
+  it("falls back to the safe root when canonicalize_path resolves home to a non-absolute value", async () => {
+    const { resolveHomeRoot } = await import("../src/main");
+
+    await expect(resolveHomeRoot(async () => "~", "/")).resolves.toBe("/");
+    await expect(resolveHomeRoot(async () => "notes", "/")).resolves.toBe("/");
+    await expect(resolveHomeRoot(async () => "", "/")).resolves.toBe("/");
+  });
+
+  it("uses the resolved home when canonicalize_path returns a real absolute path", async () => {
+    const { resolveHomeRoot } = await import("../src/main");
+
+    await expect(resolveHomeRoot(async () => "/home/tester", "/")).resolves.toBe("/home/tester");
+    await expect(resolveHomeRoot(async () => "C:\\Users\\tester", "/")).resolves.toBe("C:\\Users\\tester");
+  });
+
+  it("falls back to the safe root when canonicalize_path rejects", async () => {
+    const { resolveHomeRoot } = await import("../src/main");
+
+    await expect(
+      resolveHomeRoot(async () => {
+        throw new Error("cannot canonicalize");
+      }, "/"),
+    ).resolves.toBe("/");
+  });
+
   // 00_request.md #2: clicking the global vault always lands the Explorer on
   // the user's HOME directory, not wherever the explorer happened to be
   // sitting (`currentExplorerFolder`) — that varied click to click and was
   // the bug. Resolved via the EXISTING `canonicalize_path` IPC surface (also
   // used by CLI routing above) fed the literal `~`, which `expand_home`
   // (src-tauri) already treats as home — no new backend command. This test's
-  // `canonicalize_path` mock is an identity function (see invokeMock above),
-  // so it returns "~" verbatim; the assertion only needs to show the result
-  // is NOT `currentExplorerFolder`'s prior value ("/"), i.e. the fixed home
-  // path was actually asked for and used, not the stale wander-root.
+  // `canonicalize_path` mock returns a stand-in absolute home ("/home/mock-user",
+  // see invokeMock above) for "~" specifically, since `resolveHomeRoot` now
+  // discards a non-absolute result; the assertion only needs to show the
+  // result is NOT `currentExplorerFolder`'s prior value ("/"), i.e. the fixed
+  // home path was actually asked for and used, not the stale wander-root.
   it("jumps the global vault to the resolved home directory, not the last explorer folder", async () => {
     localStorage.setItem("mermark.workspaceState", JSON.stringify({
       workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FP"], currentVaultId: "vault-%2FP", lastSelectedPermanentVaultId: "vault-%2FP" }],
@@ -377,7 +421,7 @@ describe("main workspace wiring", () => {
     document.querySelector<HTMLElement>('[data-vault-id="vault-global"] .workspace-vault-select')?.click();
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: ~");
+    expect(document.querySelector(".breadcrumb")?.getAttribute("aria-label")).toBe("현재 폴더 경로: /home/mock-user");
   });
 
   it("restores transient Global Vault intent after a no-document reload without saving it", async () => {

@@ -199,6 +199,24 @@ function isAbsoluteLike(input: string): boolean {
   );
 }
 
+/** Whether a RESOLVED path (e.g. `canonicalize_path`'s return value) is
+ *  actually usable as a filesystem root: posix root (`/…`), a Windows drive
+ *  (`C:\…` / `C:/…`), or a Windows UNC path (`\\server\share`). Deliberately
+ *  narrower than `isAbsoluteLike` above (which also accepts a literal `~`
+ *  because THAT function checks USER-TYPED input the backend still has to
+ *  expand). A value that has already come back from the backend and still
+ *  starts with `~` means home-directory resolution failed there (see
+ *  `expand_home`'s documented literal-fallback contract in
+ *  `src-tauri/src/commands.rs`) — it is a relative path, not a usable root,
+ *  and callers like `resolveHomeRoot` must not treat it as one. */
+export function isResolvedAbsolutePath(path: string): boolean {
+  return (
+    path.startsWith("/") ||
+    path.startsWith("\\\\") ||
+    /^[A-Za-z]:[\\/]/.test(path)
+  );
+}
+
 /** Resolve a user-typed open-path against the current document's directory.
  *  Pure (no IO): blank → null (refuse); absolute/`~` → unchanged (the backend
  *  expands `~` and normalizes `.`/`..` inside read_file, so we only JOIN here);

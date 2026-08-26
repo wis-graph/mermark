@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { dirOf, resolveOpenPath, normalizePath, basename } from "./document/path";
+import { dirOf, resolveOpenPath, normalizePath, basename, isResolvedAbsolutePath } from "./document/path";
 import { createOpenPathPrompt } from "./document/open-file/path-prompt";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -137,17 +137,26 @@ export function shouldPreserveGlobalExplorerRoot(vault: Pick<Vault, "persistence
 /** The user's home directory, resolved through the EXISTING `canonicalize_path`
  *  IPC command (already used by CLI routing above) fed the literal `~` — the
  *  backend's `expand_home` (src-tauri/src/commands.rs) already special-cases
- *  a bare `~` as `$HOME`, so this needs no new backend surface. Falls back to
- *  `fallback` (the historic default root) when canonicalization fails — e.g.
- *  a headless test/CI environment with no `$HOME` — the same defensive
- *  posture `routeCliFileResolved`'s own canonicalize wrapper uses just above.
- *  Named + exported so "how do we get home" lives in one place and is
- *  independently testable, instead of being inlined at the one call site
- *  that needs it (00_request.md #2). */
+ *  a bare `~` as `$HOME`/`%USERPROFILE%`, so this needs no new backend surface.
+ *  Falls back to `fallback` (the historic default root) when canonicalization
+ *  fails outright (e.g. a headless test/CI environment) — the same defensive
+ *  posture `routeCliFileResolved`'s own canonicalize wrapper uses just above —
+ *  AND when it "succeeds" with a value that isn't actually a usable root
+ *  (`isResolvedAbsolutePath`). That second guard matters because the backend's
+ *  home lookup can itself fail (an environment with no resolvable home
+ *  directory): `expand_home`'s documented contract on that failure is to
+ *  return the input LITERALLY, so `canonicalize_path("~")` can come back as
+ *  the bare relative string `"~"` (or wherever a relative `~` canonicalizes
+ *  against the process's cwd) instead of raising an error. Using that as the
+ *  explorer's root pointed it at an arbitrary, usually-nonexistent location —
+ *  this guard keeps a home-resolution failure from ever promoting a
+ *  non-absolute value to "the root". Named + exported so "how do we get home"
+ *  lives in one place and is independently testable, instead of being
+ *  inlined at the one call site that needs it (00_request.md #2). */
 export async function resolveHomeRoot(canonicalize: (path: string) => Promise<string>, fallback: string): Promise<string> {
   try {
     const resolved = await canonicalize("~");
-    return resolved || fallback;
+    return resolved && isResolvedAbsolutePath(resolved) ? resolved : fallback;
   } catch (error) {
     if (error instanceof Error || typeof error === "string") return fallback;
     throw error;

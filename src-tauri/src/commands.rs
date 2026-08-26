@@ -20,11 +20,26 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 ///   account like `~bob/…`) is left **untouched** — we don't resolve other
 ///   users' homes, so we never over-expand a path we can't safely interpret.
 /// - Anything not starting with `~`, and the fallback when the home directory
-///   is unknown (e.g. headless test env with no `$HOME`), is returned verbatim.
+///   is unknown, is returned **verbatim** (only textually normalized).
 ///
-/// Returns an absolute, normalized `PathBuf` (the home dir is itself absolute),
-/// so this opens no new write surface and can't be used to escape via `..`:
-/// `normalize_path` collapses `..`/`.` exactly as it does for every other path.
+/// That last case is a deliberate contract, not an oversight: when `home_dir()`
+/// can't resolve a home (a headless test env, or — pre-fix — every plain
+/// Windows session, which never set `$HOME`) there is no safe *absolute*
+/// value to invent, so `expand_home("~")` degrades to returning the literal
+/// `"~"` as a plain, relative path component — exactly like any other
+/// relative input this function already leaves untouched
+/// (`expand_home_leaves_relative_path_unchanged`). It is emphatically NOT
+/// promoted to an absolute path. Callers that need "home, or give up cleanly"
+/// (rather than "home, or silently misinterpret `~` as a relative path") must
+/// check the result themselves — see `resolveHomeRoot` in `src/main.ts`,
+/// which is exactly this case: it feeds `expand_home`'s output (via
+/// `canonicalize_path`) to the explorer as a root and rejects it unless it's
+/// still absolute afterwards.
+///
+/// Returns an absolute, normalized `PathBuf` when expansion succeeds (the home
+/// dir is itself absolute), so a *successful* expansion opens no new write
+/// surface and can't be used to escape via `..`: `normalize_path` collapses
+/// `..`/`.` exactly as it does for every other path.
 pub(crate) fn expand_home(path: &str) -> PathBuf {
     let expanded = if path == "~" {
         home_dir().map(|h| h.to_string_lossy().into_owned())
@@ -39,11 +54,63 @@ pub(crate) fn expand_home(path: &str) -> PathBuf {
 }
 
 /// The current user's home directory, or `None` when the environment can't
-/// report it. Reads `$HOME` (set on every macOS/Linux desktop session) via the
-/// standard library so no extra crate is pulled in just for one lookup; `None`
-/// makes `expand_home` fall back to leaving the path verbatim.
+/// report it. Platform-picked between the two pure rules below via
+/// `#[cfg(windows)]`/`#[cfg(unix)]`; `None` makes `expand_home` fall back to
+/// leaving the path verbatim (see that function's doc for why that fallback
+/// is safe). No extra crate is pulled in just for this lookup.
 fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    #[cfg(windows)]
+    {
+        resolve_home_dir_windows(|k: &str| std::env::var_os(k))
+    }
+    #[cfg(not(windows))]
+    {
+        resolve_home_dir_unix(|k: &str| std::env::var_os(k))
+    }
+}
+
+/// Unix home-directory rule: `$HOME`, set on every macOS/Linux desktop
+/// session. Not `#[cfg]`-gated itself (only `home_dir` picks a platform) so
+/// this rule can be unit-tested on any host, including a macOS CI runner that
+/// will never actually compile the Windows target.
+fn resolve_home_dir_unix(var: impl for<'a> Fn(&'a str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    var("HOME").map(PathBuf::from)
+}
+
+/// Windows home-directory rule: `%USERPROFILE%` first — the canonical
+/// per-user home Windows sets on every interactive login session — falling
+/// back to `%HOMEDRIVE%` + `%HOMEPATH%` (the older/lower-level pair Windows
+/// also populates) only when `USERPROFILE` is unset or empty.
+///
+/// Deliberately does NOT consult `$HOME` on Windows, even though some
+/// third-party shells (Git Bash/MSYS) set it: those populate it with a
+/// Unix-style value like `/c/Users/name`, which is not a valid Windows path
+/// and would silently break every `Path::join`/`rename` downstream — worse
+/// than not resolving home at all, since `expand_home` already has a defined
+/// "resolution failed" contract (return the input verbatim) to fall back to.
+///
+/// This is the fix for the real bug this function exists to close: the old
+/// `home_dir()` only ever read `$HOME`, which a plain Windows session never
+/// sets, so home resolution always failed there and a literal `~` leaked out
+/// as a relative path (see `expand_home`'s doc and `resolveHomeRoot` in
+/// `src/main.ts`, which now guards against exactly that on the frontend too).
+///
+/// Not `#[cfg]`-gated itself, for the same cross-platform-testability reason
+/// as `resolve_home_dir_unix`.
+fn resolve_home_dir_windows(var: impl for<'a> Fn(&'a str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    if let Some(profile) = var("USERPROFILE") {
+        if !profile.is_empty() {
+            return Some(PathBuf::from(profile));
+        }
+    }
+    let drive = var("HOMEDRIVE")?;
+    let path = var("HOMEPATH")?;
+    if drive.is_empty() || path.is_empty() {
+        return None;
+    }
+    let mut combined = drive;
+    combined.push(&path);
+    Some(PathBuf::from(combined))
 }
 
 /// Normalize path components (resolve relative "." and "..") purely textually.
@@ -1319,6 +1386,92 @@ mod tests {
             expand_home("~/notes/../x.md"),
             PathBuf::from("/home/tester/x.md")
         );
+    }
+
+    #[test]
+    fn expand_home_falls_back_to_a_literal_relative_tilde_when_home_is_unresolvable() {
+        // Pins the documented failure contract: no absolute value is ever
+        // invented. Removing $HOME simulates the exact real-world condition
+        // that used to trigger the Windows bug (home_dir() returning None),
+        // now reproduced platform-independently via the pure resolver tests
+        // below plus this one exercising the full expand_home fallback path.
+        let previous = std::env::var_os("HOME");
+        std::env::remove_var("HOME");
+        assert_eq!(expand_home("~"), PathBuf::from("~"));
+        assert!(
+            !expand_home("~").is_absolute(),
+            "an unresolvable home must never be promoted to an absolute path"
+        );
+        if let Some(home) = previous {
+            std::env::set_var("HOME", home);
+        }
+    }
+
+    // --- resolve_home_dir_unix / resolve_home_dir_windows (platform-neutral
+    // home lookup rules) ---
+    //
+    // Both resolvers are pure functions of an env-lookup closure, so both
+    // platforms' rules are exercised here regardless of which OS actually
+    // runs `cargo test` — in particular the Windows rule is fully covered on
+    // a macOS/Linux CI runner, which will never compile the `#[cfg(windows)]`
+    // branch of `home_dir()` itself.
+
+    fn env_map<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl for<'b> Fn(&'b str) -> Option<std::ffi::OsString> + 'a {
+        move |key| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| std::ffi::OsString::from(v))
+    }
+
+    #[test]
+    fn resolve_home_dir_unix_reads_home() {
+        assert_eq!(
+            resolve_home_dir_unix(env_map(&[("HOME", "/home/tester")])),
+            Some(PathBuf::from("/home/tester"))
+        );
+    }
+
+    #[test]
+    fn resolve_home_dir_unix_is_none_without_home() {
+        assert_eq!(resolve_home_dir_unix(env_map(&[])), None);
+    }
+
+    #[test]
+    fn resolve_home_dir_windows_prefers_userprofile() {
+        assert_eq!(
+            resolve_home_dir_windows(env_map(&[
+                ("USERPROFILE", r"C:\Users\tester"),
+                ("HOMEDRIVE", "D:"),
+                ("HOMEPATH", r"\Other"),
+            ])),
+            Some(PathBuf::from(r"C:\Users\tester"))
+        );
+    }
+
+    #[test]
+    fn resolve_home_dir_windows_falls_back_to_homedrive_and_homepath() {
+        assert_eq!(
+            resolve_home_dir_windows(env_map(&[("HOMEDRIVE", "C:"), ("HOMEPATH", r"\Users\tester")])),
+            Some(PathBuf::from(r"C:\Users\tester"))
+        );
+    }
+
+    #[test]
+    fn resolve_home_dir_windows_ignores_home_and_empty_userprofile() {
+        // `HOME` (a Unix-shell convention some Windows tools set to a
+        // POSIX-style value) is never consulted; an empty `USERPROFILE`
+        // falls through to HOMEDRIVE+HOMEPATH exactly like a missing one.
+        assert_eq!(
+            resolve_home_dir_windows(env_map(&[
+                ("HOME", "/c/Users/tester"),
+                ("USERPROFILE", ""),
+                ("HOMEDRIVE", "C:"),
+                ("HOMEPATH", r"\Users\tester"),
+            ])),
+            Some(PathBuf::from(r"C:\Users\tester"))
+        );
+    }
+
+    #[test]
+    fn resolve_home_dir_windows_is_none_without_any_source() {
+        assert_eq!(resolve_home_dir_windows(env_map(&[])), None);
     }
 
     // --- list_link_targets (`[[` file picker enumeration) ---

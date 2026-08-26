@@ -8,7 +8,31 @@ import {
   normalizePath,
   breadcrumbSegments,
   isPathWithin,
+  isResolvedAbsolutePath,
 } from "../src/document/path";
+
+describe("isResolvedAbsolutePath", () => {
+  it("accepts a posix root", () => {
+    expect(isResolvedAbsolutePath("/Users/tester/notes")).toBe(true);
+  });
+  it("accepts a Windows drive path with either separator", () => {
+    expect(isResolvedAbsolutePath("C:\\Users\\tester")).toBe(true);
+    expect(isResolvedAbsolutePath("C:/Users/tester")).toBe(true);
+  });
+  it("accepts a Windows UNC path", () => {
+    expect(isResolvedAbsolutePath("\\\\server\\share")).toBe(true);
+  });
+  it("rejects a literal unresolved tilde — the Windows-home failure symptom", () => {
+    // This is exactly what a resolved `canonicalize_path("~")` looks like
+    // when the backend's home lookup fails (expand_home's documented
+    // literal-fallback contract, src-tauri/src/commands.rs): callers must
+    // NOT treat it as a usable absolute root.
+    expect(isResolvedAbsolutePath("~")).toBe(false);
+  });
+  it("rejects a plain relative path", () => {
+    expect(isResolvedAbsolutePath("notes/x.md")).toBe(false);
+  });
+});
 
 describe("normalizePath", () => {
   // Parity with backend `commands.rs:849 test_normalize_path_resolves_dot_dot_and_dot`
