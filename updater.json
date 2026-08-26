@@ -1,15 +1,15 @@
 {
-  "version": "0.16.0",
-  "notes": "### Added\n\n- **사이드바 단축키**: 왼쪽 사이드바를 번호로 연다 — ⌘1 워크스페이스, ⌘2 탐색기, ⌘3 최근 문서, ⌘4 목차, ⌘5 파일 찾기. 쓰던 ⌘B(탐색기)와 ⌘⇧F(파일 찾기)도 그대로 함께 동작한다. 설정 › 단축키에서 바꾼 내용도 그대로 유지된다.\n- **볼트 목록이 폴더 구조를 따른다**: 어떤 볼트가 다른 볼트 안에 들어 있으면 그 아래에 한 칸 들여써서 보여준다. 부모 볼트를 접어도 자식 볼트는 목록에 그대로 남는다.\n\n### Changed\n\n- **글로벌 볼트를 누르면 항상 홈 폴더로 간다**: 예전에는 그때 탐색기가 있던 자리로 가서 누를 때마다 결과가 달랐다. 이제 늘 같은 자리(홈)에서 시작한다.",
-  "pub_date": "2026-08-25T20:28:02Z",
+  "version": "0.16.1",
+  "notes": "### Fixed\n\n- **윈도우에서 글로벌 볼트가 엉뚱한 폴더로 가던 문제**: 윈도우에는 맥·리눅스가 쓰는 `HOME` 환경변수가 없어서 홈 폴더를 찾지 못하고 이상한 위치를 가리켰다(그 상태에서는 탐색기 이동도 되지 않았다). 이제 윈도우 방식(`USERPROFILE`)으로 홈 폴더를 찾는다. 끝내 못 찾는 경우에도 엉뚱한 곳으로 가는 대신 원래 보던 위치를 유지한다.",
+  "pub_date": "2026-08-26T12:36:36Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzNvSVVQUlBXbjZiTTBCNkdabUtSRER1NklJRlBMTVEzcitTTUsxSGRRdURzMG5iaXJoYVlDcTV0b3VSNGRxM2tCblpDemlVU2xHWVRSZUdkc2NZK2d3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NjY0MzI4CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmZwaHY2Vll6UmMyR3J5SmpmV3ZQOVREU2k5b3MveURSK3ppdWZiR0xxRndDL29SZkZBNUJ1MGxkVkhMeWhQOFE1cGNFT2V1cVAwOXMxaU11bXFRMkFBPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.16.0/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3g1U2dJN0ZteFBVMU1DZTNrSEJoNlRIWENOV05VVTRPdGxmdWNhZzlQVzY1TDdPd3VyblZqQ0E1aWJoMHJDUnVTZHFDRE0xTlZ4bUlQMHo4SVZxSUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzQ2NzY1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Cm1xYzllNXN5RE1vOENFYnlESmZhREJvQ1FwOU9MSXBaWnhNWVB3N0V4bzNEMUltdVdwRmhTaFNkNG1KODRaOFRlSk81a2ErQnN2ZDQ1bDFRNXBYd0J3PT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.16.1/mermark.app.tar.gz"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3kyUmx2SElpTW9TQ1FOblY4bEhsMFFUZExYcitxdDEzN1FvMlkvTGFmZFY2QWdQcWx4UWNXVHUzaWNxbEZGOEJObFlsc3p3eDJRV2FQRGcxa05aOGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3Njg5NjAwCWZpbGU6bWVybWFya18wLjE2LjBfeDY0LXNldHVwLmV4ZQpmenVBc2ZPbnowaU1sZXRWSGRxQk9OSHprTmFBeEtGSDgzVXQxVmdaTThZUkxHWHpYampjQWl6NjRERmVYOEhuNlhkZ0JPYUk0cENBSXJqRlpNMFREUT09Cg==",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.16.0/mermark_0.16.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzdmaVpEWGd3S0hMcVgva3RKUlpKU0xKMVgyR0Nrcmc5QUMxeXRzR0EyWGlIYlJnNjAxdnR3Wit4SnJpVVVpN3lwWFRTKzliOWV1OFhLTEVSTDdvcmc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzQ3NzE1CWZpbGU6bWVybWFya18wLjE2LjFfeDY0LXNldHVwLmV4ZQpNWG8zOVFkdng1Zi81dy9OZjlBRC9WNEI0dXdpN0x4VC90S2lHUkxHU3RBM2VSYlduNjlDNzZtVWViNTJza3diUzhYSm01eXpWcXNUNDV3dUNlMnpCUT09Cg==",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.16.1/mermark_0.16.1_x64-setup.exe"
     }
   }
 }
