@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Stub the Tauri core: convertFileSrc echoes its input (so an asset URL equals
 // its path, making the src swap observable), invoke is a spy we assert against.
@@ -15,6 +15,7 @@ import {
   viewerSourceFor,
   isRemoteSrc,
   clearImageSearchCache,
+  clearVaultDowngradeReports,
 } from "../src/markdown/image";
 import { setImageSearchRoot, owningVaultRoot, VAULT_IMAGE_SCAN_DEPTH } from "../src/markdown/image-search-root";
 import { recursiveImageSearchSetting } from "../src/settings/app";
@@ -187,6 +188,7 @@ describe("ImageWidget vault-scope search root", () => {
     invokeSpy.mockResolvedValue(null); // default: "not found" unless a case overrides it
     recursiveImageSearchSetting.set("on");
     clearImageSearchCache();
+    clearVaultDowngradeReports();
     setImageSearchRoot(() => null);
   });
 
@@ -217,6 +219,55 @@ describe("ImageWidget vault-scope search root", () => {
       baseDir: docFolder,
       name: "pic-noroot.png",
       maxDepth: 3,
+    });
+  });
+
+  // Regression (01_architect_design.md 결함 B): the vault->folder downgrade
+  // above used to be silent — no signal at all that a `![[…]]`'s contracted
+  // whole-vault search got demoted. Pin that the downgrade is now observable
+  // and carries the values a developer needs to diagnose it (name, the
+  // document's own baseDir, and the plan actually applied).
+  describe("vault-scope downgrade diagnostic (결함 B)", () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    it("warns when vault scope has no owning root, naming the target, baseDir, and the applied plan", () => {
+      setImageSearchRoot(() => null);
+      const img = mountScoped("pic-noroot.png");
+      fireError(img);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const msg = warnSpy.mock.calls[0].join(" ");
+      expect(msg).toContain("pic-noroot.png");
+      expect(msg).toContain(docFolder);
+      expect(msg).toContain("3"); // downgraded maxDepth
+    });
+
+    it("does not warn when vault scope resolves an owning root (no downgrade happened)", () => {
+      setImageSearchRoot(() => "/vault");
+      const img = mountScoped("pic-root.png");
+      fireError(img);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not warn for folder scope (never contracted to search the vault, so no downgrade)", () => {
+      setImageSearchRoot(() => null);
+      const img = mountScoped("pic-folder.png", "folder");
+      fireError(img);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("dedupes repeated onerror firings for the same (baseDir, name)", () => {
+      setImageSearchRoot(() => null);
+      const imgA = mountScoped("pic-dupe.png");
+      fireError(imgA);
+      const imgB = mountScoped("pic-dupe.png"); // second widget, same target
+      fireError(imgB);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
     });
   });
 

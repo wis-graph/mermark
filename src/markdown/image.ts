@@ -93,6 +93,46 @@ function searchPlanFor(
   return { baseDir, maxDepth: 3, gated: true };
 }
 
+/** Reports a `![[name]]` (vault-scope) embed's whole-vault search silently
+ *  downgrading to the document-folder fallback because the document isn't
+ *  inside any REGISTERED permanent vault (`imageSearchRoot()` returned
+ *  `null` — CLI-opened files, or a folder never registered as a vault). Kept
+ *  OUT of `searchPlanFor` (a pure query, CQS) — this is the one place the
+ *  downgrade gets reported, so the rule stays testable/observable without
+ *  splitting judgment across two functions (design 결함 B). Only a
+ *  console.warn in production: no packaged-app UI channel exists for this
+ *  yet, but the values it carries (target name, the document's baseDir, and
+ *  the plan actually applied) are exactly what a dev/QA session needs to
+ *  diagnose "vault syntax used, nothing found". Deduped per (baseDir, name)
+ *  — a document with several unresolved embeds sharing a target, or repeated
+ *  onerror retries of the same widget, would otherwise spam one warning per
+ *  firing for a single underlying cause. Command, void. */
+const reportedVaultDowngrades = new Set<string>();
+
+/** Drop the vault-downgrade dedup memory — a test-only escape hatch, mirroring
+ *  `clearImageSearchCache` above, for suites that reuse the same (baseDir,
+ *  name) pair across cases expecting independent warning counts. Never
+ *  called by the app itself. */
+export function clearVaultDowngradeReports(): void {
+  reportedVaultDowngrades.clear();
+}
+
+function reportVaultScopeDowngrade(
+  rawSrc: string,
+  baseDir: string,
+  plan: { readonly baseDir: string; readonly maxDepth: number; readonly gated: boolean },
+): void {
+  const key = searchCacheKey(baseDir, rawSrc);
+  if (reportedVaultDowngrades.has(key)) return;
+  reportedVaultDowngrades.add(key);
+  console.warn(
+    `[mermark] ![[${rawSrc}]] wanted a vault-wide search but "${baseDir}" is not inside ` +
+      `any registered vault, so it fell back to a document-folder scan ` +
+      `(baseDir=${plan.baseDir}, maxDepth=${plan.maxDepth}, gated=${plan.gated}). ` +
+      `Register the containing folder as a vault to restore vault-wide ![[…]] search.`,
+  );
+}
+
 /** Dedupes concurrent `resolve_image` lookups for the SAME (search base,
  *  name) pair — several `![[pic.png]]` embeds in one document would
  *  otherwise each fire their own vault-wide scan. Keyed on the search plan's
@@ -163,7 +203,11 @@ export class ImageWidget extends WidgetType {
       triedFallback = true;
       if (isRemoteSrc(this.rawSrc)) return; // remote/data never rediscovered
       if (!this.rawSrc) return; // nothing to search by name
-      const plan = searchPlanFor(this.searchScope, imageSearchRoot(), this.baseDir);
+      const root = imageSearchRoot();
+      const plan = searchPlanFor(this.searchScope, root, this.baseDir);
+      if (this.searchScope === "vault" && root === null) {
+        reportVaultScopeDowngrade(this.rawSrc, this.baseDir, plan);
+      }
       if (plan.gated && recursiveImageSearchSetting.get() !== "on") return; // user opted out (folder scope only)
       if (!plan.baseDir) return; // nothing to resolve against
       const key = searchCacheKey(plan.baseDir, this.rawSrc);

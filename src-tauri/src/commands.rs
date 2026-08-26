@@ -504,13 +504,27 @@ fn image_basename(name: &str) -> &str {
         .unwrap_or(name)
 }
 
-/// Case-insensitive basename equality, the single matching rule for the recursive
-/// image scan. ASCII fold (`eq_ignore_ascii_case`) matches `is_image_ext`'s own
-/// case policy and the APFS reality that `Photo.PNG` and `photo.png` are the same
-/// file — a case-*sensitive* match would miss files the OS itself considers equal.
-/// Unicode case-folding is deliberately out of scope (YAGNI for filenames).
+/// Canonical matching key for a basename: NFC-normalize (so NFD-decomposed and
+/// NFC-composed spellings of the same text compare equal — e.g. a Korean
+/// filename macOS wrote as combining jamo vs. the precomposed form the user
+/// typed in `![[사진.png]]`), then ASCII-lowercase the result. Only ASCII case
+/// is folded (matches `is_image_ext`'s own case policy and the APFS reality
+/// that `Photo.PNG` == `photo.png`); full Unicode case-folding is out of scope
+/// (YAGNI for filenames). This is a matching key only — never fed back into a
+/// path or returned to the caller, since the file must still be opened by its
+/// actual on-disk spelling.
+fn nfc_fold(name: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    name.nfc().collect::<String>().to_ascii_lowercase()
+}
+
+/// Basename equality for the recursive image scan, normalization- and
+/// case-insensitive. See `nfc_fold` for why both sides must be NFC-folded
+/// before comparing — a plain `eq_ignore_ascii_case` never matches an NFD
+/// disk filename against an NFC target (or vice versa) even when they're the
+/// same text.
 fn basename_matches(entry: &str, target: &str) -> bool {
-    entry.eq_ignore_ascii_case(target)
+    nfc_fold(entry) == nfc_fold(target)
 }
 
 /// The path-escape guard: is `candidate` contained within `base`? Both are
@@ -1966,6 +1980,19 @@ mod tests {
     }
 
     #[test]
+    fn basename_matches_folds_nfc_and_ascii_case_both_ways() {
+        // Pure unit-level lock on the matching rule itself, independent of the
+        // filesystem: NFD vs NFC and ASCII case must both fold to equal.
+        use unicode_normalization::UnicodeNormalization;
+        let nfc = "사진.png".to_string();
+        let nfd: String = "사진.png".nfd().collect();
+        assert!(basename_matches(&nfd, &nfc), "NFD entry must match an NFC target");
+        assert!(basename_matches(&nfc, &nfd), "NFC entry must match an NFD target");
+        assert!(basename_matches("Pic.PNG", "pic.png"), "ASCII case-fold policy preserved");
+        assert!(!basename_matches("pic.png", "other.png"), "unrelated names still differ");
+    }
+
+    #[test]
     fn resolve_basename_is_case_insensitive() {
         // A file stored as Pic.PNG is found when searching for pic.png, matching
         // APFS's own case-insensitive view of the filesystem (eq_ignore_ascii_case).
@@ -1973,6 +2000,51 @@ mod tests {
         fs::write(dir.join("Pic.PNG"), "img").unwrap();
         let got = resolve_image(dir.to_string_lossy().into_owned(), "pic.png".into(), 3);
         assert_eq!(got, Some(normalize_path(&dir.join("Pic.PNG")).to_string_lossy().into_owned()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_matches_nfd_disk_file_against_nfc_target() {
+        // Disk filename written in NFD (decomposed jamo, the form macOS/HFS+
+        // history often produces), target name typed in NFC (precomposed, what
+        // a user types in `![[사진.png]]`). Without NFC-folding both sides
+        // before comparing, this never matches even though it's the same text.
+        use unicode_normalization::UnicodeNormalization;
+        let dir = temp_dir("resolve_nfd_disk");
+        let nfd_name: String = "사진.png".nfd().collect();
+        let nfc_target = "사진.png".to_string(); // already NFC as typed in source
+        assert_ne!(nfd_name, nfc_target, "fixture must actually differ byte-for-byte");
+        let target_path = dir.join(&nfd_name);
+        fs::write(&target_path, "img").unwrap();
+        let got = resolve_image(dir.to_string_lossy().into_owned(), nfc_target, 3);
+        // The returned path must be the disk's actual (NFD) spelling, not a
+        // normalized substitute — otherwise convertFileSrc can't open it.
+        assert_eq!(
+            got,
+            Some(normalize_path(&target_path).to_string_lossy().into_owned()),
+            "NFD disk file must be found by an NFC target, and returned in its disk form"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_matches_nfc_disk_file_against_nfd_target() {
+        // The flip side: disk filename in NFC (APFS preserves creation form, so
+        // a directly-typed `사진.png` stays NFC), target spelled in NFD (e.g. a
+        // link pasted from a source that decomposed it). Must match either way.
+        use unicode_normalization::UnicodeNormalization;
+        let dir = temp_dir("resolve_nfc_disk");
+        let nfc_name = "사진.png".to_string();
+        let nfd_target: String = "사진.png".nfd().collect();
+        assert_ne!(nfc_name, nfd_target, "fixture must actually differ byte-for-byte");
+        let target_path = dir.join(&nfc_name);
+        fs::write(&target_path, "img").unwrap();
+        let got = resolve_image(dir.to_string_lossy().into_owned(), nfd_target, 3);
+        assert_eq!(
+            got,
+            Some(normalize_path(&target_path).to_string_lossy().into_owned()),
+            "NFC disk file must be found by an NFD target, and returned in its disk form"
+        );
         fs::remove_dir_all(&dir).ok();
     }
 

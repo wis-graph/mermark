@@ -98,3 +98,10 @@ arboard = { version = "3", default-features = false }
 # to the major version `rhwp` already pulls — adds zero new crates, only a
 # direct name for one already-compiled version.
 zip = "8"
+# Unicode NFC folding for `basename_matches` (commands.rs). macOS often writes
+# Korean/other combining-character filenames in NFD (decomposed) form, while a
+# document's `![[사진.png]]` link is typed in NFC (composed) — a byte-for-byte
+# comparison never matches across the two forms even though they're the same
+# text. This crate is the one correct way to fold both sides to a canonical
+# form before comparing; hand-rolling NFC decomposition tables is out of scope.
+unicode-normalization = "0.1"
