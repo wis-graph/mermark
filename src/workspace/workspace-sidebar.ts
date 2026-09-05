@@ -92,17 +92,23 @@ function nearestRegisteredParent(vault: Vault, all: readonly Vault[]): Vault | n
   return best;
 }
 
+function compareVaultDisplayOrder(left: Vault, right: Vault): number {
+  if (left.displayName < right.displayName) return -1;
+  if (left.displayName > right.displayName) return 1;
+  return left.vaultId < right.vaultId ? -1 : left.vaultId > right.vaultId ? 1 : 0;
+}
+
 /** Arrange `vaults` into parent-then-children DFS pre-order, each row tagged
  *  with its nesting `level` — a parent is ALWAYS immediately followed by its
  *  own children (00_request.md #1), and every vault attaches to its nearest
- *  registered ancestor only (never every ancestor up the chain). Stable: ties
- *  (siblings, and top-level roots) keep `vaults`' own relative order, so the
- *  same input always yields the same output. A child's collapse state is its
- *  own (vault-collapse.ts) — this function only decides ORDER/LEVEL, never
- *  visibility, so a collapsed parent can never hide a child row (the
- *  request's "부모를 접어도 자식은 숨지 않는다" invariant lives structurally
- *  here: children are sibling rows in the DOM, never nested inside the
- *  parent's tab strip). Pure query. */
+ *  registered ancestor only (never every ancestor up the chain). Roots and
+ *  each parent's direct children sort by `displayName`, then `vaultId`; only
+ *  function-local arrays are sorted, preserving stored registration order. A
+ *  child's collapse state is its own (vault-collapse.ts) — this function only
+ *  decides ORDER/LEVEL, never visibility, so a collapsed parent can never hide
+ *  a child row (the request's "부모를 접어도 자식은 숨지 않는다" invariant lives
+ *  structurally here: children are sibling rows in the DOM, never nested
+ *  inside the parent's tab strip). Pure query. */
 function arrangeVaultHierarchy(vaults: readonly Vault[]): VaultRow[] {
   const childrenByParentId = new Map<string, Vault[]>();
   const roots: Vault[] = [];
@@ -113,6 +119,8 @@ function arrangeVaultHierarchy(vaults: readonly Vault[]): VaultRow[] {
     siblings.push(vault);
     childrenByParentId.set(parent.vaultId, siblings);
   }
+  roots.sort(compareVaultDisplayOrder);
+  for (const siblings of childrenByParentId.values()) siblings.sort(compareVaultDisplayOrder);
   const rows: VaultRow[] = [];
   const visit = (vault: Vault, level: number): void => {
     rows.push({ vault, level });

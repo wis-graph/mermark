@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createWorkspaceSidebar } from "../src/workspace/workspace-sidebar";
-import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore } from "../src/workspace/workspace-state";
+import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore, workspaceStorageKey } from "../src/workspace/workspace-state";
 import type { VaultTabs } from "../src/workspace/vault-tabs";
 
 describe("workspace sidebar", () => {
@@ -559,6 +559,68 @@ describe("workspace sidebar", () => {
       expect(childRow?.hidden).toBe(false);
       // Only the parent's own tab strip collapses — the child row/select stays reachable.
       expect(childRow?.querySelector<HTMLButtonElement>(".workspace-vault-select")).toBeTruthy();
+    });
+
+    it("sorts top-level and direct-child siblings by displayName while preserving DFS levels and stored registration order", () => {
+      const store = new WorkspaceStore();
+      const parent = store.registerVault("/work", "Work");
+      const zChild = store.registerVault("/work/z", "Zulu");
+      const zRoot = store.registerVault("/z-root", "Zulu Root");
+      const aChild = store.registerVault("/work/a", "Alpha");
+      const aRoot = store.registerVault("/a-root", "Alpha Root");
+      const registrationOrder = [parent.vaultId, zChild.vaultId, zRoot.vaultId, aChild.vaultId, aRoot.vaultId];
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+
+      const permanentRows = [...sidebar.aside.querySelectorAll<HTMLElement>(
+        ".workspace-vault-group--permanent .workspace-vault-row",
+      )];
+      const renderedIds = permanentRows.map((row) => row.dataset.vaultId);
+
+      expect(renderedIds).toEqual([
+        aRoot.vaultId,
+        parent.vaultId,
+        aChild.vaultId,
+        zChild.vaultId,
+        zRoot.vaultId,
+      ]);
+
+      const levelFor = (vaultId: string) =>
+        sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${vaultId}"]`)?.style.getPropertyValue("--level");
+      expect(levelFor(aRoot.vaultId)).toBe("1");
+      expect(levelFor(parent.vaultId)).toBe("1");
+      expect(levelFor(aChild.vaultId)).toBe("2");
+      expect(levelFor(zChild.vaultId)).toBe("2");
+      expect(levelFor(zRoot.vaultId)).toBe("1");
+
+      const allRows = [...sidebar.aside.querySelectorAll<HTMLElement>(".workspace-vault-row")];
+      expect(allRows[0]?.dataset.vaultId).toBe(GLOBAL_VAULT_ID);
+      expect(levelFor(GLOBAL_VAULT_ID)).toBe("1");
+
+      expect(store.get().workspaces[0]?.vaultIds).toEqual(registrationOrder);
+      expect(store.get().vaults.map((vault) => vault.vaultId)).toEqual(registrationOrder);
+
+      const saved = JSON.parse(localStorage.getItem(workspaceStorageKey) ?? "null") as {
+        workspaces: Array<{ vaultIds: string[] }>;
+        vaults: Array<{ vaultId: string }>;
+      };
+      expect(saved.workspaces[0]?.vaultIds).toEqual(registrationOrder);
+      expect(saved.vaults.map((vault) => vault.vaultId)).toEqual(registrationOrder);
+    });
+
+    it("breaks equal displayName sibling ties by vaultId instead of registration order", () => {
+      const store = new WorkspaceStore();
+      const z = store.registerVault("/tie/z", "Same");
+      const a = store.registerVault("/tie/a", "Same");
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+
+      const renderedIds = [...sidebar.aside.querySelectorAll<HTMLElement>(
+        ".workspace-vault-group--permanent .workspace-vault-row",
+      )].map((row) => row.dataset.vaultId);
+
+      expect(renderedIds).toEqual([a.vaultId, z.vaultId]);
+      expect(store.get().workspaces[0]?.vaultIds).toEqual([z.vaultId, a.vaultId]);
     });
 
     it("keeps the global vault outside the hierarchy (no rootPath, no --level bump)", () => {
