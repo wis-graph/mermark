@@ -1,15 +1,11 @@
 {
-  "version": "0.16.1",
-  "notes": "### Fixed\n\n- **윈도우에서 글로벌 볼트가 엉뚱한 폴더로 가던 문제**: 윈도우에는 맥·리눅스가 쓰는 `HOME` 환경변수가 없어서 홈 폴더를 찾지 못하고 이상한 위치를 가리켰다(그 상태에서는 탐색기 이동도 되지 않았다). 이제 윈도우 방식(`USERPROFILE`)으로 홈 폴더를 찾는다. 끝내 못 찾는 경우에도 엉뚱한 곳으로 가는 대신 원래 보던 위치를 유지한다.",
-  "pub_date": "2026-08-26T12:36:36Z",
+  "version": "0.16.2",
+  "notes": "### Changed\n\n- **같은 단계의 영구 볼트가 제목순으로 보인다**: 볼트 목록에서 같은 단계에 있는 영구 볼트는 이름순으로 정돈된다. 폴더 계층과 등록해 둔 순서는 그대로다.\n\n### Fixed\n\n- **macOS에서 글자 조합 방식이 다른 이미지 링크도 열린다**: 디스크의 파일명과 마크다운 이미지 대상이 같은 글자를 서로 다른 유니코드 조합으로 썼어도 이미지를 찾는다.\n- **볼트 안 이미지 검색을 못 쓸 때의 안내가 분명해졌다**: 문서 폴더 검색으로 대신 찾을 때 실제 적용한 검색 범위를 진단 정보에서 확인할 수 있고, 같은 경고가 반복해서 쌓이지 않는다.",
+  "pub_date": "2026-09-08T06:17:18Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3g1U2dJN0ZteFBVMU1DZTNrSEJoNlRIWENOV05VVTRPdGxmdWNhZzlQVzY1TDdPd3VyblZqQ0E1aWJoMHJDUnVTZHFDRE0xTlZ4bUlQMHo4SVZxSUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzQ2NzY1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Cm1xYzllNXN5RE1vOENFYnlESmZhREJvQ1FwOU9MSXBaWnhNWVB3N0V4bzNEMUltdVdwRmhTaFNkNG1KODRaOFRlSk81a2ErQnN2ZDQ1bDFRNXBYd0J3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.16.1/mermark.app.tar.gz"
-    },
-    "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzdmaVpEWGd3S0hMcVgva3RKUlpKU0xKMVgyR0Nrcmc5QUMxeXRzR0EyWGlIYlJnNjAxdnR3Wit4SnJpVVVpN3lwWFRTKzliOWV1OFhLTEVSTDdvcmc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzQ3NzE1CWZpbGU6bWVybWFya18wLjE2LjFfeDY0LXNldHVwLmV4ZQpNWG8zOVFkdng1Zi81dy9OZjlBRC9WNEI0dXdpN0x4VC90S2lHUkxHU3RBM2VSYlduNjlDNzZtVWViNTJza3diUzhYSm01eXpWcXNUNDV3dUNlMnpCUT09Cg==",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.16.1/mermark_0.16.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzczOFpMQXF3MDBvS0RvTjJMN1ZCdXdSeFhtYkVralUvdnFGUnFBVk9kOFk0VGd6MVZVQ2t5QS8xSmVLU1RwWWMraFh3elU0cXNJajN5bHF1YXcvVEF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4ODQ4MjE3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CjhMbEdIZjF5c3FXR3BWTm1TNGNLV1M5T2pMUE91R3g1QVBxUzQyVjhCWldTTlYyZXE2OTEybklxZkFSSGNFTDFLd0NyVW9IYzRuRzJZdklTbTU1OEJRPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.16.2/mermark.app.tar.gz"
     }
   }
 }
