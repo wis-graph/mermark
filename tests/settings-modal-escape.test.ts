@@ -45,7 +45,7 @@ describe("settings modal — Escape의 중첩 해제(nested dismiss, 폴리시 5
     host.className = "editor-host";
     const bar = document.createElement("div");
     document.body.append(host, bar);
-    bar.append(createSettingsButton());
+    bar.append(createSettingsButton(() => []));
     (bar.querySelector(".settings-btn") as HTMLButtonElement).click();
     return document.querySelector(".settings-backdrop") as HTMLElement;
   }

@@ -232,6 +232,23 @@ fn parse_tailscale_ip_output(stdout: &str) -> Option<IpAddr> {
     stdout.lines().next()?.trim().parse().ok()
 }
 
+/// Whether this host can currently detect a Tailscale interface — a
+/// standalone probe the settings UI calls *before* the user tries the
+/// Tailscale bind mode, so the panel can grey that option out proactively
+/// instead of discovering unavailability only by matching text out of a
+/// failed `remote_share_start` (2026-09 review, fix round 1: string-matching
+/// a start error was unreliable three separate ways — a vault could happen
+/// to be named after the very word being matched, three different error
+/// strings existed across Rust/mock/test with none pinned against each
+/// other, and a real tailnet-down failure like `Cannot assign requested
+/// address` doesn't mention "tailscale" at all). Reuses the exact same
+/// detection `resolve_bind_ip` uses for `BindMode::Tailscale`, so
+/// "available" here and "resolves" there can never disagree.
+#[tauri::command]
+pub async fn remote_tailscale_available() -> bool {
+    tokio::task::spawn_blocking(tailscale_ipv4).await.unwrap_or(None).is_some()
+}
+
 /// Stops whatever server is currently running, if any — the shared teardown
 /// path both `remote_share_stop` and `remote_share_start` (for its restart)
 /// use. Sends the shutdown signal and then **awaits** the task to
@@ -385,6 +402,16 @@ mod tests {
     fn tailscale_output_parses_the_first_line_as_an_address() {
         assert_eq!(parse_tailscale_ip_output("100.64.1.2\n"), Some("100.64.1.2".parse().unwrap()));
         assert_eq!(parse_tailscale_ip_output("100.64.1.2\n100.64.1.3\n"), Some("100.64.1.2".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn tailscale_available_matches_tailscale_ipv4_directly() {
+        // Environment-independent: whatever this test runner's Tailscale
+        // state actually is, `remote_tailscale_available` must agree with
+        // the exact same detection `resolve_bind_ip` uses — that parity is
+        // the whole point of the command (module doc comment above it).
+        let expected = tailscale_ipv4().is_some();
+        assert_eq!(remote_tailscale_available().await, expected);
     }
 
     #[test]

@@ -1,8 +1,10 @@
 // "원격 공유" 카테고리 — 이 mermark(호스트)가 자신의 볼트를 Tailscale/SSH로
 // 다른 mermark(클라이언트)에 공유하도록 켜고 끄는 설정 패널. Task 9a
 // (`.superpowers/sdd/remote-vault-plan/task-9a-report.md`)가 확정한 5개
-// `#[tauri::command]`를 그대로 소비한다: remote_share_status/start/stop,
-// remote_issue_code, remote_revoke_device.
+// `#[tauri::command]`(remote_share_status/start/stop, remote_issue_code,
+// remote_revoke_device)에 더해, 9b fix round 1(리뷰 finding 3)에서 추가한
+// `remote_tailscale_available`을 소비한다 — Tailscale 감지를 시작 실패
+// 메시지의 문자열 매칭(반응형)이 아니라 사전 프로브(능동형)로 한다.
 //
 // 카테고리 등록 방식: registry.ts의 registerSetting(단일 Setting<T> ↔ 컨트롤)
 // 틀에 억지로 끼우지 않는다 — 여기서 편집하는 진짜 소스는 로컬 Setting이
@@ -134,20 +136,6 @@ export function armedIdsFromStatus(status: Pick<ShareStatus, "vaults">): string[
   return status.vaults.map((v) => v.id);
 }
 
-/** Tailscale 감지 전략(9b 보고서에 근거 기록): 이 프론트엔드에는 "Tailscale이
- *  깔려 있는가"를 직접 물어볼 IPC 커맨드가 없다(9a가 추가한 5개 커맨드 중
- *  없음 — 백엔드는 `remote_share_start` 내부에서 `tailscale ip -4`를 shell out
- *  할 뿐, 별도 감지 커맨드를 노출하지 않는다). 브라우저 샌드박스에서 로컬
- *  프로세스를 검사할 방법도 없다. 그래서 이 패널은 **사전 감지를 하지
- *  않는다** — 대신 Tailscale 바인드로 시작을 시도했다가 실패했을 때, 백엔드
- *  에러 메시지에 "tailscale"이 언급되면(대소문자 무관) "감지되지 않음"으로
- *  판정한다(반응형 감지). 실제로 없는 걸 있다고 낙관하는 대신, 실패를
- *  거짓말하지 않고 그대로 보여주는 이 저장소의 원칙(§"매 실패는 백엔드
- *  메시지 그대로")과 같은 선택이다. */
-export function looksLikeTailscaleUnavailable(errorMessage: string): boolean {
-  return /tailscale/i.test(errorMessage);
-}
-
 // ── invoke 래퍼(경계면 — 실패는 절대 삼키지 않고 Error로 던진다) ───────────
 
 async function fetchStatus(): Promise<ShareStatus> {
@@ -168,6 +156,20 @@ async function issueCode(): Promise<IssuedCode> {
 
 async function revokeDevice(id: string): Promise<boolean> {
   return invoke<boolean>("remote_revoke_device", { id });
+}
+
+/** Tailscale 감지 — 사전 프로브(9b fix round 1, finding 3). 이전 라운드는
+ *  시작 실패 메시지를 `/tailscale/i`로 매칭하는 반응형 판정이었는데 리뷰에서
+ *  세 갈래로 깨졌다: (a) Rust/mock/test 세 곳의 에러 문자열이 서로 안 맞아
+ *  리워딩 한 번에 감지가 조용히 죽고, (b) 정규식이 에러 전체를 훑어서
+ *  "Tailscale"이 들어간 이름의 볼트 하나가 라디오를 영구히 회색으로
+ *  만들었고, (c) `bind 100.x…: Cannot assign requested address` 같은 진짜
+ *  실패는 "tailscale"을 아예 언급하지 않아 놓쳤다. `remote_tailscale_available`
+ *  (`remote_share.rs`)이 `resolve_bind_ip`와 정확히 같은 탐지 로직을 재사용해
+ *  실패 없이도 미리 가부만 묻는다 — 여기 판정과 실제 바인드 시도가 절대
+ *  어긋날 수 없다. */
+async function checkTailscaleAvailable(): Promise<boolean> {
+  return invoke<boolean>("remote_tailscale_available");
 }
 
 /** 실패 메시지 추출 — invoke가 던지는 값은 Tauri에서 보통 문자열(`Result<_,
@@ -291,7 +293,7 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
   let port = DEFAULT_PORT;
   let running = false;
   let devices: readonly DeviceInfo[] = [];
-  let tailscaleAvailable = true; // §looksLikeTailscaleUnavailable — 반응형 감지 전까지는 낙관
+  let tailscaleAvailable = true; // refreshTailscaleAvailability의 프로브 결과가 오기 전까지는 낙관
   let issuedCode: IssuedCode | null = null;
   let countdownTimer: ReturnType<typeof setInterval> | null = null;
   let busy = false; // 동시 invoke 중첩 방지(연타 가드)
@@ -312,19 +314,32 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     }
   };
 
+  /** 발급된 코드를 지운다 — restart/stop 시도(성공이든 실패든)마다 반드시
+   *  호출한다(fix round 1 finding 2). 백엔드는 매 재시작마다 이전 코드를
+   *  `PairingState::unarmed()`로 무효화하고, stop은 `/pair`가 붙을 서버
+   *  자체를 내린다 — 두 경우 다 화면의 코드가 더 이상 교환 가능하지 않다.
+   *  볼트 체크박스 토글 하나가 실행 중 재시작을 트리거하므로 꽤 자주
+   *  일어난다(예전엔 죽은 코드를 계속 카운트다운했다). */
+  const clearIssuedCode = (): void => {
+    issuedCode = null;
+    stopCountdown();
+  };
+
+  /** 코드 표시를 갱신한다. 만료돼도 `issuedCode` 자체는 지우지 않고
+   *  "만료됨"을 보여준다(fix round 1: 조용히 사라지던 예전 동작 대신 명시적
+   *  상태) — 실제로 무효화되는 시점은 `clearIssuedCode`(재시작/정지 시도)뿐. */
   const renderCode = (): void => {
     if (!issuedCode) {
       codeDisplay.hidden = true;
       return;
     }
-    const remaining = codeRemainingMs(Date.now(), issuedCode.issued_at_ms);
+    codeDisplay.hidden = false;
     if (codeExpired(Date.now(), issuedCode.issued_at_ms)) {
-      issuedCode = null;
+      codeDisplay.textContent = `${issuedCode.code} — 만료됨`;
       stopCountdown();
-      codeDisplay.hidden = true;
       return;
     }
-    codeDisplay.hidden = false;
+    const remaining = codeRemainingMs(Date.now(), issuedCode.issued_at_ms);
     codeDisplay.textContent = `${issuedCode.code} (${formatCountdown(remaining)} 남음)`;
   };
 
@@ -389,23 +404,64 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     }
   };
 
-  /** 백엔드 진실로 로컬 상태를 다시 맞춘다 — 9b 브리프 필수 규칙: "재시작
-   *  실패 시 remote_share_status를 다시 읽어 그 결과로 렌더". 성공 경로에서도
-   *  같은 함수를 재사용해 두 경로가 다른 상태를 만들 여지를 없앤다. */
-  const syncFromStatus = (status: ShareStatus): void => {
+  /** running/port/devices만 백엔드 진실로 맞춘다 — armedVaultIds/bindMode
+   *  ("pending" 편집값)는 건드리지 않는다. 기기 목록만 바뀌는 새로고침
+   *  (연결 해제)이 공유가 꺼져 있는 동안 사용자가 아직 적용하지 않은 볼트
+   *  체크박스 선택을 지워버리는 걸 막는다(fix round 1 finding 4). */
+  const syncRunningAndDevices = (status: ShareStatus): void => {
     running = status.running;
-    bindMode = status.bind_mode;
     port = status.port;
-    armedVaultIds = armedIdsFromStatus(status);
     devices = status.devices;
   };
 
+  /** armedVaultIds/bindMode("pending" 편집값)를 백엔드 진실로 되돌린다.
+   *  mount 시점(아직 아무것도 편집 안 함)과 start/stop 시도 직후(성공이든
+   *  실패든 — 9b 브리프: "재시작 실패 시 remote_share_status를 다시 읽어
+   *  그 결과로 렌더")에만 호출한다. 기기 목록만 갱신할 때는 호출하지
+   *  않는다(위 syncRunningAndDevices와 분리한 이유). */
+  const syncPendingFromStatus = (status: ShareStatus): void => {
+    bindMode = status.bind_mode;
+    armedVaultIds = armedIdsFromStatus(status);
+  };
+
+  /** 전체 재동기화(running/port/devices + pending armedVaultIds/bindMode) —
+   *  mount, applyStart/applyStop 직후에만 쓴다. */
   const refreshStatus = async (): Promise<void> => {
     try {
-      syncFromStatus(await fetchStatus());
+      const status = await fetchStatus();
+      syncRunningAndDevices(status);
+      syncPendingFromStatus(status);
     } catch (err) {
       showError(errorText(err));
     }
+    render();
+  };
+
+  /** 부분 재동기화(running/port/devices만) — 기기 철회처럼 pending 편집값과
+   *  무관한 변화를 반영할 때 쓴다. */
+  const refreshRunningAndDevices = async (): Promise<void> => {
+    try {
+      syncRunningAndDevices(await fetchStatus());
+    } catch (err) {
+      showError(errorText(err));
+    }
+    render();
+  };
+
+  /** Tailscale 가용성을 사전 프로브로 확인한다(mount 시 1회). 프로브
+   *  자체가 실패(IPC 에러)하면 사용자를 막지 않도록 낙관("available")으로
+   *  둔다 — 실제 시작 시도가 진짜 에러를 보여줄 것이다. 아직 시작 전이고
+   *  bindMode가 기본값 "tailscale"인데 감지가 false로 나오면, 적용된 적
+   *  없는 pending 값이므로 로컬호스트로 미리 내려준다(선택된 채 비활성인
+   *  모순된 화면을 피한다) — 이미 그 모드로 돌고 있는 세션(running=true)은
+   *  건드리지 않는다. */
+  const refreshTailscaleAvailability = async (): Promise<void> => {
+    try {
+      tailscaleAvailable = await checkTailscaleAvailable();
+    } catch {
+      tailscaleAvailable = true;
+    }
+    if (!tailscaleAvailable && bindMode === "tailscale" && !running) bindMode = "localhost-only";
     render();
   };
 
@@ -418,6 +474,7 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     if (busy) return;
     busy = true;
     clearError();
+    clearIssuedCode(); // 이번 시도가 성공하든 실패 후 서버가 내려가든, 이전 코드는 죽는다(finding 2)
     const vaults = buildVaultsToArm(getVaultOptions(), armedVaultIds);
     const wasRunning = running;
     try {
@@ -425,12 +482,7 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
       if (!wasRunning) notice.hidden = false; // "처음 켤 때" 안내 — off→on 전환마다(이 방화벽 프롬프트는 매번 유효하다)
       await refreshStatus();
     } catch (err) {
-      const msg = errorText(err);
-      showError(msg);
-      if (bindMode === "tailscale" && looksLikeTailscaleUnavailable(msg)) {
-        tailscaleAvailable = false;
-        bindMode = "localhost-only";
-      }
+      showError(errorText(err));
       await refreshStatus(); // 실패 후에도 항상 백엔드 진실로 재동기화
     } finally {
       busy = false;
@@ -442,6 +494,7 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     if (busy) return;
     busy = true;
     clearError();
+    clearIssuedCode(); // 서버가 내려가면 /pair 자체가 없다 — 코드는 곧장 무효(finding 2)
     try {
       await stopShare();
       await refreshStatus();
@@ -511,10 +564,10 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     clearError();
     try {
       await revokeDevice(id);
-      await refreshStatus();
+      await refreshRunningAndDevices(); // pending armedVaultIds/bindMode는 건드리지 않는다(finding 4)
     } catch (err) {
       showError(errorText(err));
-      await refreshStatus();
+      await refreshRunningAndDevices();
     } finally {
       busy = false;
       render();
@@ -523,6 +576,7 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
 
   render();
   void refreshStatus(); // 마운트 시 백엔드의 "마지막 구성값"으로 미리 채운다(9a 보고서 §2)
+  void refreshTailscaleAvailability(); // 마운트 시 Tailscale 가용성을 사전 프로브(finding 3)
 
   attachTeardown(root, [() => stopCountdown()]);
 

@@ -439,7 +439,8 @@ pub fn run() {
             remote_share::remote_share_start,
             remote_share::remote_share_stop,
             remote_share::remote_issue_code,
-            remote_share::remote_revoke_device
+            remote_share::remote_revoke_device,
+            remote_share::remote_tailscale_available
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]

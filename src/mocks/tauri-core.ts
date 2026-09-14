@@ -324,10 +324,13 @@ const hostShare: {
  *  buried in the case body): a vault whose `root` literally equals one of
  *  these strings makes the mocked start fail the way the real backend does —
  *  `"mock-error:tailscale-unavailable"` mirrors `resolve_bind_ip`'s Err when
- *  the `tailscale` CLI can't resolve an IP (message names "Tailscale", the
- *  only signal remote-share-panel.ts's `looksLikeTailscaleUnavailable` reacts
- *  to); `"mock-error:missing-root"` mirrors `arm_vaults`'s pre-flight
- *  `.is_dir()` guard (task-9a-report.md Finding 2 — names the vault). */
+ *  the `tailscale` CLI can't resolve an IP (still worth exercising even
+ *  though the panel no longer branches on this message — 9b fix round 1
+ *  finding 3 replaced that string-matching with a proactive
+ *  `remote_tailscale_available` probe; this just confirms a genuine start
+ *  failure is still shown verbatim, error text untouched); `"mock-error:
+ *  missing-root"` mirrors `arm_vaults`'s pre-flight `.is_dir()` guard
+ *  (task-9a-report.md Finding 2 — names the vault). */
 function hostShareMockError(vaults: readonly { id: string; display_name: string; root: string }[]): string | null {
   const missing = vaults.find((v) => v.root === "mock-error:missing-root");
   if (missing) return `"${missing.display_name}" 볼트의 경로를 찾을 수 없습니다: ${missing.root}`;
@@ -1044,7 +1047,10 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const bindMode = String(a.bindMode ?? "tailscale") as "tailscale" | "localhost-only";
       const port = Number(a.port ?? 8787);
       const vaults = (a.vaults ?? []) as Array<{ id: string; display_name: string; root: string }>;
-      if (vaults.length === 0) throw "공유할 볼트를 선택하세요"; // mirrors the backend's zero-vault refusal
+      // Wording pinned to `share_start`'s exact string (remote_share.rs:290)
+      // — fix round 1 flagged that a paraphrase here quietly drifts from
+      // what the real backend says.
+      if (vaults.length === 0) throw "공유할 볼트를 하나 이상 선택하세요";
       const err = hostShareMockError(vaults);
       if (err) throw err;
       // stop→start always (task-9a-report.md: "재시작은 항상 stop→start"),
@@ -1084,6 +1090,15 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const revoked = hostShare.devices.length < before;
       console.info("[mock] remote_revoke_device", id, revoked);
       return revoked as T;
+    }
+    case "remote_tailscale_available": {
+      // Mirrors `remote_tailscale_available() -> bool` (9b fix round 1,
+      // finding 3 — a proactive probe, no args). dev:browser has no real
+      // Tailscale to shell out to, so this hardcodes the common-case answer
+      // (`true`) rather than fabricating a fake detection signal; flip this
+      // literal locally if you need to exercise the "감지되지 않음" path.
+      console.info("[mock] remote_tailscale_available -> true");
+      return true as T;
     }
     case "check":
       // `@tauri-apps/plugin-updater`'s `check()` calls

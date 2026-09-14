@@ -16,7 +16,7 @@ import { renderRemoteSharePane, type VaultOption } from "../remote-share-panel";
  *  this function does not append it anywhere, unlike the old mountSettingsButton
  *  it replaces (that one assumed "append = far right", which broke once
  *  .window-controls started owning the far-right slot on win/linux). */
-export function createSettingsButton(getShareableVaults: () => readonly VaultOption[] = () => []): HTMLButtonElement {
+export function createSettingsButton(getShareableVaults: () => readonly VaultOption[]): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.className = "chrome-btn settings-btn icon-only";
   const label = document.createElement("span");

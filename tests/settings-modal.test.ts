@@ -31,7 +31,7 @@ describe("settings modal (mount + open/close)", () => {
   it("creating only builds the ⚙ button — no modal DOM until first open (lazy build), and it is not appended anywhere", () => {
     const bar = document.createElement("div");
     document.body.appendChild(bar);
-    const btn = createSettingsButton();
+    const btn = createSettingsButton(() => []);
     expect(btn.classList.contains("settings-btn")).toBe(true);
     expect(btn.parentElement).toBeNull(); // caller positions it — createSettingsButton doesn't append
     expect(document.querySelector(".settings-backdrop")).toBeNull(); // not built yet
@@ -42,7 +42,7 @@ describe("settings modal (mount + open/close)", () => {
     host.className = "editor-host";
     const bar = document.createElement("div");
     document.body.append(host, bar);
-    const btn = createSettingsButton();
+    const btn = createSettingsButton(() => []);
     bar.append(btn);
     (bar.querySelector(".settings-btn") as HTMLButtonElement).click();
 
@@ -64,7 +64,7 @@ describe("settings modal (mount + open/close)", () => {
     host.className = "editor-host";
     const bar = document.createElement("div");
     document.body.append(host, bar);
-    bar.append(createSettingsButton());
+    bar.append(createSettingsButton(() => []));
     (bar.querySelector(".settings-btn") as HTMLButtonElement).click();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect((document.querySelector(".settings-backdrop") as HTMLElement).hidden).toBe(true);
@@ -74,7 +74,7 @@ describe("settings modal (mount + open/close)", () => {
   it("the pane reflects the entry label in the row label cell", () => {
     const bar = document.createElement("div");
     document.body.appendChild(bar);
-    bar.append(createSettingsButton());
+    bar.append(createSettingsButton(() => []));
     (bar.querySelector(".settings-btn") as HTMLButtonElement).click();
     const labels = [...document.querySelectorAll(".settings-pane .settings-row-label")].map((l) => l.textContent);
     expect(labels).toContain("X");

@@ -47,7 +47,7 @@ describe("settings modal — 버전 category", () => {
   function openModal(): HTMLElement {
     const bar = document.createElement("div");
     document.body.appendChild(bar);
-    bar.append(createSettingsButton());
+    bar.append(createSettingsButton(() => []));
     (bar.querySelector(".settings-btn") as HTMLButtonElement).click();
     return document.querySelector(".settings-backdrop") as HTMLElement;
   }

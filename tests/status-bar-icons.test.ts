@@ -45,7 +45,7 @@ describe("status-bar icons (Lucide SVG, no emoji)", () => {
     document.body.innerHTML = "";
     const bar = document.createElement("div");
     document.body.appendChild(bar);
-    bar.append(createSettingsButton());
+    bar.append(createSettingsButton(() => []));
     const btn = bar.querySelector(".settings-btn") as HTMLButtonElement;
     expect(btn.querySelector("svg.icon-settings")).not.toBeNull();
     expect(btn.querySelector(".chrome-btn-label")?.textContent).toBe("설정");

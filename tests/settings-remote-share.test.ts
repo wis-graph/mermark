@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // invoke() is mocked directly per-test via a controllable fn — the panel talks
-// to five host commands (remote_share_status/start/stop, remote_issue_code,
-// remote_revoke_device); no real Tauri runtime exists under jsdom.
+// to six host commands (remote_share_status/start/stop, remote_issue_code,
+// remote_revoke_device, remote_tailscale_available); no real Tauri runtime
+// exists under jsdom.
 const mockInvoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
@@ -20,7 +21,6 @@ import {
   buildVaultsToArm,
   armedIdsFromStatus,
   shareableVaultsFrom,
-  looksLikeTailscaleUnavailable,
   type VaultOption,
   type ShareStatus,
 } from "../src/settings/remote-share-panel";
@@ -99,12 +99,6 @@ describe("remote-share-panel — 순수 함수", () => {
     };
     expect(shareableVaultsFrom(state)).toEqual([{ id: "v1", displayName: "노트", root: "/a" }]);
   });
-
-  it("Tailscale 미감지는 실패 메시지에 'tailscale'이 언급될 때만 반응형으로 판정한다", () => {
-    expect(looksLikeTailscaleUnavailable("Tailscale 주소를 찾을 수 없습니다")).toBe(true);
-    expect(looksLikeTailscaleUnavailable("tailscale ip -4 실패")).toBe(true);
-    expect(looksLikeTailscaleUnavailable("포트가 이미 사용 중입니다")).toBe(false);
-  });
 });
 
 // ── DOM: 설정 패널 통합 ─────────────────────────────────────────────────────
@@ -112,6 +106,14 @@ describe("remote-share-panel — 순수 함수", () => {
 const VAULTS: VaultOption[] = [{ id: "v1", displayName: "노트", root: "/Users/x/notes" }];
 
 const OFF_STATUS: ShareStatus = { running: false, bind_mode: "tailscale", port: 8787, vaults: [], devices: [] };
+
+const RUNNING_STATUS: ShareStatus = {
+  running: true,
+  bind_mode: "tailscale",
+  port: 8787,
+  vaults: [{ id: "v1", display_name: "노트" }],
+  devices: [],
+};
 
 describe("remote-share-panel — 설정 패널 통합", () => {
   beforeEach(() => {
@@ -125,6 +127,20 @@ describe("remote-share-panel — 설정 패널 통합", () => {
     });
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  /** 라우팅 기본값: 명시적으로 오버라이드하지 않은 커맨드는 "꺼짐 상태 +
+   *  Tailscale 감지됨"으로 응답한다 — 대부분의 테스트가 신경 쓰지 않는
+   *  두 커맨드(remote_share_status, remote_tailscale_available)를 매번
+   *  손으로 채우지 않게 한다. */
+  function mockRoutes(overrides: Partial<Record<string, () => Promise<unknown>>>): void {
+    mockInvoke.mockImplementation((cmd: string) => {
+      const handler = overrides[cmd];
+      if (handler) return handler();
+      if (cmd === "remote_share_status") return Promise.resolve(OFF_STATUS);
+      if (cmd === "remote_tailscale_available") return Promise.resolve(true);
+      return Promise.resolve(undefined);
+    });
+  }
 
   function openModal(getVaults: () => readonly VaultOption[] = () => VAULTS): HTMLElement {
     const bar = document.createElement("div");
@@ -140,34 +156,35 @@ describe("remote-share-panel — 설정 패널 통합", () => {
     tab?.click();
   }
 
+  const segBtn = (backdrop: HTMLElement, text: string): HTMLButtonElement =>
+    [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-seg-btn")].find((b) => b.textContent === text)!;
+
   it("사이드바에 원격 공유 카테고리가 있다", () => {
-    mockInvoke.mockResolvedValue(OFF_STATUS);
+    mockRoutes({});
     const backdrop = openModal();
     const cats = [...backdrop.querySelectorAll<HTMLElement>(".settings-cat")].map((c) => c.textContent);
     expect(cats).toContain("원격 공유");
   });
 
   it("볼트가 없으면 켜기 버튼이 비활성 + 안내 문구", async () => {
-    mockInvoke.mockResolvedValue(OFF_STATUS);
+    mockRoutes({});
     const backdrop = openModal(() => []);
     openRemoteShareTab(backdrop);
     await flush();
-    const onBtn = [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-seg-btn")].find((b) => b.textContent === "켜기")!;
-    expect(onBtn.disabled).toBe(true);
+    expect(segBtn(backdrop, "켜기").disabled).toBe(true);
     expect(backdrop.textContent).toContain("공유할 볼트를 먼저 선택하세요");
   });
 
   it("볼트 체크 → 켜기 클릭 시 remote_share_start를 올바른 wire shape으로 호출한다", async () => {
-    mockInvoke.mockImplementation((cmd: string) => (cmd === "remote_share_status" ? Promise.resolve(OFF_STATUS) : Promise.resolve(undefined)));
+    mockRoutes({});
     const backdrop = openModal();
     openRemoteShareTab(backdrop);
     await flush();
 
-    const checkbox = backdrop.querySelector<HTMLInputElement>(".remote-share-checkbox")!;
-    checkbox.click();
+    backdrop.querySelector<HTMLInputElement>(".remote-share-checkbox")!.click();
     await flush();
 
-    const onBtn = [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-seg-btn")].find((b) => b.textContent === "켜기")!;
+    const onBtn = segBtn(backdrop, "켜기");
     expect(onBtn.disabled).toBe(false);
     onBtn.click();
     await flush();
@@ -182,18 +199,13 @@ describe("remote-share-panel — 설정 패널 통합", () => {
   });
 
   it("재시작 실패 시 에러 메시지를 그대로 보여주고 remote_share_status로 재동기화한다", async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "remote_share_status") return Promise.resolve(OFF_STATUS);
-      if (cmd === "remote_share_start") return Promise.reject("포트가 이미 사용 중입니다");
-      return Promise.resolve(undefined);
-    });
+    mockRoutes({ remote_share_start: () => Promise.reject("포트가 이미 사용 중입니다") });
     const backdrop = openModal();
     openRemoteShareTab(backdrop);
     await flush();
     backdrop.querySelector<HTMLInputElement>(".remote-share-checkbox")!.click();
     await flush();
-    const onBtn = [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-seg-btn")].find((b) => b.textContent === "켜기")!;
-    onBtn.click();
+    segBtn(backdrop, "켜기").click();
     await flush();
     await flush();
 
@@ -203,33 +215,39 @@ describe("remote-share-panel — 설정 패널 통합", () => {
     expect(statusCalls).toBeGreaterThanOrEqual(2); // mount + 실패 후 재조회
   });
 
-  it("Tailscale 실패 메시지를 받으면 Tailscale 라디오를 비활성화하고 안내를 보여준다", async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "remote_share_status") return Promise.resolve(OFF_STATUS);
-      if (cmd === "remote_share_start") return Promise.reject("Tailscale 주소를 찾을 수 없습니다");
-      return Promise.resolve(undefined);
-    });
+  // fix round 1, finding 3: Tailscale 감지는 이제 시작 실패 메시지를 매칭하는
+  // 반응형이 아니라, 마운트 시 remote_tailscale_available을 미리 묻는 능동형.
+  it("Tailscale이 감지되지 않으면 마운트 시점부터 라디오가 비활성 + 로컬호스트로 기본 선택된다", async () => {
+    mockRoutes({ remote_tailscale_available: () => Promise.resolve(false) });
     const backdrop = openModal();
     openRemoteShareTab(backdrop);
     await flush();
-    backdrop.querySelector<HTMLInputElement>(".remote-share-checkbox")!.click();
-    await flush();
-    const onBtn = [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-seg-btn")].find((b) => b.textContent === "켜기")!;
-    onBtn.click();
-    await flush();
-    await flush();
+    await flush(); // refreshStatus와 refreshTailscaleAvailability 둘 다 settle
 
-    const tailscaleBtn = [...backdrop.querySelectorAll<HTMLButtonElement>(".settings-seg-btn")].find((b) => b.textContent === "Tailscale")!;
+    const tailscaleBtn = segBtn(backdrop, "Tailscale");
+    const localhostBtn = segBtn(backdrop, "로컬호스트만 (SSH 터널)");
     expect(tailscaleBtn.disabled).toBe(true);
+    expect(tailscaleBtn.getAttribute("aria-pressed")).toBe("false");
+    expect(localhostBtn.getAttribute("aria-pressed")).toBe("true"); // finding 1: 더 이상 disabled+selected로 어긋나지 않는다
     expect(backdrop.textContent).toContain("Tailscale이 감지되지 않았습니다");
   });
 
+  it("이미 Tailscale로 실행 중이면 감지 실패가 와도 현재 선택을 강제로 바꾸지 않는다", async () => {
+    mockRoutes({ remote_share_status: () => Promise.resolve(RUNNING_STATUS), remote_tailscale_available: () => Promise.resolve(false) });
+    const backdrop = openModal();
+    openRemoteShareTab(backdrop);
+    await flush();
+    await flush();
+
+    const tailscaleBtn = segBtn(backdrop, "Tailscale");
+    expect(tailscaleBtn.disabled).toBe(true); // 더 이상 고를 순 없지만
+    expect(tailscaleBtn.getAttribute("aria-pressed")).toBe("true"); // 이미 실행 중인 세션의 선택은 그대로 보여준다
+  });
+
   it("공유 중이면 페어링 코드 발급 버튼이 활성화되고, 코드는 남은 시간과 함께 표시된다", async () => {
-    const runningStatus: ShareStatus = { running: true, bind_mode: "tailscale", port: 8787, vaults: [{ id: "v1", display_name: "노트" }], devices: [] };
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "remote_share_status") return Promise.resolve(runningStatus);
-      if (cmd === "remote_issue_code") return Promise.resolve({ code: "123456", issued_at_ms: Date.now() });
-      return Promise.resolve(undefined);
+    mockRoutes({
+      remote_share_status: () => Promise.resolve(RUNNING_STATUS),
+      remote_issue_code: () => Promise.resolve({ code: "123456", issued_at_ms: Date.now() }),
     });
     const backdrop = openModal();
     openRemoteShareTab(backdrop);
@@ -243,18 +261,108 @@ describe("remote-share-panel — 설정 패널 통합", () => {
     expect(backdrop.querySelector(".remote-share-code")?.textContent).toContain("123456");
   });
 
+  // fix round 1, finding 2 (일부): 만료돼도 코드가 조용히 사라지지 않고 명시적
+  // "만료됨" 상태를 보여준다.
+  it("이미 만료된 채로 코드를 받으면 조용히 사라지지 않고 '만료됨'을 보여준다", async () => {
+    mockRoutes({
+      remote_share_status: () => Promise.resolve(RUNNING_STATUS),
+      remote_issue_code: () => Promise.resolve({ code: "999999", issued_at_ms: Date.now() - PAIRING_TTL_MS - 1000 }),
+    });
+    const backdrop = openModal();
+    openRemoteShareTab(backdrop);
+    await flush();
+    backdrop.querySelector<HTMLButtonElement>(".remote-share-issue-btn")!.click();
+    await flush();
+
+    const codeDisplay = backdrop.querySelector<HTMLElement>(".remote-share-code")!;
+    expect(codeDisplay.hidden).toBe(false);
+    expect(codeDisplay.textContent).toContain("999999");
+    expect(codeDisplay.textContent).toContain("만료됨");
+  });
+
+  // fix round 1, finding 2: 재시작(볼트 토글 → stop→start)이 이전에 발급된
+  // 페어링 코드를 죽은 채 카운트다운시키지 않고 즉시 지운다.
+  it("실행 중 볼트를 토글해 재시작하면 이전에 발급된 페어링 코드가 사라진다", async () => {
+    const twoVaults: VaultOption[] = [
+      { id: "v1", displayName: "노트", root: "/Users/x/notes" },
+      { id: "v2", displayName: "일기", root: "/Users/x/diary" },
+    ];
+    mockRoutes({
+      remote_share_status: () => Promise.resolve(RUNNING_STATUS), // v1만 armed
+      remote_issue_code: () => Promise.resolve({ code: "123456", issued_at_ms: Date.now() }),
+      remote_share_start: () => Promise.resolve(undefined),
+    });
+    const backdrop = openModal(() => twoVaults);
+    openRemoteShareTab(backdrop);
+    await flush();
+
+    backdrop.querySelector<HTMLButtonElement>(".remote-share-issue-btn")!.click();
+    await flush();
+    expect(backdrop.querySelector(".remote-share-code")?.textContent).toContain("123456");
+
+    // v2를 체크 → 이미 running이므로 applyStart(재시작)를 즉시 트리거한다.
+    const v2Checkbox = [...backdrop.querySelectorAll<HTMLInputElement>(".remote-share-checkbox")][1];
+    v2Checkbox.click();
+    await flush();
+    await flush();
+
+    const codeDisplay = backdrop.querySelector<HTMLElement>(".remote-share-code")!;
+    expect(codeDisplay.hidden).toBe(true);
+  });
+
+  it("공유를 끄면 페어링 코드가 사라진다", async () => {
+    mockRoutes({
+      remote_share_status: () => Promise.resolve(RUNNING_STATUS),
+      remote_issue_code: () => Promise.resolve({ code: "123456", issued_at_ms: Date.now() }),
+      remote_share_stop: () => Promise.resolve(undefined),
+    });
+    const backdrop = openModal();
+    openRemoteShareTab(backdrop);
+    await flush();
+
+    backdrop.querySelector<HTMLButtonElement>(".remote-share-issue-btn")!.click();
+    await flush();
+    expect(backdrop.querySelector(".remote-share-code")?.textContent).toContain("123456");
+
+    segBtn(backdrop, "끄기").click();
+    await flush();
+    await flush();
+
+    const codeDisplay = backdrop.querySelector<HTMLElement>(".remote-share-code")!;
+    expect(codeDisplay.hidden).toBe(true);
+  });
+
+  // fix round 1, finding 4: 공유가 꺼진 동안의 기기 철회(remote_share_status
+  // 재조회를 일으킴)가 아직 적용하지 않은 볼트 체크박스 선택을 지우면 안 된다.
+  it("공유가 꺼진 상태에서 기기 연결 해제를 눌러도 미적용 볼트 선택은 지워지지 않는다", async () => {
+    const offWithDevice: ShareStatus = { ...OFF_STATUS, devices: [{ id: "dev-1", label: "맥북", paired_at_ms: 1 }] };
+    mockRoutes({
+      remote_share_status: () => Promise.resolve(offWithDevice),
+      remote_revoke_device: () => Promise.resolve(true),
+    });
+    const backdrop = openModal();
+    openRemoteShareTab(backdrop);
+    await flush();
+
+    const checkbox = backdrop.querySelector<HTMLInputElement>(".remote-share-checkbox")!;
+    checkbox.click(); // 아직 적용 안 한 pending 선택
+    await flush();
+    expect(checkbox.checked).toBe(true);
+
+    backdrop.querySelector<HTMLButtonElement>(".remote-share-revoke-btn")!.click();
+    await flush();
+    await flush();
+
+    expect(checkbox.checked).toBe(true); // finding 4: 여전히 체크돼 있어야 한다
+    const revokeCall = mockInvoke.mock.calls.find((c) => c[0] === "remote_revoke_device");
+    expect(revokeCall![1]).toEqual({ id: "dev-1" });
+  });
+
   it("기기 목록에서 연결 해제를 누르면 remote_revoke_device(id)를 호출한다", async () => {
-    const runningStatus: ShareStatus = {
-      running: true,
-      bind_mode: "tailscale",
-      port: 8787,
-      vaults: [{ id: "v1", display_name: "노트" }],
-      devices: [{ id: "dev-1", label: "맥북", paired_at_ms: 1 }],
-    };
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "remote_share_status") return Promise.resolve(runningStatus);
-      if (cmd === "remote_revoke_device") return Promise.resolve(true);
-      return Promise.resolve(undefined);
+    const runningWithDevice: ShareStatus = { ...RUNNING_STATUS, devices: [{ id: "dev-1", label: "맥북", paired_at_ms: 1 }] };
+    mockRoutes({
+      remote_share_status: () => Promise.resolve(runningWithDevice),
+      remote_revoke_device: () => Promise.resolve(true),
     });
     const backdrop = openModal();
     openRemoteShareTab(backdrop);
@@ -268,14 +376,8 @@ describe("remote-share-panel — 설정 패널 통합", () => {
   });
 
   it("토큰이나 볼트의 로컬 파일시스템 root를 절대 렌더하지 않는다", async () => {
-    const runningStatus: ShareStatus = {
-      running: true,
-      bind_mode: "tailscale",
-      port: 8787,
-      vaults: [{ id: "v1", display_name: "노트" }],
-      devices: [{ id: "dev-1", label: "맥북", paired_at_ms: 1 }],
-    };
-    mockInvoke.mockResolvedValue(runningStatus);
+    const runningWithDevice: ShareStatus = { ...RUNNING_STATUS, devices: [{ id: "dev-1", label: "맥북", paired_at_ms: 1 }] };
+    mockRoutes({ remote_share_status: () => Promise.resolve(runningWithDevice) });
     const backdrop = openModal();
     openRemoteShareTab(backdrop);
     await flush();
