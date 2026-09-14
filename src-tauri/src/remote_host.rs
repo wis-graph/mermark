@@ -1915,7 +1915,7 @@ mod tests {
         let app = router(state);
 
         for (path, _) in get_routes() {
-            let query = match path {
+            let query: String = match path {
                 "/vaults" => continue, // takes no vault-relative path param
                 "/list_dir" | "/list_files_recursive" => "?vault=rv1&path=.git&show_hidden=true".into(),
                 "/resolve_image" => "?vault=rv1&path=.git&name=config&max_depth=1".into(),
