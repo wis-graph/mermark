@@ -62,8 +62,15 @@ rhwp = { git = "https://github.com/edwardkim/rhwp", rev = "93862a4e16df59834ebce
 # Tauri already runs a tokio runtime under the hood but doesn't re-export the
 # crate, so `hwp.rs`'s parse/render timeouts (`tokio::time::timeout`) need it
 # declared explicitly. Kept to the one feature we use — this adds no new
-# transitive dependency, since tauri already pulls in full tokio.
-tokio = { version = "1", default-features = false, features = ["time"] }
+# transitive dependency, since tauri already pulls in full tokio. "net"/"rt"/
+# "macros" are added for the remote-host HTTP server (`remote_host::serve`,
+# its `#[tokio::test]`s) — still no new *transitive* dependency, only naming
+# features of the already-compiled crate.
+tokio = { version = "1", default-features = false, features = ["time", "net", "rt", "rt-multi-thread", "macros"] }
+# Remote vault host's read-only HTTP server (`remote_host.rs`). The one
+# runtime crate this feature is permitted to add — everything it needs
+# (tokio, hyper) is already in the build graph via tauri-plugin-updater.
+axum = "0.7"
 # SQLite DB viewer backend (read-only). Unlike sql.js (loads the whole file
 # into a WASM heap -> OOM on a large database), rusqlite lets SQLite read
 # pages straight off disk, so opening a multi-gigabyte database costs only
@@ -105,3 +112,10 @@ zip = "8"
 # text. This crate is the one correct way to fold both sides to a canonical
 # form before comparing; hand-rolling NFC decomposition tables is out of scope.
 unicode-normalization = "0.1"
+
+[dev-dependencies]
+# `tower::ServiceExt::oneshot` drives `remote_host::router`'s axum `Router`
+# directly in tests without binding a real socket. Dev-only: never ships in
+# the built app, so it doesn't count against the "one runtime dependency"
+# budget for this feature.
+tower = { version = "0.4", features = ["util"] }

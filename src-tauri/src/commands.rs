@@ -157,7 +157,7 @@ pub(crate) fn mtime_ms(path: &str) -> u64 {
 /// A file's contents plus the modification time observed when it was read.
 /// The frontend keeps `mtime` as the baseline and hands it back on write so the
 /// backend can detect an external change before overwriting.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct FileContent {
     pub text: String,
     pub mtime: u64,
@@ -467,7 +467,7 @@ pub fn bundle_doc(path: String) -> Result<String, String> {
 /// `sub/note.md` without changing the shape), and `kind` lets the frontend branch
 /// its insertion rule. The frontend mirrors this exact shape in
 /// `src/mocks/tauri-core.ts` and its `invoke<LinkTarget[]>("list_link_targets")`.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct LinkTarget {
     /// Insertion label: a markdown note's basename (no `.md`), or an image's full
     /// file name (extension included, Obsidian embed convention).
@@ -832,7 +832,7 @@ pub fn list_link_targets(dir: String) -> Result<Vec<LinkTarget>, String> {
 /// first and are hover-expandable). The frontend mirrors this exact shape in
 /// `src/mocks/tauri-core.ts` and its `invoke<DirEntry[]>("list_dir")`; serde
 /// serializes the field names verbatim, so `is_dir` stays snake_case on the wire.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct DirEntry {
     /// Full file/folder name, extension included (`note.md`, not `note`).
     pub name: String,
@@ -987,7 +987,7 @@ fn is_excluded_scan_dir(name: &str) -> bool {
 /// One file found by a recursive scan (`list_files_recursive`), for the
 /// sidebar's fuzzy file-finder (⌘⇧F). The frontend mirrors this exact shape
 /// in `src/mocks/tauri-core.ts` and its `invoke<ScanResult>`.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct FileHit {
     /// File name only (`note.md`), for display.
     pub name: String,
@@ -1001,7 +1001,7 @@ pub struct FileHit {
 /// Result of a recursive scan: the files found (sorted by `rel_path`) plus
 /// whether the walk hit a defensive ceiling (`MAX_SCAN_DEPTH`/
 /// `MAX_SCAN_FILES`) and so is a partial, not exhaustive, listing.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ScanResult {
     pub files: Vec<FileHit>,
     pub truncated: bool,
