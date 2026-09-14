@@ -719,7 +719,8 @@ git commit -m "feat(remote-host): 페어링 코드 수명·기기 토큰 발급�
 | `GET` | `/vaults` | 공유된 볼트 목록 |
 | `GET` | `/list_dir` | 디렉터리 나열 |
 | `GET` | `/list_files_recursive` | 재귀 스캔 |
-| `GET` | `/read_file` | 파일 읽기 |
+| `GET` | `/read_file` | 파일 읽기 (UTF-8 텍스트) |
+| `GET` | `/read_asset` | 이미지 등 바이너리 바이트 (Ruling 7) |
 | `GET` | `/resolve_image` | 이미지 경로 해석 |
 | `GET` | `/list_link_targets` | 위키링크 후보 |
 
@@ -1072,6 +1073,64 @@ Expected: PASS
 ```bash
 git add src/mocks/tauri-core.ts
 git commit -m "test(mock): remote_* 커맨드 브라우저 mock 추가 (경계면 parity)"
+```
+
+---
+
+### Task 8a: 문서별 볼트 컨텍스트와 원격 쓰기 차단
+
+**Ruling 6·8·9·10으로 신설.** Task 1 리뷰가 연 구멍을 메운다. **Task 8보다 먼저 실행한다.**
+
+Task 1은 읽기 12곳을 초크포인트로 모았지만, 그중 6곳(리프 모듈)은 `Vault`가 스레딩돼 있지 않아 `localFileHost`로 직결된다. Task 8은 `file-host.ts`만 고치므로, 이대로면 **원격 볼트를 보는 중에도 그 6곳이 이쪽 디스크를 읽는다.**
+
+**Files:**
+- Modify: `src/markdown/wikilink.ts`, `src/markdown/image.ts`, `src/markdown/local-doc-link.ts`, `src/editor.ts`
+- Modify: `src/main.ts` (openInWindow에서 facet 주입, `openDocument`·`navigateHistory` 볼트 귀속)
+- Create: `src/document/document-vault.ts` (facet 정의)
+- Test: 각 모듈 옆 colocated 테스트
+
+**seam — 이건 결정된 사항이다:**
+`currentVault()`를 리프 모듈에 스레딩하지 **않는다**. `src/markdown/image-search-root.ts:25-37`이 앱 상태 배선을 명시적으로 금지한다(과거 버그의 원인). 대신:
+- 문서별 볼트를 **CodeMirror facet**으로 싣는다. `main.ts`의 `openInWindow`가 탭의 볼트를 이미 알고 있으므로 거기서 주입하고, 위젯은 `view.state.facet(documentVault)`로 읽는다.
+- `LocalDocumentLinkContext`에는 `vault` 필드를 추가한다.
+
+**해야 할 것:**
+
+1. **(Ruling 8 — 가장 중요) 원격 볼트에서 자동 파일 생성을 막는다.**
+   `wikilink.ts:168`의 `invoke("create_markdown_file", …)`은 원격 볼트에서 도달 가능하다. 없는 `[[링크]]`를 클릭하면 **맥북 로컬에 엉뚱한 파일이 생긴다** — v1 READ-ONLY를 정면으로 깬다.
+   원격 볼트일 때는 생성 분기를 타지 않고 `원격 볼트는 읽기 전용입니다` 안내를 띄운다(무음 무시 금지).
+
+```ts
+it("원격 볼트에서는 없는 위키링크를 클릭해도 파일을 만들지 않는다", async () => {
+  const calls: string[] = [];
+  await clickMissingWikilink({ vault: remoteVault, invoke: (cmd) => { calls.push(cmd); return Promise.resolve() as never; } });
+  expect(calls).not.toContain("create_markdown_file");
+  expect(lastNotice()).toBe("원격 볼트는 읽기 전용입니다");
+});
+```
+
+2. **(Ruling 9) 문서 열기·히스토리 이동의 볼트 귀속을 고친다.**
+   `main.ts:355 openDocument`와 `:424 navigateHistory`는 `currentVault() ?? global`(사이드바 선택)로 라우팅한다. 원격↔로컬 경계를 넘는 뒤로/앞으로가 잘못된 백엔드를 친다. `onCloseTab`(:378)이 이미 **탭의 볼트**를 쓰는 올바른 선례다 — 그 형태로 맞춘다.
+
+3. **(Ruling 7 연결) 이미지를 원격에서 실어온다.**
+   `image.ts`는 `resolve_image`로 경로를 받은 뒤 `convertFileSrc(경로)`로 표시한다. 원격 경로는 이쪽 디스크에 없으므로 그 방식으로는 **절대** 뜨지 않는다. 원격 볼트일 때는 Task 6의 `remote_read_image`(바이트 → `data:` URL)를 쓴다. CSP `img-src`에 이미 `data:`가 있어 설정 변경은 없다.
+
+4. **(Ruling 10) `local-doc-link.ts`를 판정한다.**
+   이 모듈은 `canonicalize_path`를 3회(`:212,:215,:228`) 부르는데 `FileHostBackend`에 없는 커맨드다. 둘 중 하나를 **고르고 보고서에 근거를 남긴다**: (a) 원격 전용 링크 리졸버를 둔다, (b) 원격 볼트에서 `[텍스트](형제.md)` 링크를 `원격 볼트에서는 지원하지 않습니다`로 명시 표시한다(Task 11과 같은 표기).
+
+5. **v1에서 라우팅이 불필요한 것들** — 근거를 보고서에 남기고 그대로 둔다:
+   `editor.ts:255` retryOriginal(쓰기 직전 충돌 복구인데 원격은 읽기 전용), `wikilink-complete.ts:91`(읽기 전용에서 `[[` 타이핑), `main.ts:309`(볼트 이전 시대 마이그레이션, 정당하게 로컬).
+
+- [ ] **Step 1: 위 1~4의 실패 테스트를 먼저 쓴다** (Ruling 8 테스트는 위에 그대로 있다)
+- [ ] **Step 2: 실패를 확인한다** — Run: `npx vitest run src/markdown/ src/document/`
+- [ ] **Step 3: facet과 분기를 구현한다**
+- [ ] **Step 4: 통과와 회귀를 확인한다** — Run: `npx vitest run && npx tsc --noEmit && npm test`. 로컬 볼트 동작은 변하지 않아야 한다.
+- [ ] **Step 5: 리프 6곳에 후속 근거 주석을 남긴다** (Task 1 리뷰의 Minor) — 라우팅하지 않은 곳은 *왜* 안 하는지 한 줄로 적는다.
+- [ ] **Step 6: 커밋**
+
+```bash
+git add src/document/document-vault.ts src/markdown/ src/editor.ts src/main.ts
+git commit -m "feat(remote): 문서별 볼트 컨텍스트와 원격 볼트 쓰기 차단"
 ```
 
 ---
