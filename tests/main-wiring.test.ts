@@ -1507,8 +1507,11 @@ describe("main workspace wiring", () => {
       expect(item).not.toBeNull();
       // Migrated to the permanent vault "/A" auto-registered by the ?file=
       // cold launch above (routeCliFileResolved), not left un-migrated or
-      // dropped.
-      expect(item?.dataset.vaultId).not.toBe("");
+      // dropped. `toBeTruthy` (not `not.toBe("")`) matters: pre-migration
+      // code never sets `dataset.vaultId` at all, so it reads back as
+      // `undefined` — a weaker `not.toBe("")` assertion would pass against
+      // BOTH the fixed and the unfixed code and prove nothing.
+      expect(item?.dataset.vaultId).toBeTruthy();
       item?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("레거시 문서"));
       expect(invokeMock.mock.calls.some(([command]) => command === "remote_read_file")).toBe(false);
