@@ -172,4 +172,53 @@ describe("WorkspaceStore", () => {
     expect(store.get().vaults).toEqual([]);
     expect(store.get().workspaces[0]?.currentVaultId).toBe(GLOBAL_VAULT_ID);
   });
+
+  // Ruling 21: a paired remote vault must round-trip through a restart, same
+  // as a permanent one — before Task 10, readState's guard accepted only
+  // persistenceKind === "permanent" and commit's saveState filter dropped
+  // everything else, so a remote vault vanished the moment the app restarted.
+  describe("remote vaults", () => {
+    it("registers a remote vault, selects it, and survives a reload", () => {
+      const firstStore = new WorkspaceStore();
+      const remote = firstStore.registerRemoteVault("wis-macmini:8787", "rv-abc", "맥미니 노트");
+
+      expect(remote.persistenceKind).toBe("remote");
+      expect(remote.rootPath).toBeNull();
+      expect(firstStore.get().workspaces[0]?.currentVaultId).toBe(remote.vaultId);
+
+      const restartedStore = new WorkspaceStore();
+      const reloaded = restartedStore.getVault(remote.vaultId);
+      expect(reloaded).toMatchObject({ persistenceKind: "remote", host: "wis-macmini:8787", remoteVaultId: "rv-abc", displayName: "맥미니 노트" });
+      expect(restartedStore.get().workspaces[0]?.vaultIds).toContain(remote.vaultId);
+      expect(restartedStore.get().workspaces[0]?.currentVaultId).toBe(remote.vaultId);
+    });
+
+    it("rejects pairing the same host+remoteVaultId twice", () => {
+      const store = new WorkspaceStore();
+      store.registerRemoteVault("wis-macmini", "rv-1", "노트");
+      expect(() => store.registerRemoteVault("wis-macmini", "rv-1", "다시")).toThrowError(WorkspaceStateError);
+    });
+
+    it("selecting a remote vault never writes lastSelectedPermanentVaultId, so a permanent vault is still restored after a global excursion", () => {
+      const store = new WorkspaceStore();
+      const permanent = store.registerVault("/notes", "Notes");
+      const remote = store.registerRemoteVault("wis-macmini", "rv-1", "원격");
+      store.selectVault(permanent.vaultId);
+      store.selectVault(remote.vaultId);
+      store.selectVault(GLOBAL_VAULT_ID);
+
+      const saved = JSON.parse(localStorage.getItem(workspaceStorageKey) ?? "null") as { workspaces: Array<{ lastSelectedPermanentVaultId: string | null }> };
+      expect(saved.workspaces[0]?.lastSelectedPermanentVaultId).toBe(permanent.vaultId);
+
+      const restarted = new WorkspaceStore();
+      expect(restarted.get().workspaces[0]?.lastSelectedPermanentVaultId).toBe(permanent.vaultId);
+    });
+
+    it("unregisters a remote vault by id", () => {
+      const store = new WorkspaceStore();
+      const remote = store.registerRemoteVault("wis-macmini", "rv-1", "원격");
+      expect(store.unregisterVault(remote.vaultId).persistenceKind).toBe("remote");
+      expect(store.get().vaults).toEqual([]);
+    });
+  });
 });

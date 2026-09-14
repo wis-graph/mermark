@@ -475,6 +475,19 @@ export function createExplorerPanel({
 
   const makeEmptyState = (): HTMLElement => makeState("explorer-empty", "이 폴더에는 표시할 파일이 없습니다");
 
+  /** A few muted placeholder rows shown while a listing is in flight — most
+   *  visible for a remote vault (a network round-trip through remote_list_dir,
+   *  file-host.ts), where a stalled host must read as "loading", never as a
+   *  frozen UI (item 4: no synchronous block). Local listings resolve almost
+   *  instantly so this just flashes, but it's the same code path for both —
+   *  no vault-kind branch here, since renderTree/expandFolder already don't
+   *  know or care which backend `listDir` routes to. */
+  const makeSkeleton = (): HTMLElement => {
+    const wrap = create("div", "explorer-skeleton");
+    for (let i = 0; i < 4; i++) wrap.append(create("div", "explorer-skeleton-row"));
+    return wrap;
+  };
+
   /** Build one entry row. Folders get a chevron twisty + aria-expanded + a lazy
    *  children group; files get a spacer (chevron alignment) and are greyed +
    *  inert when non-markdown. `level` (1-based) drives aria-level + the CSS
@@ -534,6 +547,7 @@ export function createExplorerPanel({
     const path = node.dataset.path;
     if (!path) return;
     const level = Number(node.dataset.level ?? "1") + 1;
+    kids.replaceChildren(makeSkeleton());
     try {
       const result = await readChildren(path);
       if (listingRequests.get(path) !== result.request) return;
@@ -669,6 +683,8 @@ export function createExplorerPanel({
       tree.append(up);
     }
 
+    const skeleton = makeSkeleton();
+    tree.append(skeleton);
     try {
       const result = await readChildren(rootPath);
       // Superseded by a later render — leave `focusOwed` for it to inherit.
@@ -678,6 +694,7 @@ export function createExplorerPanel({
       // guaranteed later render to inherit the obligation, so it must not
       // survive past this return.
       if (listingRequests.get(rootPath) !== result.request) { focusOwed = false; return; }
+      skeleton.remove();
       if (result.entries.length === 0) tree.append(makeEmptyState());
       else for (const e of result.entries) tree.append(await makeEntry(e, 1));
       // renderTree's own tree.replaceChildren() (above) wiped any highlight —
@@ -687,6 +704,7 @@ export function createExplorerPanel({
     } catch (error) {
       if (renderGeneration !== renderId) return; // superseded — same as above
       if (listingErrors.get(rootPath) !== errorMessage(error)) { focusOwed = false; return; } // current generation, stale error — discharge, don't carry forward
+      skeleton.remove();
       const errorState = makeState("explorer-root-error", `현재 루트를 읽을 수 없습니다: ${errorMessage(error)}`, {
         className: "explorer-root-reselect",
         label: "루트 다시 선택",

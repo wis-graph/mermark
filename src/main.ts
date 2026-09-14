@@ -553,22 +553,29 @@ async function boot() {
   // the type does not enforce — pinned by tests/workspace-state.test.ts
   // ("registers canonical permanent vaults..." and "re-derives explorerRoot
   // from rootPath on reload...").
-  // Returns `null` for a remote vault: its `explorerRoot` is a HOST-side
-  // virtual path, not a local filesystem root the Explorer (`jumpToRoot`) can
-  // navigate to — callers must treat `null` as "not a local-explorer target"
-  // and skip the jump, not fall through to some other local path.
+  // Task 10: a remote vault's `explorerRoot` ("/" — see registerRemoteVault,
+  // workspace-state.ts) IS now a valid Explorer target. Nothing else in the
+  // explorer needed to change to make this work: `listDir` (below) already
+  // routes through `fileHostFor(currentVault())`, which was ALWAYS
+  // vault-kind-generic (file-host.ts's makeFileHost switch) — the only thing
+  // stopping remote browsing was this function itself refusing to hand the
+  // explorer a root to jump to. `isRootLocked` already returns true for
+  // remote (main.ts's own switch, above), so "up" past the vault root is
+  // still refused exactly like a permanent vault.
   const explorerRootForVault = (vault: Vault): string | null => {
     switch (vault.persistenceKind) {
       case "permanent": return vault.explorerRoot;
       case "global": return homeRoot;
-      case "remote": return null;
+      case "remote": return vault.explorerRoot;
       default: return assertNever(vault);
     }
   };
-  // Command wrapper around `explorer.jumpToRoot` that honors `null`
-  // ("not a local-explorer target") by simply not jumping — a remote vault's
-  // Explorer entry point does not exist yet (Task 10+), so the safest thing
-  // this window can do today is leave the Explorer wherever it already was.
+  // Command wrapper around `explorer.jumpToRoot`. `explorerRootForVault` now
+  // resolves every vault kind to a real root (Task 10), so the `null` guard
+  // below is unreachable today — kept because `explorerRootForVault`'s
+  // return type stays `string | null` (a defensive width, not a live case),
+  // and removing the guard would silently pass `null` straight to
+  // `jumpToRoot` the day a future vault kind legitimately needs one again.
   const jumpExplorerToVaultRoot = (vault: Vault): void => {
     const root = explorerRootForVault(vault);
     if (root !== null) explorer.jumpToRoot(root);
@@ -869,8 +876,31 @@ async function boot() {
       fileHostFor(currentVault() ?? workspaceStore.getGlobalVault()).listDir(p, showHiddenFilesSetting.get() === "on"),
     getBaseDir: explorerRootForCurrentSelection,
     onOpenFile: async (absPath) => {
-      if (!currentFile) {
-        location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
+      const openVault = currentVault();
+      // The cold-start reload (below) carries the target through the URL so
+      // the NEXT boot can re-derive which vault owns it — createDocumentReloadUrl
+      // only ever encodes a local/global root (routeCliFileResolved, called at
+      // boot, can only resolve "permanent" or "global" — see
+      // routingTrustsCurrentVault's doc comment). A remote document's path is
+      // vault-relative and carries no such information, so a reload would
+      // strand the user back on the Global Vault welcome screen instead of
+      // reopening it. Opening in-place is strictly correct for remote
+      // regardless of whether a document is already open elsewhere in this
+      // window — there is no "first-ever open" special case for remote to
+      // begin with, since a reload could never have served it anyway.
+      if (!currentFile && openVault?.persistenceKind !== "remote") {
+        location.href = createDocumentReloadUrl(absPath, openVault?.persistenceKind === "global" ? currentExplorerFolder : null);
+      } else if (openVault?.persistenceKind === "remote") {
+        // Explicit targetVault (Ruling 9's resolveTargetVault pattern) — not
+        // optional here the way it is for permanent. routeDocumentPath's
+        // fallback (routeCliFile) can only ever land on "permanent" or
+        // "global" (its own doc comment); a vault-relative remote path like
+        // "노트.md" matches no registered permanent root and would silently
+        // fall through to the Global Vault — reading (and re-saving any tab
+        // state for) the WRONG vault even though the Explorer, one line
+        // above, is unambiguously already browsing this remote vault via the
+        // very same `currentVault()`.
+        openDocumentSafely(absPath, undefined, openVault);
       } else {
         openDocumentSafely(absPath);
       }

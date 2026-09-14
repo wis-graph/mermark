@@ -59,6 +59,26 @@ export const classifyRemoteError = (e: unknown): RemoteConnectionState => {
   return "unreachable";
 };
 
+/** Probes a paired remote vault's reachability for the sidebar's connection
+ *  badge (Task 10). Reuses `remote_list_dir` on the vault's own root rather
+ *  than adding a dedicated ping command — a directory listing already proves
+ *  every layer the badge cares about (host reachable, token still valid,
+ *  sharing still on), and `classifyRemoteError` already turns its failure
+ *  shape into exactly the 4 states the badge renders. `call` defaults to the
+ *  real `invoke`, swappable for a spy in tests — same pattern as
+ *  `remoteFileHost`. */
+export const remoteConnectionStateFor = async (
+  vault: RemoteVault,
+  call: typeof invoke = invoke,
+): Promise<RemoteConnectionState> => {
+  try {
+    await call("remote_list_dir", { host: vault.host, vault: vault.remoteVaultId, path: vault.explorerRoot, showHidden: false });
+    return "connected";
+  } catch (e) {
+    return classifyRemoteError(e);
+  }
+};
+
 const remoteParentAndName = (path: string): { parent: string; name: string } => {
   const slash = path.lastIndexOf("/");
   return slash === -1 ? { parent: "", name: path } : { parent: path.slice(0, slash), name: path.slice(slash + 1) };

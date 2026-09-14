@@ -1589,6 +1589,46 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .workspace-error { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .5em; padding: .5em .4em; color: var(--sidebar-muted); }
 .workspace-error[hidden] { display: none; }
 .workspace-error-message { min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
+
+/* Task 10 — "볼트 추가" entry point next to the workspace title, reusing the
+   existing icon-button rules (.workspace-vault-action) rather than inventing
+   a new button shape. */
+.workspace-add-remote-btn { display: inline-flex; align-items: center; justify-content: center; width: 2em; height: calc(24em / 13); border: 0; background: transparent; color: var(--sidebar-muted); cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease, color .12s ease; }
+.workspace-add-remote-btn:hover, .workspace-add-remote-btn:focus-visible { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); color: var(--sidebar-fg); }
+.workspace-add-remote-btn svg { width: 15px; height: 15px; }
+
+/* Connection badge (item 3) — 4 distinct tones, never collapsed to one
+   generic "실패" pill. "checking" is the async-probe-in-flight state
+   (renderRemoteBadge, workspace-sidebar.ts), shown before the first result. */
+.workspace-vault-badge { display: inline-flex; align-items: center; align-self: center; padding: .1em .55em; margin: 0 .3em; border-radius: 999px; font-size: .82em; white-space: nowrap; }
+.workspace-vault-badge--checking { color: var(--sidebar-muted); background: color-mix(in srgb, var(--sidebar-fg) 6%, transparent); }
+.workspace-vault-badge--ok { color: #7cc48f; background: color-mix(in srgb, #7cc48f 16%, transparent); }
+.workspace-vault-badge--warn { color: #e0b25c; background: color-mix(in srgb, #e0b25c 16%, transparent); }
+.workspace-vault-badge--error { color: #e28080; background: color-mix(in srgb, #e28080 16%, transparent); }
+
+/* Pairing dialog (remote-vault-dialog.ts) — a small anchored panel, same
+   surface language as .workspace-error (muted text, --sidebar-well card)
+   rather than a full-screen modal; the workspace aside is already a narrow
+   fixed-width panel, so this docks inside it instead of overlaying the app. */
+.remote-vault-dialog { display: flex; flex-direction: column; gap: .6em; margin: .4em; padding: .7em; background: var(--sidebar-well); border-radius: var(--radius-sm, 6px); }
+.remote-vault-dialog[hidden] { display: none; }
+.remote-vault-dialog-header { display: flex; align-items: center; gap: .5em; }
+.remote-vault-dialog-title { flex: 1; font-weight: 600; }
+.remote-vault-dialog-close { display: inline-flex; align-items: center; justify-content: center; width: 1.8em; height: 1.8em; border: 0; background: transparent; color: var(--sidebar-muted); cursor: pointer; border-radius: var(--radius-sm, 6px); }
+.remote-vault-dialog-close:hover { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); color: var(--sidebar-fg); }
+.remote-vault-dialog-error { color: var(--danger, #e28080); font-size: .9em; word-break: keep-all; overflow-wrap: anywhere; }
+.remote-vault-dialog-step { display: flex; flex-direction: column; gap: .5em; }
+.remote-vault-dialog-input { padding: .4em .55em; border: 1px solid color-mix(in srgb, var(--sidebar-fg) 20%, transparent); border-radius: var(--radius-sm, 6px); background: transparent; color: var(--sidebar-fg); font: inherit; }
+.remote-vault-dialog-submit { padding: .4em .7em; border: 0; border-radius: var(--radius-sm, 6px); background: color-mix(in srgb, var(--sidebar-fg) 14%, transparent); color: var(--sidebar-fg); cursor: pointer; }
+.remote-vault-dialog-submit:disabled { opacity: .5; cursor: default; }
+.remote-vault-dialog-list { display: flex; flex-direction: column; gap: .3em; }
+.remote-vault-dialog-row { display: flex; align-items: center; gap: .5em; padding: .3em .4em; border-radius: var(--radius-sm, 6px); }
+.remote-vault-dialog-row:hover { background: color-mix(in srgb, var(--sidebar-fg) 6%, transparent); }
+.remote-vault-dialog-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-vault-dialog-row-add { display: inline-flex; align-items: center; justify-content: center; width: 1.8em; height: 1.8em; border: 0; background: transparent; color: var(--sidebar-muted); cursor: pointer; border-radius: var(--radius-sm, 6px); }
+.remote-vault-dialog-row-add:hover { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); color: var(--sidebar-fg); }
+.remote-vault-dialog-row-add:disabled { opacity: .4; cursor: default; }
+.remote-vault-dialog-empty { color: var(--sidebar-muted); padding: .3em .4em; }
 /* Drops the font-size override this panel used to declare alone (11px-base),
    so it inherits the ambient 13px-base like outline-empty/recent-empty do.
    Inline padding is the rows' .4em rather than those panels' .5em because this
@@ -1896,6 +1936,19 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .explorer-refresh { flex: none; color: var(--sidebar-muted); }
 .explorer-refresh:hover, .explorer-refresh:focus-visible { color: var(--sidebar-fg); }
 .explorer-empty, .explorer-root-error, .explorer-child-error { padding: .5em 8px; color: var(--sidebar-muted); }
+/* Loading placeholder shown while a listing is in flight (explorer-panel.ts's
+   makeSkeleton) — most visible for a remote vault's network round-trip
+   (item 4: never a synchronous block, always something on screen). Same
+   shimmer technique as the update-check spinner's own @keyframes elsewhere
+   in this file, but a width pulse instead of a rotation — reads as "rows
+   are coming" rather than "a single thing is spinning". */
+.explorer-skeleton { display: flex; flex-direction: column; gap: .3em; padding: .3em 8px; }
+.explorer-skeleton-row { height: 1.1em; border-radius: var(--radius-sm, 6px); background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); animation: explorer-skeleton-pulse 1.2s ease-in-out infinite; }
+.explorer-skeleton-row:nth-child(1) { width: 70%; }
+.explorer-skeleton-row:nth-child(2) { width: 45%; animation-delay: .1s; }
+.explorer-skeleton-row:nth-child(3) { width: 60%; animation-delay: .2s; }
+.explorer-skeleton-row:nth-child(4) { width: 35%; animation-delay: .3s; }
+@keyframes explorer-skeleton-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
 .explorer-root-error, .explorer-child-error { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .5em; }
 .explorer-state-message, .search-state-message { min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
 .explorer-root-reselect, .explorer-retry { border: 1px solid var(--sidebar-border); border-radius: var(--radius-sm, 6px); background: transparent; color: var(--sidebar-fg); font: inherit; padding: .2em .5em; cursor: pointer; }

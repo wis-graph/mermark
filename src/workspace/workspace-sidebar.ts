@@ -3,9 +3,13 @@ import { renderSidebarButton } from "../sidebar/toggle";
 import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
 import { basename, dirOf, isPathWithin } from "../document/path";
 import { extensionOf, renderEntryGlyph } from "../sidebar/explorer/file-icons";
-import { WorkspaceStateError, type Vault, type WorkspaceState, type WorkspaceStore } from "./workspace-state";
+import { WorkspaceStateError, type RemoteVault, type Vault, type WorkspaceState, type WorkspaceStore } from "./workspace-state";
 import type { VaultTabs } from "./vault-tabs";
 import { isVaultCollapsed, setVaultCollapsed } from "./vault-collapse";
+import { badgeFor } from "./add-remote-vault";
+import { remoteConnectionStateFor, type RemoteConnectionState } from "../document/file-host";
+import { createRemoteVaultDialog, type RemoteVaultDialog } from "./remote-vault-dialog";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface WorkspaceSidebar {
   readonly button: HTMLButtonElement;
@@ -21,6 +25,36 @@ export interface WorkspaceSidebarHandlers {
   readonly onCloseTab?: (vault: Vault, tab: VaultTabs["tabs"][number]) => void;
   onOpen?(): void;
   readonly getTabs?: (vaultId: string) => VaultTabs;
+  /** Swappable for a spy in tests (pairing dialog + connection badges). */
+  readonly call?: typeof invoke;
+}
+
+/** How long a remote vault's connection badge is trusted before the next
+ *  render re-probes it — a burst-dedup window (this panel re-renders on
+ *  every store notification, e.g. a tab open/close), not a correctness
+ *  cache: a genuinely stale badge just waits for its own re-render, exactly
+ *  like `remoteFileHost`'s listing cache (file-host.ts) this mirrors. */
+const BADGE_TTL_MS = 8000;
+const badgeCache = new Map<string, { expires: number; state: RemoteConnectionState }>();
+
+/** Renders `el` as a connection badge for `vault`, serving a cached state
+ *  immediately if fresh and always kicking off a background re-probe when
+ *  stale — never blocks the row's render on the network (item 4: skeleton,
+ *  not a synchronous freeze). Command (void); the cache above is the shared
+ *  state, this function only paints from + refreshes it. */
+function renderRemoteBadge(el: HTMLElement, vault: RemoteVault, call: typeof invoke): void {
+  const paint = (state: RemoteConnectionState): void => {
+    const badge = badgeFor(state);
+    el.textContent = badge.label;
+    el.className = `workspace-vault-badge workspace-vault-badge--${badge.tone}`;
+  };
+  const hit = badgeCache.get(vault.vaultId);
+  if (hit && hit.expires > Date.now()) { paint(hit.state); return; }
+  el.textContent = "확인 중"; el.className = "workspace-vault-badge workspace-vault-badge--checking";
+  void remoteConnectionStateFor(vault, call).then((state) => {
+    badgeCache.set(vault.vaultId, { expires: Date.now() + BADGE_TTL_MS, state });
+    paint(state);
+  });
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] => {
@@ -130,12 +164,19 @@ function arrangeVaultHierarchy(vaults: readonly Vault[]): VaultRow[] {
   return rows;
 }
 
-export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCloseTab, onOpen, getTabs }: WorkspaceSidebarHandlers): WorkspaceSidebar {
+export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCloseTab, onOpen, getTabs, call = invoke }: WorkspaceSidebarHandlers): WorkspaceSidebar {
   const button = create("button", "chrome-btn workspace-btn icon-only");
   const aside = create("aside", "workspace-aside sidebar-aside");
   aside.id = "workspace-aside"; aside.hidden = true;
   const header = create("div", "workspace-header sidebar-header");
   const title = create("span", "workspace-title"); title.textContent = "워크스페이스"; header.append(title);
+  // "볼트 추가 › 원격 볼트" (item 1): local vaults are still registered from
+  // the explorer's per-folder bookmark toggle (unchanged by this task), so
+  // this button's only job is opening the remote pairing dialog below.
+  const addRemoteBtn = create("button", "workspace-add-remote-btn") as HTMLButtonElement;
+  addRemoteBtn.type = "button"; addRemoteBtn.title = "원격 볼트 추가"; addRemoteBtn.setAttribute("aria-label", "원격 볼트 추가");
+  addRemoteBtn.append(icon("plus"));
+  header.append(addRemoteBtn);
   const list = create("div", "workspace-vault-list"); list.setAttribute("role", "list");
   // Names the registration path (the explorer's per-folder bookmark toggle)
   // instead of ending at "없습니다" with no next step. Text only — an "open the
@@ -151,7 +192,9 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
   // there's only ever one error showing at a time.
   const errorMessage = create("span", "workspace-error-message");
   const errorEl = create("div", "workspace-error"); errorEl.hidden = true; errorEl.append(errorMessage);
-  aside.append(header, errorEl, list);
+  const remoteDialog: RemoteVaultDialog = createRemoteVaultDialog({ store, call, onRegistered: () => remoteDialog.close() });
+  aside.append(header, errorEl, list, remoteDialog.root);
+  addRemoteBtn.addEventListener("click", () => remoteDialog.open());
 
   const renderButton = (): void => renderSidebarButton(button, "list-tree", "워크스페이스", !aside.hidden, "workspace-aside");
   renderButton();
@@ -177,10 +220,15 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
     if (!workspace) return;
     errorEl.hidden = true;
     list.replaceChildren();
-    const permanentVaults = workspace.vaultIds.flatMap((vaultId) => {
+    // Workspace.vaultIds holds every PERSISTED vault (permanent + remote,
+    // Ruling 21) — split by kind here so each renders in its own group below,
+    // same shape as the pre-existing global/permanent split.
+    const registeredVaults = workspace.vaultIds.flatMap((vaultId) => {
       const vault = state.vaults.find((item) => item.vaultId === vaultId);
       return vault ? [vault] : [];
     });
+    const permanentVaults = registeredVaults.filter((vault) => vault.persistenceKind === "permanent");
+    const remoteVaults = registeredVaults.filter((vault): vault is RemoteVault => vault.persistenceKind === "remote");
     empty.hidden = permanentVaults.length > 0;
     // Every vault about to render, global included — a permanent vault named
     // the same as the global vault (or another permanent vault) is exactly
@@ -331,6 +379,18 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
           const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = "영구 볼트 해제 — 탭 상태는 보존됩니다"; remove.setAttribute("aria-label", `${vault.displayName} 영구 볼트 해제 — 탭 상태는 보존됩니다`); remove.append(icon("bookmark-filled")); remove.addEventListener("click", () => { try { store.unregisterVault(vault.vaultId); } catch (error) { showError(error); } });
           row.append(remove);
         }
+        if (vault.persistenceKind === "remote") {
+          // 4-state connection badge (item 3) — never a generic "실패", each
+          // of connected/unreachable/auth-expired/sharing-off says a
+          // different thing to fix. Painted async by renderRemoteBadge so a
+          // stalled host never blocks this render (item 4's "동기 블로킹
+          // 금지" applies here too, not just the explorer tree).
+          const badge = create("span", "workspace-vault-badge workspace-vault-badge--checking");
+          renderRemoteBadge(badge, vault, call);
+          row.append(badge);
+          const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = "원격 볼트 해제"; remove.setAttribute("aria-label", `${vault.displayName} 원격 볼트 해제`); remove.append(icon("x")); remove.addEventListener("click", () => { try { store.unregisterVault(vault.vaultId); } catch (error) { showError(error); } });
+          row.append(remove);
+        }
         group.append(row);
       }
       if (emptyState) group.append(emptyState);
@@ -338,6 +398,13 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
     };
     renderGroup("workspace-vault-group--global", [{ vault: store.getGlobalVault(), level: 1 }]);
     renderGroup("workspace-vault-group--permanent", arrangeVaultHierarchy(permanentVaults), "영구 볼트", empty);
+    // Remote vaults have no rootPath, so arrangeVaultHierarchy's parent/child
+    // nesting (which keys off rootPath containment) never applies to them —
+    // rendered as a flat level-1 list, no empty-state (the group simply
+    // doesn't render when there are none, unlike permanent's "no rows yet"
+    // guidance, since there's no registration entry point to point at here
+    // other than the + button already in the header).
+    if (remoteVaults.length > 0) renderGroup("workspace-vault-group--remote", remoteVaults.map((vault) => ({ vault, level: 1 })), "원격 볼트");
   };
   store.subscribe(render); render(store.get());
   return { button, aside, close, refresh: () => render(store.get()) };

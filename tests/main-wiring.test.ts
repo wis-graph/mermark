@@ -64,6 +64,20 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
     return Promise.resolve(undefined);
   }
   if (command === "list_files_recursive") return Promise.resolve(scanResult);
+  // task 10: a paired remote vault's reads go through remote_list_dir/
+  // remote_read_file (file-host.ts's remoteFileHost) instead of the local
+  // commands above — wired here so the "drive onSelectTab with a real
+  // RemoteVault" integration test below exercises the real Explorer +
+  // workspace-sidebar click path, not just a spied fileHostFor call.
+  if (command === "remote_list_dir") {
+    const a = args as Record<string, unknown>;
+    if (a.path === "/") return Promise.resolve([{ name: "노트.md", path: "노트.md", is_dir: false }]);
+    return Promise.resolve([]);
+  }
+  if (command === "remote_read_file") {
+    const a = args as Record<string, unknown>;
+    return Promise.resolve({ text: documentContents.get(String(a.path)) ?? "# 원격 문서", mtime: 1 });
+  }
   return Promise.resolve(false);
 });
 
@@ -1156,18 +1170,16 @@ describe("main workspace wiring", () => {
   // uses for isVaultRootLocked/tabScopeForVault above — so it can be called
   // directly with a REAL RemoteVault object and asserted on for real,
   // instead of only pinning main.ts's source text (which can't fail for a
-  // genuine logic regression that happens to keep the same strings). A
-  // running remote vault still can't be driven through the FULL app boot in
-  // this suite (RemoteVault is intentionally NOT accepted by the
-  // localStorage deserializer — see workspace-state.ts's persisted-vault
-  // type guard — so onSelectTab/navigateHistory can't be exercised
-  // end-to-end with a live RemoteVault until a later task adds a way to
-  // register/select one at runtime); the leaf-module behavior itself
-  // (wikilink.ts/image.ts honoring a real remote facet value) IS covered
-  // end-to-end by tests/wikilink.test.ts's "remote-vault read-only guard"
-  // and tests/image.test.ts's "remote-vault loading" suites. A thin wiring
-  // check confirms main.ts's call sites actually USE these functions (a
-  // fact no pure-function test can prove on its own).
+  // genuine logic regression that happens to keep the same strings). Task 10
+  // closed the gap this comment used to describe (RemoteVault now round-trips
+  // through the localStorage deserializer, workspace-state.ts's Ruling 21) —
+  // "onSelectTab driven end-to-end with a live RemoteVault" is now covered
+  // directly below instead of deferred; the leaf-module behavior itself
+  // (wikilink.ts/image.ts honoring a real remote facet value) is separately
+  // covered end-to-end by tests/wikilink.test.ts's "remote-vault read-only
+  // guard" and tests/image.test.ts's "remote-vault loading" suites. A thin
+  // wiring check confirms main.ts's call sites actually USE these functions
+  // (a fact no pure-function test can prove on its own).
   describe("task-8a: vault attribution for open/history/standard-links (Ruling 9/10)", () => {
     const permanentVault = { vaultId: "vault-P", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent" as const, explorerRoot: "/P" };
     const globalVault = { vaultId: "vault-global", workspaceId: "workspace-default", displayName: "글로벌 볼트", rootPath: null, persistenceKind: "global" as const, explorerRoot: null };
@@ -1223,6 +1235,54 @@ describe("main workspace wiring", () => {
     it("wires setDocumentOpenHandler to standardLinkRejectionFor BEFORE building a canonicalize_path context", () => {
       expect(mainSource).toContain("const rejection = standardLinkRejectionFor(vault);");
       expect(mainSource).toContain("markLocalLinkFailure(request.feedbackEl, rejection);");
+    });
+
+    // Task 10 (Ruling 21's "파생 효과"): now that a RemoteVault round-trips
+    // through localStorage, this drives the REAL boot — Explorer navigation,
+    // document open, and a workspace-sidebar tab click — through onSelectTab,
+    // instead of only asserting resolveTargetVault/routingTrustsCurrentVault
+    // in isolation. Proves fileHostFor actually resolves to remoteFileHost
+    // for a live vault reached by clicking through the real UI, not a vault
+    // object constructed and passed in by the test.
+    it("drives onSelectTab with a real, persisted RemoteVault and reads through remote_read_file", async () => {
+      localStorage.setItem("mermark.workspaceState", JSON.stringify({
+        workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-x"], currentVaultId: "vault-remote-x", lastSelectedPermanentVaultId: null }],
+        vaults: [{ vaultId: "vault-remote-x", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: "/", host: "wis-macmini", remoteVaultId: "rv-1" }],
+        currentWorkspaceId: "workspace-default",
+      }));
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+
+      // Open the Explorer and the workspace sidebar — the remote vault is
+      // already `currentVaultId` from the seeded state above, so the
+      // Explorer should already be sitting at its root ("/") once
+      // `explorerRootForVault`/`jumpExplorerToVaultRoot` ran at boot restore.
+      document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="노트.md"]')).not.toBeNull());
+      expect(invokeMock).toHaveBeenCalledWith("remote_list_dir", expect.objectContaining({ host: "wis-macmini", vault: "rv-1", path: "/" }));
+
+      document.querySelector<HTMLElement>('.explorer-file[data-path="노트.md"]')?.click();
+      await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledWith("remote_read_file", expect.objectContaining({ host: "wis-macmini", vault: "rv-1", path: "노트.md" })));
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("원격 문서"));
+      invokeMock.mockClear();
+
+      // Re-select the SAME (already active) tab through the workspace
+      // sidebar — exactly the onSelectTab click path (workspace-sidebar.ts's
+      // `activate`), not a re-open through the Explorer. A second
+      // remote_read_file call here is proof onSelectTab itself — not just
+      // the Explorer's own open handler — resolves the remote backend.
+      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('[data-vault-id="vault-remote-x"] .workspace-vault-tab')).not.toBeNull());
+      const tab = document.querySelector<HTMLButtonElement>('[data-vault-id="vault-remote-x"] .workspace-vault-tab');
+      tab?.click();
+      await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledWith("remote_read_file", expect.objectContaining({ host: "wis-macmini", vault: "rv-1", path: "노트.md" })));
+
+      // No WorkspaceStateError surfaced — before Task 10, selectVault threw
+      // for any non-"permanent" vault (workspace-state.ts), which this
+      // exact click path would have hit via onSelectTab's
+      // `workspaceStore.selectVault(selectedVault.vaultId)`.
+      expect(document.querySelector(".workspace-error")?.hasAttribute("hidden")).toBe(true);
     });
   });
 });
