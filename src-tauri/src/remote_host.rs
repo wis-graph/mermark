@@ -546,33 +546,66 @@ async fn pair_handler(
 /// reason: memory must never run ahead of what's durable, or a failed write
 /// (full disk, read-only volume, permissions) would leave this process
 /// believing a device is paired that a restart would silently forget.
+/// Holds a **single** lock acquisition across clone → save → write-back —
+/// this is load-bearing, not stylistic. An earlier version of both
+/// `persist_new_device` and `revoke_and_persist` took the lock twice (once
+/// to clone, again to write back), which let a `/pair` and an IPC revoke
+/// interleave: a revoke's write-back could land, then a `/pair` already
+/// holding a clone taken *before* the revoke would overwrite it, silently
+/// resurrecting the just-revoked device with a token that once again
+/// authorizes reads. Revocation is the one operation a user performs
+/// specifically to cut off access, so a lost update there is worse than
+/// either operation simply blocking on the other — which is exactly what
+/// holding the guard for the whole sequence guarantees: the second caller's
+/// `state.devices.lock()` doesn't even return until the first has finished
+/// writing both disk and memory, so it always clones the post-first-write
+/// state. `mutate` runs under that single guard and returns the new
+/// contents to persist, or `None` for "nothing changed, don't touch disk"
+/// (the no-op-revoke case).
+fn persist_devices_atomically(
+    state: &HostState,
+    mutate: impl FnOnce(&mut Vec<crate::remote_token::PairedDevice>),
+) -> Result<(), String> {
+    let mut devices = state.devices.lock().unwrap();
+    let mut candidate = devices.clone();
+    mutate(&mut candidate);
+    crate::remote_token::save(&state.config_dir, &candidate)?;
+    *devices = candidate;
+    Ok(())
+}
+
+/// Disk-first device registration: builds the post-insert device list,
+/// persists *that* via `remote_token::save`, and only replaces the live
+/// `devices` list once the write to disk has actually succeeded — mirrors
+/// `ClientTokens::remember`'s ordering (see that doc comment) for the same
+/// reason: memory must never run ahead of what's durable, or a failed write
+/// (full disk, read-only volume, permissions) would leave this process
+/// believing a device is paired that a restart would silently forget. See
+/// `persist_devices_atomically`'s doc comment for why the whole
+/// clone/save/write-back sequence runs under one lock acquisition, not two.
 pub(crate) fn persist_new_device(
     state: &HostState,
     device: crate::remote_token::PairedDevice,
 ) -> Result<(), String> {
-    let mut candidate = state.devices.lock().unwrap().clone();
-    candidate.push(device);
-    crate::remote_token::save(&state.config_dir, &candidate)?;
-    *state.devices.lock().unwrap() = candidate;
-    Ok(())
+    persist_devices_atomically(state, |candidate| candidate.push(device))
 }
 
 /// Disk-first device revocation, the mirror image of `persist_new_device`.
 /// Returns whether a device was actually removed, same as
 /// `remote_token::revoke`, so a caller revoking an already-gone id can tell
 /// the two cases apart. When the id doesn't match anything there is nothing
-/// to persist, so this is a pure no-op rather than a needless disk write.
-/// On a failed persist the in-memory list is left untouched — following
-/// `ClientTokens::forget`'s ordering — because the *worse* failure mode here
-/// is reporting a device revoked when its token still authorizes requests
-/// (the disk write, not the memory update, is the one that must not lie).
+/// to persist, so this is a pure no-op rather than a needless disk write —
+/// checked *inside* the same locked section `persist_devices_atomically`
+/// holds, not before it, so a concurrent pair can't sneak the id back in
+/// between the check and the lock.
 pub(crate) fn revoke_and_persist(state: &HostState, id: &str) -> Result<bool, String> {
-    let mut candidate = state.devices.lock().unwrap().clone();
+    let mut devices = state.devices.lock().unwrap();
+    let mut candidate = devices.clone();
     if !crate::remote_token::revoke(&mut candidate, id) {
         return Ok(false);
     }
     crate::remote_token::save(&state.config_dir, &candidate)?;
-    *state.devices.lock().unwrap() = candidate;
+    *devices = candidate;
     Ok(true)
 }
 
@@ -1291,6 +1324,104 @@ mod tests {
         assert!(!removed);
         assert_eq!(state.devices.lock().unwrap().len(), 1);
         assert!(!crate::remote_token::store_path(&config_dir).exists(), "변경이 없으면 디스크에 쓰지 않는다");
+    }
+
+    /// Fix round 1, Finding 1: a revoke followed by a pair must never
+    /// resurrect the revoked device. Before `persist_devices_atomically`,
+    /// each function acquired the `devices` lock twice (once to clone, once
+    /// to write back) — sequentially calling `revoke_and_persist` then
+    /// `persist_new_device` still exercises that exact clone→save→write-back
+    /// shape end to end, so a regression back to the two-acquisition version
+    /// would still corrupt this (a stale-enough in-process cache from a
+    /// wider refactor could reintroduce the window even without literal
+    /// concurrency). The stronger, genuinely concurrent version of this
+    /// guarantee is `concurrent_revoke_and_pair_never_resurrects_the_revoked_device`
+    /// below.
+    #[test]
+    fn revoke_then_pair_does_not_resurrect_the_revoked_device() {
+        let config_dir = scratch_config_dir();
+        let devices = vec![crate::remote_token::PairedDevice {
+            id: "dev1".into(),
+            token: "aa".into(),
+            label: "맥북".into(),
+            paired_at_ms: 1,
+        }];
+        crate::remote_token::save(&config_dir, &devices).unwrap();
+        let state = HostState {
+            armed: Arc::new(Mutex::new(vec![])),
+            devices: Arc::new(Mutex::new(devices)),
+            pairing: Arc::new(Mutex::new(PairingState::unarmed())),
+            config_dir: config_dir.clone(),
+        };
+
+        assert!(revoke_and_persist(&state, "dev1").unwrap());
+        persist_new_device(
+            &state,
+            crate::remote_token::PairedDevice {
+                id: "dev2".into(),
+                token: "bb".into(),
+                label: "폰".into(),
+                paired_at_ms: 2,
+            },
+        )
+        .unwrap();
+
+        let on_disk = crate::remote_token::load(&config_dir).unwrap();
+        assert_eq!(on_disk.len(), 1, "revoke된 dev1이 되살아나면 안 된다: {on_disk:?}");
+        assert_eq!(on_disk[0].id, "dev2");
+        std::fs::remove_dir_all(&config_dir).ok();
+    }
+
+    /// The real concurrency version: a revoke and a fresh pair racing on
+    /// real OS threads must never let the revoked device reappear, and
+    /// memory/disk must agree once both finish. This is the scenario the
+    /// two-lock-acquisition bug (fixed by `persist_devices_atomically`)
+    /// could actually produce — whichever thread's `.lock()` call lands
+    /// second must observe the first's completed write, not a stale clone
+    /// taken before it.
+    #[test]
+    fn concurrent_revoke_and_pair_never_resurrects_the_revoked_device() {
+        let config_dir = scratch_config_dir();
+        let initial = vec![crate::remote_token::PairedDevice {
+            id: "dev1".into(),
+            token: "aa".into(),
+            label: "맥북".into(),
+            paired_at_ms: 1,
+        }];
+        crate::remote_token::save(&config_dir, &initial).unwrap();
+        let state = HostState {
+            armed: Arc::new(Mutex::new(vec![])),
+            devices: Arc::new(Mutex::new(initial)),
+            pairing: Arc::new(Mutex::new(PairingState::unarmed())),
+            config_dir: config_dir.clone(),
+        };
+
+        let revoker_state = state.clone();
+        let revoker = std::thread::spawn(move || revoke_and_persist(&revoker_state, "dev1"));
+        let pairer_state = state.clone();
+        let pairer = std::thread::spawn(move || {
+            persist_new_device(
+                &pairer_state,
+                crate::remote_token::PairedDevice {
+                    id: "dev2".into(),
+                    token: "bb".into(),
+                    label: "폰".into(),
+                    paired_at_ms: 2,
+                },
+            )
+        });
+        revoker.join().unwrap().unwrap();
+        pairer.join().unwrap().unwrap();
+
+        let on_disk = crate::remote_token::load(&config_dir).unwrap();
+        let in_memory = state.devices.lock().unwrap().clone();
+        assert_eq!(on_disk, in_memory, "디스크와 메모리는 항상 일치해야 한다");
+        assert!(
+            !on_disk.iter().any(|d| d.id == "dev1"),
+            "레이스와 무관하게 철회된 기기가 되살아나면 안 된다: {on_disk:?}"
+        );
+        assert!(on_disk.iter().any(|d| d.id == "dev2"), "새로 페어링된 기기는 남아 있어야 한다: {on_disk:?}");
+        std::fs::remove_dir_all(&config_dir).ok();
     }
 
     // --- server lifecycle (bind/run) ---

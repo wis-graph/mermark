@@ -49,6 +49,34 @@ pub struct VaultToArm {
     pub root: String,
 }
 
+/// Converts the caller's `VaultToArm` list into `ArmedVault`s, rejecting any
+/// whose `root` isn't a directory that actually exists *right now* — before
+/// `share_start` ever tears down a running server or binds a socket for it
+/// (checked first, ahead of `stop_running`/`bind`, so a bad root never costs
+/// an already-working session). This buys no security (`resolve_within`/
+/// `canonicalize_within` already gate every request path, and a symlink or a
+/// root that's removed a moment later is caught there regardless) — it's a
+/// **confusion guard**: without it, a stale or relative `root` starts a
+/// server that binds happily and then 404s every single request, which is
+/// close to impossible to diagnose from a settings UI. Naming the vault in
+/// the error (not just the path) is what lets a UI point at which checkbox
+/// is wrong when several vaults were selected at once.
+fn arm_vaults(vaults: Vec<VaultToArm>) -> Result<Vec<ArmedVault>, String> {
+    vaults
+        .into_iter()
+        .map(|v| {
+            let root = PathBuf::from(&v.root);
+            if !root.is_dir() {
+                return Err(format!(
+                    "\"{}\" 볼트의 경로를 찾을 수 없습니다: {}",
+                    v.display_name, v.root
+                ));
+            }
+            Ok(ArmedVault { id: v.id, display_name: v.display_name, root })
+        })
+        .collect()
+}
+
 /// A running server's teardown handle: the `shutdown` sender
 /// `stop_running` fires to ask `remote_host::run`'s graceful shutdown to
 /// begin, and the `handle` that same stop awaits so the port is verifiably
@@ -149,14 +177,19 @@ pub fn remote_share_status(state: tauri::State<'_, RemoteShareState>) -> ShareSt
 /// `&state` argument satisfies this signature for free.
 fn share_status(state: &RemoteShareState) -> ShareStatus {
     let inner = state.inner.lock().unwrap();
-    let status = ShareStatus {
-        running: inner.running.is_some(),
-        bind_mode: inner.config.bind_mode,
-        port: inner.config.port,
-        vaults: inner.host.armed.lock().unwrap().clone(),
-        devices: inner.host.devices.lock().unwrap().iter().map(redact).collect(),
-    };
-    status
+    // `vaults`/`devices` are materialized into locals *before* the tail
+    // struct literal below — not merely for style. `ShareStatus { ... }` as
+    // the function's tail expression, with a nested `.lock()` call inline
+    // inside one of its fields, hits a real rustc temporary-lifetime-extension
+    // quirk: the nested `MutexGuard` temporary gets its scope extended to
+    // the function's return, which then conflicts with `inner` itself being
+    // dropped first (`inner` is a named local, not a temporary, so it drops
+    // before the return value is used) — `error[E0597]: inner does not live
+    // long enough`. Pre-binding sidesteps it: nothing nested inside the tail
+    // expression touches a `Mutex` anymore, only plain field reads.
+    let vaults = inner.host.armed.lock().unwrap().clone();
+    let devices = inner.host.devices.lock().unwrap().iter().map(redact).collect();
+    ShareStatus { running: inner.running.is_some(), bind_mode: inner.config.bind_mode, port: inner.config.port, vaults, devices }
 }
 
 /// Resolves a `BindMode` to the concrete address to bind. `LocalhostOnly` is
@@ -256,17 +289,13 @@ async fn share_start(
     if vaults.is_empty() {
         return Err("공유할 볼트를 하나 이상 선택하세요".into());
     }
+    let armed = arm_vaults(vaults)?;
 
     stop_running(state).await;
 
     let ip = resolve_bind_ip(bind_mode).await?;
     let addr = SocketAddr::new(ip, port);
     let listener = remote_host::bind(addr).await?;
-
-    let armed: Vec<ArmedVault> = vaults
-        .into_iter()
-        .map(|v| ArmedVault { id: v.id, display_name: v.display_name, root: PathBuf::from(v.root) })
-        .collect();
 
     let mut inner = state.inner.lock().unwrap();
     *inner.host.armed.lock().unwrap() = armed;
@@ -397,6 +426,39 @@ mod tests {
         let result = share_start(BindMode::LocalhostOnly, 0, Vec::new(), &state).await;
         assert!(result.is_err());
         assert!(!share_status(&state).running);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Fix round 1, Finding 2: a vault whose `root` doesn't exist (typo,
+    /// stale path, unmounted volume) must be refused up front, naming the
+    /// vault — not accepted and left to 404 every request once the server
+    /// is already running, which is nearly impossible to diagnose from a
+    /// settings UI. Also pins that the check runs *before* anything is torn
+    /// down: an already-running session must survive a bad `remote_share_start`
+    /// call untouched.
+    #[tokio::test]
+    async fn starting_with_a_nonexistent_root_is_refused_and_names_the_vault() {
+        let dir = tmp_config_dir("bad-root");
+        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let good = vec![VaultToArm {
+            id: "v1".into(),
+            display_name: "노트".into(),
+            root: std::env::temp_dir().to_string_lossy().into_owned(),
+        }];
+        share_start(BindMode::LocalhostOnly, 0, good, &state).await.unwrap();
+        assert!(share_status(&state).running);
+
+        let bad = vec![VaultToArm {
+            id: "v2".into(),
+            display_name: "존재하지않는볼트".into(),
+            root: "/mermark/definitely/not/a/real/path".into(),
+        }];
+        let result = share_start(BindMode::LocalhostOnly, 0, bad, &state).await;
+        let err = result.unwrap_err();
+        assert!(err.contains("존재하지않는볼트"), "에러가 어떤 볼트인지 이름을 밝혀야 한다: {err}");
+        assert!(share_status(&state).running, "잘못된 볼트 하나 때문에 기존 실행 중인 세션이 꺼지면 안 된다");
+
+        stop_running(&state).await;
         std::fs::remove_dir_all(&dir).ok();
     }
 
