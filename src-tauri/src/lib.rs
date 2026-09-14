@@ -29,6 +29,13 @@ mod remote_client;
 // disjoint command sets and disjoint managed state (`ClientTokens` vs.
 // `RemoteShareState`).
 mod remote_share;
+// `remote_ssh.rs` owns the client-side SSH tunnel fallback (Task 12) for
+// users without Tailscale: it spawns `ssh -N -L ...` as a child process and
+// never touches a key or a passphrase — see that module's doc comment. Once
+// the tunnel is up, `remote_client.rs`'s existing `base_url` (which already
+// maps `ssh://user@host` to the local forward) makes every other `remote_*`
+// command work unchanged.
+mod remote_ssh;
 mod remote_token;
 mod single_instance;
 mod sqlite;
@@ -357,6 +364,12 @@ pub fn run() {
         // `unwatch_file` can swap the one live watcher.
         .manage(watcher::WatchState::default())
         .manage(hwp::HwpState::default())
+        // At most one live SSH tunnel (Task 12's Tailscale-less fallback) —
+        // see `remote_ssh.rs` module doc for why a second concurrent tunnel
+        // is refused rather than raced. Dropped with the rest of `App`'s
+        // managed state on normal app exit, which is what kills the child
+        // `ssh` process (`ActiveTunnel`'s `Drop` impl) rather than leaking it.
+        .manage(remote_ssh::SshTunnels::default())
         // The set of directories `arm_html_view_root` has admitted; the
         // `htmlview` protocol handler below reads it via `AppHandle::state`.
         // See `htmlview.rs` module doc for the full design.
@@ -435,6 +448,8 @@ pub fn run() {
             remote_client::remote_read_image,
             remote_client::remote_resolve_image,
             remote_client::remote_list_link_targets,
+            remote_ssh::remote_ssh_connect,
+            remote_ssh::remote_ssh_disconnect,
             remote_share::remote_share_status,
             remote_share::remote_share_start,
             remote_share::remote_share_stop,

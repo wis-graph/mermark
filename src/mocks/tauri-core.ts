@@ -293,6 +293,14 @@ function remoteMockError(host: string): string | null {
   return CODES[m[1]] ?? null;
 }
 
+// ── remote_ssh_* mock state (client-side SSH tunnel fallback — task 12) ────
+// Mirrors `SshTunnels` (src-tauri/src/remote_ssh.rs): at most one tunneled
+// host at a time, reused when the same host connects again, refused when a
+// different host asks while one is active. The browser mock has no real
+// port or subprocess to manage — it just tracks which host (if any) is
+// "tunneled" so the same port-collision guard is observable in dev:browser.
+let sshTunnelHost: string | null = null;
+
 // ── remote_share_* mock state (the HOST side — task 9b) ─────────────────────
 // Mirrors `RemoteShareState`/`HostState` (src-tauri/src/remote_share.rs,
 // remote_host.rs): in-memory only, starts off, remembers the last-configured
@@ -1023,6 +1031,32 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       if (err) throw err;
       console.info("[mock] remote_list_link_targets", host, a.vault, a.path);
       return [] as T;
+    }
+    case "remote_ssh_connect": {
+      // Mirrors `remote_ssh_connect(host) -> Result<(), String>`
+      // (remote_ssh.rs): rejects a non-`ssh://` host the same way the real
+      // `tunnel_args` does, reuses an already-open tunnel to the same host
+      // (idempotent — no second spawn), and refuses a second host while one
+      // is active with the exact `SSH_TUNNEL_BUSY:` prefix the real
+      // `connect_with` returns (via `decide_connect`'s `Busy` case).
+      const host = String(a.host ?? "");
+      if (!host.startsWith("ssh://")) throw "ssh:// 호스트가 아닙니다";
+      if (sshTunnelHost !== null && sshTunnelHost !== host) {
+        throw `SSH_TUNNEL_BUSY: 이미 다른 호스트(${sshTunnelHost})로 SSH 터널이 연결되어 있습니다. 먼저 연결을 해제하세요.`;
+      }
+      sshTunnelHost = host;
+      console.info("[mock] remote_ssh_connect", host);
+      return undefined as T;
+    }
+    case "remote_ssh_disconnect": {
+      // Mirrors `remote_ssh_disconnect(host) -> Result<(), String>`: a no-op
+      // when nothing (or a different host) is connected, same "off toggle
+      // never fails just because it's already off" idiom as
+      // remote_share_stop's mock below.
+      const host = String(a.host ?? "");
+      if (sshTunnelHost === host) sshTunnelHost = null;
+      console.info("[mock] remote_ssh_disconnect", host);
+      return undefined as T;
     }
     case "remote_share_status": {
       // Mirrors `remote_share_status() -> ShareStatus` (remote_share.rs, no
