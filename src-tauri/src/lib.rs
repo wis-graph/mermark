@@ -11,6 +11,9 @@ mod epubview;
 mod htmlview;
 mod hwp;
 mod qa_trace;
+// Unused until Task 4 (pairing) and Task 5 (HTTP server) call into it.
+#[allow(dead_code)]
+mod remote_host;
 mod single_instance;
 mod sqlite;
 mod watcher;
