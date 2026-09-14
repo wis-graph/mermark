@@ -41,11 +41,28 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 /// surface and can't be used to escape via `..`: `normalize_path` collapses
 /// `..`/`.` exactly as it does for every other path.
 pub(crate) fn expand_home(path: &str) -> PathBuf {
+    expand_home_with(path, home_dir())
+}
+
+/// `expand_home`'s actual logic, taking the home directory as a plain
+/// argument instead of looking it up itself — the same wrapper/logic split
+/// `remote_share.rs`'s `tailscale_ipv4_via(program)` uses, and for the same
+/// reason: a test that wants to exercise "home is unresolvable" must be able
+/// to pass `None` directly rather than mutating `$HOME` process-globally.
+/// The env var is process-wide state, so removing/restoring it around a test
+/// races every other test running in parallel that happens to touch a home
+/// path in the same window (fix round: `cargo test` flaked roughly 1 in 3
+/// full runs, and 4 in 5 in isolation, purely from this race — `HOME` is not
+/// this test's own private variable no matter how carefully it's saved and
+/// restored). `expand_home` itself keeps its one-argument shape; nothing
+/// downstream of it (`read_file`/`write_file`/`canonicalize_path`/... or
+/// their IPC signatures) changes.
+fn expand_home_with(path: &str, home: Option<PathBuf>) -> PathBuf {
     let expanded = if path == "~" {
-        home_dir().map(|h| h.to_string_lossy().into_owned())
+        home.as_ref().map(|h| h.to_string_lossy().into_owned())
     } else if let Some(rest) = path.strip_prefix("~/") {
         // `~/rest`: the tilde is its own first component → safe to expand.
-        home_dir().map(|h| h.join(rest).to_string_lossy().into_owned())
+        home.as_ref().map(|h| h.join(rest).to_string_lossy().into_owned())
     } else {
         // `~user/…` or no leading tilde at all → leave verbatim.
         None
@@ -1398,75 +1415,81 @@ mod tests {
 
     // --- expand_home (`~` tilde expansion for typed open-path) ---
     //
-    // These tests set `$HOME` to a known value so home expansion is
-    // deterministic regardless of the machine running them. `expand_home` reads
-    // `$HOME` through `home_dir()`, so they assert against that exact root.
+    // These tests exercise `expand_home_with` directly, passing a known home
+    // as a plain argument instead of mutating `$HOME` — `std::env::set_var`
+    // is process-global, so even setting it to the *same* value across
+    // parallel tests is shared mutable state a sibling test doesn't expect
+    // (see `expand_home_with`'s doc comment for the concrete flake this
+    // caused with a *differing* value). `expand_home` itself is covered
+    // separately by `expand_home_leaves_relative_path_unchanged_via_the_public_fn`.
+
+    fn tester_home() -> PathBuf {
+        PathBuf::from("/home/tester")
+    }
 
     #[test]
     fn expand_home_replaces_leading_tilde_slash() {
-        std::env::set_var("HOME", "/home/tester");
         assert_eq!(
-            expand_home("~/notes/x.md"),
+            expand_home_with("~/notes/x.md", Some(tester_home())),
             PathBuf::from("/home/tester/notes/x.md")
         );
     }
 
     #[test]
     fn expand_home_bare_tilde_is_the_home_dir() {
-        std::env::set_var("HOME", "/home/tester");
-        assert_eq!(expand_home("~"), PathBuf::from("/home/tester"));
+        assert_eq!(expand_home_with("~", Some(tester_home())), PathBuf::from("/home/tester"));
     }
 
     #[test]
     fn expand_home_leaves_absolute_path_unchanged() {
-        std::env::set_var("HOME", "/home/tester");
         // No leading tilde → returned verbatim (only normalized).
-        assert_eq!(expand_home("/abs/x.md"), PathBuf::from("/abs/x.md"));
+        assert_eq!(expand_home_with("/abs/x.md", Some(tester_home())), PathBuf::from("/abs/x.md"));
     }
 
     #[test]
     fn expand_home_leaves_relative_path_unchanged() {
-        std::env::set_var("HOME", "/home/tester");
         // Relative paths carry no tilde → normalized but not anchored to home.
-        assert_eq!(expand_home("sub/x.md"), PathBuf::from("sub/x.md"));
+        assert_eq!(expand_home_with("sub/x.md", Some(tester_home())), PathBuf::from("sub/x.md"));
     }
 
     #[test]
     fn expand_home_does_not_expand_named_user_tilde() {
-        std::env::set_var("HOME", "/home/tester");
         // `~bob/…` is a *different* user's home, which we never resolve — left
         // verbatim so we don't over-expand a path we can't safely interpret.
-        assert_eq!(expand_home("~bob/x.md"), PathBuf::from("~bob/x.md"));
+        assert_eq!(expand_home_with("~bob/x.md", Some(tester_home())), PathBuf::from("~bob/x.md"));
     }
 
     #[test]
     fn expand_home_normalizes_after_expansion() {
-        std::env::set_var("HOME", "/home/tester");
         // `..` inside an expanded path is collapsed by normalize_path, so a
         // tilde path can't escape via `..` any more than a literal one can.
         assert_eq!(
-            expand_home("~/notes/../x.md"),
+            expand_home_with("~/notes/../x.md", Some(tester_home())),
             PathBuf::from("/home/tester/x.md")
         );
+    }
+
+    /// `expand_home` (the public, one-argument entry point every real caller
+    /// uses) still behaves correctly end to end — this doesn't touch `$HOME`
+    /// because a relative input is returned verbatim regardless of what the
+    /// real environment's home resolves to.
+    #[test]
+    fn expand_home_leaves_relative_path_unchanged_via_the_public_fn() {
+        assert_eq!(expand_home("sub/x.md"), PathBuf::from("sub/x.md"));
     }
 
     #[test]
     fn expand_home_falls_back_to_a_literal_relative_tilde_when_home_is_unresolvable() {
         // Pins the documented failure contract: no absolute value is ever
-        // invented. Removing $HOME simulates the exact real-world condition
-        // that used to trigger the Windows bug (home_dir() returning None),
-        // now reproduced platform-independently via the pure resolver tests
-        // below plus this one exercising the full expand_home fallback path.
-        let previous = std::env::var_os("HOME");
-        std::env::remove_var("HOME");
-        assert_eq!(expand_home("~"), PathBuf::from("~"));
+        // invented. Passing `None` directly (rather than removing $HOME —
+        // see `expand_home_with`'s doc comment for why that raced other
+        // tests) simulates the exact real-world condition that used to
+        // trigger the Windows bug (home_dir() returning None).
+        assert_eq!(expand_home_with("~", None), PathBuf::from("~"));
         assert!(
-            !expand_home("~").is_absolute(),
+            !expand_home_with("~", None).is_absolute(),
             "an unresolvable home must never be promoted to an absolute path"
         );
-        if let Some(home) = previous {
-            std::env::set_var("HOME", home);
-        }
     }
 
     // --- resolve_home_dir_unix / resolve_home_dir_windows (platform-neutral
