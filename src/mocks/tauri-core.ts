@@ -275,6 +275,24 @@ function normalizeMockPath(path: string): string {
  *  over the same keys) so the two commands can never see a different
  *  filesystem in the mock — same single-source-of-truth reasoning as the
  *  real backend reusing `is_hidden_entry`/`is_mermark_artifact` for both. */
+// Explicit test hook for the `remote_*` commands' three failure classes
+// (REMOTE:AuthExpired / REMOTE:SharingOff / REMOTE:Unreachable — see
+// remote_client.rs's `classify`). Pair with a host literally typed as
+// "mock-error:auth-expired" etc. in the remote-vault UI to force that error
+// path in the browser mock; any other host succeeds normally. Deliberately a
+// magic *host value*, not a magic branch buried in each case, so it's
+// discoverable from the call site instead of ambient.
+function remoteMockError(host: string): string | null {
+  const m = /^mock-error:(auth-expired|sharing-off|unreachable)$/.exec(host);
+  if (!m) return null;
+  const CODES: Record<string, string> = {
+    "auth-expired": "REMOTE:AuthExpired",
+    "sharing-off": "REMOTE:SharingOff",
+    unreachable: "REMOTE:Unreachable",
+  };
+  return CODES[m[1]] ?? null;
+}
+
 const TREE: Record<string, DirEntry[]> = {
   "/mock/vault": [
     // .config sorts first within the folder group (ascii '.' < letters),
@@ -861,6 +879,105 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       attachmentStore.delete(record.relPath);
       attachmentReceipts.delete(token);
       return undefined as T;
+    }
+    case "remote_pair": {
+      // Mirrors the real `remote_pair(host, code, label) -> Result<(), String>`:
+      // exchanges a pairing code for a device token, remembered server-side —
+      // the token never crosses back to the frontend (remote_client.rs's doc
+      // comment), so success returns nothing.
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      console.info("[mock] remote_pair", host, a.code, a.label);
+      return undefined as T;
+    }
+    case "remote_vaults": {
+      // Mirrors the real `remote_vaults(host) -> Result<Vec<RemoteVault>, String>`.
+      // Checked against `RemoteVault` in src-tauri/src/remote_client.rs: no
+      // `rename_all`, so serde emits the Rust field names verbatim —
+      // `display_name` stays snake_case, not `displayName`.
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      console.info("[mock] remote_vaults", host);
+      return [{ id: "rv-demo", display_name: "원격 데모 볼트" }] as T;
+    }
+    case "remote_list_dir": {
+      // Mirrors `remote_list_dir(host, vault, path, show_hidden) ->
+      // Result<Vec<DirEntry>, String>`. Checked against `DirEntry` in
+      // commands.rs (`is_dir` snake_case, same as the local `list_dir` mock
+      // above) and against remote_host.rs's `list_dir_handler`, which rewrites
+      // every entry's `path` to be **vault-relative** before it reaches the
+      // client (the host never leaks its own absolute filesystem paths) — so
+      // unlike the local TREE fixture, these paths carry no vault-root prefix.
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      console.info("[mock] remote_list_dir", host, a.vault, a.path, "showHidden", a.showHidden);
+      return [{ name: "원격노트.md", path: "원격노트.md", is_dir: false }] as T;
+    }
+    case "remote_list_files_recursive": {
+      // Mirrors `remote_list_files_recursive(host, vault, path, show_hidden) ->
+      // Result<ScanResult, String>`. Checked against `FileHit` (commands.rs):
+      // three fields — `name`, `path`, `rel_path` — not two; `path` is
+      // rewritten vault-relative by `list_files_recursive_handler`
+      // (remote_host.rs) the same way `list_dir`'s is, so it equals `rel_path`
+      // here (no absolute vault-root prefix exists on the wire).
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      console.info("[mock] remote_list_files_recursive", host, a.vault, a.path, "showHidden", a.showHidden);
+      return {
+        files: [{ name: "원격노트.md", path: "원격노트.md", rel_path: "원격노트.md" }],
+        truncated: false,
+      } as T;
+    }
+    case "remote_read_file": {
+      // Mirrors `remote_read_file(host, vault, path) -> Result<FileContent, String>`.
+      // Checked against `FileContent` (commands.rs): `{ text, mtime }`, same
+      // shape as the local `read_file` mock.
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      console.info("[mock] remote_read_file", host, a.vault, a.path);
+      return { text: "# 원격 데모\n\n브라우저 mock이 만든 원격 문서입니다.", mtime: 1 } as T;
+    }
+    case "remote_read_image": {
+      // Mirrors `remote_read_image(host, vault, path) -> Result<String, String>`:
+      // checked against remote_client.rs's `data_url` — returns a
+      // `data:<mime>;base64,...` string directly, not a path (there is no
+      // remote filesystem for `convertFileSrc` to address).
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      console.info("[mock] remote_read_image", host, a.vault, a.path);
+      return "data:image/png;base64,iVBORw0KGgo=" as T;
+    }
+    case "remote_resolve_image": {
+      // Mirrors `remote_resolve_image(host, vault, path, name, max_depth) ->
+      // Result<Option<String>, String>` (Tauri maps `max_depth` to `maxDepth`
+      // on the JS side, same snake→camel rule as the local `resolve_image`
+      // mock's `maxDepth`). Checked against remote_host.rs's
+      // `resolve_image_handler`, which rewrites a hit to vault-relative before
+      // sending — this mock always misses (`null`), deterministic and cheap
+      // since the browser has no remote tree to scan.
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      console.info("[mock] remote_resolve_image", host, a.vault, a.path, a.name, a.maxDepth);
+      return null as T;
+    }
+    case "remote_list_link_targets": {
+      // Mirrors `remote_list_link_targets(host, vault, path) ->
+      // Result<Vec<LinkTarget>, String>`. Checked against `LinkTarget`
+      // (commands.rs): `{ name, rel, kind }`, same shape as the local
+      // `list_link_targets` mock. Empty here — the remote `[[` picker isn't
+      // exercised by the SAMPLE doc, and an empty list is a valid response.
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      console.info("[mock] remote_list_link_targets", host, a.vault, a.path);
+      return [] as T;
     }
     case "check":
       // `@tauri-apps/plugin-updater`'s `check()` calls
