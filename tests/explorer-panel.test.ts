@@ -661,6 +661,37 @@ describe("explorer: per-folder permanent-vault toggle", () => {
     expect(toggle?.querySelector(".icon-bookmark")).toBeTruthy();
   });
 
+  // Final review I2: onToggleVault/isVaultRegistered are ALWAYS wired by
+  // main.ts, so without a way to say "not for THIS root", a remote vault's
+  // directories rendered the toggle too — clicking it called
+  // canonicalize_path on a vault-relative name against the local filesystem,
+  // which either left the row's skeleton on screen forever (no matching
+  // local path) or registered a same-named LOCAL folder as a vault (if one
+  // happened to exist at the CWD).
+  it("canBookmarkFolders: false suppresses the toggle entirely, even though onToggleVault/isVaultRegistered are wired", async () => {
+    const onToggleVault = vi.fn();
+    const isVaultRegistered = vi.fn(async () => false);
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      onToggleVault,
+      isVaultRegistered,
+      canBookmarkFolders: () => false,
+    });
+
+    expect(panel.aside.querySelector(".explorer-vault-toggle")).toBeNull();
+    expect(isVaultRegistered).not.toHaveBeenCalled();
+
+    // Defense in depth: the Space-key shortcut on a focused folder must not
+    // reach onToggleVault either, even though no visible button exists to
+    // click.
+    const folderItem = panel.aside.querySelector<HTMLElement>('[data-path="/root/sub"]');
+    folderItem?.focus();
+    folderItem?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true }));
+    expect(onToggleVault).not.toHaveBeenCalled();
+  });
+
   it("toggles the canonical folder and does not activate the folder row", async () => {
     const onToggleVault = vi.fn();
     const panel = await openPanel({

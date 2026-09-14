@@ -181,6 +181,18 @@ export interface ExplorerHandlers {
    *  resolve symlink/alias identity. */
   isVaultRegistered?(root: string): Promise<boolean>;
   isRootLocked?(): boolean;
+  /** Whether the folder-bookmark toggle (`onToggleVault`/`isVaultRegistered`)
+   *  may render at all for the CURRENT root. Absent (or returning `true`)
+   *  means "render as before" — every existing caller keeps working
+   *  unchanged. Final review I2: a remote vault's directories were rendering
+   *  this toggle anyway (`onToggleVault`/`isVaultRegistered` are always
+   *  wired in main.ts), and clicking it called `canonicalize_path` on a
+   *  vault-relative name against the LOCAL filesystem — an `Err` that left
+   *  the row's skeleton on screen forever, or, worse, registered a
+   *  same-named LOCAL folder as a permanent vault if one happened to exist
+   *  at the CWD. A remote listing has no local folder to bookmark in the
+   *  first place, so the toggle must never even render there. */
+  canBookmarkFolders?(): boolean;
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
@@ -219,6 +231,7 @@ export function createExplorerPanel({
   onToggleVault,
   isVaultRegistered,
   isRootLocked,
+  canBookmarkFolders,
 }: ExplorerHandlers): ExplorerPanel {
   /** "Does clicking/Entering this row open something?" — isEditableTextFile's
    *  reach extended by the gated viewer case: a non-editable row is only
@@ -516,7 +529,7 @@ export function createExplorerPanel({
     // block BELOW the label — not as a flex sibling to its RIGHT (the 527faf6 bug).
     const label = create("div", "explorer-label");
     label.append(chevron, glyph, name);
-    if (e.is_dir && onToggleVault && isVaultRegistered) {
+    if (e.is_dir && onToggleVault && isVaultRegistered && (canBookmarkFolders?.() ?? true)) {
       const toggle = create("button", "explorer-vault-toggle");
       toggle.type = "button";
       toggle.tabIndex = -1;
@@ -911,7 +924,12 @@ export function createExplorerPanel({
   });
 
   const toggleFocusedVault = (item: HTMLElement): void => {
-    if (!onToggleVault || !item.classList.contains("explorer-dir")) return;
+    // The Space-key shortcut below reaches `onToggleVault` directly, bypassing
+    // whatever `makeEntry` chose to render — so it needs the SAME
+    // `canBookmarkFolders` gate the visible toggle button uses, or a keyboard
+    // user on a remote listing could still register a local folder as a
+    // vault even with the button correctly hidden (final review I2).
+    if (!onToggleVault || !item.classList.contains("explorer-dir") || !(canBookmarkFolders?.() ?? true)) return;
     if (item.dataset.path) onToggleVault(item.dataset.path);
   };
 

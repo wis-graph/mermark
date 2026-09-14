@@ -1357,6 +1357,87 @@ describe("main workspace wiring", () => {
       expect(remoteReadImageCalls.some((p) => p.startsWith("/"))).toBe(false);
     });
 
+    // I3 (final-review-ts.md): ⌘-click / ⌘+Enter on a remote Explorer row
+    // used to call open_path(<vault-relative name>) — a LOCAL command — which
+    // either silently console.error'd (nothing visible to the user, spec §6)
+    // or, if the CWD happened to hold a same-named file, opened THAT local
+    // file in a new window under the remote note's name. Must refuse
+    // visibly instead.
+    it("⌘-click on a remote Explorer row refuses visibly instead of calling open_path against the local filesystem", async () => {
+      localStorage.setItem("mermark.workspaceState", JSON.stringify({
+        workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-nw"], currentVaultId: "vault-remote-nw", lastSelectedPermanentVaultId: null }],
+        vaults: [{ vaultId: "vault-remote-nw", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" }],
+        currentWorkspaceId: "workspace-default",
+      }));
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+
+      document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="노트.md"]')).not.toBeNull());
+      const row = document.querySelector<HTMLElement>('.explorer-file[data-path="노트.md"]');
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true }));
+
+      await vi.waitFor(() => expect(document.querySelector(".save-status")?.textContent).toContain("원격 볼트에서는 지원하지 않습니다"));
+      expect(invokeMock).not.toHaveBeenCalledWith("open_path", expect.anything());
+    });
+
+    // I4 (final review): the recovery modal's "다시 시도" used to call
+    // openDocument(path) with NO targetVault, so a stale/still-open recovery
+    // modal's retry re-resolved the vault via currentVault() — whatever is
+    // CURRENTLY selected in the sidebar — instead of the vault the failed
+    // read was actually FOR. This is the sixth instance of the same
+    // currentVault()-inference bug Rulings 9/32/33 already closed at five
+    // other call sites. Repro: fail a LOCAL open (captures targetVault=P),
+    // then switch the sidebar to an already-open REMOTE tab WITHOUT the
+    // recovery modal closing (openInWindow's success path never calls
+    // closeRecovery — only the "no document open" welcome branch does), then
+    // retry — it must still read through P, not the now-current remote vault.
+    it("recovery modal retry uses the vault the FAILED read was for, not whatever is selected in the sidebar by the time 다시 시도 is clicked", async () => {
+      documentContents.set("노트.md", "# 원격 문서");
+      localStorage.setItem("mermark.workspaceState", JSON.stringify({
+        workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FP", "vault-remote-i4"], currentVaultId: "vault-remote-i4", lastSelectedPermanentVaultId: null }],
+        vaults: [
+          { vaultId: "vault-%2FP", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent", explorerRoot: "/P" },
+          { vaultId: "vault-remote-i4", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" },
+        ],
+        currentWorkspaceId: "workspace-default",
+      }));
+      vi.stubGlobal("location", { search: "", href: "" });
+      rejectedReads.add("/P/fail.md");
+
+      await import("../src/main");
+
+      // Open the remote vault's document first, so it has a real open tab to
+      // switch back to later (a remote vault's tabs are session-only — there
+      // is nothing to restore from storage, it must be opened live).
+      document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="노트.md"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.explorer-file[data-path="노트.md"]')?.click();
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("원격 문서"));
+
+      // Fail a LOCAL open via the CLI-routing path (routeCliFile selects "P"
+      // as a side effect, so targetVault=P is what showOpenRecovery captures).
+      await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+      emitEvent("cli-open-request", { id: 1, path: "/P/fail.md" });
+      await vi.waitFor(() => expect(document.querySelector(".recovery-backdrop")).not.toBeNull());
+      invokeMock.mockClear();
+
+      // Switch back to the remote vault's already-open tab WITHOUT the
+      // recovery modal closing.
+      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('[data-vault-id="vault-remote-i4"] .workspace-vault-tab')).not.toBeNull());
+      document.querySelector<HTMLButtonElement>('[data-vault-id="vault-remote-i4"] .workspace-vault-tab')?.click();
+      await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledWith("remote_read_file", expect.objectContaining({ path: "노트.md" })));
+      expect(document.querySelector(".recovery-backdrop")).not.toBeNull(); // still open — never closed by the switch
+      invokeMock.mockClear();
+
+      document.querySelector<HTMLButtonElement>(".recovery-action-retry")?.click();
+      await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledWith("read_file", expect.objectContaining({ path: "/P/fail.md" })));
+      expect(invokeMock).not.toHaveBeenCalledWith("remote_read_file", expect.anything());
+      expect(invokeMock).not.toHaveBeenCalledWith("remote_list_dir", expect.anything());
+    });
+
     // Task 11: the persistent read-only indicator and the explicit
     // unsupported-file refusal, driven through the real boot + Explorer
     // click path (not the pure remote-capability.ts functions in isolation —

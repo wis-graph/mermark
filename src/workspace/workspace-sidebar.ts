@@ -7,7 +7,7 @@ import { WorkspaceStateError, anyVaultStillUsesHost, type RemoteVault, type Vaul
 import type { VaultTabs } from "./vault-tabs";
 import { isVaultCollapsed, setVaultCollapsed } from "./vault-collapse";
 import { badgeFor } from "./add-remote-vault";
-import { remoteConnectionStateFor, type RemoteConnectionState } from "../document/file-host";
+import { remoteConnectionStateFor, evictSshTunnelMemo, type RemoteConnectionState } from "../document/file-host";
 import { createRemoteVaultDialog, type RemoteVaultDialog } from "./remote-vault-dialog";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -428,6 +428,14 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
               // failure here has nothing left to act on, the vault
               // registration is already gone either way.
               if (vault.host.startsWith("ssh://") && !anyVaultStillUsesHost(store.get().vaults, vault.host)) {
+                // I5 (final review): tearing down the Rust-side tunnel alone
+                // leaves file-host.ts's OWN memo (ensureSshTunnel's cache)
+                // believing it's still "ready" — evict it too, the same way
+                // a failed connect or a discovered SSH_TUNNEL_MISMATCH
+                // already does, so a re-added vault on this host reconnects
+                // on its very next read instead of silently trusting a
+                // memo for a tunnel this action just tore down.
+                evictSshTunnelMemo(vault.host);
                 void call("remote_ssh_disconnect", { host: vault.host }).catch(() => {});
               }
             } catch (error) { showError(error); }

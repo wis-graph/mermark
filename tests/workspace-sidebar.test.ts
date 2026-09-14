@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createWorkspaceSidebar } from "../src/workspace/workspace-sidebar";
 import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore, workspaceStorageKey } from "../src/workspace/workspace-state";
+import { ensureSshTunnel } from "../src/document/file-host";
 import type { VaultTabs } from "../src/workspace/vault-tabs";
 
 describe("workspace sidebar", () => {
@@ -540,6 +541,37 @@ describe("workspace sidebar", () => {
 
       sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-action`)!.click();
       expect(call).not.toHaveBeenCalledWith("remote_ssh_disconnect", expect.anything());
+    });
+
+    // I5 (final review): an explicit user-initiated "연결 해제" tore down
+    // the Rust-side tunnel via remote_ssh_disconnect, but left file-host.ts's
+    // OWN client-side memo (`ensureSshTunnel`'s cache) believing the tunnel
+    // was still "ready" — the next read for a re-added vault on the same
+    // host would skip reconnecting entirely until a live request happened to
+    // fail with SSH_TUNNEL_MISMATCH. The disconnect action must evict that
+    // memo itself, the same way a failed connect or a discovered mismatch
+    // already does (file-host.ts's evictSshTunnelMemo).
+    it("disconnecting the last vault on an ssh host evicts file-host.ts's client-side tunnel memo, so the next read reconnects instead of trusting a stale memo", async () => {
+      const host = "ssh://wis@t12b-i5-host";
+      const store = new WorkspaceStore();
+      const vault = store.registerRemoteVault(host, "rv-i5", "볼트");
+      const call = vi.fn(async () => undefined) as never;
+
+      // Memoize the tunnel as "ready" first (same as a normal read would).
+      await ensureSshTunnel(host, call);
+      const connectCallsBefore = (call as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === "remote_ssh_connect").length;
+      expect(connectCallsBefore).toBe(1);
+
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+      sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-action`)!.click();
+      expect(call).toHaveBeenCalledWith("remote_ssh_disconnect", { host });
+
+      // If the memo were still cached, this would resolve WITHOUT calling
+      // remote_ssh_connect again.
+      await ensureSshTunnel(host, call);
+      const connectCallsAfter = (call as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === "remote_ssh_connect").length;
+      expect(connectCallsAfter).toBe(2);
     });
   });
 

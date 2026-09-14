@@ -716,7 +716,7 @@ async function boot() {
           await openDocument(path, undefined, undefined, targetVault);
           return true;
         } catch (error: unknown) {
-          showOpenRecovery(path, String(error));
+          showOpenRecovery(path, String(error), targetVault);
           throw error;
         }
       });
@@ -745,7 +745,16 @@ async function boot() {
     openRecovery = handle;
   };
 
-  function showOpenRecovery(path: string, detail: string): void {
+  // I4 (final review): `vault` is the SAME explicit-vault-threading rule
+  // Ruling 9/32/33 already closed at five other call sites in this file
+  // (openDocument/navigateHistory/openWithViewer/openRecentEntry/the CLI open
+  // path) — without it, "다시 시도" fell back to `openDocument`'s own
+  // `currentVault()` default, which is the vault of whatever is SELECTED in
+  // the sidebar, not necessarily the vault THIS failed read was for. A
+  // remote vault selected in the sidebar while a local CLI/path-prompt open
+  // fails would then retry through `remote_read_file` for a plain local
+  // path — Ruling 33's exact symptom, one click later.
+  function showOpenRecovery(path: string, detail: string, vault?: Vault): void {
     showRecovery("open-read", detail, async (action) => {
       if (action === "open-another") {
         prompt.button.click();
@@ -753,7 +762,7 @@ async function boot() {
       }
       if (action !== "retry") return "failed";
       try {
-        await openDocument(path);
+        await openDocument(path, undefined, undefined, vault);
         return "succeeded";
       } catch {
         return "failed";
@@ -987,6 +996,25 @@ async function boot() {
     viewerSlot.closeAll();
   }
 
+  /** ⌘/Ctrl+click or ⌘+Enter's "open this row in a brand-new window" action,
+   *  shared by the Explorer and the file-finder search panel (final review
+   *  I3). `open_path` is a LOCAL-filesystem command — a remote row's path is
+   *  vault-relative ("노트.md"), which either silently fails (console-only,
+   *  nothing the user sees — spec §6 forbids exactly this) or, if the
+   *  process's CWD happens to hold a same-named file, opens THAT unrelated
+   *  local file in the new window under the remote note's name. Refuses
+   *  visibly instead, the same message `standardLinkRejectionFor` already
+   *  uses for the analogous remote-link case. */
+  function openInNewWindow(absPath: string, vault: Vault | undefined): void {
+    if (isRemoteVault(vault)) {
+      save.set("error", REMOTE_VAULT_LOCAL_LINK_MESSAGE);
+      return;
+    }
+    invoke("open_path", { path: absPath }).catch((err) => {
+      console.error("Failed to open in a new window", err);
+    });
+  }
+
   const explorer = createExplorerPanel({
     listDir: (p) =>
       fileHostFor(currentVault() ?? workspaceStore.getGlobalVault()).listDir(p, showHiddenFilesSetting.get() === "on"),
@@ -1037,14 +1065,11 @@ async function boot() {
     // prompt-launched LOCAL path get misjudged against an unrelated
     // sidebar-selected remote vault).
     onOpenWithViewer: (absPath) => openWithViewer(absPath, currentVault() ?? workspaceStore.getGlobalVault()),
-    // ⌘/Ctrl+click or ⌘+Enter on a markdown row: open it in a brand-new window.
-    // Reuses open_path — the same command wikilink clicks already invoke to
-    // spawn a new document window — so no new backend command is needed.
-    onOpenFileNewWindow: (absPath) => {
-      invoke("open_path", { path: absPath }).catch((err) => {
-        console.error("Failed to open in a new window", err);
-      });
-    },
+    // ⌘/Ctrl+click or ⌘+Enter on a markdown row: open it in a brand-new
+    // window (or refuse visibly for a remote row — I3, openInNewWindow).
+    // The Explorer is unambiguously browsing `currentVault()`, same as
+    // `onOpenWithViewer` just above.
+    onOpenFileNewWindow: (absPath) => openInNewWindow(absPath, currentVault()),
     onOpen: () => closeOtherSidebarPanels("explorer"),
     onRootChange: (root) => {
       if (currentVault()?.persistenceKind === "global") currentExplorerFolder = root;
@@ -1053,6 +1078,10 @@ async function boot() {
     onToggleVault: (root) => toggleExplorerVault(root),
     isVaultRegistered: (root) => isVaultRegistered(root),
     isRootLocked: () => isVaultRootLocked(currentVault()),
+    // I2: a remote listing has no local folder to bookmark — the toggle
+    // (and its Space-key shortcut) must not even render there, or clicking
+    // it sends a vault-relative name into a LOCAL canonicalize_path call.
+    canBookmarkFolders: () => !isRemoteVault(currentVault()),
   });
 
   // Ruling 9: `targetVault`, when the caller already knows it (onSelectVault/
@@ -1103,7 +1132,7 @@ async function boot() {
   const openDocumentSafely = (absPath: string, onCommit?: () => void, targetVault?: Vault): Promise<boolean> => {
     const requestId = beginLifecycleRequest();
     return openDocument(absPath, requestId, onCommit, targetVault).catch((error: unknown) => {
-      if (requestId === lifecycleRequest) showOpenRecovery(absPath, String(error));
+      if (requestId === lifecycleRequest) showOpenRecovery(absPath, String(error), targetVault);
       return false;
     });
   };
@@ -1388,7 +1417,7 @@ async function boot() {
           try {
             fresh = await fileHostFor(vault).readFile(nextTab.path);
           } catch (error: unknown) {
-            if (requestId === lifecycleRequest) showOpenRecovery(nextTab.path, String(error));
+            if (requestId === lifecycleRequest) showOpenRecovery(nextTab.path, String(error), vault);
             return;
           }
         }
@@ -1453,11 +1482,11 @@ async function boot() {
         await openDocumentSafely(absPath, undefined, targetVault);
       }
     },
-    onOpenFileNewWindow: (absPath) => {
-      invoke("open_path", { path: absPath }).catch((err) => {
-        console.error("Failed to open in a new window", err);
-      });
-    },
+    // I3: same visible refusal as the Explorer's onOpenFileNewWindow above,
+    // routed through the same `searchScanVault` this panel's own onOpenFile
+    // (just above) already uses for the analogous "which vault is this row
+    // in" question.
+    onOpenFileNewWindow: (absPath) => openInNewWindow(absPath, searchScanVault ?? currentVault() ?? workspaceStore.getGlobalVault()),
     // SAME RULE as `openPathEntry` above, expressed as a predicate + a command
     // instead of one call. The panels need the QUESTION ("is this row even
     // openable?") separately from the ACT of opening — a row's clickability is
