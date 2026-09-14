@@ -1,12 +1,14 @@
 import { EditorView, WidgetType } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
-import { localFileHost } from "../document/file-host";
+import { localFileHost, fileHostFor } from "../document/file-host";
 import { openPath as openAsset } from "@tauri-apps/plugin-opener";
 import { findHeadingByText } from "./outline";
 import { jumpTo } from "./footnote-nav";
 import { openExternal } from "./open-external";
 import { isEditableTextFile } from "../sidebar/explorer/file-icons";
 import { requestDocumentOpen } from "./document-open";
+import { documentVault, isRemoteVault, REMOTE_VAULT_READONLY_MESSAGE } from "../document/document-vault";
+import type { Vault } from "../workspace/workspace-state";
 
 /** Whether a wikilink target opens in mermark's own editor (current-window
  *  safe transaction, `requestDocumentOpen`) rather than being handed to the
@@ -93,6 +95,15 @@ export class WikilinkWidget extends WidgetType {
     const a = document.createElement("a");
     a.className = "cm-wikilink cm-wikilink-pending";
     a.textContent = this.alias;
+    // The document's own vault (facet — never app state, see
+    // document-vault.ts's header). `undefined` (no facet provider, e.g. a
+    // bare-view test) means "local" — same behavior as before this vault
+    // context existed. A real vault routes existence checks through the
+    // chokepoint instead of always hitting this machine's disk, so a
+    // remote-vault document's link state reflects the REMOTE file, not a
+    // same-path local file that happens to exist (or doesn't).
+    const vault: Vault | undefined = view.state?.facet(documentVault);
+    const host = vault ? fileHostFor(vault) : localFileHost;
 
     if (this.externalUrl !== null) {
       // [[https://…]] / [[https://…|alias]] — external URL, no IPC of any
@@ -165,6 +176,17 @@ export class WikilinkWidget extends WidgetType {
       } else {
         // File does not exist
         if (isMd) {
+          // Ruling 8 — v1 remote vaults are read-only. Without this gate, a
+          // click on a missing [[link]] while viewing a remote vault would
+          // call create_markdown_file, which writes to THIS machine's local
+          // disk (the wrong vault AND the wrong machine at once). Never
+          // silent: the notice is the same visible-error idiom the
+          // non-markdown "cannot auto-create" branch below already uses.
+          if (isRemoteVault(vault)) {
+            a.classList.add("cm-wikilink-error");
+            a.title = REMOTE_VAULT_READONLY_MESSAGE;
+            return;
+          }
           invoke("create_markdown_file", { path: this.path })
             .then(() => {
               a.classList.remove("cm-wikilink-missing");
@@ -186,7 +208,7 @@ export class WikilinkWidget extends WidgetType {
       }
     });
 
-    localFileHost.pathExists(this.path).then((exists) => {
+    host.pathExists(this.path).then((exists) => {
       fileExists = exists;
       a.classList.remove("cm-wikilink-pending");
       a.classList.add(exists ? "cm-wikilink-active" : "cm-wikilink-missing");

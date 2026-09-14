@@ -16,11 +16,15 @@ import {
   isRemoteSrc,
   clearImageSearchCache,
   clearVaultDowngradeReports,
+  clearRemoteImageCache,
 } from "../src/markdown/image";
 import { setImageSearchRoot, owningVaultRoot, VAULT_IMAGE_SCAN_DEPTH } from "../src/markdown/image-search-root";
 import { recursiveImageSearchSetting } from "../src/settings/app";
 import { setImageOpenHandler } from "../src/markdown/image-open";
+import { EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
+import { documentVault } from "../src/document/document-vault";
+import type { RemoteVault } from "../src/workspace/workspace-state";
 
 // The click handler's `attachAltClickEdit` only ever touches `view` when a
 // MOUSEDOWN carries Alt (not exercised by these click-only tests), so a stub
@@ -437,5 +441,66 @@ describe("ImageWidget click → open viewer (_workspace/01_architect_design_imgc
     await new Promise((r) => setTimeout(r, 0));
     clickAt(img, 10, 10);
     expect(openSpy).toHaveBeenCalledWith("/mock/found/pic.png");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ruling 7 / task-8a item 3: a remote vault's images cannot render via
+// convertFileSrc (the path only exists on the HOST, not this machine) — the
+// widget must instead fetch bytes over remote_read_image and swap in the
+// returned data: URL.
+// ---------------------------------------------------------------------------
+describe("ImageWidget remote-vault loading (Ruling 7)", () => {
+  const baseDir = "notes";
+  const remoteVault: RemoteVault = {
+    vaultId: "vault-remote-1",
+    workspaceId: "workspace-default",
+    displayName: "원격 볼트",
+    rootPath: null,
+    persistenceKind: "remote",
+    explorerRoot: "remote://wis-macmini/",
+    host: "wis-macmini",
+    remoteVaultId: "rv-1",
+  };
+  const remoteView = { state: EditorState.create({ extensions: [documentVault.of(remoteVault)] }) } as unknown as EditorView;
+
+  beforeEach(() => {
+    invokeSpy.mockReset();
+    clearRemoteImageCache();
+  });
+
+  it("fetches bytes via remote_read_image and swaps in the returned data: URL, never convertFileSrc", async () => {
+    invokeSpy.mockResolvedValue("data:image/png;base64,AAAA");
+    const widget = new ImageWidget(`${baseDir}/cat.png`, "alt", "cat.png", baseDir);
+    const img = widget.toDOM(remoteView) as HTMLImageElement;
+
+    expect(img.src).toBe(""); // not the convertFileSrc-built literal url
+    expect(invokeSpy).toHaveBeenCalledWith("remote_read_image", { host: "wis-macmini", vault: "rv-1", path: "notes/cat.png" });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(img.src).toBe("data:image/png;base64,AAAA");
+  });
+
+  it("caches by (host, remote vault id, path) — a second widget for the same image does not refetch", async () => {
+    invokeSpy.mockResolvedValue("data:image/png;base64,AAAA");
+    new ImageWidget(`${baseDir}/cat.png`, "alt", "cat.png", baseDir).toDOM(remoteView);
+    await new Promise((r) => setTimeout(r, 0));
+    new ImageWidget(`${baseDir}/cat.png`, "alt", "cat.png", baseDir).toDOM(remoteView);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(invokeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("a literal remote/data rawSrc (e.g. an external https:// image) skips remote_read_image entirely", () => {
+    const widget = new ImageWidget("https://ex.com/c.png", "alt", "https://ex.com/c.png", baseDir);
+    const img = widget.toDOM(remoteView) as HTMLImageElement;
+    expect(img.src).toBe("https://ex.com/c.png");
+    expect(invokeSpy).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION: a local (no facet) document still loads via convertFileSrc, no remote_read_image call", () => {
+    const widget = new ImageWidget(`${baseDir}/cat.png`, "alt", "cat.png", baseDir);
+    const img = widget.toDOM(fakeView) as HTMLImageElement;
+    expect(img.src).toContain(`${baseDir}/cat.png`); // convertFileSrc mock echoes input (jsdom resolves img.src to an absolute URL)
+    expect(invokeSpy).not.toHaveBeenCalledWith("remote_read_image", expect.any(Object));
   });
 });

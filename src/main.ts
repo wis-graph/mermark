@@ -88,7 +88,8 @@ import { openImageViewer } from "./chrome/viewer/image-viewer";
 import { isRemoteSrc } from "./markdown/image";
 import { setImageOpenHandler } from "./markdown/image-open";
 import { setDocumentOpenHandler } from "./markdown/document-open";
-import { openStandardLocalLink } from "./markdown/local-doc-link";
+import { openStandardLocalLink, markLocalLinkFailure, REMOTE_VAULT_LOCAL_LINK_MESSAGE } from "./markdown/local-doc-link";
+import { isRemoteVault } from "./document/document-vault";
 import { setImageSearchRoot, owningVaultRoot } from "./markdown/image-search-root";
 import { attachImageToVault } from "./markdown/attach-image";
 import {
@@ -360,6 +361,10 @@ async function boot() {
       await migrateFavoriteFoldersToVaults(
         workspaceStore,
         readLegacyFavoriteFolders(),
+        // Leaf-site note (task-8a step 5): stays on localFileHost — this runs
+        // once at boot, BEFORE any vault (remote included) is selected, over
+        // legacy LOCAL favorite-folder paths from a pre-vault install. There
+        // is no vault to route through yet; this predates the whole concept.
         async (path) => localFileHost.directoryExists(path),
         (path) => canonicalizeLegacyFavoriteFolder((candidate) => invoke("canonicalize_path", { path: candidate }), path),
       );
@@ -386,6 +391,18 @@ async function boot() {
   const vaultTabs = new VaultTabStore();
   const conflictRecovery = createConflictRecovery();
   let routedVault = reloadHandoff.globalExplorerRoot !== null ? workspaceStore.getGlobalVault() : cliRoute?.vault;
+  // Ruling 9 (navigateHistory half): NavHistory (nav-history.ts) stores bare
+  // paths — no vault. Back/forward CAN cross a vault boundary (any
+  // vault-switching open pushes a history entry the same way every other
+  // open does), so navigateHistory needs to know which vault a history
+  // TARGET belongs to before it reads it, not just whichever vault is
+  // currently open. Populated by every openInWindow call (below) instead of
+  // widening NavHistory's own shape — nav-history.ts's pure stack arithmetic
+  // is tested independently of any vault concept and stays that way; this
+  // is a side-table keyed by path, immune to the index churn pushHistory/
+  // pruneAt do internally. Keyed on normalizePath so it agrees with every
+  // other vault-scoped lookup in this file (currentConflictIdentity, etc).
+  const navVaultByPath = new Map<string, Vault>();
   const selectedWorkspaceVault = (): Vault | undefined => {
     const workspace = workspaceStore.get().workspaces.find((item) => item.workspaceId === workspaceStore.get().currentWorkspaceId);
     return workspace?.currentVaultId ? workspaceStore.getVault(workspace.currentVaultId) : undefined;
@@ -406,7 +423,18 @@ async function boot() {
     currentFile ? owningVaultRoot(dirOf(currentFile), permanentRootsOf(workspaceStore.get())) : null;
   const routeDocumentPath = (path: string) => {
     const current = routedVault;
-    if (current?.persistenceKind === "global") return current;
+    // Ruling 9 fix: a remote vault short-circuits exactly like "global"
+    // already did — routeCliFile below can only ever resolve to "permanent"
+    // or "global" (it path-matches against REGISTERED PERMANENT ROOTS, all
+    // absolute local filesystem paths); a remote document's path is
+    // vault-relative (`"노트.md"`, no root prefix at all) and would never
+    // match, silently reclassifying an already-known remote document as the
+    // Global Vault. Re-deriving by path is only meaningful for "permanent"
+    // (a real absolute path that might belong to a DIFFERENT permanent
+    // vault than the one currently routed) — global and remote both must
+    // trust whatever the caller already established (onCommit callbacks set
+    // `routedVault` before this runs; see onSelectVault/onSelectTab).
+    if (current?.persistenceKind === "global" || current?.persistenceKind === "remote") return current;
     const route = routeCliFile(workspaceStore, path);
     routedVault = route.vault;
     return route.vault;
@@ -842,11 +870,26 @@ async function boot() {
     isRootLocked: () => isVaultRootLocked(currentVault()),
   });
 
-  const openDocument = async (absPath: string, requestId = beginLifecycleRequest(), onCommit?: () => void): Promise<boolean> => {
+  // Ruling 9: `targetVault`, when the caller already knows it (onSelectVault/
+  // onSelectTab — switching TO a specific tab's vault), is the vault the
+  // READ must go through. Without it, `currentVault()` here is the vault of
+  // whatever is STILL open (the switch's SOURCE, not its target) — onCommit
+  // (which flips `routedVault` to the target) only runs AFTER this read
+  // succeeds, so a vault-crossing open would read through the wrong
+  // backend. Every other caller (CLI open, wikilink/standard-link clicks,
+  // recent/welcome-pane opens) never crosses a vault boundary within one
+  // call, so the `currentVault() ?? global` fallback keeps their existing
+  // behavior unchanged.
+  const openDocument = async (
+    absPath: string,
+    requestId = beginLifecycleRequest(),
+    onCommit?: () => void,
+    targetVault?: Vault,
+  ): Promise<boolean> => {
     const sourceEditor = current;
     let fresh: { text: string; mtime: number };
     try {
-      fresh = await fileHostFor(currentVault() ?? workspaceStore.getGlobalVault()).readFile(absPath);
+      fresh = await fileHostFor(targetVault ?? currentVault() ?? workspaceStore.getGlobalVault()).readFile(absPath);
     } catch (error: unknown) {
       if (requestId === lifecycleRequest) throw error;
       return false;
@@ -860,12 +903,12 @@ async function boot() {
       return false;
     }
     onCommit?.();
-    openInWindow(absPath, fresh, { watcherReady: true });
+    openInWindow(absPath, fresh, { watcherReady: true }, targetVault);
     return true;
   };
-  const openDocumentSafely = (absPath: string, onCommit?: () => void): Promise<boolean> => {
+  const openDocumentSafely = (absPath: string, onCommit?: () => void, targetVault?: Vault): Promise<boolean> => {
     const requestId = beginLifecycleRequest();
-    return openDocument(absPath, requestId, onCommit).catch((error: unknown) => {
+    return openDocument(absPath, requestId, onCommit, targetVault).catch((error: unknown) => {
       if (requestId === lifecycleRequest) showOpenRecovery(absPath, String(error));
       return false;
     });
@@ -908,6 +951,18 @@ async function boot() {
       return;
     }
     const vault = currentVault();
+    // Item 4 decision (Ruling 10, local-doc-link.ts's header comment has the
+    // full reasoning): a remote vault's standard [text](sibling.md) links
+    // are marked unsupported outright — canonicalize_path (the pipeline's
+    // only IPC) is a LOCAL-filesystem command with no remote equivalent and
+    // no `vaultRootPath` to run against. Checked BEFORE building `context`
+    // (which already gates non-"permanent" vaults to `null`, generically)
+    // so a remote-vault click gets the specific "원격 볼트는" wording
+    // instead of the permanent-vault-only generic reason.
+    if (isRemoteVault(vault)) {
+      markLocalLinkFailure(request.feedbackEl, REMOTE_VAULT_LOCAL_LINK_MESSAGE);
+      return;
+    }
     const context =
       vault?.persistenceKind === "permanent" && currentFile
         ? { documentPath: currentFile, vaultRootPath: vault.rootPath }
@@ -1071,7 +1126,7 @@ async function boot() {
           routedVault = selectedVault;
           jumpExplorerToVaultRoot(selectedVault);
         };
-        if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path, commitSelection);
+        if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path, commitSelection, selectedVault);
         else commitSelection();
       } else {
         const requestId = beginLifecycleRequest();
@@ -1095,7 +1150,7 @@ async function boot() {
         workspaceStore.selectVault(selectedVault.vaultId);
         routedVault = selectedVault;
         vaultTabs.select(selectedVault.vaultId, tab.tabId, scope);
-      });
+      }, selectedVault);
     },
     onCloseTab: (vault, tab) => {
       const currentTabs = vaultTabs.get(vault.vaultId);
@@ -1391,8 +1446,20 @@ async function boot() {
     file: string,
     fresh: { text: string; mtime: number },
     opts: { readonly viaHistory?: boolean; readonly watcherReady?: boolean } = {},
+    targetVault?: Vault,
   ): void {
-    const selectedVault = routeDocumentPath(file);
+    // `targetVault`, when the caller already knows it (a vault-crossing
+    // open: onSelectVault/onSelectTab via openDocument above, or
+    // navigateHistory below), wins over routeDocumentPath's own
+    // path-based re-derivation — routeDocumentPath can only ever land on
+    // "permanent"/"global" (see its own comment), so a remote target passed
+    // explicitly would otherwise get silently reclassified. Explicitly
+    // setting `routedVault` here covers navigateHistory, which has no
+    // onCommit callback to have already done it (onSelectVault/onSelectTab's
+    // onCommit already did, redundantly but harmlessly).
+    const selectedVault = targetVault ?? routeDocumentPath(file);
+    if (targetVault) routedVault = targetVault;
+    navVaultByPath.set(normalizePath(file), selectedVault);
     closeConflict();
     closeOpenViewer(); // opening a document closes any open viewer (design §A rule 1)
     teardownCurrent();
@@ -1416,6 +1483,7 @@ async function boot() {
       autosaveDelay: autosaveDelaySetting.get(),
       conflictPolicy: conflictPolicySetting.get(),
       vimMode: vimModeSetting.get(),
+      vault: selectedVault,
       // Outline panel's docChanged listener — re-attaches per mount, so the
       // outline tracks whichever document is currently live.
       extraExtensions: outline.listener,
@@ -1507,9 +1575,15 @@ async function boot() {
     if (next === navHistory) return; // at an end → no-op (same-ref signal)
     const target = currentEntry(next);
     if (!target) return;
+    // Ruling 9: the vault THIS history entry was opened from (navVaultByPath,
+    // recorded by openInWindow), never `currentVault()` — which is the vault
+    // of whatever is open RIGHT NOW, i.e. the navigation's SOURCE, not its
+    // target. A path with no recorded vault (entries from before this map
+    // existed, or a same-session edge case) falls back to the old behavior.
+    const targetVault = navVaultByPath.get(normalizePath(target)) ?? currentVault() ?? workspaceStore.getGlobalVault();
     let fresh: { text: string; mtime: number };
     try {
-      fresh = await fileHostFor(currentVault() ?? workspaceStore.getGlobalVault()).readFile(target);
+      fresh = await fileHostFor(targetVault).readFile(target);
     } catch {
       // The target file is gone: forget it and skip (no navigation).
       navHistory = pruneAt(navHistory, next.index);
@@ -1518,7 +1592,7 @@ async function boot() {
     if (!(await commitBeforeSwitch())) return;
     if (!(await watcherHandoff.handoff(target))) return;
     navHistory = next; // commit the pointer only after the read succeeded
-    openInWindow(target, fresh, { viaHistory: true, watcherReady: true });
+    openInWindow(target, fresh, { viaHistory: true, watcherReady: true }, targetVault);
   }
   const goBack = (): void => void navigateHistory(back);
   const goForward = (): void => void navigateHistory(forward);

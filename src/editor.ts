@@ -17,6 +17,8 @@ import { wikilinkCompletionSource } from "./markdown/wikilink-complete";
 import { markupWrap } from "./markdown/markup-wrap";
 import { pasteLinkWrap } from "./markdown/paste-link";
 import type { ConflictPolicy, VimMode } from "./settings/app";
+import { documentVault } from "./document/document-vault";
+import type { Vault } from "./workspace/workspace-state";
 
 export type SaveStatus = "saved" | "saving" | "error" | "conflict" | "recovery";
 export type { PreviewMode };
@@ -252,6 +254,11 @@ function makeAutosave(
       onStatus("recovery", detail);
     },
     async retryOriginal(text: string): Promise<boolean> {
+      // Leaf-site note (task-8a step 5): stays on localFileHost, not
+      // fileHostFor(vault) — this re-reads the baseline to RETRY A WRITE
+      // after a save conflict, and v1 remote vaults have no write path at
+      // all (no autosave, no conflict to retry). Unreachable for remote by
+      // construction, not an oversight.
       try {
         const fresh = await localFileHost.readFile(path);
         baseline = fresh.mtime;
@@ -333,6 +340,13 @@ export function mountEditor(
     /** Initial conflict policy (live value flows via setConflictPolicy). */
     conflictPolicy?: ConflictPolicy;
     vimMode?: VimMode;
+    /** The vault THIS document belongs to — injected as a CodeMirror facet
+     *  (document-vault.ts) rather than read from app state, so markdown-layer
+     *  leaf modules (wikilink/image widgets) can ask "what vault is this
+     *  document in" without importing workspace/chrome state. undefined (the
+     *  default) means "unknown/local" — every pre-vault-context mount and
+     *  test keeps behaving exactly as before. */
+    vault?: Vault;
     /** Editor-adjacent chrome extensions that aren't part of the core editing
      *  setup (e.g. the outline panel's docChanged listener). Threaded in so they
      *  re-attach on every re-mount, tracking the new document automatically. */
@@ -355,6 +369,7 @@ export function mountEditor(
     conflictPolicy = "pause",
     extraExtensions = [],
     findReplaceHint,
+    vault,
   } = opts;
   void conflictPolicy;
   // The SSOT settings are the writers; these mutable cells are the editor's sink
@@ -430,6 +445,10 @@ export function mountEditor(
   const state = EditorState.create({
     doc,
     extensions: [
+      // Fixed for the mount's lifetime (a document's vault doesn't change
+      // out from under an open editor) — no Compartment needed, unlike mode/
+      // vim/features above which DO change live.
+      documentVault.of(vault),
       markdownLang(),
       markdownFolding,
       // 4 spaces (not the CM default 2): a 2-space nested list item sits below

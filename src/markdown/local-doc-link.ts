@@ -35,6 +35,28 @@ export type LocalLinkRejectionReason =
   | "outside-vault"
   | "not-a-regular-file";
 
+// Item 4 decision (Ruling 10): a remote vault's standard [text](sibling.md)
+// links are marked unsupported OUTRIGHT — main.ts's setDocumentOpenHandler
+// never even calls resolveLocalDocumentLink for one — rather than routed
+// through a parallel remote resolver. Reasoning: every step past
+// parseLocalDocumentHref in this pipeline (steps 11-17) is built on
+// `canonicalize_path`, a LOCAL-filesystem command that resolves symlinks
+// against a permanent vault's own `rootPath` — there is no
+// `remote_canonicalize_path`, and a remote vault has no `rootPath` to
+// canonicalize against in the first place (`RemoteVault.rootPath` is
+// `null`). Building a parallel remote resolver would mean either (a)
+// inventing a host-side canonicalize command whose only job is a traversal
+// guard the LOCAL pipeline needs because of local symlinks — a guard whose
+// shape doesn't obviously transfer to "a directory the host chooses to
+// expose", or (b) faking canonicalization client-side, which would weaken
+// the exact protection this pipeline exists for. Wikilinks already cover
+// remote same-vault navigation (wikilink.ts, routed through the vault-aware
+// FileHostBackend chokepoint above); a standard-Markdown-link is the ONE
+// less-common link form this covers, so "explicitly unsupported for now"
+// costs little and keeps the traversal guard's local-only assumptions from
+// leaking into a code path they were never verified against.
+export const REMOTE_VAULT_LOCAL_LINK_MESSAGE = "원격 볼트에서는 지원하지 않습니다";
+
 export const LOCAL_LINK_REJECTION_MESSAGES: Record<LocalLinkRejectionReason, string> = {
   query: "쿼리 문자열이 있는 링크는 열 수 없습니다",
   "empty-path": "링크 대상이 비어 있습니다",
@@ -199,6 +221,16 @@ export function isPathInsideRoot(root: string, target: string): boolean {
  *  crosses a symlinked directory resolves to the REAL path, not a lexical
  *  guess), target canonicalize+isolation+regular+extension. Query (IPC reads
  *  only, no side effects). */
+// Leaf-site note (task-8a step 5): every `invoke("canonicalize_path", …)` and
+// `localFileHost.pathExists(…)` call below stays UNROUTED through
+// fileHostFor/the vault facet — deliberately, not an oversight. This
+// function only ever runs with a non-null `context`, and main.ts only ever
+// builds one for a `persistenceKind === "permanent"` document (see the
+// header comment above and REMOTE_VAULT_LOCAL_LINK_MESSAGE) — a remote (or
+// global) vault's document gets `context === null` and returns
+// "no-vault-context"/is redirected to the remote-specific message before
+// reaching this function at all. `localFileHost` is therefore always the
+// CORRECT backend here, never a leak onto the wrong machine.
 export async function resolveLocalDocumentLink(
   href: string,
   context: LocalLinkContext | null,
@@ -244,7 +276,7 @@ export async function resolveLocalDocumentLink(
 /** Mark `el` with the shared local-link failure presentation (mirrors
  *  `open-external.ts`'s `markFailure` / `wikilink.ts`'s `cm-wikilink-error`
  *  pattern: a CSS class plus a hover-visible Korean title). Command, void. */
-function markLocalLinkFailure(el: HTMLElement, message: string): void {
+export function markLocalLinkFailure(el: HTMLElement, message: string): void {
   el.classList.add("cm-local-link-error");
   el.title = message;
 }

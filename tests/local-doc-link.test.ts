@@ -12,6 +12,8 @@ import {
   openStandardLocalLink,
   isPathInsideRoot,
   LOCAL_LINK_REJECTION_MESSAGES,
+  REMOTE_VAULT_LOCAL_LINK_MESSAGE,
+  markLocalLinkFailure,
   type LocalLinkContext,
 } from "../src/markdown/local-doc-link";
 
@@ -285,5 +287,24 @@ describe("openStandardLocalLink — command", () => {
     await openStandardLocalLink({ href: "./note.md", feedbackEl: el }, context(), open);
     expect(open).toHaveBeenCalledWith("/vault/dir/note.md");
     expect(el.classList.contains("cm-local-link-error")).toBe(false);
+  });
+});
+
+// task-8a item 4: main.ts's setDocumentOpenHandler checks isRemoteVault
+// BEFORE ever building a context (so resolveLocalDocumentLink/
+// canonicalize_path is never reached for a remote vault — see
+// local-doc-link.ts's header comment on REMOTE_VAULT_LOCAL_LINK_MESSAGE for
+// the full item-4 reasoning) and marks the feedback element with these two
+// exports; this pins their exact shape so that wiring can't silently drift.
+describe("REMOTE_VAULT_LOCAL_LINK_MESSAGE / markLocalLinkFailure (task-8a item 4)", () => {
+  it("is the exact Korean 'unsupported in a remote vault' wording", () => {
+    expect(REMOTE_VAULT_LOCAL_LINK_MESSAGE).toBe("원격 볼트에서는 지원하지 않습니다");
+  });
+
+  it("markLocalLinkFailure marks the same cm-local-link-error/title presentation openStandardLocalLink uses", () => {
+    const el = document.createElement("a");
+    markLocalLinkFailure(el, REMOTE_VAULT_LOCAL_LINK_MESSAGE);
+    expect(el.classList.contains("cm-local-link-error")).toBe(true);
+    expect(el.title).toBe(REMOTE_VAULT_LOCAL_LINK_MESSAGE);
   });
 });

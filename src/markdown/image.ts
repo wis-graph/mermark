@@ -1,11 +1,13 @@
 import { EditorView, WidgetType } from "@codemirror/view";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { localFileHost } from "../document/file-host";
 import { recursiveImageSearchSetting } from "../settings/app";
 import { attachAltClickEdit } from "./wikilink";
 import { requestImageOpen } from "./image-open";
 import { boundedCache } from "./bounded-cache";
 import { imageSearchRoot, VAULT_IMAGE_SCAN_DEPTH } from "./image-search-root";
+import { documentVault, isRemoteVault } from "../document/document-vault";
+import type { RemoteVault } from "../workspace/workspace-state";
 
 /** A literal target is a remote/data URL — it never gets the recursive-search
  *  fallback (the scan is a filesystem walk under baseDir; only local files can be
@@ -153,6 +155,20 @@ export function clearImageSearchCache(): void {
   searchCache.clear();
 }
 
+/** Caches `remote_read_image` results by (host, remote vault id, path) — the
+ *  same "don't refetch on every reveal/unreveal cycle" concern boundedCache
+ *  already solves for mermaid/math renders, just for a network round-trip
+ *  instead of a CPU render. A remote vault's images never change out from
+ *  under an open document in v1 (read-only, no push updates), so there is no
+ *  invalidation rule to get wrong. */
+const remoteImageCache = boundedCache<string, Promise<string>>(64);
+const remoteImageCacheKey = (vault: RemoteVault, path: string): string => `${vault.host} ${vault.remoteVaultId} ${path}`;
+
+/** Test-only escape hatch, mirrors clearImageSearchCache above. */
+export function clearRemoteImageCache(): void {
+  remoteImageCache.clear();
+}
+
 export class ImageWidget extends WidgetType {
   /** `url` is the literal-resolved asset URL (the cheap, no-cost path that
    *  preserves current behavior). `rawSrc`/`baseDir` are kept so a load failure
@@ -186,7 +202,30 @@ export class ImageWidget extends WidgetType {
     const img = document.createElement("img");
     img.className = "cm-image";
     img.alt = this.alt;
-    img.src = this.url;
+    // Ruling 7/item 3: `this.url` was built via convertFileSrc against THIS
+    // machine's asset protocol — a remote vault's file lives on the host, not
+    // here, so that URL can never resolve. A remote document's own vault
+    // (facet, never app state) instead fetches bytes over remote_read_image
+    // (returns a ready `data:` URL — CSP's img-src already allows `data:`,
+    // no config change) and swaps them in once they arrive. A literal
+    // remote/data rawSrc (an external image pasted into a remote document)
+    // needs none of this — resolveImageUrl already passed it through as-is.
+    const vault = view.state?.facet(documentVault);
+    if (isRemoteVault(vault) && this.rawSrc && !isRemoteSrc(this.rawSrc)) {
+      const remoteVault = vault as RemoteVault;
+      const path = resolveImageSrc(this.rawSrc, this.baseDir);
+      const key = remoteImageCacheKey(remoteVault, path);
+      let pending = remoteImageCache.get(key);
+      if (!pending) {
+        pending = invoke<string>("remote_read_image", { host: remoteVault.host, vault: remoteVault.remoteVaultId, path });
+        remoteImageCache.put(key, pending);
+      }
+      pending
+        .then((dataUrl) => { img.src = dataUrl; })
+        .catch(() => { remoteImageCache.delete(key); }); // best-effort: leave the broken-image state, allow a retry later
+    } else {
+      img.src = this.url;
+    }
 
     // Recursive-search fallback: when the literal src fails to load AND the
     // setting is on AND it's a local path, ask the backend to find the file by
@@ -204,6 +243,12 @@ export class ImageWidget extends WidgetType {
       triedFallback = true;
       if (isRemoteSrc(this.rawSrc)) return; // remote/data never rediscovered
       if (!this.rawSrc) return; // nothing to search by name
+      // The rediscovery scan is a LOCAL filesystem walk (localFileHost.resolveImage
+      // below, unconditionally) — a remote vault's document has no local baseDir
+      // to walk, so skip it rather than fire a pointless (and disk-scanning-looking)
+      // IPC call while viewing remote content. The primary remote_read_image swap
+      // above already covers the real "find this file" job for a remote vault.
+      if (isRemoteVault(vault)) return;
       const root = imageSearchRoot();
       const plan = searchPlanFor(this.searchScope, root, this.baseDir);
       if (this.searchScope === "vault" && root === null) {

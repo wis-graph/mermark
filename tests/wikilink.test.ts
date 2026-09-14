@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { EditorState } from "@codemirror/state";
 import { wikilinkPath, isImageTarget, sameFileHeadingAnchor, WikilinkWidget } from "../src/markdown/wikilink";
 import { setDocumentOpenHandler } from "../src/markdown/document-open";
+import { documentVault, REMOTE_VAULT_READONLY_MESSAGE } from "../src/document/document-vault";
+import type { RemoteVault } from "../src/workspace/workspace-state";
 
 const mockInvoke = vi.fn();
 const mockOpenAsset = vi.fn();
@@ -297,7 +300,67 @@ describe("WikilinkWidget external URL branch (E)", () => {
     expect(mockInvoke).not.toHaveBeenCalledWith("create_markdown_file", expect.any(Object));
     expect(mockInvoke).not.toHaveBeenCalledWith("open_path", expect.any(Object));
   });
+});
 
+// ---------------------------------------------------------------------------
+// F — Ruling 8 / task-8a item 1: a remote vault is READ-ONLY. Clicking a
+// missing [[link]] must never call create_markdown_file (which would write a
+// stray file onto THIS machine's local disk while viewing a remote vault),
+// and must show a visible notice instead of silently doing nothing.
+// ---------------------------------------------------------------------------
+describe("WikilinkWidget remote-vault read-only guard (F, Ruling 8)", () => {
+  const remoteVault: RemoteVault = {
+    vaultId: "vault-remote-1",
+    workspaceId: "workspace-default",
+    displayName: "원격 볼트",
+    rootPath: null,
+    persistenceKind: "remote",
+    explorerRoot: "remote://wis-macmini/",
+    host: "wis-macmini",
+    remoteVaultId: "rv-1",
+  };
+  const remoteView = { state: EditorState.create({ extensions: [documentVault.of(remoteVault)] }) } as any;
+
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  it("clicking a missing [[link]] in a remote vault never calls create_markdown_file, and shows the read-only notice", async () => {
+    mockInvoke.mockImplementation((cmd) => (cmd === "path_exists" ? Promise.resolve(false) : Promise.resolve()));
+
+    const widget = new WikilinkWidget("alias", "missing.md");
+    const dom = widget.toDOM(remoteView);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(dom.className).toContain("cm-wikilink-missing");
+
+    dom.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockInvoke).not.toHaveBeenCalledWith("create_markdown_file", expect.any(Object));
+    expect(dom.className).toContain("cm-wikilink-error");
+    expect(dom.title).toBe(REMOTE_VAULT_READONLY_MESSAGE);
+  });
+
+  it("REGRESSION: a local (no facet / undefined vault) document still auto-creates as before", async () => {
+    let exists = false;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === "path_exists") return Promise.resolve(exists);
+      if (cmd === "create_markdown_file") {
+        exists = true;
+        return Promise.resolve();
+      }
+      return Promise.resolve();
+    });
+    const widget = new WikilinkWidget("alias", "missing.md");
+    const dom = widget.toDOM({} as any); // no `.state` at all — same fixture every other test in this file uses
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    dom.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockInvoke).toHaveBeenCalledWith("create_markdown_file", { path: "missing.md" });
+  });
+});
+
+describe("WikilinkWidget external URL branch (E) — eq()", () => {
   it("eq() is false when externalUrl differs", () => {
     const a = new WikilinkWidget("x", "", null, "https://a.com");
     const b = new WikilinkWidget("x", "", null, "https://b.com");

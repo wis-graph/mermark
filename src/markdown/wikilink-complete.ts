@@ -81,6 +81,13 @@ let cachedAt = 0;
  *  IPC is zero. Invalidates when the dir changes or the TTL lapses. Side-effecting
  *  (a command): the only function here that talks to the backend. */
 export async function loadTargetsOnce(baseDir: string): Promise<LinkTarget[]> {
+  // Leaf-site note (task-8a step 5): stays on localFileHost, not
+  // fileHostFor(vault) — this only feeds `[[` autocomplete SUGGESTIONS
+  // (read-only either way, never create_markdown_file/write), so a remote
+  // vault's worst case here is a stale/local suggestion list, not a
+  // read-only violation or a wrong-machine write. Left local-only for v1;
+  // a later task can thread the vault through if remote `[[` suggestions
+  // turn out to matter.
   const fresh = cache !== null && cachedDir === baseDir && Date.now() - cachedAt < TTL_MS;
   if (fresh) return cache!;
   const list = await localFileHost.listLinkTargets(baseDir);
