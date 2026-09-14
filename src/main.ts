@@ -156,11 +156,12 @@ function assertNever(x: never): never {
  *  === "permanent"` check this replaces. */
 export function isVaultRootLocked(vault: Pick<Vault, "persistenceKind"> | undefined): boolean {
   if (!vault) return false;
-  switch (vault.persistenceKind) {
+  const kind = vault.persistenceKind;
+  switch (kind) {
     case "permanent": return true;
     case "global": return false;
     case "remote": return true;
-    default: return assertNever(vault as never);
+    default: return assertNever(kind);
   }
 }
 
@@ -177,11 +178,12 @@ export function isVaultRootLocked(vault: Pick<Vault, "persistenceKind"> | undefi
  *  fell into the `else`); this function just makes that choice explicit and
  *  exhaustive so it survives the next vault kind. */
 export function tabScopeForVault(vault: Pick<Vault, "persistenceKind">): TabPersistenceScope {
-  switch (vault.persistenceKind) {
+  const kind = vault.persistenceKind;
+  switch (kind) {
     case "permanent": return "permanent";
     case "global": return "session";
     case "remote": return "session";
-    default: return assertNever(vault as never);
+    default: return assertNever(kind);
   }
 }
 
