@@ -15,7 +15,7 @@
 //! shows up as an ordinary `Component::Normal` and sails through the
 //! component check untouched (see `epubview.rs`'s doc comment on
 //! "structural vs. checked" containment — this case is exactly why
-//! `htmlview.rs` re-validates *after* the join). `is_canonically_within` is
+//! `htmlview.rs` re-validates *after* the join). `canonicalize_within` is
 //! that second gate: it canonicalizes both the armed root and the resolved
 //! candidate — which resolves symlinks to their real target, not just their
 //! lexical path — and, if the canonicalized target is still contained,
@@ -116,6 +116,33 @@ mod tests {
     #[test]
     fn rejects_empty_and_root() {
         assert_eq!(resolve_within(&armed(), ""), None);
+    }
+
+    /// Pins the accept path: a real file inside the armed root must come
+    /// back as `Some` carrying the *canonicalized* path inside the root —
+    /// not just any `Some`. Without this, a bug that returned `Some` for
+    /// the wrong path (e.g. echoing back an unrelated file) would pass
+    /// every other test here. Compares against `root.canonicalize()` rather
+    /// than the raw `root` because on macOS `TMPDIR` resolves through a
+    /// `/var` → `/private/var` symlink, so a literal `root.join(...)`
+    /// wouldn't match what `canonicalize_within` actually returns.
+    #[test]
+    fn accepts_a_real_file_inside_the_armed_root() {
+        let n = TEST_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = std::env::temp_dir().join(format!("mermark-rv-accept-{}-{n}", std::process::id()));
+        let root = tmp.join("vault");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("note.md"), "hello").unwrap();
+
+        let armed = ArmedVault { id: "rv1".into(), display_name: "노트".into(), root: root.clone() };
+        let resolved = resolve_within(&armed, "note.md");
+        let canonical = resolved.as_ref().and_then(|candidate| canonicalize_within(&armed, candidate));
+        let expected = root.canonicalize().unwrap().join("note.md");
+
+        std::fs::remove_dir_all(&tmp).ok();
+
+        assert_eq!(resolved, Some(root.join("note.md")), "component check should pass");
+        assert_eq!(canonical, Some(expected), "legitimate in-root file must resolve to its canonical path");
     }
 
     /// A symlink inside the armed root pointing at a file outside it: the
