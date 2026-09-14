@@ -53,11 +53,33 @@ pub fn base_url(host: &str) -> Result<String, String> {
     if host.contains("://") || host.contains('/') {
         return Err(format!("호스트에는 이름과 포트만 적습니다: {host}"));
     }
+    if !is_ascii_host(host) {
+        // A frontend pre-flight check (`hostFieldProblem`) is meant to catch
+        // this before the user ever gets here (e.g. typing "맥미니"), but
+        // that check is TS and can be bypassed, skipped by an older client,
+        // or simply have a bug — this is the backstop for the same mistake.
+        // Left unchecked, a non-ASCII host silently goes out IDNA/punycode-
+        // encoded (`xn--9i1bx8ksvb`), which never resolves and surfaces only
+        // as an opaque `REMOTE:Unreachable`, not as "that's not a valid
+        // host name".
+        return Err(format!("호스트 이름에는 영문·숫자·점·하이픈만 쓸 수 있습니다: {host}"));
+    }
     if host.contains(':') {
         Ok(format!("http://{host}"))
     } else {
         Ok(format!("http://{host}:{DEFAULT_PORT}"))
     }
+}
+
+/// Whether every byte of a host string is plain ASCII — the only alphabet
+/// `base_url` accepts for a bare `name[:port]`. Named separately (rather
+/// than inlined into `base_url`'s `if`) because this is a domain rule in
+/// its own right: it's the same "only ASCII host/port syntax" boundary the
+/// frontend's `hostFieldProblem` enforces before pairing, and giving it a
+/// name here is what lets both sides be read as "the same rule enforced
+/// twice" rather than two unrelated checks that happen to overlap.
+fn is_ascii_host(host: &str) -> bool {
+    host.is_ascii()
 }
 
 /// Classifies a host response's HTTP status into one of the four surfaced
@@ -463,6 +485,26 @@ mod tests {
     fn rejects_a_host_with_a_path_or_scheme_we_do_not_support() {
         assert!(base_url("http://evil/x").is_err());
         assert!(base_url("").is_err());
+    }
+
+    /// The backstop for the "맥미니" incident: a frontend pre-flight check
+    /// (`hostFieldProblem`) is supposed to catch this first, but this must
+    /// refuse the same input for the same reason even if that gate is
+    /// bypassed, outdated, or buggy.
+    #[test]
+    fn base_url_refuses_a_non_ascii_host() {
+        assert!(base_url("맥미니").is_err());
+    }
+
+    /// Pins every shape `base_url` already accepted before the non-ASCII
+    /// guard was added — the guard must add a new rejection, not narrow
+    /// any of these.
+    #[test]
+    fn base_url_still_accepts_every_shape_it_already_did() {
+        assert_eq!(base_url("mac-mini").unwrap(), "http://mac-mini:8787");
+        assert_eq!(base_url("mac-mini:9000").unwrap(), "http://mac-mini:9000");
+        assert_eq!(base_url("100.64.1.2").unwrap(), "http://100.64.1.2:8787");
+        assert!(base_url("ssh://whatever").unwrap().starts_with("http://127.0.0.1:"));
     }
 
     #[test]

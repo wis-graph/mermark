@@ -217,7 +217,42 @@ async fn resolve_bind_ip(mode: BindMode) -> Result<IpAddr, String> {
 /// could act on differently, so they all collapse to "no Tailscale address
 /// available" for `resolve_bind_ip` to report.
 fn tailscale_ipv4() -> Option<IpAddr> {
-    tailscale_ipv4_via("tailscale")
+    tailscale_ipv4_from(tailscale_program_candidates())
+}
+
+/// Known install locations for the `tailscale` CLI, tried in order before
+/// ever falling back to a bare `PATH` lookup. A GUI app launched from
+/// Finder inherits `launchctl`'s minimal `PATH`
+/// (`/usr/bin:/bin:/usr/sbin:/sbin`) — it does **not** see `/usr/local/bin`
+/// or `/opt/homebrew/bin`, even though a Terminal shell (which sources
+/// `.zshrc`/`.bash_profile`) does. That gap is why the Tailscale radio in
+/// Settings worked when mermark was launched from a terminal but silently
+/// failed when launched by double-clicking the `.app` bundle: the bare
+/// `"tailscale"` lookup below depends entirely on `PATH`, and the GUI
+/// process's `PATH` never contains it.
+///
+/// This list is the single owner of that domain rule — no caller should
+/// hardcode a candidate path inline. The bare-name fallback is deliberately
+/// **last**: a `PATH` lookup can only help (never hurt) once every known
+/// absolute location has already come up empty, so trying it first would
+/// just be redundant in the terminal case and never fire in the GUI case.
+fn tailscale_program_candidates() -> &'static [&'static str] {
+    &[
+        "/usr/local/bin/tailscale", // Homebrew (Intel) / the app's own shim script
+        "/Applications/Tailscale.app/Contents/MacOS/tailscale", // App Store bundle's real binary
+        "/opt/homebrew/bin/tailscale", // Homebrew (Apple Silicon)
+        "tailscale",                // PATH fallback — must stay last
+    ]
+}
+
+/// Tries each candidate program in order and returns the first one that
+/// successfully reports an address. A candidate that doesn't exist (or
+/// isn't executable) just fails `tailscale_ipv4_via` like any other
+/// failure and the search moves on — this is what lets a GUI-launched app
+/// skip past the absolute paths that don't apply to its install and still
+/// land on one that does.
+fn tailscale_ipv4_from(candidates: &[&str]) -> Option<IpAddr> {
+    candidates.iter().find_map(|c| tailscale_ipv4_via(c))
 }
 
 /// `tailscale_ipv4`'s body, with the program name pulled out as a parameter
@@ -444,6 +479,47 @@ mod tests {
         // Stands in for "tailscale not on PATH" — this exact name should
         // never collide with a real binary on a test runner's machine.
         assert_eq!(tailscale_ipv4_via("mermark-nonexistent-tailscale-stand-in"), None);
+    }
+
+    /// PATH lookup is the fallback, never the first thing tried — a GUI
+    /// app's minimal inherited PATH doesn't have `tailscale` on it, so
+    /// every absolute-path candidate ahead of it must actually be an
+    /// absolute path, and the bundled App Store binary (the one behind the
+    /// `/usr/local/bin/tailscale` shim script, per this machine's own
+    /// `cat /usr/local/bin/tailscale`) must be among them.
+    #[test]
+    fn tailscale_candidates_put_the_bare_path_lookup_last() {
+        let candidates = tailscale_program_candidates();
+        assert_eq!(*candidates.last().unwrap(), "tailscale", "PATH 폴백은 반드시 마지막이어야 한다");
+        assert!(
+            candidates.len() >= 2 && candidates[..candidates.len() - 1].iter().all(|c| c.starts_with('/')),
+            "폴백 앞의 후보는 전부 절대 경로여야 한다: {candidates:?}"
+        );
+        assert!(
+            candidates.contains(&"/Applications/Tailscale.app/Contents/MacOS/tailscale"),
+            "App Store 번들 실체 경로가 후보에 있어야 한다"
+        );
+    }
+
+    /// The actual regression: earlier candidates not existing must not stop
+    /// the search — it should keep going and find a later one. The old
+    /// tests all passed `tailscale_ipv4_via` an absolute path directly,
+    /// never exercising this search loop at all, which is exactly how the
+    /// Finder-launched-app bug shipped undetected.
+    #[cfg(unix)]
+    #[test]
+    fn tailscale_ipv4_from_skips_missing_candidates_and_uses_a_later_one() {
+        let dir = tmp_config_dir("ipv4-from-skips-missing");
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = fake_tailscale_script(&dir, "100.64.1.2\n");
+        let candidates = ["/nonexistent/mermark-a/tailscale", "/nonexistent/mermark-b/tailscale", program.as_str()];
+        assert_eq!(tailscale_ipv4_from(&candidates), Some("100.64.1.2".parse().unwrap()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tailscale_ipv4_from_is_none_when_every_candidate_is_missing() {
+        assert_eq!(tailscale_ipv4_from(&["/nonexistent/a", "/nonexistent/b"]), None);
     }
 
     #[test]
