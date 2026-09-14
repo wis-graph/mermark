@@ -97,6 +97,7 @@ import { setImageSearchRoot, owningVaultRoot } from "./markdown/image-search-roo
 import { attachImageToVault } from "./markdown/attach-image";
 import {
   GLOBAL_VAULT_ID,
+  REMOTE_VAULT_WIRE_ROOT,
   WorkspaceStateError,
   WorkspaceStore,
   type Vault,
@@ -135,6 +136,25 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
 };
 
 const SAFE_EXPLORER_BASE_PATH = "/";
+
+/** A just-opened document's own base directory — `dirOf(file)`, with a
+ *  fallback for the "file sits at its vault's own root, no directory part"
+ *  case. The fallback is NOT one constant: a local vault's root is the real
+ *  filesystem root (`SAFE_EXPLORER_BASE_PATH`, "/"), but a remote vault's
+ *  root is the wire root (`REMOTE_VAULT_WIRE_ROOT`, "") — this baseDir feeds
+ *  straight into `resolveImageSrc`/`remote_resolve_image`'s `baseDir`
+ *  argument (markdown/image.ts), which for a remote document becomes a
+ *  `remote_read_image` path query. Final review C1's second symptom: using
+ *  the local fallback ("/") for a remote root-level document made every
+ *  `![[img]]` in it resolve to "/img.png" — a path the host's `safe_path`
+ *  always 404s (only "" is its own root; any leading "/" hits
+ *  `resolve_within`'s `RootDir` rejection) — so every image in a root-level
+ *  remote note broke. Named so the ONE fallback rule that must track
+ *  `REMOTE_VAULT_WIRE_ROOT` lives in one place instead of being reinlined at
+ *  each of `currentBaseDir`'s two assignment sites. */
+function baseDirForOpenedDocument(file: string, vault: Vault | undefined): string {
+  return dirOf(file) || (isRemoteVault(vault) ? REMOTE_VAULT_WIRE_ROOT : SAFE_EXPLORER_BASE_PATH);
+}
 
 export function shouldPreserveGlobalExplorerRoot(vault: Pick<Vault, "persistenceKind"> | undefined): boolean {
   return vault?.persistenceKind === "global";
@@ -571,11 +591,19 @@ async function boot() {
   let currentExplorerFolder = reloadHandoff.globalExplorerRoot ?? currentBaseDir;
   // A remote vault's `explorerRoot` is a virtual browsing root on the HOST,
   // not a path this window's local filesystem can `list_dir` — it must never
-  // reach the local Explorer's `getBaseDir`/`jumpToRoot` as if it were one
-  // (task-2b brief: this exact confusion is what made the local explorer jump
-  // to a bogus root). Until a real remote-browsing surface exists (Task 10+),
-  // both fall back to whatever local folder the Explorer was already showing,
-  // same as the Global Vault — never `vault.explorerRoot` for a remote vault.
+  // be confused with a LOCAL folder (task-2b brief: this exact confusion is
+  // what made the local explorer jump to a bogus root before Task 10 gave
+  // the Explorer a real remote-browsing surface). But since Task 10,
+  // `getBaseDir` (the Explorer interface this function implements) already
+  // routes every `listDir` through `fileHostFor(currentVault())` — which is
+  // vault-kind-generic — so a remote vault's OWN `explorerRoot` (Task 10's
+  // `registerRemoteVault`) is exactly the right thing to hand back, the same
+  // way the permanent case hands back `vault.explorerRoot` instead of some
+  // other local folder. Final review C1/I1: returning `currentExplorerFolder`
+  // (a LOCAL folder) here instead was the bug — it made `jumpToRoot` refuse
+  // to move (root-locked, and the local folder never equals the vault's real
+  // root) and left every remote vault's Explorer stuck showing whatever
+  // local tree was up before the vault was selected.
   const explorerRootForCurrentSelection = (): string => {
     const selected = selectedWorkspaceVault();
     if (shouldPreserveGlobalExplorerRoot(selected)) return currentExplorerFolder;
@@ -584,7 +612,7 @@ async function boot() {
     switch (vault.persistenceKind) {
       case "permanent": return vault.explorerRoot;
       case "global": return currentBaseDir;
-      case "remote": return currentExplorerFolder;
+      case "remote": return vault.explorerRoot;
       default: return assertNever(vault);
     }
   };
@@ -1052,9 +1080,10 @@ async function boot() {
     targetVault?: Vault,
   ): Promise<boolean> => {
     const sourceEditor = current;
+    const readVault = resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault());
     let fresh: { text: string; mtime: number };
     try {
-      fresh = await fileHostFor(resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault())).readFile(absPath);
+      fresh = await fileHostFor(readVault).readFile(absPath);
     } catch (error: unknown) {
       if (requestId === lifecycleRequest) throw error;
       return false;
@@ -1063,12 +1092,12 @@ async function boot() {
       if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
       return false;
     }
-    if (!(await watcherHandoff.handoff(absPath)) || requestId !== lifecycleRequest) {
+    if (!(await watcherHandoff.handoff(absPath, readVault)) || requestId !== lifecycleRequest) {
       if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
       return false;
     }
     onCommit?.();
-    openInWindow(absPath, fresh, { watcherReady: true }, targetVault);
+    openInWindow(absPath, fresh, {}, targetVault);
     return true;
   };
   const openDocumentSafely = (absPath: string, onCommit?: () => void, targetVault?: Vault): Promise<boolean> => {
@@ -1367,14 +1396,14 @@ async function boot() {
           if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
           return;
         }
-        if (!(await watcherHandoff.handoff(nextTab?.path)) || requestId !== lifecycleRequest) {
+        if (!(await watcherHandoff.handoff(nextTab?.path, vault)) || requestId !== lifecycleRequest) {
           if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
           return;
         }
         const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, scope);
         routedVault = vault;
         const selection = selectVaultView(nextTabs);
-        if (selection.kind === "document" && fresh) openInWindow(selection.tab.path, fresh, { watcherReady: true });
+        if (selection.kind === "document" && fresh) openInWindow(selection.tab.path, fresh, {});
         else renderWelcomeForVault();
       })();
     },
@@ -1638,7 +1667,7 @@ async function boot() {
   function openInWindow(
     file: string,
     fresh: { text: string; mtime: number },
-    opts: { readonly viaHistory?: boolean; readonly watcherReady?: boolean } = {},
+    opts: { readonly viaHistory?: boolean } = {},
     targetVault?: Vault,
   ): void {
     // `targetVault`, when the caller already knows it (a vault-crossing
@@ -1665,7 +1694,7 @@ async function boot() {
     teardownCurrent();
     host.classList.remove("welcome-host");
     currentFile = file;
-    currentBaseDir = dirOf(file) || SAFE_EXPLORER_BASE_PATH;
+    currentBaseDir = baseDirForOpenedDocument(file, selectedVault);
     if (selectedVault) vaultTabs.open(selectedVault.vaultId, file, tabScopeForVault(selectedVault));
     const { text, mtime } = fresh;
 
@@ -1730,12 +1759,14 @@ async function boot() {
       }
     }
 
-    // A remote document's path is vault-relative ("노트.md", no host-local
-    // filesystem counterpart) — watch_file would arm a LOCAL filesystem
-    // watcher on whatever that relative name resolves to under the process's
-    // CWD, not the host's file (v1 has no remote file-watch command at all).
-    // Skipped outright rather than let it silently watch the wrong thing.
-    if (!opts.watcherReady && selectedVault.persistenceKind !== "remote") void watcherHandoff.handoff(file);
+    // No `!opts.watcherReady` fallback here (there used to be one): every
+    // real caller of `openInWindow` already threads `watcherReady: true`
+    // after having done its OWN `watcherHandoff.handoff` call first (final
+    // review C2 found this branch dead — the guard it was gated behind never
+    // actually fired). Watching (or skipping, for a remote vault) now
+    // happens exactly once per open, at each of those call sites, gated
+    // structurally by `handoff` itself via `shouldWatchDocument` — not
+    // re-decided here from `selectedVault.persistenceKind` a second time.
 
     // Re-opening swaps the document without firing docChanged on the new editor,
     // so an open outline panel would show the previous file's headings. Refresh
@@ -1807,9 +1838,9 @@ async function boot() {
       return;
     }
     if (!(await commitBeforeSwitch())) return;
-    if (!(await watcherHandoff.handoff(target))) return;
+    if (!(await watcherHandoff.handoff(target, targetVault))) return;
     navHistory = next; // commit the pointer only after the read succeeded
-    openInWindow(target, fresh, { viaHistory: true, watcherReady: true }, targetVault);
+    openInWindow(target, fresh, { viaHistory: true }, targetVault);
   }
   const goBack = (): void => void navigateHistory(back);
   const goForward = (): void => void navigateHistory(forward);

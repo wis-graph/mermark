@@ -50,6 +50,17 @@ describe("resolveImageSrc", () => {
   it("keeps an absolute filesystem path as-is", () => {
     expect(resolveImageSrc("/abs/a.png", baseDir)).toBe("/abs/a.png");
   });
+
+  // C1's second symptom (final-review-ts.md): a root-level REMOTE document's
+  // baseDir is the wire root, "" (REMOTE_VAULT_WIRE_ROOT) — never "/" (that's
+  // the LOCAL filesystem root, a different vault kind's convention). Joining
+  // "" the same way a non-empty baseDir joins ("${baseDir}/${src}") produces
+  // a leading "/" no matter what baseDir was, so an empty baseDir must be a
+  // distinct case: the src IS already the full vault-relative path, nothing
+  // to prefix.
+  it("baseDir \"\" (the remote wire root) returns src unprefixed, not \"/\" + src", () => {
+    expect(resolveImageSrc("pic.png", "")).toBe("pic.png");
+  });
 });
 
 describe("isRemoteSrc", () => {

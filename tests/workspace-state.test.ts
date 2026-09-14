@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore, anyVaultStillUsesHost, canonicalRootPath, workspaceStorageKey } from "../src/workspace/workspace-state";
+import { GLOBAL_VAULT_ID, REMOTE_VAULT_WIRE_ROOT, WorkspaceStateError, WorkspaceStore, anyVaultStillUsesHost, canonicalRootPath, workspaceStorageKey } from "../src/workspace/workspace-state";
 
 describe("WorkspaceStore", () => {
   beforeEach(() => localStorage.clear());
@@ -191,6 +191,30 @@ describe("WorkspaceStore", () => {
       expect(reloaded).toMatchObject({ persistenceKind: "remote", host: "wis-macmini:8787", remoteVaultId: "rv-abc", displayName: "맥미니 노트" });
       expect(restartedStore.get().workspaces[0]?.vaultIds).toContain(remote.vaultId);
       expect(restartedStore.get().workspaces[0]?.currentVaultId).toBe(remote.vaultId);
+    });
+
+    // C1 (final-review-ts.md): the host's own wire contract (remote_host.rs's
+    // `safe_path`) treats ONLY the empty string as "the vault root" — any
+    // non-empty path (including "/") goes through `resolve_within`, which
+    // rejects a leading `RootDir` component and 404s. A `RemoteVault` whose
+    // `explorerRoot` is `"/"` therefore can never list its own root against a
+    // real host: every badge probe and every Explorer root-jump 404s and gets
+    // misclassified as "호스트가 공유를 껐음" even though sharing is on. Pinned
+    // here (not just at the wire-constant's declaration) so a future change to
+    // either registration path can't silently regress back to "/".
+    it("gives a freshly registered remote vault the wire-root value, not a local-looking \"/\"", () => {
+      const store = new WorkspaceStore();
+      const remote = store.registerRemoteVault("wis-macmini", "rv-1", "원격");
+      expect(remote.explorerRoot).toBe(REMOTE_VAULT_WIRE_ROOT);
+      expect(remote.explorerRoot).toBe("");
+    });
+
+    it("restores the wire-root value for a remote vault reloaded from storage", () => {
+      const firstStore = new WorkspaceStore();
+      firstStore.registerRemoteVault("wis-macmini", "rv-1", "원격");
+      const restarted = new WorkspaceStore();
+      const reloaded = restarted.get().vaults.find((v) => v.persistenceKind === "remote");
+      expect(reloaded?.explorerRoot).toBe(REMOTE_VAULT_WIRE_ROOT);
     });
 
     it("rejects pairing the same host+remoteVaultId twice", () => {

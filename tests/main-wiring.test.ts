@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorView } from "@codemirror/view";
 import { SHORTCUT_ACTIONS } from "../src/shortcuts/actions";
+import { REMOTE_VAULT_WIRE_ROOT } from "../src/workspace/workspace-state";
 
 const pathArg = (args: unknown): string | undefined => {
   if (typeof args !== "object" || args === null || !("path" in args) || typeof args.path !== "string") return undefined;
@@ -71,10 +72,18 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
   // workspace-sidebar click path, not just a spied fileHostFor call.
   if (command === "remote_list_dir") {
     const a = args as Record<string, unknown>;
+    const remotePath = String(a.path ?? "");
+    // C1 regression guard: the real host (remote_host.rs's `safe_path`)
+    // treats ONLY the empty string as "the vault root" — a leading "/" 404s
+    // at `resolve_within`'s `RootDir` rejection, which `remote_client.rs`'s
+    // `classify()` maps to `REMOTE:SharingOff`. A caller that still sends
+    // "/" for the root (the exact C1 bug) sees this rejection here too,
+    // instead of the mock silently answering as if "/" worked.
+    if (remotePath.startsWith("/")) return Promise.reject(new Error("REMOTE:SharingOff"));
     // "책.epub" (task 11): a remote vault CAN list a non-viewable file — the
     // listing itself is just names/paths — but opening it must be refused
     // (remote-capability.ts's remoteCanOpen), not silently mis-rendered.
-    if (a.path === "/") {
+    if (remotePath === REMOTE_VAULT_WIRE_ROOT) {
       return Promise.resolve([
         { name: "노트.md", path: "노트.md", is_dir: false },
         { name: "책.epub", path: "책.epub", is_dir: false },
@@ -84,12 +93,28 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
   }
   if (command === "remote_read_file") {
     const a = args as Record<string, unknown>;
-    return Promise.resolve({ text: documentContents.get(String(a.path)) ?? "# 원격 문서", mtime: 1 });
+    const remotePath = String(a.path ?? "");
+    // Same C1 regression guard as remote_list_dir above, applied to reads —
+    // a vault-relative name never starts with "/" on the wire.
+    if (remotePath.startsWith("/")) return Promise.reject(new Error("REMOTE:SharingOff"));
+    return Promise.resolve({ text: documentContents.get(remotePath) ?? "# 원격 문서", mtime: 1 });
+  }
+  if (command === "remote_read_image") {
+    const a = args as Record<string, unknown>;
+    const remotePath = String(a.path ?? "");
+    remoteReadImageCalls.push(remotePath);
+    // Same C1 regression guard: a root-level document's image reference must
+    // resolve to a bare vault-relative name ("pic.png"), never "/pic.png" —
+    // main.ts's currentBaseDir fallback for a root-level remote document must
+    // be the wire root (""), not the local filesystem root ("/").
+    if (remotePath.startsWith("/")) return Promise.reject(new Error("REMOTE:SharingOff"));
+    return Promise.resolve("data:image/png;base64,AAAA");
   }
   return Promise.resolve(false);
 });
 
 const documentContents = new Map<string, string>();
+const remoteReadImageCalls: string[] = [];
 const watcherEvents: string[] = [];
 const deferredReads = new Map<string, { readonly promise: Promise<unknown> }>();
 const deferredWatches = new Map<string, { readonly promise: Promise<void> }>();
@@ -165,6 +190,7 @@ describe("main workspace wiring", () => {
     localStorage.clear();
     invokeMock.mockClear();
     documentContents.clear();
+    remoteReadImageCalls.length = 0;
     watcherEvents.length = 0;
     deferredReads.clear();
     deferredWatches.clear();
@@ -1191,7 +1217,7 @@ describe("main workspace wiring", () => {
   describe("task-8a: vault attribution for open/history/standard-links (Ruling 9/10)", () => {
     const permanentVault = { vaultId: "vault-P", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent" as const, explorerRoot: "/P" };
     const globalVault = { vaultId: "vault-global", workspaceId: "workspace-default", displayName: "글로벌 볼트", rootPath: null, persistenceKind: "global" as const, explorerRoot: null };
-    const remoteVault = { vaultId: "vault-remote-1", workspaceId: "workspace-default", displayName: "원격 볼트", rootPath: null, persistenceKind: "remote" as const, explorerRoot: "remote://wis-macmini/", host: "wis-macmini", remoteVaultId: "rv-1" };
+    const remoteVault = { vaultId: "vault-remote-1", workspaceId: "workspace-default", displayName: "원격 볼트", rootPath: null, persistenceKind: "remote" as const, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" };
 
     it("routingTrustsCurrentVault: true for global/remote (never re-derive by path), false for permanent (path re-derivation is meaningful) and undefined", async () => {
       const { routingTrustsCurrentVault } = await import("../src/main");
@@ -1224,10 +1250,16 @@ describe("main workspace wiring", () => {
 
     it("wires routeDocumentPath/openDocument/navigateHistory to actually USE routingTrustsCurrentVault/resolveTargetVault (not a parallel inline copy of the same rule)", () => {
       expect(mainSource).toContain("if (current && routingTrustsCurrentVault(current.persistenceKind)) return current;");
-      expect(mainSource).toContain("fileHostFor(resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault())).readFile(absPath);");
+      expect(mainSource).toContain("const readVault = resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault());");
+      expect(mainSource).toContain("fileHostFor(readVault).readFile(absPath);");
       expect(mainSource).toContain("resolveTargetVault(workspaceStore.getVault(entry.vaultId), currentVault(), workspaceStore.getGlobalVault());");
-      expect(mainSource).toContain("openInWindow(absPath, fresh, { watcherReady: true }, targetVault);");
-      expect(mainSource).toContain("openInWindow(target, fresh, { viaHistory: true, watcherReady: true }, targetVault);");
+      expect(mainSource).toContain("openInWindow(absPath, fresh, {}, targetVault);");
+      expect(mainSource).toContain("openInWindow(target, fresh, { viaHistory: true }, targetVault);");
+      // C2: the SAME vault resolved for the read is what handoff uses to
+      // decide whether to watch at all (shouldWatchDocument) — not
+      // re-derived, and not skipped.
+      expect(mainSource).toContain("watcherHandoff.handoff(absPath, readVault)");
+      expect(mainSource).toContain("watcherHandoff.handoff(target, targetVault)");
     });
 
     it("onSelectVault/onSelectTab pass their own already-known target vault through, not the sidebar's currentVault()", () => {
@@ -1255,7 +1287,7 @@ describe("main workspace wiring", () => {
     it("drives onSelectTab with a real, persisted RemoteVault and reads through remote_read_file", async () => {
       localStorage.setItem("mermark.workspaceState", JSON.stringify({
         workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-x"], currentVaultId: "vault-remote-x", lastSelectedPermanentVaultId: null }],
-        vaults: [{ vaultId: "vault-remote-x", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: "/", host: "wis-macmini", remoteVaultId: "rv-1" }],
+        vaults: [{ vaultId: "vault-remote-x", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" }],
         currentWorkspaceId: "workspace-default",
       }));
       vi.stubGlobal("location", { search: "", href: "" });
@@ -1264,11 +1296,13 @@ describe("main workspace wiring", () => {
 
       // Open the Explorer and the workspace sidebar — the remote vault is
       // already `currentVaultId` from the seeded state above, so the
-      // Explorer should already be sitting at its root ("/") once
-      // `explorerRootForVault`/`jumpExplorerToVaultRoot` ran at boot restore.
+      // Explorer should already be sitting at its wire root (C1: the empty
+      // string, NOT "/" — the host's `safe_path` only recognizes "" as the
+      // vault root) once `explorerRootForVault`/`jumpExplorerToVaultRoot` ran
+      // at boot restore.
       document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
       await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="노트.md"]')).not.toBeNull());
-      expect(invokeMock).toHaveBeenCalledWith("remote_list_dir", expect.objectContaining({ host: "wis-macmini", vault: "rv-1", path: "/" }));
+      expect(invokeMock).toHaveBeenCalledWith("remote_list_dir", expect.objectContaining({ host: "wis-macmini", vault: "rv-1", path: REMOTE_VAULT_WIRE_ROOT }));
 
       document.querySelector<HTMLElement>('.explorer-file[data-path="노트.md"]')?.click();
       await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledWith("remote_read_file", expect.objectContaining({ host: "wis-macmini", vault: "rv-1", path: "노트.md" })));
@@ -1293,6 +1327,36 @@ describe("main workspace wiring", () => {
       expect(document.querySelector(".workspace-error")?.hasAttribute("hidden")).toBe(true);
     });
 
+    // C1's second symptom (final-review-ts.md): a root-level remote document
+    // has no directory part (`dirOf("노트.md") === ""`), so main.ts's
+    // `currentBaseDir = dirOf(file) || SAFE_EXPLORER_BASE_PATH` fallback used
+    // to substitute "/" — the LOCAL filesystem root, never a valid remote
+    // path. Every image in a root-level remote note broke as a result
+    // (`resolveImageSrc("pic.png", "/")` → "/pic.png" → `remote_read_image`
+    // 404s at the host's `RootDir` rejection). This test opens a root-level
+    // remote document whose content references an image and asserts the
+    // resulting `remote_read_image` call carries the bare vault-relative
+    // name, not a leading-slash path.
+    it("resolves a root-level remote document's image against the wire root, not the local filesystem root", async () => {
+      documentContents.set("노트.md", "# 원격\n\n![그림](pic.png)\n");
+      localStorage.setItem("mermark.workspaceState", JSON.stringify({
+        workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-img"], currentVaultId: "vault-remote-img", lastSelectedPermanentVaultId: null }],
+        vaults: [{ vaultId: "vault-remote-img", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" }],
+        currentWorkspaceId: "workspace-default",
+      }));
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+
+      document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="노트.md"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.explorer-file[data-path="노트.md"]')?.click();
+      await vi.waitFor(() => expect(remoteReadImageCalls.length).toBeGreaterThan(0));
+
+      expect(remoteReadImageCalls).toContain("pic.png");
+      expect(remoteReadImageCalls.some((p) => p.startsWith("/"))).toBe(false);
+    });
+
     // Task 11: the persistent read-only indicator and the explicit
     // unsupported-file refusal, driven through the real boot + Explorer
     // click path (not the pure remote-capability.ts functions in isolation —
@@ -1300,7 +1364,7 @@ describe("main workspace wiring", () => {
     it("shows a persistent '읽기 전용 (원격)' mode indicator for an open remote document, and refuses an unsupported remote file type with an explicit message instead of opening a broken viewer", async () => {
       localStorage.setItem("mermark.workspaceState", JSON.stringify({
         workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-y"], currentVaultId: "vault-remote-y", lastSelectedPermanentVaultId: null }],
-        vaults: [{ vaultId: "vault-remote-y", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: "/", host: "wis-macmini", remoteVaultId: "rv-1" }],
+        vaults: [{ vaultId: "vault-remote-y", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" }],
         currentWorkspaceId: "workspace-default",
       }));
       vi.stubGlobal("location", { search: "", href: "" });
@@ -1344,7 +1408,7 @@ describe("main workspace wiring", () => {
       workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FA", "vault-remote-z"], currentVaultId: "vault-remote-z", lastSelectedPermanentVaultId: "vault-%2FA" }],
       vaults: [
         { vaultId: "vault-%2FA", workspaceId: "workspace-default", displayName: "A", rootPath: "/A", persistenceKind: "permanent", explorerRoot: "/A" },
-        { vaultId: "vault-remote-z", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: "/", host: "wis-macmini", remoteVaultId: "rv-1" },
+        { vaultId: "vault-remote-z", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" },
       ],
       currentWorkspaceId: "workspace-default",
     });

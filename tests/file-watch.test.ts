@@ -3,7 +3,8 @@ import { describe, it, expect } from "vitest";
 // decideExternalChange is a pure decision — it imports nothing from Tauri, so we
 // don't need to mock the IPC/event modules here. (watchFile/unwatchFile/onFileChanged
 // are thin invoke/listen wrappers covered by the golden-master + render path.)
-import { createWatcherHandoff, decideExternalChange } from "../src/document/file-watch";
+import { createWatcherHandoff, decideExternalChange, shouldWatchDocument } from "../src/document/file-watch";
+import type { RemoteVault, PermanentVault } from "../src/workspace/workspace-state";
 
 describe("decideExternalChange (auto-reload vs conflict)", () => {
   it("reloads silently when there is no unsaved work", () => {
@@ -44,5 +45,59 @@ describe("decideExternalChange (auto-reload vs conflict)", () => {
     await expect(handoff.handoff("/B.md")).resolves.toBe(false);
 
     expect(events).toEqual(["unwatch", "watch /B.md", "watch /A.md"]);
+  });
+
+  // C2 (final-review-ts.md): every remote document open called
+  // watch_file(<vault-relative name>) against the LOCAL filesystem — the
+  // remote skip in main.ts's openInWindow was gated behind a flag every real
+  // caller had already flipped, so it was dead code. This makes it
+  // structurally impossible instead: `handoff` itself refuses to call
+  // `port.watch` for a remote vault, no matter which caller forgets to
+  // check first.
+  const remoteVault: RemoteVault = {
+    vaultId: "vault-remote-1",
+    workspaceId: "workspace-default",
+    displayName: "원격",
+    rootPath: null,
+    persistenceKind: "remote",
+    explorerRoot: "",
+    host: "wis-macmini",
+    remoteVaultId: "rv-1",
+  };
+  const permanentVault: PermanentVault = {
+    vaultId: "vault-local-1",
+    workspaceId: "workspace-default",
+    displayName: "로컬",
+    rootPath: "/A",
+    persistenceKind: "permanent",
+    explorerRoot: "/A",
+  };
+
+  it("shouldWatchDocument: false for a remote vault, true for local/global/undefined", () => {
+    expect(shouldWatchDocument(remoteVault)).toBe(false);
+    expect(shouldWatchDocument(permanentVault)).toBe(true);
+    expect(shouldWatchDocument(undefined)).toBe(true);
+  });
+
+  it("handoff never calls port.watch for a remote vault's document, even though a path was given — it still unwatches whatever was previously watched", async () => {
+    const events: string[] = [];
+    const handoff = createWatcherHandoff({
+      unwatch: async () => { events.push("unwatch"); },
+      watch: async (path) => { events.push(`watch ${path}`); return { path, generation: "1" }; },
+    }, () => {});
+
+    await expect(handoff.handoff("노트.md", remoteVault)).resolves.toBe(true);
+    expect(events).toEqual(["unwatch"]); // no "watch 노트.md" — the local watcher was never armed
+  });
+
+  it("handoff still watches a local vault's document exactly as before", async () => {
+    const events: string[] = [];
+    const handoff = createWatcherHandoff({
+      unwatch: async () => { events.push("unwatch"); },
+      watch: async (path) => { events.push(`watch ${path}`); return { path, generation: "1" }; },
+    }, () => {});
+
+    await expect(handoff.handoff("/A/note.md", permanentVault)).resolves.toBe(true);
+    expect(events).toEqual(["unwatch", "watch /A/note.md"]);
   });
 });

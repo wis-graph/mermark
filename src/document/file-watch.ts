@@ -7,6 +7,8 @@
 // function so main.ts never hides that domain rule in an inline `if`.
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { isRemoteVault } from "./document-vault";
+import type { Vault } from "../workspace/workspace-state";
 
 /** The payload the backend emits on a real external change (self-writes are
  *  filtered out in Rust, so the frontend never sees its own autosave here). */
@@ -57,8 +59,26 @@ export interface WatcherHandoffPort {
   readonly unwatch: () => Promise<void>;
 }
 
+/** Whether `vault`'s currently open document should register a filesystem
+ *  watch at all. Local vaults (permanent/global/undefined — no vault yet
+ *  known) always should; a remote vault's document lives on ANOTHER
+ *  machine — its path (`watch_file`'s argument) is vault-relative
+ *  (`"노트.md"`), and the real backend's `notify::Watcher::watch` resolves a
+ *  relative path against THIS machine's process CWD, not the host. Watching
+ *  it here either fails outright (Finder-launched .app, CWD `/`) or —worse—
+ *  silently attaches to an unrelated same-named local file (CWD happens to
+ *  hold a `노트.md` of its own), whose edits then overwrite the remote
+ *  buffer via the normal external-change reload path. Final review C2: the
+ *  remote skip used to live as a per-call-site `if` at each of main.ts's
+ *  three open paths (and one of the three never even had it) — this is the
+ *  single gate `handoff` itself applies below, so a caller can no longer
+ *  forget to check. */
+export function shouldWatchDocument(vault: Vault | undefined): boolean {
+  return !isRemoteVault(vault);
+}
+
 export interface WatcherHandoff {
-  handoff(path: string | undefined): Promise<boolean>;
+  handoff(path: string | undefined, vault?: Vault): Promise<boolean>;
   invalidate(): void;
   accepts(event: Pick<WatchSession, "path" | "generation">, currentPath: string): boolean;
 }
@@ -71,7 +91,11 @@ export function createWatcherHandoff(
   let queue: Promise<void> = Promise.resolve();
   let activeSession: WatchSession | undefined;
 
-  const handoff = (path: string | undefined): Promise<boolean> => {
+  const handoff = (rawPath: string | undefined, vault?: Vault): Promise<boolean> => {
+    // shouldWatchDocument's gate applies HERE, before the path is ever
+    // touched, not as a condition each caller has to remember at its own
+    // call site — see the doc comment above.
+    const path = shouldWatchDocument(vault) ? rawPath : undefined;
     const request = ++generation;
     const result = queue.then(async () => {
       if (request !== generation) return false;

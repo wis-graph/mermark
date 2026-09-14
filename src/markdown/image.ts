@@ -28,6 +28,16 @@ export function isRemoteSrc(rawSrc: string): boolean {
 export function resolveImageSrc(src: string, baseDir: string): string {
   if (isRemoteSrc(src)) return src;
   if (src.startsWith("/")) return src;
+  // `baseDir === ""` is REMOTE_VAULT_WIRE_ROOT (workspace-state.ts) — a
+  // root-level remote document's own base directory, distinct from a LOCAL
+  // vault's root ("/"). The join below (`${baseDir}/${src}`) always adds a
+  // leading "/" no matter what baseDir was, which is correct when baseDir IS
+  // "/" (a local root) but wrong when baseDir is the empty wire root: the
+  // host's `safe_path` treats a leading "/" as an absolute-path escape
+  // attempt and 404s it (final review C1's second symptom — every image in a
+  // root-level remote note broke). `src` is already the full vault-relative
+  // path in that case, so nothing gets prefixed.
+  if (baseDir === "") return src;
   return `${baseDir.replace(/\/$/, "")}/${src}`;
 }
 

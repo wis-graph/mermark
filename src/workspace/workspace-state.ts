@@ -4,6 +4,19 @@ export const GLOBAL_VAULT_ID = "vault-global";
 export const GLOBAL_VAULT_NAME = "글로벌 볼트";
 
 export type PersistenceKind = "permanent" | "global" | "remote";
+
+/** The ONE spelling of "the vault root" a `RemoteVault.explorerRoot` may ever
+ *  carry — the single named function/constant the final review (C1) asked
+ *  for: "what the remote vault root is called on the wire". The host's own
+ *  contract (`remote_host.rs`'s `safe_path`) treats ONLY the empty string as
+ *  the vault root; `resolve_within` rejects a leading `RootDir` component
+ *  (i.e. any path starting with `/`), so a `"/"` sent as `path` 404s and the
+ *  client misreads that as "호스트가 공유를 껐음". Every place that constructs
+ *  or restores a `RemoteVault` MUST use this constant for `explorerRoot`
+ *  (`registerRemoteVault` and `readState`'s restore branch, below) — routing
+ *  both through one symbol makes it impossible for the two to drift apart the
+ *  way `"/"` vs. the wire's `""` did. */
+export const REMOTE_VAULT_WIRE_ROOT = "";
 interface VaultBase {
   readonly vaultId: string;
   readonly workspaceId: string;
@@ -93,7 +106,7 @@ const readState = (): WorkspaceState => {
         return [{ vaultId: item.vaultId, workspaceId: item.workspaceId, displayName: item.displayName, persistenceKind: "permanent", rootPath: canonicalRootPath(item.rootPath), explorerRoot: canonicalRootPath(item.rootPath) }];
       }
       if (item.persistenceKind === "remote" && typeof item.host === "string" && typeof item.remoteVaultId === "string") {
-        return [{ vaultId: item.vaultId, workspaceId: item.workspaceId, displayName: item.displayName, persistenceKind: "remote", rootPath: null, explorerRoot: "/", host: item.host, remoteVaultId: item.remoteVaultId }];
+        return [{ vaultId: item.vaultId, workspaceId: item.workspaceId, displayName: item.displayName, persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: item.host, remoteVaultId: item.remoteVaultId }];
       }
       return [];
     });
@@ -180,7 +193,7 @@ export class WorkspaceStore {
     const workspace = this.currentWorkspace();
     if (workspace.vaultIds.some((id) => { const v = this.vaultById(id); return v?.persistenceKind === "remote" && v.host === host && v.remoteVaultId === remoteVaultId; }))
       throw new WorkspaceStateError("duplicate-root", `A vault is already registered for ${host}/${remoteVaultId}`);
-    const vault: Vault = { vaultId: makeRemoteVaultId(host, remoteVaultId), workspaceId: workspace.workspaceId, rootPath: null, displayName: displayName.trim() || remoteVaultId, persistenceKind: "remote", explorerRoot: "/", host, remoteVaultId };
+    const vault: Vault = { vaultId: makeRemoteVaultId(host, remoteVaultId), workspaceId: workspace.workspaceId, rootPath: null, displayName: displayName.trim() || remoteVaultId, persistenceKind: "remote", explorerRoot: REMOTE_VAULT_WIRE_ROOT, host, remoteVaultId };
     const nextWorkspace = { ...workspace, vaultIds: [...workspace.vaultIds, vault.vaultId], currentVaultId: vault.vaultId };
     this.commit({ ...this.state, workspaces: this.state.workspaces.map((item) => item.workspaceId === workspace.workspaceId ? nextWorkspace : item), vaults: [...this.state.vaults, vault] });
     return vault;
