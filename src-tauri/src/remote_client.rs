@@ -363,6 +363,62 @@ pub async fn remote_read_file(
     decode_response(res).await
 }
 
+/// The `/read_asset` request every asset-fetching command (`remote_read_image`,
+/// `remote_read_asset`, and the remote branch of the `htmlview` scheme
+/// handler — 0.18.0 T7) shares: tunnel guard, token lookup, the GET itself,
+/// and status classification, ending in `(content-type, raw bytes)`. Pulled
+/// out as its own function (design §4.5) rather than left duplicated in each
+/// caller specifically so all three go through **one** place that turns a
+/// non-success status into an error — see `asset_error_for_status` for why
+/// that classification can't just be `send_authorized`'s generic `classify`.
+pub(crate) async fn fetch_vault_asset(
+    host: &str,
+    vault: &str,
+    path: &str,
+    store: &crate::remote_token::ClientTokens,
+    tunnels: &crate::remote_ssh::SshTunnels,
+) -> Result<(String, Vec<u8>), String> {
+    ensure_tunnel_serves(host, tunnels)?;
+    let token = token_for_or_expired(store, host)?;
+    let url = format!("{}/read_asset", base_url(host)?);
+    let res = client()?
+        .get(&url)
+        .query(&[("vault", vault), ("path", path)])
+        .header("x-mermark-token", &token)
+        .send()
+        .await
+        .map_err(unreachable)?;
+    if !res.status().is_success() {
+        return Err(asset_error_for_status(res.status().as_u16(), path));
+    }
+    let content_type =
+        res.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let bytes = res.bytes().await.map_err(unreachable)?;
+    Ok((content_type, bytes.to_vec()))
+}
+
+/// Classifies a non-success `/read_asset` response status into the error
+/// string the frontend sees. **413 is deliberately not folded into
+/// `status_for`'s four connection states**: the host's `MAX_ASSET_BYTES`
+/// ceiling (remote_host.rs) rejects a file that is simply too large to
+/// transfer, which is a fact about *this file*, not about whether the host is
+/// reachable — collapsing it into `status_for`'s `_ => Unreachable` arm (as
+/// plain `classify()` would) tells the user "check your network" for a
+/// problem no amount of network troubleshooting fixes. `REMOTE_ASSET_TOO_LARGE:`
+/// is a prefix outside the `REMOTE:` four-state family on purpose, so
+/// `file-bytes.ts`'s `isRemoteAssetTooLarge` can route it to its own "this
+/// file is too big" message instead of the generic connection-state UI.
+/// Every other status still goes through the shared `classify`/`status_for`
+/// path unchanged — this function adds one case, it doesn't replace the
+/// family.
+fn asset_error_for_status(http_status: u16, path: &str) -> String {
+    if http_status == 413 {
+        format!("REMOTE_ASSET_TOO_LARGE: {path}")
+    } else {
+        classify(http_status)
+    }
+}
+
 /// Fetches an image's raw bytes from the host and returns them as a
 /// `data:<mime>;base64,<...>` URL the frontend sets directly as an `img.src`.
 /// This exists because `remote_resolve_image` only returns a vault-relative
@@ -373,6 +429,10 @@ pub async fn remote_read_file(
 /// string is simpler for the caller than a byte array plus a MIME string it
 /// has to combine correctly itself. The app's CSP already allows `data:` in
 /// `img-src`, so this needs no CSP change.
+///
+/// Built on `fetch_vault_asset` (0.18.0 T6) — the return contract (a `data:`
+/// URL string) is unchanged; only the transport got shared with
+/// `remote_read_asset` below.
 #[tauri::command]
 pub async fn remote_read_image(
     host: String,
@@ -381,16 +441,37 @@ pub async fn remote_read_image(
     store: tauri::State<'_, crate::remote_token::ClientTokens>,
     tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
 ) -> Result<String, String> {
-    ensure_tunnel_serves(&host, &tunnels)?;
-    let token = token_for_or_expired(&store, &host)?;
-    let url = format!("{}/read_asset", base_url(&host)?);
-    let req = client()?.get(&url).query(&[("vault", vault.as_str()), ("path", path.as_str())]);
-    let res = send_authorized(req, &token).await?;
-    let content_type = as_image_mime(
-        res.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or(""),
-    );
-    let bytes = res.bytes().await.map_err(unreachable)?;
-    Ok(data_url(&content_type, &bytes))
+    let (content_type, bytes) = fetch_vault_asset(&host, &vault, &path, &store, &tunnels).await?;
+    Ok(data_url(&as_image_mime(&content_type), &bytes))
+}
+
+/// A remote vault file's **raw bytes**, for the byte-class viewers (PDF/DOCX/
+/// Excel/CSV/off-mode HTML — 0.18.0 T6, design §4.5). `remote_read_image`'s
+/// sibling, but returns the bytes themselves rather than a `data:` URL: a
+/// base64 `data:` string inflates by ~33% and briefly doubles peak memory
+/// (encoded + decoded copies both live at once), a cost that was negligible
+/// for a few-hundred-KB image but is not for a 15 MiB spreadsheet.
+///
+/// Returns `tauri::ipc::Response` — a raw (non-JSON) IPC body — which Tauri's
+/// `application/octet-stream` content-type on the wire makes the frontend's
+/// `invoke()` resolve as an `ArrayBuffer` (confirmed against this Tauri
+/// version's own `scripts/ipc-protocol.js`: anything other than
+/// `application/json`/`text/plain` takes the `response.arrayBuffer()`
+/// branch — design §8-B).
+///
+/// No `token` parameter: like every other `remote_*` command, the device
+/// token never reaches the frontend — it's looked up server-side by `host`
+/// (this module's doc comment).
+#[tauri::command]
+pub async fn remote_read_asset(
+    host: String,
+    vault: String,
+    path: String,
+    store: tauri::State<'_, crate::remote_token::ClientTokens>,
+    tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
+) -> Result<tauri::ipc::Response, String> {
+    let (_content_type, bytes) = fetch_vault_asset(&host, &vault, &path, &store, &tunnels).await?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Restricts a response's declared content type to `image/*` before it's
@@ -705,5 +786,106 @@ mod tests {
         let tunnels = crate::remote_ssh::SshTunnels::default();
         let err = ensure_tunnel_serves("ssh://wis@macmini", &tunnels).unwrap_err();
         assert!(err.starts_with("SSH_TUNNEL_MISMATCH"), "got: {err}");
+    }
+
+    // --- asset_error_for_status (0.18.0 T6): 413 is not one of the four
+    // connection states — see the function's own doc comment for why. ------
+
+    #[test]
+    fn asset_too_large_is_not_one_of_the_four_connection_states() {
+        let msg = asset_error_for_status(413, "big.xlsx");
+        assert!(msg.starts_with("REMOTE_ASSET_TOO_LARGE:"), "got: {msg}");
+        assert!(msg.contains("big.xlsx"), "got: {msg}");
+        assert!(!msg.contains("Unreachable"), "got: {msg}");
+    }
+
+    #[test]
+    fn asset_errors_other_than_413_still_use_the_shared_four_state_classifier() {
+        assert!(asset_error_for_status(401, "x").contains("AuthExpired"));
+        assert!(asset_error_for_status(404, "x").contains("SharingOff"));
+        assert!(asset_error_for_status(500, "x").contains("Unreachable"));
+    }
+
+    #[test]
+    fn status_for_mapping_is_unchanged_by_the_asset_error_addition() {
+        // The 4-state map is the badge UI's SSOT — asset_error_for_status
+        // must add a case beside it, never alter it.
+        assert_eq!(status_for(200), RemoteStatus::Connected);
+        assert_eq!(status_for(401), RemoteStatus::AuthExpired);
+        assert_eq!(status_for(404), RemoteStatus::SharingOff);
+        assert_eq!(status_for(413), RemoteStatus::Unreachable);
+    }
+
+    // --- fetch_vault_asset: the real network path both remote_read_image
+    // and remote_read_asset now share -------------------------------------
+
+    #[tokio::test]
+    async fn fetch_vault_asset_maps_a_413_response_to_the_too_large_error() {
+        ensure_crypto_provider_installed();
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let _ = stream
+                    .write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n");
+            }
+        });
+
+        let dir = std::env::temp_dir().join(format!(
+            "mermark-remote-client-test-fetch-asset-413-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let store = crate::remote_token::ClientTokens::load(&dir);
+        store.remember(&format!("{addr}"), "tok").unwrap();
+        let tunnels = crate::remote_ssh::SshTunnels::default();
+
+        // `fetch_vault_asset` builds its own URL from `base_url(host)`, so the
+        // host under test must be exactly what `base_url` turns into
+        // `http://<addr>` — an explicit port makes `base_url` skip appending
+        // its own default.
+        let host = format!("{addr}");
+        let err = fetch_vault_asset(&host, "v1", "big.xlsx", &store, &tunnels).await.unwrap_err();
+        assert!(err.starts_with("REMOTE_ASSET_TOO_LARGE:"), "got: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn fetch_vault_asset_returns_content_type_and_bytes_on_success() {
+        ensure_crypto_provider_installed();
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 4\r\n\r\n\xde\xad\xbe\xef",
+                );
+            }
+        });
+
+        let dir = std::env::temp_dir().join(format!(
+            "mermark-remote-client-test-fetch-asset-ok-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let store = crate::remote_token::ClientTokens::load(&dir);
+        let host = format!("{addr}");
+        store.remember(&host, "tok").unwrap();
+        let tunnels = crate::remote_ssh::SshTunnels::default();
+
+        let (content_type, bytes) = fetch_vault_asset(&host, "v1", "a.bin", &store, &tunnels).await.unwrap();
+        assert_eq!(content_type, "application/octet-stream");
+        assert_eq!(bytes, vec![0xde, 0xad, 0xbe, 0xef]);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

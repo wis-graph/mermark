@@ -387,8 +387,8 @@ pub fn run() {
         // untouched — this scheme gets its *own* CSP via the response header
         // (`htmlview::FRAME_CSP`), which is the whole mechanism that lets a
         // scripted document execute inline JS without weakening the app.
-        .register_uri_scheme_protocol("htmlview", |ctx, request| {
-            htmlview::handle_html_view_request(ctx.app_handle(), &request)
+        .register_asynchronous_uri_scheme_protocol("htmlview", |ctx, request, responder| {
+            htmlview::handle_html_view_request(ctx.app_handle(), request, responder)
         })
         // The set of `.epub` files `arm_epub_view` has admitted; the `epub`
         // protocol handler below reads it via `AppHandle::state`. Sibling of
@@ -430,6 +430,7 @@ pub fn run() {
             attachment_import::finalize_attachment_import,
             attachment_import::rollback_attachment_import,
             htmlview::arm_html_view_root,
+            htmlview::arm_remote_html_view_root,
             epubview::arm_epub_view,
             epubview::read_epub_entry,
             hwp::hwp_open,
@@ -446,6 +447,7 @@ pub fn run() {
             remote_client::remote_list_files_recursive,
             remote_client::remote_read_file,
             remote_client::remote_read_image,
+            remote_client::remote_read_asset,
             remote_client::remote_resolve_image,
             remote_client::remote_list_link_targets,
             remote_ssh::remote_ssh_connect,

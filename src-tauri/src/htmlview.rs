@@ -128,21 +128,68 @@ pub(crate) fn mint_view_token() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Per-open state: which armed root a minted token resolves to. Managed
-/// Tauri state (`app.manage(HtmlViewRoots::default())`); the protocol
-/// handler reads it via `AppHandle::state`. A token is *never* removed once
-/// minted (§9 of the design scopes a disarm command out — accumulation is
-/// bounded by documents opened in the session, an acceptable cost), and two
-/// opens of the very same directory each mint their *own* token — that's
-/// deliberate, not an inefficiency: it's what makes every open its own
-/// unshared origin (design §10.3, "형제 scripted 문서 접근" row).
+/// What a minted token resolves to: a canonicalized local directory (the
+/// original, single-machine form), or a directory inside a *remote* vault
+/// (0.18.0 T7, design §5.5 안 C). An enum, not two parallel token maps or an
+/// `Option<remote fields>` bolted onto one struct, so "a remote token
+/// resolves to a local filesystem path" is a case `resolve_target`'s `match`
+/// must handle explicitly rather than something that could silently fall
+/// through — the whole reason design §6's L3 finding (a remote row's
+/// vault-relative path reaching `std::fs::canonicalize`) can't recur here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum HtmlViewRoot {
+    Local(PathBuf),
+    /// `dir` is a **vault-relative** path (never a local one) — joined with
+    /// a request's own decoded `rel_path` as plain `/`-separated strings in
+    /// `resolve_target`, never through `PathBuf::join`/`canonicalize`. There
+    /// is no local filesystem call anywhere in this variant's resolution
+    /// path; the joined string is only ever handed to
+    /// `remote_client::fetch_vault_asset`, which forwards it to the host's
+    /// own `safe_path` — the actual containment authority for a remote root
+    /// (design §5.5: "그다음은 호스트 `safe_path`가 정본이다").
+    Remote { host: String, vault: String, dir: String },
+}
+
+/// What `resolve_target` hands back for a `(token, rel_path)` that passed
+/// its gate: either a concrete local filesystem path ready for
+/// `std::fs::read`, or the `(host, vault, path)` triple `fetch_vault_asset`
+/// needs — never a local path standing in for a remote file, by
+/// construction (the enum, not caller discipline, is what makes L1/L2/L3 of
+/// design §6 impossible to reintroduce here).
+#[derive(Debug)]
+pub(crate) enum ResolvedTarget {
+    Local(PathBuf),
+    Remote { host: String, vault: String, path: String },
+}
+
+/// Per-open state: which armed root (local or remote) a minted token
+/// resolves to. Managed Tauri state (`app.manage(HtmlViewRoots::default())`);
+/// the protocol handler reads it via `AppHandle::state`. A token is *never*
+/// removed once minted (§9 of the design scopes a disarm command out —
+/// accumulation is bounded by documents opened in the session, an acceptable
+/// cost), and two opens of the very same directory each mint their *own*
+/// token — that's deliberate, not an inefficiency: it's what makes every
+/// open its own unshared origin (design §10.3, "형제 scripted 문서 접근" row).
 #[derive(Default)]
-pub struct HtmlViewRoots(Mutex<HashMap<String, PathBuf>>);
+pub struct HtmlViewRoots(Mutex<HashMap<String, HtmlViewRoot>>);
 
 impl HtmlViewRoots {
     /// Mint a token, bind `root` (already canonicalized by the caller) to
     /// it, and return the token.
     fn arm(&self, root: PathBuf) -> String {
+        self.bind(HtmlViewRoot::Local(root))
+    }
+
+    /// Mint a token bound to a directory inside a remote vault. `dir` is
+    /// trusted as vault-relative (the caller — `arm_remote_html_view_root`
+    /// — derives it from the document's own already-vault-relative path,
+    /// never from user-typed input), mirroring `arm`'s trust of an
+    /// already-canonicalized `root`.
+    fn arm_remote(&self, host: String, vault: String, dir: String) -> String {
+        self.bind(HtmlViewRoot::Remote { host, vault, dir })
+    }
+
+    fn bind(&self, root: HtmlViewRoot) -> String {
         let token = mint_view_token();
         self.0
             .lock()
@@ -164,11 +211,66 @@ impl HtmlViewRoots {
     /// token's own root, structurally — there is no code path that lets
     /// token A's request resolve inside token B's root, so "교차 토큰"
     /// access is closed by construction, not by an extra check).
+    ///
+    /// Local-only: a token bound to a remote root always misses here. Kept
+    /// `#[cfg(test)]` — `handle_html_view_request` calls `resolve_target`
+    /// exclusively now, so this accessor's only remaining caller is the
+    /// pre-existing local test suite (design plan §8.1
+    /// "local_roots_behave_exactly_as_before"), which this pins unchanged
+    /// rather than rewriting every one of those tests onto `resolve_target`.
+    #[cfg(test)]
     fn resolve(&self, token: &str, rel_path: &Path) -> Option<PathBuf> {
-        let root = self.0.lock().unwrap_or_else(|e| e.into_inner()).get(token).cloned()?;
-        let candidate = root.join(rel_path);
-        is_within_armed_root(&root, &candidate).then_some(candidate)
+        match self.0.lock().unwrap_or_else(|e| e.into_inner()).get(token).cloned()? {
+            HtmlViewRoot::Local(root) => {
+                let candidate = root.join(rel_path);
+                is_within_armed_root(&root, &candidate).then_some(candidate)
+            }
+            HtmlViewRoot::Remote { .. } => None,
+        }
     }
+
+    /// The general accessor `handle_html_view_request` drives: resolves a
+    /// `(token, rel_path)` pair against whichever kind of root the token was
+    /// armed with. `None` for an unknown token (same as `resolve`), a local
+    /// escape (`resolve`'s containment check, reused verbatim), or a remote
+    /// path that fails `is_joinable_remote_rel` — the client-side first gate
+    /// for a remote root (design §5.5); the host's own `safe_path` is still
+    /// the authoritative check once the request reaches it.
+    fn resolve_target(&self, token: &str, rel_path: &Path) -> Option<ResolvedTarget> {
+        match self.0.lock().unwrap_or_else(|e| e.into_inner()).get(token).cloned()? {
+            HtmlViewRoot::Local(root) => {
+                let candidate = root.join(rel_path);
+                is_within_armed_root(&root, &candidate).then_some(ResolvedTarget::Local(candidate))
+            }
+            HtmlViewRoot::Remote { host, vault, dir } => {
+                is_joinable_remote_rel(rel_path).then(|| {
+                    let rel = rel_path.to_string_lossy();
+                    let path = if dir.is_empty() { rel.into_owned() } else { format!("{dir}/{rel}") };
+                    ResolvedTarget::Remote { host, vault, path }
+                })
+            }
+        }
+    }
+}
+
+/// Whether `rel` may be joined onto a remote root's vault-relative `dir` at
+/// all — the client-side first gate for a remote token (design §5.5), mirror
+/// of the host's own `resolve_within` lexical rule: every component must be
+/// `Normal` (rejects an absolute leading `/`, a `..` parent-dir component,
+/// and a bare empty path). This is *not* the authoritative containment check
+/// — unlike `is_within_armed_root`, there is no local filesystem to
+/// canonicalize against for a remote root, so the real authority is the
+/// host's own `safe_path` once `fetch_vault_asset` sends the joined path
+/// there (design §5.5: "그다음은 호스트 `safe_path`가 정본이다"). This gate
+/// exists so an obviously-escaping request never leaves the client at all,
+/// not to be the last word on it.
+pub(crate) fn is_joinable_remote_rel(rel: &Path) -> bool {
+    use std::path::Component;
+    let mut components = rel.components().peekable();
+    if components.peek().is_none() {
+        return false; // empty
+    }
+    components.all(|c| matches!(c, Component::Normal(_)))
 }
 
 /// The single containment rule this whole feature's file-access safety rests
@@ -209,6 +311,26 @@ pub(crate) fn is_within_armed_root(root: &Path, candidate: &Path) -> bool {
 pub fn arm_html_view_root(dir: String, roots: tauri::State<'_, HtmlViewRoots>) -> Result<String, String> {
     let canonical = std::fs::canonicalize(&dir).map_err(|e| format!("arm {dir}: {e}"))?;
     Ok(roots.arm(canonical))
+}
+
+/// Arm a directory *inside a remote vault* as a root the `htmlview` protocol
+/// may serve files from (0.18.0 T7, design §5.5). `dir` is trusted as
+/// already vault-relative — the frontend derives it from the document's own
+/// remote-relative path the same way `arm_html_view_root`'s caller derives a
+/// local `dir` from `absPath`'s parent, never from raw user input. No local
+/// filesystem call here at all (unlike `arm_html_view_root`'s
+/// `canonicalize`) — there is nothing local to canonicalize against for a
+/// remote root; containment is enforced per-request by
+/// `is_joinable_remote_rel` (client-side first gate) and the host's own
+/// `safe_path` (authoritative gate), not at arm time.
+#[tauri::command]
+pub fn arm_remote_html_view_root(
+    host: String,
+    vault: String,
+    dir: String,
+    roots: tauri::State<'_, HtmlViewRoots>,
+) -> Result<String, String> {
+    Ok(roots.arm_remote(host, vault, dir))
 }
 
 /// Content-Type for a file the `htmlview` protocol serves, keyed on
@@ -397,36 +519,75 @@ fn build_ok_response(request: &Request<Vec<u8>>, fs_path: &Path, bytes: Vec<u8>)
 }
 
 /// The `htmlview` protocol handler registered on the Tauri builder in
-/// `lib.rs`. `OPTIONS` is answered as a CORS preflight
-/// (`build_preflight_response`, token-blind by construction). Every other
-/// method must be `GET` — this protocol has no write surface — and then
-/// passes the token/root gate: `token_and_rel_path` must parse a token from
-/// the request, and `HtmlViewRoots::resolve` must map that token to a root
-/// *and* confirm the joined path still resolves inside it (unknown token,
-/// path escape, and cross-token access are all refused the same way — see
-/// `HtmlViewRoots::resolve`'s doc). Only past that does the file need to
-/// actually be readable, and only then does `build_ok_response` attach the
-/// CSP/CORS headers and return the bytes.
+/// `lib.rs`, via `register_asynchronous_uri_scheme_protocol` (0.18.0 T7 —
+/// converted from the original synchronous `register_uri_scheme_protocol`
+/// specifically so a `Remote` root's request can `.await` a network fetch;
+/// design §8-C confirmed the signature against this Tauri version). `OPTIONS`
+/// is answered as a CORS preflight (`build_preflight_response`, token-blind
+/// by construction). Every other method must be `GET` — this protocol has no
+/// write surface — and then passes the token/root gate:
+/// `token_and_rel_path` must parse a token from the request, and
+/// `HtmlViewRoots::resolve_target` must map that token to a root *and*
+/// confirm the joined path still resolves inside it (unknown token, path
+/// escape, and cross-token access are all refused the same way — see
+/// `HtmlViewRoots::resolve_target`'s doc).
+///
+/// **The `Local` branch is byte-for-byte the same behavior as before this
+/// revision** (design plan §8.2 requirement): same synchronous
+/// `std::fs::read`, same `build_ok_response` call, just now handed to
+/// `responder.respond` instead of returned directly — the async registration
+/// only changes *how* the response reaches the webview, never what it is,
+/// for a local root. The `Remote` branch is the new capability: it spawns an
+/// async task (`tauri::async_runtime::spawn`) that awaits
+/// `remote_client::fetch_vault_asset` and responds once the network round
+/// trip completes; a fetch failure of any kind collapses to the same bare
+/// 403 `forbidden_response` the local path already uses for "not servable" —
+/// deliberately undifferentiated, same reasoning as `forbidden_response`'s
+/// own doc comment (not leaking *why* a probing request failed).
 pub(crate) fn handle_html_view_request(
     app: &tauri::AppHandle,
-    request: &Request<Vec<u8>>,
-) -> Response<Vec<u8>> {
+    request: Request<Vec<u8>>,
+    responder: tauri::UriSchemeResponder,
+) {
     if request.method() == Method::OPTIONS {
-        return build_preflight_response(request);
+        responder.respond(build_preflight_response(&request));
+        return;
     }
     if request.method() != Method::GET {
-        return forbidden_response();
+        responder.respond(forbidden_response());
+        return;
     }
-    let Some((token, rel_path)) = token_and_rel_path(request) else {
-        return forbidden_response();
+    let Some((token, rel_path)) = token_and_rel_path(&request) else {
+        responder.respond(forbidden_response());
+        return;
     };
     let roots = app.state::<HtmlViewRoots>();
-    let Some(fs_path) = roots.resolve(&token, &rel_path) else {
-        return forbidden_response();
+    let Some(target) = roots.resolve_target(&token, &rel_path) else {
+        responder.respond(forbidden_response());
+        return;
     };
-    match std::fs::read(&fs_path) {
-        Ok(bytes) => build_ok_response(request, &fs_path, bytes),
-        Err(_) => forbidden_response(),
+    match target {
+        ResolvedTarget::Local(fs_path) => {
+            let resp = match std::fs::read(&fs_path) {
+                Ok(bytes) => build_ok_response(&request, &fs_path, bytes),
+                Err(_) => forbidden_response(),
+            };
+            responder.respond(resp);
+        }
+        ResolvedTarget::Remote { host, vault, path } => {
+            let app_handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let store = app_handle.state::<crate::remote_token::ClientTokens>();
+                let tunnels = app_handle.state::<crate::remote_ssh::SshTunnels>();
+                let resp = match crate::remote_client::fetch_vault_asset(&host, &vault, &path, &store, &tunnels)
+                    .await
+                {
+                    Ok((_content_type, bytes)) => build_ok_response(&request, Path::new(&path), bytes),
+                    Err(_) => forbidden_response(),
+                };
+                responder.respond(resp);
+            });
+        }
     }
 }
 
@@ -707,6 +868,108 @@ mod tests {
             .body(Vec::new())
             .unwrap();
         assert_eq!(html_view_scheme_source(&req), WINDOWS_SCHEME_SOURCE);
+    }
+
+    // --- HtmlViewRoot::Remote / resolve_target (0.18.0 T7) ----------------
+
+    #[test]
+    fn a_remote_root_never_touches_the_local_filesystem() {
+        // L3 regression guard (design §6): HtmlViewRoot is an enum, so a
+        // remote token resolving to a local PathBuf is impossible by
+        // construction — proven here by the shape of resolve_target's
+        // return value, not by absence of a canonicalize call.
+        let roots = HtmlViewRoots::default();
+        let token = roots.arm_remote("mac-mini".into(), "rv1".into(), "노트/대시보드".into());
+        match roots.resolve_target(&token, Path::new("app.js")).unwrap() {
+            ResolvedTarget::Remote { host, vault, path } => {
+                assert_eq!(host, "mac-mini");
+                assert_eq!(vault, "rv1");
+                assert_eq!(path, "노트/대시보드/app.js", "slash-joined, not a local PathBuf");
+            }
+            other => panic!("remote token resolved to a local target: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_remote_token_refuses_a_traversal_before_it_ever_reaches_the_host() {
+        let roots = HtmlViewRoots::default();
+        let token = roots.arm_remote("h".into(), "v".into(), "dir".into());
+        // A literal `..` component, and the percent-encoded form that only
+        // becomes `..` after decode_path_segment runs — both must be
+        // rejected by is_joinable_remote_rel before any request is built.
+        for rel in ["../secret.md", "%2e%2e%2fsecret.md"] {
+            let req = get_request(&token, rel, None);
+            let (_, decoded) = token_and_rel_path(&req).unwrap();
+            assert!(
+                roots.resolve_target(&token, &decoded).is_none(),
+                "{rel:?}는 호스트에 보내기 전에 거절돼야 한다"
+            );
+        }
+        // A leading-`/` rel is checked directly (not round-tripped through a
+        // URI first): `format!("htmlview://{token}/{rel}")` with a `rel`
+        // that already starts with `/` produces a double slash that
+        // `token_and_rel_path`'s `trim_start_matches('/')` collapses away
+        // entirely (verified: the decoded result comes back as the ordinary
+        // relative path "etc/hosts", not "/etc/hosts") — so this case
+        // exercises is_joinable_remote_rel's own absolute-path rejection
+        // directly, the same rule `resolve_target` runs, rather than relying
+        // on a URI round trip that can't reproduce it.
+        assert!(!is_joinable_remote_rel(Path::new("/etc/hosts")));
+    }
+
+    #[test]
+    fn is_joinable_remote_rel_matches_the_hosts_own_component_rule() {
+        assert!(is_joinable_remote_rel(Path::new("a/b.js")));
+        assert!(!is_joinable_remote_rel(Path::new("../b.js")));
+        assert!(!is_joinable_remote_rel(Path::new("/b.js")));
+        assert!(!is_joinable_remote_rel(Path::new("")));
+    }
+
+    #[test]
+    fn local_roots_behave_exactly_as_before() {
+        // The pre-existing local test suite above (arming_mints_a_token_...,
+        // one_token_never_resolves_inside_a_different_tokens_root, the
+        // percent-encoded-traversal pair, etc.) all still passes unchanged —
+        // this test additionally pins resolve_target's Local arm against the
+        // same fixture resolve() already covers, so the two accessors can
+        // never quietly diverge for a local root.
+        let root = scratch_dir("state_target_local_parity");
+        fs::write(root.join("doc.html"), "<html></html>").unwrap();
+        let roots = HtmlViewRoots::default();
+        let canonical = std::fs::canonicalize(&root).unwrap();
+        let token = roots.arm(canonical.clone());
+        assert_eq!(
+            roots.resolve(&token, Path::new("doc.html")),
+            match roots.resolve_target(&token, Path::new("doc.html")) {
+                Some(ResolvedTarget::Local(p)) => Some(p),
+                other => panic!("local token resolved to a non-local target: {other:?}"),
+            }
+        );
+        // A remote-armed token never resolves through the local-only
+        // `resolve()` accessor.
+        let remote_token = roots.arm_remote("h".into(), "v".into(), "d".into());
+        assert!(roots.resolve(&remote_token, Path::new("x")).is_none());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn frame_csp_native_form_is_still_byte_for_byte_unchanged_by_the_async_registration_switch() {
+        // Locks that converting register_uri_scheme_protocol ->
+        // register_asynchronous_uri_scheme_protocol (design §8-C) didn't
+        // change one byte of the frame CSP — same assertion as the
+        // pre-existing `frame_csp_native_form_is_byte_for_byte_unchanged_
+        // from_the_shipped_v1_string` test above, named separately so a
+        // regression here reads as "the async switch broke this", not "the
+        // Windows fix broke this".
+        assert_eq!(frame_csp(NATIVE_SCHEME_SOURCE), frame_csp(NATIVE_SCHEME_SOURCE));
+        assert_eq!(
+            frame_csp(NATIVE_SCHEME_SOURCE),
+            "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' htmlview: https:; \
+             style-src 'unsafe-inline' htmlview: https:; img-src htmlview: data: blob: https:; \
+             media-src htmlview: data: blob: https:; font-src htmlview: data: https:; \
+             connect-src htmlview: https:; frame-src 'none'; object-src 'none'; base-uri 'none'; \
+             form-action 'none'"
+        );
     }
 
     // --- test request builders ---
