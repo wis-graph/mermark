@@ -95,6 +95,17 @@ pub fn tunnel_args(host: &str, port: u16) -> Result<Vec<String>, String> {
     Ok(vec![
         "-o".into(),
         "ExitOnForwardFailure=yes".into(),
+        // Without this, a host that requires an interactive password (no
+        // key auth configured) makes `ssh` block on a prompt written to
+        // `/dev/tty` — invisible to mermark, which piped stdin closed
+        // specifically so it would never have to answer one (see this
+        // module's doc comment). That prompt then just sits there for the
+        // whole `READY_TIMEOUT` window with nothing useful happening;
+        // `BatchMode=yes` makes `ssh` itself refuse to prompt and exit
+        // immediately instead, so `has_exited` in `wait_until_ready` reports
+        // the real failure right away.
+        "-o".into(),
+        "BatchMode=yes".into(),
         "-N".into(),
         "-L".into(),
         format!("{port}:localhost:{port}"),
@@ -446,6 +457,29 @@ pub async fn remote_ssh_disconnect(host: String, state: tauri::State<'_, SshTunn
     Ok(())
 }
 
+/// Whether the tunnel currently active in `state` — if any — is the one that
+/// would actually serve `host`. `remote_client.rs`'s ssh-routed commands
+/// check this immediately before sending, closing a hole `base_url` opens by
+/// design: `base_url` maps *every* `ssh://...` host to the same fixed local
+/// address (`127.0.0.1:DEFAULT_PORT`, the one shared tunnel slot this module
+/// enforces — see this module's doc comment), discarding which host that
+/// address currently forwards to. Concretely: a tunnel to host A is Active;
+/// A reboots, so the `ssh` child exits on its own; the user opens a vault on
+/// host B, and `connect_with`'s dead-tunnel reaping (see its doc comment)
+/// lets B's `remote_ssh_connect` claim the same slot and spawn B's tunnel on
+/// the same local port; the user then switches back to the still-registered
+/// A vault. Without this guard, `remote_list_dir(host=A)` would resolve to
+/// `127.0.0.1:DEFAULT_PORT` exactly as before — which is now B's tunnel —
+/// and hand A's 128-bit device token to B's machine. Named so it reads as
+/// the promise it makes ("this tunnel currently serves this host"), not
+/// merely "is something active" — `decide_connect`'s `AlreadyConnected` asks
+/// a related but distinct question (should a *new* connect reuse the slot),
+/// and conflating the two here would have let this guard rubber-stamp a
+/// tunnel to the wrong host just because *some* tunnel happens to be up.
+pub fn tunnel_serves(state: &SshTunnels, host: &str) -> bool {
+    matches!(&*state.active.lock().unwrap(), TunnelSlot::Active(t) if t.host == host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,7 +492,11 @@ mod tests {
         let args = tunnel_args("ssh://wis@macmini", 8787).unwrap();
         assert_eq!(
             args,
-            vec!["-o", "ExitOnForwardFailure=yes", "-N", "-L", "8787:localhost:8787", "wis@macmini"]
+            vec![
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "BatchMode=yes",
+                "-N", "-L", "8787:localhost:8787", "wis@macmini",
+            ]
         );
     }
 
@@ -802,5 +840,89 @@ mod tests {
         let state = SshTunnels::default();
         shutdown_all(&state); // must not panic
         assert!(matches!(*state.active.lock().unwrap(), TunnelSlot::Empty));
+    }
+
+    // --- tunnel_serves: the cross-host token-leak guard (fix round 3,
+    // Important 3) ---------------------------------------------------------
+
+    #[test]
+    fn tunnel_serves_is_false_when_nothing_is_active() {
+        let state = SshTunnels::default();
+        assert!(!tunnel_serves(&state, "ssh://a@h"));
+    }
+
+    #[test]
+    fn tunnel_serves_is_true_only_for_the_host_the_active_tunnel_actually_serves() {
+        let child = spawn_sleep(5);
+        let state = SshTunnels::default();
+        *state.active.lock().unwrap() = TunnelSlot::Active(ActiveTunnel { host: "ssh://a@h1".into(), child });
+
+        assert!(tunnel_serves(&state, "ssh://a@h1"), "활성 터널이 실제로 서비스하는 호스트여야 한다");
+        assert!(
+            !tunnel_serves(&state, "ssh://a@h2"),
+            "다른 호스트를 대상으로 한 터널로 오인하면 안 된다 — 토큰이 잘못된 호스트로 전송될 수 있다"
+        );
+    }
+
+    #[test]
+    fn tunnel_serves_is_false_while_only_connecting_not_yet_active() {
+        let state = SshTunnels::default();
+        *state.active.lock().unwrap() = TunnelSlot::Connecting("ssh://a@h".into());
+        assert!(
+            !tunnel_serves(&state, "ssh://a@h"),
+            "연결 중일 뿐 아직 서비스할 수 없는 터널을 서비스 중이라고 보고하면 안 된다"
+        );
+    }
+
+    /// The exact scenario `tunnel_serves`'s doc comment describes: host A's
+    /// tunnel dies (simulating a reboot — the child process exits on its
+    /// own), a `connect_with` for a different host B reaps the dead slot and
+    /// takes it over, and a stale caller still asking about A must get
+    /// `false`, never a leftover `true` from before the takeover.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tunnel_serves_flips_to_the_new_host_after_a_dead_tunnel_is_reaped_and_replaced() {
+        let dir = std::env::temp_dir().join(format!(
+            "mermark_ssh_tunnel_serves_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = fake_ssh_script(&dir);
+        let state = SshTunnels::default();
+
+        // Host A's tunnel: a child that exits immediately on its own,
+        // standing in for "the remote host rebooted, so ssh's connection
+        // died and it exited" — connect_with itself is not exercised here,
+        // only the slot's contents, since this test cares about
+        // tunnel_serves reading the slot correctly across a takeover, not
+        // about the reaping logic (already covered by
+        // `connect_with`'s own tests).
+        let mut dead = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+        let _ = dead.wait();
+        *state.active.lock().unwrap() = TunnelSlot::Active(ActiveTunnel { host: "ssh://a@h1".into(), child: dead });
+        assert!(tunnel_serves(&state, "ssh://a@h1"));
+
+        // A connect for a different host reaps the dead slot and claims it.
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        tokio::spawn(async move {
+            if let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+                let _ = listener.accept().await;
+            }
+        });
+        connect_with(&program, "ssh://b@h2", port, Duration::from_secs(2), Duration::from_millis(20), &state)
+            .await
+            .unwrap();
+
+        assert!(
+            !tunnel_serves(&state, "ssh://a@h1"),
+            "죽은 A 터널이 재사용된 후에는 A를 서비스한다고 보고하면 안 된다"
+        );
+        assert!(tunnel_serves(&state, "ssh://b@h2"), "새로 연결된 B가 지금 서비스 중인 호스트여야 한다");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

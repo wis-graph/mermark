@@ -155,11 +155,32 @@ impl ClientTokens {
     /// nothing has been paired yet) and remembers `config_dir` so later
     /// `remember`/`forget` calls can persist without the caller re-supplying
     /// it every time.
+    /// A missing store file reads as "no host paired yet" and stays silent
+    /// — that's the ordinary state before the first `remember`. A store
+    /// file that exists but fails to parse is a different situation (see
+    /// this module's doc comment on why `remote_token::load`, the host-side
+    /// twin of this function, distinguishes the two) and is reported to
+    /// stderr rather than swallowed the same way — an earlier version of
+    /// this function collapsed both cases into the same silent empty map
+    /// via `.ok().and_then(...).unwrap_or_default()`, which would make a
+    /// corrupt client token store look identical to "never paired with
+    /// anyone", forcing every host back through a confusing re-pair with no
+    /// hint why. Still infallible (`Self`, not `Result`) — every call site
+    /// (`lib.rs`'s managed-state setup among them) treats construction as
+    /// unconditional, so this starts empty and reports rather than
+    /// propagating an error nothing here is set up to receive.
     pub fn load(config_dir: &Path) -> Self {
-        let tokens = std::fs::read_to_string(client_store_path(config_dir))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+        let path = client_store_path(config_dir);
+        let tokens = match std::fs::read_to_string(&path) {
+            Ok(text) => match serde_json::from_str(&text) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    eprintln!("remote_token: {} 파싱 실패, 빈 토큰 상태로 시작합니다: {e}", path.display());
+                    Default::default()
+                }
+            },
+            Err(_) => Default::default(),
+        };
         Self { dir: config_dir.to_path_buf(), tokens: std::sync::Mutex::new(tokens) }
     }
 
@@ -173,11 +194,22 @@ impl ClientTokens {
     /// memory can never run ahead of what's durable, so a failed write
     /// (full disk, read-only volume, permissions) can't leave this launch
     /// remembering a token that vanishes the next time the store is loaded.
+    /// Holds a **single** lock acquisition across clone → persist →
+    /// write-back — the same fix (and for the same reason)
+    /// `remote_host.rs`'s `persist_devices_atomically` applies on the host
+    /// side (Ruling 28): a version that locked, cloned, and dropped the
+    /// guard before persisting, then locked again to write back, left a
+    /// window where a concurrent `remember`/`forget` on the *same* store
+    /// could interleave and lose one caller's update once the second's
+    /// write-back landed. Held across `self.persist`'s file I/O — a lock
+    /// held during I/O is a worse trade than a lost update here, since this
+    /// store's whole job is "remember what pairing already granted".
     pub fn remember(&self, host: &str, token: &str) -> Result<(), String> {
-        let mut candidate = self.tokens.lock().unwrap().clone();
+        let mut tokens = self.tokens.lock().unwrap();
+        let mut candidate = tokens.clone();
         candidate.insert(host.to_string(), token.to_string());
         self.persist(&candidate)?;
-        *self.tokens.lock().unwrap() = candidate;
+        *tokens = candidate;
         Ok(())
     }
 
@@ -187,12 +219,15 @@ impl ClientTokens {
     /// successful when the removal didn't actually make it to disk would
     /// let a caller believe a device was un-paired while its token still
     /// authorizes reads on the next launch.
+    /// Same single-lock-acquisition fix as `remember`, same reason — see
+    /// its doc comment.
     #[allow(dead_code)] // "un-pair this host" UI (a later task) is the real call site.
     pub fn forget(&self, host: &str) -> Result<(), String> {
-        let mut candidate = self.tokens.lock().unwrap().clone();
+        let mut tokens = self.tokens.lock().unwrap();
+        let mut candidate = tokens.clone();
         candidate.remove(host);
         self.persist(&candidate)?;
-        *self.tokens.lock().unwrap() = candidate;
+        *tokens = candidate;
         Ok(())
     }
 
@@ -266,6 +301,31 @@ mod tests {
     fn missing_store_is_not_an_error() {
         let dir = tmp();
         assert_eq!(load(&dir).unwrap(), Vec::<PairedDevice>::new());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `ClientTokens::load` is infallible by design (see its doc comment),
+    /// so a corrupt store can't propagate an `Err` the way the host-side
+    /// `load` does — but it must not silently misbehave either: it starts
+    /// empty (same as "never paired with anyone") and, crucially, a
+    /// subsequent `remember` still works and persists normally, proving the
+    /// corrupt bytes were discarded rather than left to reappear or wedge
+    /// the store.
+    #[test]
+    fn client_tokens_load_recovers_from_a_corrupt_store_instead_of_wedging() {
+        let dir = tmp();
+        std::fs::write(client_store_path(&dir), b"not json").unwrap();
+        let store = ClientTokens::load(&dir);
+        assert_eq!(store.token_for("wis-macmini"), None, "손상된 저장소는 빈 상태로 시작해야 한다");
+        store.remember("wis-macmini", "deadbeef").unwrap();
+        assert_eq!(store.token_for("wis-macmini").as_deref(), Some("deadbeef"));
+
+        let reloaded = ClientTokens::load(&dir);
+        assert_eq!(
+            reloaded.token_for("wis-macmini").as_deref(),
+            Some("deadbeef"),
+            "손상된 저장소를 정상적으로 덮어쓴 뒤에는 새로 읽어도 값이 남아 있어야 한다"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

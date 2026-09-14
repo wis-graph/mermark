@@ -75,25 +75,40 @@ pub fn status_for(http_status: u16) -> RemoteStatus {
     }
 }
 
-/// Builds the `reqwest::Client` every command shares, pinned to the two
-/// timeouts above. A separate client per call would also work, but building
-/// one is cheap and this keeps the timeout policy in exactly one place.
-/// `.redirect(Policy::none())`: reqwest's default follows up to 10 redirects
-/// and only strips `Authorization`/`Cookie` on a cross-origin hop — our own
-/// `x-mermark-token` header isn't one of those, so a redirecting (compromised
-/// or misconfigured) host would otherwise have the client forward the bearer
-/// token to wherever it points. This client has no legitimate reason to
-/// follow a redirect at all — every route it calls is a fixed path on the
-/// host named by `host` — so redirects are refused outright rather than
-/// followed and merely re-authorized.
+/// The single `reqwest::Client` every command actually shares — built once,
+/// on the first call, and handed out as a clone from then on (`reqwest::Client`
+/// wraps its connection pool in an `Arc` internally, so cloning it is cheap
+/// and every clone still shares the one pool). An earlier version of this
+/// function built a fresh `Client` on every call — its own doc comment
+/// already claimed to build "the client every command shares", which was
+/// simply wrong: a client built per call shares nothing, including the
+/// connection pool reuse that's the whole point of holding one client at
+/// all. `OnceLock` makes the doc's claim true instead of relaxing it: built
+/// exactly once regardless of call order or concurrent first calls, same
+/// idempotency shape `ensure_crypto_provider_installed`'s `Once` already
+/// uses just below.
 fn client() -> Result<reqwest::Client, String> {
-    ensure_crypto_provider_installed();
-    reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(RESPONSE_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| e.to_string())
+    static CLIENT: std::sync::OnceLock<Result<reqwest::Client, String>> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            ensure_crypto_provider_installed();
+            // `.redirect(Policy::none())`: reqwest's default follows up to 10
+            // redirects and only strips `Authorization`/`Cookie` on a
+            // cross-origin hop — our own `x-mermark-token` header isn't one
+            // of those, so a redirecting (compromised or misconfigured) host
+            // would otherwise have the client forward the bearer token to
+            // wherever it points. This client has no legitimate reason to
+            // follow a redirect at all — every route it calls is a fixed
+            // path on the host named by `host` — so redirects are refused
+            // outright rather than followed and merely re-authorized.
+            reqwest::Client::builder()
+                .connect_timeout(CONNECT_TIMEOUT)
+                .timeout(RESPONSE_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .clone()
 }
 
 /// `reqwest`'s rustls TLS backend (pulled in transitively — this build
@@ -135,6 +150,36 @@ fn unreachable(e: reqwest::Error) -> String {
 /// left as a bare `.ok_or(...)` repeated at every command's top.
 fn token_for_or_expired(store: &crate::remote_token::ClientTokens, host: &str) -> Result<String, String> {
     store.token_for(host).ok_or_else(|| format!("REMOTE:{:?}", RemoteStatus::AuthExpired))
+}
+
+/// The cross-host tunnel guard every command below checks immediately before
+/// sending: for a directly-reachable host (Tailscale-style, no `ssh://`
+/// prefix) this is a no-op — `base_url` already resolves such a host to its
+/// own address, so there is no shared local port for a different host's
+/// tunnel to have silently taken over. For an `ssh://` host, `base_url`
+/// resolves to the one shared local tunnel port (`remote_ssh.rs`'s module
+/// doc comment) regardless of which host is actually forwarded through it
+/// right now — `remote_ssh::tunnel_serves` is the only thing that still
+/// knows that. Refusing here, before this device's bearer token for `host`
+/// is ever attached to a request, is what closes the leak
+/// `remote_ssh::tunnel_serves`'s own doc comment describes in full: a stale
+/// tunnel reference sending host A's token to whatever machine now holds the
+/// shared port. `SSH_TUNNEL_MISMATCH:` (not a `REMOTE:` prefix — this is not
+/// one of the four connectivity states `RemoteStatus` enumerates) is what
+/// `file-host.ts`'s `isTunnelMismatch` matches on to evict its own stale
+/// "tunnel ready" memo, so the *next* read reconnects instead of replaying
+/// this same refusal forever.
+fn ensure_tunnel_serves(host: &str, tunnels: &crate::remote_ssh::SshTunnels) -> Result<(), String> {
+    if !host.starts_with("ssh://") {
+        return Ok(());
+    }
+    if crate::remote_ssh::tunnel_serves(tunnels, host) {
+        Ok(())
+    } else {
+        Err(format!(
+            "SSH_TUNNEL_MISMATCH: {host}에 대한 SSH 터널이 더 이상 유효하지 않습니다. 다시 연결하세요."
+        ))
+    }
 }
 
 /// Formats a non-success HTTP status as the `REMOTE:` error string the
@@ -208,7 +253,9 @@ pub async fn remote_pair(
     code: String,
     label: String,
     store: tauri::State<'_, crate::remote_token::ClientTokens>,
+    tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
 ) -> Result<(), String> {
+    ensure_tunnel_serves(&host, &tunnels)?;
     let url = format!("{}/pair", base_url(&host)?);
     let res = client()?
         .post(&url)
@@ -227,7 +274,9 @@ pub async fn remote_pair(
 pub async fn remote_vaults(
     host: String,
     store: tauri::State<'_, crate::remote_token::ClientTokens>,
+    tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
 ) -> Result<Vec<RemoteVault>, String> {
+    ensure_tunnel_serves(&host, &tunnels)?;
     let token = token_for_or_expired(&store, &host)?;
     let url = format!("{}/vaults", base_url(&host)?);
     let res = send_authorized(client()?.get(&url), &token).await?;
@@ -241,7 +290,9 @@ pub async fn remote_list_dir(
     path: String,
     show_hidden: bool,
     store: tauri::State<'_, crate::remote_token::ClientTokens>,
+    tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
 ) -> Result<Vec<crate::commands::DirEntry>, String> {
+    ensure_tunnel_serves(&host, &tunnels)?;
     let token = token_for_or_expired(&store, &host)?;
     let url = format!("{}/list_dir", base_url(&host)?);
     let req = client()?.get(&url).query(&[
@@ -260,7 +311,9 @@ pub async fn remote_list_files_recursive(
     path: String,
     show_hidden: bool,
     store: tauri::State<'_, crate::remote_token::ClientTokens>,
+    tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
 ) -> Result<crate::commands::ScanResult, String> {
+    ensure_tunnel_serves(&host, &tunnels)?;
     let token = token_for_or_expired(&store, &host)?;
     let url = format!("{}/list_files_recursive", base_url(&host)?);
     let req = client()?.get(&url).query(&[
@@ -278,7 +331,9 @@ pub async fn remote_read_file(
     vault: String,
     path: String,
     store: tauri::State<'_, crate::remote_token::ClientTokens>,
+    tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
 ) -> Result<crate::commands::FileContent, String> {
+    ensure_tunnel_serves(&host, &tunnels)?;
     let token = token_for_or_expired(&store, &host)?;
     let url = format!("{}/read_file", base_url(&host)?);
     let req = client()?.get(&url).query(&[("vault", vault.as_str()), ("path", path.as_str())]);
@@ -302,7 +357,9 @@ pub async fn remote_read_image(
     vault: String,
     path: String,
     store: tauri::State<'_, crate::remote_token::ClientTokens>,
+    tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
 ) -> Result<String, String> {
+    ensure_tunnel_serves(&host, &tunnels)?;
     let token = token_for_or_expired(&store, &host)?;
     let url = format!("{}/read_asset", base_url(&host)?);
     let req = client()?.get(&url).query(&[("vault", vault.as_str()), ("path", path.as_str())]);
@@ -351,7 +408,9 @@ pub async fn remote_resolve_image(
     name: String,
     max_depth: u8,
     store: tauri::State<'_, crate::remote_token::ClientTokens>,
+    tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
 ) -> Result<Option<String>, String> {
+    ensure_tunnel_serves(&host, &tunnels)?;
     let token = token_for_or_expired(&store, &host)?;
     let url = format!("{}/resolve_image", base_url(&host)?);
     let max_depth_str = max_depth.to_string();
@@ -371,7 +430,9 @@ pub async fn remote_list_link_targets(
     vault: String,
     path: String,
     store: tauri::State<'_, crate::remote_token::ClientTokens>,
+    tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
 ) -> Result<Vec<crate::commands::LinkTarget>, String> {
+    ensure_tunnel_serves(&host, &tunnels)?;
     let token = token_for_or_expired(&store, &host)?;
     let url = format!("{}/list_link_targets", base_url(&host)?);
     let req = client()?.get(&url).query(&[("vault", vault.as_str()), ("path", path.as_str())]);
@@ -534,5 +595,25 @@ mod tests {
         assert_eq!(as_image_mime("text/html"), "application/octet-stream");
         assert_eq!(as_image_mime("text/html; charset=utf-8"), "application/octet-stream");
         assert_eq!(as_image_mime(""), "application/octet-stream");
+    }
+
+    // --- ensure_tunnel_serves: the cross-host token-leak guard, in
+    // isolation (see remote_ssh.rs's `tunnel_serves` for the full attack
+    // scenario) ---------------------------------------------------------
+
+    #[test]
+    fn ensure_tunnel_serves_passes_through_for_a_non_ssh_host() {
+        let tunnels = crate::remote_ssh::SshTunnels::default();
+        assert!(
+            ensure_tunnel_serves("wis-macmini", &tunnels).is_ok(),
+            "Tailscale 스타일 호스트는 공유 터널 포트를 쓰지 않으므로 이 가드가 필요 없다"
+        );
+    }
+
+    #[test]
+    fn ensure_tunnel_serves_refuses_an_ssh_host_with_no_active_tunnel() {
+        let tunnels = crate::remote_ssh::SshTunnels::default();
+        let err = ensure_tunnel_serves("ssh://wis@macmini", &tunnels).unwrap_err();
+        assert!(err.starts_with("SSH_TUNNEL_MISMATCH"), "got: {err}");
     }
 }

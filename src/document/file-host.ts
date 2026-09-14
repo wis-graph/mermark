@@ -95,6 +95,33 @@ export const ensureSshTunnel = (host: string, call: typeof invoke): Promise<void
   return promise;
 };
 
+/** Drops `host`'s memoized "tunnel ready" promise, if any — the seam
+ *  `evictOnTunnelMismatch` (below) uses once a request discovers the memo
+ *  was lying, and exported so `workspace-sidebar.ts`'s `remote_ssh_disconnect`
+ *  call site (an explicit user-initiated disconnect, not a request failure)
+ *  can evict the same memo instead of leaving a resolved "ready" promise
+ *  pointing at a tunnel that command just tore down. Fix round 3, Important
+ *  4's other half: this module already re-established a *dead* tunnel
+ *  (`ensureSshTunnel`'s own `.catch` above) but never noticed a tunnel that
+ *  died silently and was later reused for a *different* host — the eviction
+ *  path this function feeds. */
+export const evictSshTunnelMemo = (host: string): void => {
+  sshTunnelReady.delete(host);
+};
+
+/** Whether a `remote_*` call's rejection is the Rust-side
+ *  `ensure_tunnel_serves` guard's `SSH_TUNNEL_MISMATCH:` (see
+ *  `remote_client.rs`): the memoized tunnel this client thought was ready no
+ *  longer actually serves `host` — reboot/reconnect race, another host's
+ *  tunnel now occupies the shared local port. Deliberately not folded into
+ *  `classifyRemoteError`'s four states: those are reachability/auth outcomes
+ *  a vault can't fix by itself; this one specifically means the cached
+ *  promise below is stale and must be dropped so the *next* read
+ *  re-establishes the tunnel, rather than replaying the same mismatch
+ *  forever. */
+const isTunnelMismatch = (e: unknown): boolean =>
+  (e instanceof Error ? e.message : String(e)).includes("SSH_TUNNEL_MISMATCH");
+
 /** Runs `makeCall` — skipping straight through to it, with NO extra
  *  microtask hop, for a non-`ssh://` host. `await`ing even an
  *  already-resolved `Promise.resolve()` (what `ensureSshTunnel` returns for
@@ -104,9 +131,24 @@ export const ensureSshTunnel = (host: string, call: typeof invoke): Promise<void
  *  sibling-wikilink listing dedup) assert the underlying `remote_*` call
  *  happened synchronously-ish, within the same tick a render/click
  *  triggered it — so this only pays that one-tick cost on the `ssh://` path
- *  that actually needs it. */
+ *  that actually needs it.
+ *
+ *  Fix round 3, Important 4: `makeCall`'s own failure — not just
+ *  `ensureSshTunnel`'s — is now watched for `SSH_TUNNEL_MISMATCH`
+ *  (`isTunnelMismatch`), evicting the memo before rethrowing. Without this,
+ *  a tunnel that died *after* `ensureSshTunnel` last resolved successfully
+ *  (laptop sleep/wake, the remote host rebooting) stayed cached as "ready"
+ *  forever — this function's own doc comment already promised reconnection
+ *  after a restart, but nothing evicted the memo once a *live* session's
+ *  tunnel went stale mid-session, so every read for that vault kept sending
+ *  requests through a tunnel Rust itself would now refuse. */
 const afterTunnel = <T>(host: string, call: typeof invoke, makeCall: () => Promise<T>): Promise<T> =>
-  host.startsWith("ssh://") ? ensureSshTunnel(host, call).then(makeCall) : makeCall();
+  host.startsWith("ssh://")
+    ? ensureSshTunnel(host, call).then(makeCall).catch((e: unknown) => {
+        if (isTunnelMismatch(e)) evictSshTunnelMemo(host);
+        throw e;
+      })
+    : makeCall();
 
 /** Probes a paired remote vault's reachability for the sidebar's connection
  *  badge (Task 10). Reuses `remote_list_dir` on the vault's own root rather

@@ -146,9 +146,12 @@ impl PairingState {
     /// The initial state before any pairing code has ever been issued —
     /// `redeem` reports `NotArmed` for it, same as it would for any other
     /// session whose `code` is `None`. This is what `RemoteShareState`
-    /// constructs at startup and after `remote_share_stop`: sharing being
-    /// off must not leave a stale, still-redeemable code lying around from
-    /// a previous session.
+    /// constructs at startup. `remote_share_stop` does NOT itself call this
+    /// (an earlier version of this comment claimed it did) — it only tears
+    /// the server down; a still-armed pairing code left in the `Arc<Mutex<_>>`
+    /// after a stop is inert, since no `/pair` handler is reachable to
+    /// redeem it once the listener is gone, and `remote_share_start` re-arms
+    /// with a fresh code the next time sharing turns back on regardless.
     pub fn unarmed() -> Self {
         Self { code: None, used: false, failed_attempts: 0 }
     }
@@ -256,6 +259,25 @@ use std::sync::{Arc, Mutex};
 /// covers any legitimate vault-relative path.
 const MAX_REQUEST_PATH_BYTES: usize = 4096;
 
+/// What `/list_dir` and `/list_files_recursive` pass to `commands::` in
+/// place of the peer's own `show_hidden` query value — always `false`,
+/// unconditionally. Decided deliberately, not left as an oversight:
+/// `safe_path`'s hidden/artifact gate (see its doc comment) means the host
+/// can never actually *serve* a path with a hidden component anyway — a peer
+/// asking `show_hidden=true` for `.git/config` still 404s at `safe_path`
+/// regardless of what this constant says. So the only thing a peer's
+/// `show_hidden=true` could still do, if it were honored, is make a
+/// listing's *entries* name hidden siblings the peer can never actually
+/// open (`.git`, `.obsidian`, `.DS_Store`, ...) — at best a misleading
+/// listing (dead entries that 404 the moment they're clicked), at worst a
+/// gratuitous disclosure of the host's dotfile layout to an authenticated
+/// peer who has no way to read what's named. Neither outcome is worth
+/// honoring, so a remote listing always behaves as if `show_hidden=false`,
+/// full stop — the field survives on `DirQuery` only because the wire shape
+/// is shared with the local `list_dir`/`list_files_recursive` commands, not
+/// because the host route reads it.
+const IGNORE_PEER_SHOW_HIDDEN: bool = false;
+
 /// Everything a request handler needs, shared across connections. `armed` is
 /// the live list of vaults the user has checked to share (mutated by
 /// `remote_share_start`, Task 9's host control surface — this module only
@@ -289,11 +311,18 @@ pub struct PathQuery {
 
 /// `list_dir`/`list_files_recursive` additionally take the explorer's
 /// "숨김 파일 표시" toggle, so they get their own query shape rather than
-/// overloading `PathQuery`.
+/// overloading `PathQuery`. `show_hidden` is accepted on the wire (kept for
+/// shape-parity with the local `list_dir`/`list_files_recursive` commands)
+/// but never actually honored by the corresponding handlers — see
+/// `IGNORE_PEER_SHOW_HIDDEN`.
 #[derive(serde::Deserialize)]
 pub struct DirQuery {
     pub vault: String,
     pub path: String,
+    // Deliberately unread by the handlers — see `IGNORE_PEER_SHOW_HIDDEN`.
+    // Kept as a field (not dropped from the wire shape) so a client that
+    // still sends it isn't rejected by strict query deserialization.
+    #[allow(dead_code)]
     pub show_hidden: bool,
 }
 
@@ -444,14 +473,32 @@ fn armed_vault(state: &HostState, id: &str) -> Result<ArmedVault, StatusCode> {
 /// The full containment gate for one request: length-bounds `rel` (Ruling
 /// 12's third gate — an absurd path must never reach a syscall), then the
 /// lexical gate (`resolve_within`), then the canonical gate
-/// (`canonicalize_within`), and returns the *canonical* path — the only path
-/// a caller may open (see `canonicalize_within`'s doc comment on the TOCTOU
-/// window opening the pre-canonical path would reopen). Every failure —
-/// too-long, lexical escape, symlink escape, or plain "doesn't exist" — comes
-/// back as the same `NOT_FOUND`: `canonicalize` cannot itself distinguish
-/// "missing" from "escape attempt", so refusing to guess and returning 404
-/// uniformly is what keeps this server from leaking which one happened, and
-/// matches the client's own `path_exists` semantics (Ruling 12).
+/// (`canonicalize_within`), then the hidden/artifact gate
+/// (`has_a_hidden_or_artifact_component`) — checked against the *canonical*
+/// resolved path's vault-relative form, not the raw `rel` a client sent, so a
+/// non-hidden-looking symlink that resolves inside a hidden directory (or a
+/// hidden artifact) is caught the same as a request that names the hidden
+/// segment directly. Returns the *canonical* path — the only path a caller
+/// may open (see `canonicalize_within`'s doc comment on the TOCTOU window
+/// opening the pre-canonical path would reopen).
+///
+/// This is the single chokepoint every file route goes through — a prior
+/// round wired the hidden/artifact check into `/read_asset` only, which left
+/// every other route (`/read_file` among them) able to serve
+/// `.git/config` — routinely credential-bearing — just by asking for it
+/// directly. Putting the check here instead means a future route can't
+/// forget it: it comes for free the moment a handler calls `safe_path`,
+/// exactly like the escape gates already did. See
+/// `every_get_route_with_a_path_param_refuses_a_hidden_path_component` for
+/// the regression test that walks `get_routes()` so a fifth route added
+/// without thought fails loudly rather than silently reintroducing the gap.
+///
+/// Every failure — too-long, lexical escape, symlink escape, hidden/artifact,
+/// or plain "doesn't exist" — comes back as the same `NOT_FOUND`:
+/// `canonicalize` cannot itself distinguish "missing" from "escape attempt",
+/// so refusing to guess and returning 404 uniformly is what keeps this server
+/// from leaking which one happened, and matches the client's own
+/// `path_exists` semantics (Ruling 12).
 ///
 /// An empty `rel` means "the vault root itself" — a freshly paired client's
 /// very first `/list_dir` has nothing to name yet but the top level, so the
@@ -460,15 +507,24 @@ fn armed_vault(state: &HostState, id: &str) -> Result<ArmedVault, StatusCode> {
 /// relaxing it there would also have to touch the same code path `..` and
 /// absolute paths go through), so the root case is handled here, before
 /// `resolve_within` ever sees it, by canonicalizing `armed.root` directly.
+/// The vault root itself is never itself a hidden/artifact path, so the
+/// hidden-gate check on the empty-`rel` branch is a cheap no-op, not a
+/// special case.
 fn safe_path(armed: &ArmedVault, rel: &str) -> Result<std::path::PathBuf, StatusCode> {
     if rel.len() > MAX_REQUEST_PATH_BYTES {
         return Err(StatusCode::NOT_FOUND);
     }
-    if rel.is_empty() {
-        return armed_root_canonical(armed);
+    let root = armed_root_canonical(armed)?;
+    let resolved = if rel.is_empty() {
+        root.clone()
+    } else {
+        let candidate = resolve_within(armed, rel).ok_or(StatusCode::NOT_FOUND)?;
+        canonicalize_within(armed, &candidate).ok_or(StatusCode::NOT_FOUND)?
+    };
+    if has_a_hidden_or_artifact_component(&vault_relative(&root, &resolved.to_string_lossy())) {
+        return Err(StatusCode::NOT_FOUND);
     }
-    let resolved = resolve_within(armed, rel).ok_or(StatusCode::NOT_FOUND)?;
-    canonicalize_within(armed, &resolved).ok_or(StatusCode::NOT_FOUND)
+    Ok(resolved)
 }
 
 /// The armed vault's own root, canonicalized. Every path field a response
@@ -506,10 +562,24 @@ fn vault_relative(root: &Path, abs: &str) -> String {
     }
 }
 
+/// Ceiling on `/pair`'s `label` field. Unlike every other request field,
+/// `label` is never validated against a fixed vocabulary — it's a
+/// human-chosen device name ("맥북", "iPad") — but with no bound at all, a
+/// caller who has redeemed a valid pairing code (a real, if narrow,
+/// capability) could still hand the host a multi-megabyte string that gets
+/// persisted to disk via `persist_new_device` and rendered verbatim in the
+/// host's own paired-devices settings UI on every future load. 256 bytes
+/// comfortably covers any real device name (`docs/design/remote-vault.md`'s
+/// own examples are a handful of characters) while ruling out that abuse.
+const MAX_PAIR_LABEL_BYTES: usize = 256;
+
 async fn pair_handler(
     State(state): State<HostState>,
     Json(req): Json<PairRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
+    if req.label.len() > MAX_PAIR_LABEL_BYTES {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let now = now_ms();
     let token = {
         let mut pairing = state.pairing.lock().unwrap();
@@ -559,19 +629,29 @@ async fn pair_handler(
 /// holding the guard for the whole sequence guarantees: the second caller's
 /// `state.devices.lock()` doesn't even return until the first has finished
 /// writing both disk and memory, so it always clones the post-first-write
-/// state. `mutate` runs under that single guard and returns the new
-/// contents to persist, or `None` for "nothing changed, don't touch disk"
-/// (the no-op-revoke case).
+/// state. `mutate` runs under that single guard and reports whether it
+/// actually changed `candidate` (`bool`, not the `Option` an earlier version
+/// of this comment claimed — there is no "new contents" to hand back,
+/// `mutate` edits `candidate` in place): `true` persists the mutated list to
+/// disk and swaps it into `*devices`; `false` ("nothing changed" — the
+/// no-op-revoke case) skips both, since there is nothing to make durable.
+/// `persist_new_device` and `revoke_and_persist` are both thin callers of
+/// this function now — see their doc comments — rather than each
+/// re-implementing the same clone/save/write-back sequence, which is what
+/// let them drift apart (one single-lock, one still double-locking) in the
+/// first place.
 fn persist_devices_atomically(
     state: &HostState,
-    mutate: impl FnOnce(&mut Vec<crate::remote_token::PairedDevice>),
-) -> Result<(), String> {
+    mutate: impl FnOnce(&mut Vec<crate::remote_token::PairedDevice>) -> bool,
+) -> Result<bool, String> {
     let mut devices = state.devices.lock().unwrap();
     let mut candidate = devices.clone();
-    mutate(&mut candidate);
+    if !mutate(&mut candidate) {
+        return Ok(false);
+    }
     crate::remote_token::save(&state.config_dir, &candidate)?;
     *devices = candidate;
-    Ok(())
+    Ok(true)
 }
 
 /// Disk-first device registration: builds the post-insert device list,
@@ -583,30 +663,36 @@ fn persist_devices_atomically(
 /// believing a device is paired that a restart would silently forget. See
 /// `persist_devices_atomically`'s doc comment for why the whole
 /// clone/save/write-back sequence runs under one lock acquisition, not two.
+/// A fresh pairing always changes the list (a push can never be a no-op), so
+/// the `mutate` closure here always reports `true`.
 pub(crate) fn persist_new_device(
     state: &HostState,
     device: crate::remote_token::PairedDevice,
 ) -> Result<(), String> {
-    persist_devices_atomically(state, |candidate| candidate.push(device))
+    persist_devices_atomically(state, |candidate| {
+        candidate.push(device);
+        true
+    })
+    .map(|_| ())
 }
 
-/// Disk-first device revocation, the mirror image of `persist_new_device`.
-/// Returns whether a device was actually removed, same as
-/// `remote_token::revoke`, so a caller revoking an already-gone id can tell
-/// the two cases apart. When the id doesn't match anything there is nothing
-/// to persist, so this is a pure no-op rather than a needless disk write —
-/// checked *inside* the same locked section `persist_devices_atomically`
-/// holds, not before it, so a concurrent pair can't sneak the id back in
-/// between the check and the lock.
+/// Disk-first device revocation, the mirror image of `persist_new_device` —
+/// and, since this fix, a direct caller of `persist_devices_atomically`
+/// rather than a hand-duplicated copy of its body (the duplication is what
+/// let this function keep the two-lock-acquisition shape after
+/// `persist_new_device` was fixed to hold one — the exact drift the shared
+/// helper now makes structurally impossible). Returns whether a device was
+/// actually removed, same as `remote_token::revoke`, so a caller revoking an
+/// already-gone id can tell the two cases apart; `remote_token::revoke`'s own
+/// return value is exactly the `bool` `persist_devices_atomically` expects
+/// back from `mutate`, so "did anything change" and "should this persist"
+/// are the same question here. When the id doesn't match anything there is
+/// nothing to persist, so this is a pure no-op rather than a needless disk
+/// write — checked *inside* the same locked section
+/// `persist_devices_atomically` holds, not before it, so a concurrent pair
+/// can't sneak the id back in between the check and the lock.
 pub(crate) fn revoke_and_persist(state: &HostState, id: &str) -> Result<bool, String> {
-    let mut devices = state.devices.lock().unwrap();
-    let mut candidate = devices.clone();
-    if !crate::remote_token::revoke(&mut candidate, id) {
-        return Ok(false);
-    }
-    crate::remote_token::save(&state.config_dir, &candidate)?;
-    *devices = candidate;
-    Ok(true)
+    persist_devices_atomically(state, |candidate| crate::remote_token::revoke(candidate, id))
 }
 
 /// Maps `redeem`'s `PairError` to an HTTP status. Every variant means "this
@@ -627,6 +713,17 @@ async fn vaults_handler(
     Ok(Json(vaults))
 }
 
+/// Ceiling on `/read_file`'s response body, mirroring `read_asset_handler`'s
+/// `MAX_ASSET_BYTES` precedent for the same reason: without a cap, a request
+/// for a multi-gigabyte file inside the vault would be read wholesale into
+/// RAM — and, since this route has no concurrency limit of its own, eight
+/// simultaneous requests for one such file would allocate eight times that
+/// before `read_file_bounded`'s UTF-8 check even had a chance to reject it.
+/// 20 MiB matches `MAX_ASSET_BYTES` — no real markdown note approaches this,
+/// while a deliberately or accidentally huge file is refused before most of
+/// it is ever read.
+const MAX_READ_FILE_BYTES: u64 = 20 * 1024 * 1024;
+
 async fn read_file_handler(
     State(state): State<HostState>,
     headers: HeaderMap,
@@ -635,9 +732,48 @@ async fn read_file_handler(
     authorize(&state, &headers)?;
     let armed = armed_vault(&state, &q.vault)?;
     let path = safe_path(&armed, &q.path)?; // canonical path — this is what gets opened.
-    let content = crate::commands::read_file(path.to_string_lossy().into_owned())
+    // `read_file_bounded` does synchronous filesystem I/O (open + metadata +
+    // read) — run on a blocking thread rather than inline in this async
+    // handler, or a slow/huge read would stall Tokio's shared worker
+    // threads, and with them every other in-flight request on this host —
+    // including the host's OWN editor, which runs its local Tauri commands
+    // on the same runtime. `read_asset_handler`'s own synchronous read is a
+    // pre-existing instance of this same shape, already bounded by
+    // `MAX_ASSET_BYTES`; this handler is the one the reviewer flagged
+    // because, before this fix, it had no bound at all (see
+    // `MAX_READ_FILE_BYTES`'s doc comment).
+    let content = tokio::task::spawn_blocking(move || read_file_bounded(&path))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? // the blocking task itself panicked
         .map_err(|_| StatusCode::NOT_FOUND)?;
     Ok(Json(content))
+}
+
+/// The actual read behind `read_file_handler`, split out so it can run
+/// inside `spawn_blocking` as a plain synchronous function. Deliberately
+/// does not call `commands::read_file` (which has no size bound at all —
+/// see this task's finding): opens the file once, checks its metadata length
+/// against `MAX_READ_FILE_BYTES` *before* reading any of it (same ordering
+/// `read_asset_handler` uses for `MAX_ASSET_BYTES`), then reads through that
+/// same handle so the size check and the bytes read can never refer to two
+/// different underlying files. Reuses `commands::mtime_ms` for the mtime
+/// field rather than re-deriving it, so this and the local `read_file`
+/// command agree on exactly what "the file's mtime" means. A single opaque
+/// `()` error is enough here — `read_file_handler` maps every failure to the
+/// same `NOT_FOUND` `safe_path` already uses for "this request does not
+/// resolve to servable content", so the specific reason (missing, too big,
+/// not UTF-8, a directory) is not something the caller needs distinguished.
+fn read_file_bounded(path: &std::path::Path) -> Result<crate::commands::FileContent, ()> {
+    let mut file = std::fs::File::open(path).map_err(|_| ())?;
+    let meta = file.metadata().map_err(|_| ())?;
+    if meta.is_dir() || meta.len() > MAX_READ_FILE_BYTES {
+        return Err(());
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    file.by_ref().take(MAX_READ_FILE_BYTES).read_to_end(&mut bytes).map_err(|_| ())?;
+    let text = String::from_utf8(bytes).map_err(|_| ())?;
+    let mtime = crate::commands::mtime_ms(&path.to_string_lossy());
+    Ok(crate::commands::FileContent { text, mtime })
 }
 
 /// Best-effort content-type for `read_asset`'s raw bytes, keyed off the
@@ -677,7 +813,9 @@ const MAX_ASSET_BYTES: u64 = 20 * 1024 * 1024;
 /// carries credential-bearing remote URLs, which must never leave the host.
 /// Reuses `commands::is_hidden_entry`/`is_mermark_artifact` (the SSOT
 /// `list_dir` itself applies) rather than re-deriving the rule, just applied
-/// to every path segment instead of one.
+/// to every path segment instead of one. This is `safe_path`'s hidden/
+/// artifact gate — see its doc comment for why every file route goes
+/// through it there rather than each route re-checking on its own.
 fn has_a_hidden_or_artifact_component(vault_relative_path: &str) -> bool {
     Path::new(vault_relative_path).components().any(|c| {
         let name = c.as_os_str().to_string_lossy();
@@ -696,20 +834,10 @@ async fn read_asset_handler(
 ) -> Result<impl IntoResponse, StatusCode> {
     authorize(&state, &headers)?;
     let armed = armed_vault(&state, &q.vault)?;
+    // `safe_path` itself now rejects a hidden/artifact path — the previous
+    // per-route re-check that used to live here (and only here) is gone;
+    // see `safe_path`'s doc comment for why the chokepoint moved.
     let path = safe_path(&armed, &q.path)?;
-    let root = armed_root_canonical(&armed)?;
-    // The containment gate only knows about escapes, not mermark's listing
-    // policy — reapply the same exclusion `list_dir`/`list_files_recursive`
-    // apply (`is_hidden_entry`/`is_mermark_artifact`) so this route can't be
-    // used to fetch `.git/config`, `.obsidian/plugins/x/data.json`, or the
-    // editor's own scratch files just because their name happens to be
-    // known. Checked against *every* path component (not just the file
-    // name) — see `has_a_hidden_or_artifact_component`'s doc comment. 404,
-    // not 403 — same "don't distinguish missing from excluded" posture
-    // `safe_path` already uses.
-    if has_a_hidden_or_artifact_component(&vault_relative(&root, &path.to_string_lossy())) {
-        return Err(StatusCode::NOT_FOUND);
-    }
     // Single open handle for the metadata check and the read below — two
     // separate syscalls against the *path* (`fs::metadata` then `fs::read`)
     // would leave a window where a host-local write between them could
@@ -753,7 +881,10 @@ async fn list_dir_handler(
     let armed = armed_vault(&state, &q.vault)?;
     let path = safe_path(&armed, &q.path)?;
     let root = armed_root_canonical(&armed)?;
-    let mut entries = crate::commands::list_dir(path.to_string_lossy().into_owned(), q.show_hidden)
+    // `q.show_hidden` is deliberately never forwarded to `commands::list_dir`
+    // — see `IGNORE_PEER_SHOW_HIDDEN`'s doc comment for why a peer's request
+    // to see hidden entries is refused rather than honored.
+    let mut entries = crate::commands::list_dir(path.to_string_lossy().into_owned(), IGNORE_PEER_SHOW_HIDDEN)
         .map_err(|_| StatusCode::NOT_FOUND)?;
     // `commands::list_dir` returns the host's absolute filesystem paths —
     // correct for the local explorer, but here they'd both leak the armed
@@ -775,8 +906,11 @@ async fn list_files_recursive_handler(
     let armed = armed_vault(&state, &q.vault)?;
     let path = safe_path(&armed, &q.path)?;
     let root = armed_root_canonical(&armed)?;
-    let mut result = crate::commands::list_files_recursive(path.to_string_lossy().into_owned(), q.show_hidden)
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    // Same reasoning as `list_dir_handler`: `q.show_hidden` is never honored
+    // here either — see `IGNORE_PEER_SHOW_HIDDEN`.
+    let mut result =
+        crate::commands::list_files_recursive(path.to_string_lossy().into_owned(), IGNORE_PEER_SHOW_HIDDEN)
+            .map_err(|_| StatusCode::NOT_FOUND)?;
     // Same rewrite as `list_dir_handler`, same reason: `FileHit.path` comes
     // back absolute from `commands::list_files_recursive`.
     for hit in &mut result.files {
@@ -1024,6 +1158,46 @@ mod tests {
         (state, dir)
     }
 
+    /// Like `state_with_file`, but for tests that must prove an escape path
+    /// is *actually* blocked, not merely 404 because nothing happens to sit
+    /// there. `root` (`tmp/vault`) holds `in_vault` and `tmp` itself (the
+    /// armed root's *parent* — exactly where a `../`-relative escape lands)
+    /// holds `outside`. Without a real file at the escape target, a test
+    /// asserting 404 for `path=../outside.md` can't tell "the containment
+    /// gate correctly rejected this" apart from "there was never anything to
+    /// find" — both look identical from the response alone, so a broken gate
+    /// and a working one would pass the same assertion. Planting a real,
+    /// distinctively-named file at the escape target closes that gap: if a
+    /// future regression let the escape through, the response would carry
+    /// `outside`'s content instead of 404.
+    fn state_with_escape_target(
+        in_vault: (&str, &str),
+        outside: (&str, &str),
+    ) -> (HostState, PathBuf) {
+        let n = TEST_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = std::env::temp_dir().join(format!("mermark-rv-escape-{}-{n}", std::process::id()));
+        let root = tmp.join("vault");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(in_vault.0), in_vault.1).unwrap();
+        std::fs::write(tmp.join(outside.0), outside.1).unwrap();
+        let state = HostState {
+            armed: Arc::new(Mutex::new(vec![ArmedVault {
+                id: "rv1".into(),
+                display_name: "노트".into(),
+                root: root.clone(),
+            }])),
+            devices: Arc::new(Mutex::new(vec![crate::remote_token::PairedDevice {
+                id: "dev1".into(),
+                token: "test-token".into(),
+                label: "테스트".into(),
+                paired_at_ms: 0,
+            }])),
+            pairing: Arc::new(Mutex::new(PairingState::armed(issue_pairing_code(0)))),
+            config_dir: scratch_config_dir(),
+        };
+        (state, tmp)
+    }
+
     /// Drives `app` with one request via `tower::ServiceExt::oneshot`,
     /// attaching `token` as the `x-mermark-token` header when given (`None`
     /// sends the request with no auth header at all, not an empty one — the
@@ -1056,22 +1230,26 @@ mod tests {
         serde_json::from_slice(&bytes).unwrap()
     }
 
+    /// Iterates `get_routes()` — the same SSOT table `router()` builds from
+    /// — rather than a hand-picked subset, so a route added there without a
+    /// case here is covered automatically instead of silently going
+    /// unchecked. A previous version of this test named only 3 of the then-7
+    /// GET routes (`/read_file`, `/list_dir`, `/vaults`); the other 4
+    /// (`/read_asset`, `/list_files_recursive`, `/resolve_image`,
+    /// `/list_link_targets`) had never actually been exercised against a
+    /// non-GET method at all.
     #[tokio::test]
     async fn file_routes_reject_every_method_but_get() {
         let app = router(test_state());
-        for (method, path) in [
-            (http::Method::POST, "/read_file"),
-            (http::Method::PUT, "/read_file"),
-            (http::Method::DELETE, "/read_file"),
-            (http::Method::POST, "/list_dir"),
-            (http::Method::PUT, "/vaults"),
-        ] {
-            let res = call(&app, method.clone(), path, None).await;
-            assert_eq!(
-                res.status(),
-                http::StatusCode::METHOD_NOT_ALLOWED,
-                "{method} {path} 는 405여야 한다 — 읽기 전용은 라우트 부재로 강제된다"
-            );
+        for (path, _) in get_routes() {
+            for method in [http::Method::POST, http::Method::PUT, http::Method::DELETE] {
+                let res = call(&app, method.clone(), path, None).await;
+                assert_eq!(
+                    res.status(),
+                    http::StatusCode::METHOD_NOT_ALLOWED,
+                    "{method} {path} 는 405여야 한다 — 읽기 전용은 라우트 부재로 강제된다"
+                );
+            }
         }
     }
 
@@ -1093,13 +1271,17 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    /// A real, distinctively-named file sits at the escape target — see
+    /// `state_with_escape_target`'s doc comment for why a merely-nonexistent
+    /// target would leave this test unable to tell a working gate apart from
+    /// a broken one.
     #[tokio::test]
     async fn read_file_refuses_a_path_outside_the_armed_vault() {
-        let (state, dir) = state_with_file("note.md", "x");
+        let (state, tmp) = state_with_escape_target(("note.md", "x"), ("outside.md", "SECRET"));
         let app = router(state);
         let res = call_get(&app, "/read_file?vault=rv1&path=../outside.md").await;
         assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
-        std::fs::remove_dir_all(dir).ok();
+        std::fs::remove_dir_all(tmp).ok();
     }
 
     #[tokio::test]
@@ -1120,11 +1302,11 @@ mod tests {
     /// that the single decode axum performs is exactly the one gate acts on.
     #[tokio::test]
     async fn percent_encoded_traversal_is_refused() {
-        let (state, dir) = state_with_file("note.md", "x");
+        let (state, tmp) = state_with_escape_target(("note.md", "x"), ("outside.md", "SECRET"));
         let app = router(state);
         let res = call_get(&app, "/read_file?vault=rv1&path=%2e%2e%2foutside.md").await;
         assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
-        std::fs::remove_dir_all(dir).ok();
+        std::fs::remove_dir_all(tmp).ok();
     }
 
     /// A wrong bearer token is rejected exactly like a missing one — the
@@ -1242,6 +1424,41 @@ mod tests {
         assert_eq!(on_disk[0].id, parsed.id);
         assert_eq!(on_disk[0].token, parsed.token);
         assert_eq!(on_disk[0].label, "맥북");
+        std::fs::remove_dir_all(&config_dir).ok();
+    }
+
+    /// A caller who has redeemed a genuinely valid pairing code (a real, if
+    /// narrow, capability) must still be refused an oversized `label` — see
+    /// `MAX_PAIR_LABEL_BYTES`'s doc comment for the abuse this closes
+    /// (persisted to disk, rendered verbatim in the host's settings UI).
+    /// Refused *before* `redeem` is ever called, so an oversized label can't
+    /// burn one of the pairing code's limited attempts either.
+    #[tokio::test]
+    async fn pair_refuses_an_oversized_label() {
+        let code = "333444".to_string();
+        let issued_at_ms = now_ms();
+        let config_dir = scratch_config_dir();
+        let state = HostState {
+            armed: Arc::new(Mutex::new(vec![])),
+            devices: Arc::new(Mutex::new(vec![])),
+            pairing: Arc::new(Mutex::new(PairingState::armed(PairingCode { code: code.clone(), issued_at_ms }))),
+            config_dir: config_dir.clone(),
+        };
+        let app = router(state);
+        let oversized_label = "a".repeat(MAX_PAIR_LABEL_BYTES + 1);
+        let body = serde_json::to_vec(&serde_json::json!({ "code": code, "label": oversized_label })).unwrap();
+        let req = Request::builder()
+            .method(http::Method::POST)
+            .uri("/pair")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), http::StatusCode::BAD_REQUEST);
+        assert!(
+            crate::remote_token::load(&config_dir).unwrap().is_empty(),
+            "거부된 페어링은 기기를 등록하면 안 된다"
+        );
         std::fs::remove_dir_all(&config_dir).ok();
     }
 
@@ -1485,13 +1702,18 @@ mod tests {
     /// still 404 on every route, not just `read_file`.
     #[tokio::test]
     async fn list_dir_still_refuses_dotdot_and_absolute_paths() {
-        let (state, dir) = state_with_file("note.md", "x");
+        // `..` from the armed root lands in `tmp` — planting a real,
+        // distinctively-named file there (see `state_with_escape_target`'s
+        // doc comment) means a broken gate would show up as a 200 listing
+        // `outside.md`, not just a 404 that happens to also occur when
+        // nothing's there.
+        let (state, tmp) = state_with_escape_target(("note.md", "x"), ("outside.md", "SECRET"));
         let app = router(state);
         let res = call_get(&app, "/list_dir?vault=rv1&path=..&show_hidden=false").await;
         assert_eq!(res.status(), http::StatusCode::NOT_FOUND, "dotdot escape");
         let res = call_get(&app, "/list_dir?vault=rv1&path=%2Fetc&show_hidden=false").await;
         assert_eq!(res.status(), http::StatusCode::NOT_FOUND, "absolute path escape");
-        std::fs::remove_dir_all(dir).ok();
+        std::fs::remove_dir_all(tmp).ok();
     }
 
     /// General regression guard, not scoped to one route: no response body
@@ -1635,6 +1857,109 @@ mod tests {
         let app = router(state);
         let res = call_get(&app, "/read_asset?vault=rv1&path=big.bin").await;
         assert_eq!(res.status(), http::StatusCode::PAYLOAD_TOO_LARGE);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    // --- fix round 3: the safe_path hidden/artifact chokepoint, the
+    // read_file size cap, and the cross-host ssh tunnel guard's TS-visible
+    // shape --------------------------------------------------------------
+
+    /// The concrete exploit the report opens with: `.git/config` served
+    /// through `/read_file`, which — before this fix — had no hidden-file
+    /// check at all (only `/read_asset` did). Now that the check lives in
+    /// `safe_path` itself, every route gets it for free.
+    #[tokio::test]
+    async fn read_file_refuses_a_hidden_component_path() {
+        let (state, dir) = state_with_file("note.md", "x");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git").join("config"), b"[remote \"origin\"]\n\turl = https://user:pass@example.com/repo.git\n").unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_file?vault=rv1&path=.git/config").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// The other half of the report's exploit: `show_hidden=true` on
+    /// `/list_dir` must never actually reveal a hidden entry — see
+    /// `IGNORE_PEER_SHOW_HIDDEN`'s doc comment for why the flag is accepted
+    /// on the wire but never honored by the handler.
+    #[tokio::test]
+    async fn list_dir_never_reveals_hidden_entries_even_when_show_hidden_is_requested() {
+        let (state, dir) = state_with_file("note.md", "x");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/list_dir?vault=rv1&path=&show_hidden=true").await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        let entries: Vec<crate::commands::DirEntry> = json_body(res).await;
+        assert!(
+            !entries.iter().any(|e| e.name == ".git"),
+            "숨김 표시를 요청해도 .git이 노출되면 안 된다: {:?}",
+            entries.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Walks `get_routes()` — the same SSOT table `router()` and
+    /// `no_route_response_leaks_the_armed_root_absolute_path` already build
+    /// off — rather than a hand-picked subset of routes, so a fifth
+    /// path-taking route added later without threading it through
+    /// `safe_path` fails this test immediately instead of silently
+    /// reopening the gap a prior round left (`/read_asset` only). A path
+    /// this test has no query fixture for panics loudly (the `other =>`
+    /// arm) rather than running zero iterations for it.
+    #[tokio::test]
+    async fn every_get_route_with_a_path_param_refuses_a_hidden_path_component() {
+        let (state, dir) = state_with_file("note.md", "x");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git").join("config"), b"[remote \"origin\"]").unwrap();
+        let app = router(state);
+
+        for (path, _) in get_routes() {
+            let query = match path {
+                "/vaults" => continue, // takes no vault-relative path param
+                "/list_dir" | "/list_files_recursive" => "?vault=rv1&path=.git&show_hidden=true".into(),
+                "/resolve_image" => "?vault=rv1&path=.git&name=config&max_depth=1".into(),
+                "/read_file" | "/read_asset" | "/list_link_targets" => "?vault=rv1&path=.git/config".into(),
+                other => panic!(
+                    "새 라우트 {other}가 get_routes()에 추가됐다 — \
+                     every_get_route_with_a_path_param_refuses_a_hidden_path_component에 쿼리 케이스를 추가하라"
+                ),
+            };
+            let res = call_get(&app, &format!("{path}{query}")).await;
+            assert_eq!(
+                res.status(),
+                http::StatusCode::NOT_FOUND,
+                "{path}은 숨김 경로 구성요소를 거부해야 한다"
+            );
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// `MAX_READ_FILE_BYTES` refuses an oversized file via a metadata check
+    /// before ever reading it into memory — same ordering
+    /// `read_asset_refuses_a_file_over_the_size_ceiling` pins for
+    /// `MAX_ASSET_BYTES`.
+    #[tokio::test]
+    async fn read_file_refuses_a_file_over_the_size_ceiling() {
+        let (state, dir) = state_with_file("note.md", "x");
+        let big = "a".repeat((MAX_READ_FILE_BYTES + 1) as usize);
+        std::fs::write(dir.join("big.md"), &big).unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_file?vault=rv1&path=big.md").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// A file at or under the ceiling is unaffected — the cap must not
+    /// reject legitimate reads.
+    #[tokio::test]
+    async fn read_file_serves_a_file_right_at_the_size_ceiling() {
+        let (state, dir) = state_with_file("note.md", "x");
+        let exactly_at_cap = "a".repeat(MAX_READ_FILE_BYTES as usize);
+        std::fs::write(dir.join("at_cap.md"), &exactly_at_cap).unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_file?vault=rv1&path=at_cap.md").await;
+        assert_eq!(res.status(), http::StatusCode::OK);
         std::fs::remove_dir_all(dir).ok();
     }
 }

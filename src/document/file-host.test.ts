@@ -1,5 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
-import { makeFileHost, remoteFileHost, remoteConnectionStateFor, classifyRemoteError, type FileHostBackend } from "./file-host";
+import {
+  makeFileHost,
+  remoteFileHost,
+  remoteConnectionStateFor,
+  classifyRemoteError,
+  ensureSshTunnel,
+  evictSshTunnelMemo,
+  type FileHostBackend,
+} from "./file-host";
 import type { RemoteVault } from "../workspace/workspace-state";
 
 const backend = (): FileHostBackend => ({
@@ -226,6 +234,62 @@ describe("remoteFileHost / remoteConnectionStateFor — ssh tunnel reconnect (fi
     const state = await remoteConnectionStateFor(sshVault("ssh://wis@restart-test-4"), call);
     expect(state).toBe("connected");
     expect(calls).toEqual(["remote_ssh_connect", "remote_list_dir"]);
+  });
+
+  // Fix round 3, Important 4 (TS side): a tunnel that dies *after*
+  // `ensureSshTunnel` last resolved successfully (laptop sleep/wake, the
+  // remote host rebooting into a different host's tunnel taking over the
+  // shared port — see remote_ssh.rs's `tunnel_serves` doc comment) must not
+  // stay cached as "ready" forever. Rust's `ensure_tunnel_serves` guard
+  // reports that mismatch as an `SSH_TUNNEL_MISMATCH:`-prefixed rejection
+  // from the underlying `remote_*` call itself (not from
+  // `remote_ssh_connect`), so the eviction has to watch for that, not just
+  // `ensureSshTunnel`'s own promise.
+  it("a SSH_TUNNEL_MISMATCH failure evicts the memo so the next read reconnects", async () => {
+    const host = "ssh://wis@restart-test-5";
+    const calls: string[] = [];
+    let readShouldMismatch = true;
+    const call = ((cmd: string) => {
+      calls.push(cmd);
+      if (cmd === "remote_ssh_connect") return Promise.resolve(undefined);
+      if (cmd === "remote_read_file") {
+        if (readShouldMismatch) {
+          readShouldMismatch = false;
+          return Promise.reject(new Error(`SSH_TUNNEL_MISMATCH: ${host}에 대한 SSH 터널이 더 이상 유효하지 않습니다.`));
+        }
+        return Promise.resolve({ text: "본문", mtime: 1 });
+      }
+      return Promise.reject(new Error("unexpected " + cmd));
+    }) as never;
+    const vault = sshVault(host);
+    const backend = remoteFileHost(vault, call);
+
+    // First read: tunnel connects, but the read itself discovers the tunnel
+    // now serves a different host and rejects.
+    await expect(backend.readFile("a.md")).rejects.toThrow("SSH_TUNNEL_MISMATCH");
+    expect(calls).toEqual(["remote_ssh_connect", "remote_read_file"]);
+
+    // Without eviction, this second read would see the memo still "ready"
+    // and skip straight to remote_read_file — it must reconnect instead.
+    await backend.readFile("b.md");
+    expect(calls).toEqual(["remote_ssh_connect", "remote_read_file", "remote_ssh_connect", "remote_read_file"]);
+  });
+
+  it("evictSshTunnelMemo forces the next ensureSshTunnel call to reconnect", async () => {
+    const host = "ssh://wis@restart-test-6";
+    const calls: string[] = [];
+    const call = ((cmd: string) => {
+      calls.push(cmd);
+      return Promise.resolve(undefined);
+    }) as never;
+
+    await ensureSshTunnel(host, call);
+    await ensureSshTunnel(host, call); // memoized — no second connect
+    expect(calls).toEqual(["remote_ssh_connect"]);
+
+    evictSshTunnelMemo(host);
+    await ensureSshTunnel(host, call);
+    expect(calls).toEqual(["remote_ssh_connect", "remote_ssh_connect"]);
   });
 });
 
