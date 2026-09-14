@@ -168,6 +168,16 @@ function fileName(path: string): string {
   return sep >= 0 ? path.slice(sep + 1) : path;
 }
 
+/** Is this scale visually indistinguishable from no zoom at all — the point
+ *  where the scale-up/scale-down transform trick below buys nothing (design
+ *  §3.3.2, 0.17.1 T3). A near-1 float (accumulated from repeated zoom
+ *  in/out) counts as identity too, since it renders identically. This is the
+ *  SOLE owner of the identity-zoom domain rule — `applyHtmlZoom` only
+ *  branches on its answer, never re-derives it inline. Pure query. */
+export function isIdentityZoom(scale: number): boolean {
+  return Math.abs(scale - 1) < 1e-6;
+}
+
 /** Apply the parent-side zoom transform (full-pane rewrite design §B —
  *  iframe documents can't inherit a CSS custom property across the document
  *  boundary, so `.html-viewer-frame`'s own box is scaled from the OUTSIDE
@@ -178,8 +188,29 @@ function fileName(path: string): string {
  *  survives). `scale` is the SHELL's viewer-local zoom factor
  *  (`shell.zoom.get()`), never fontScale — reused verbatim from before this
  *  round (v0.8.6's transform trick), only its SOURCE changed (below).
- *  Command (void) — a DOM mutation, not a query. */
-function applyHtmlZoom(iframe: HTMLIFrameElement, scale: number): void {
+ *
+ *  At an IDENTITY scale (design §3.3, 0.17.1 T3 — the scroll-lag fix) this
+ *  trick has zero visual effect but still pays a real cost: a transformed
+ *  iframe drops out of WKWebView's compositor fast-scroll path, and
+ *  `bindZoomSink` applies the current factor immediately on every open, so
+ *  a document opened at the default zoom (the overwhelming majority of
+ *  opens — most users never touch zoom) sat under `transform: scale(1)` the
+ *  entire time for nothing. `.html-viewer-frame`'s own CSS is already
+ *  `width:100%; height:100%` (below), and its wrapper
+ *  `.html-viewer-frame-wrap` is `flex:1; min-height:0` — so clearing the
+ *  inline styles at identity makes the box CSS-only-equivalent to
+ *  `calc(100% / 1)`; the trick's contract ("post-transform box exactly
+ *  fills the wrapper") still holds. The four properties are REMOVED (`""`),
+ *  not left unset, so zooming in and back out to 1 doesn't leave a stale
+ *  transform behind. Command (void) — a DOM mutation, not a query. */
+export function applyHtmlZoom(iframe: HTMLIFrameElement, scale: number): void {
+  if (isIdentityZoom(scale)) {
+    iframe.style.width = "";
+    iframe.style.height = "";
+    iframe.style.transform = "";
+    iframe.style.transformOrigin = "";
+    return;
+  }
   iframe.style.width = `calc(100% / ${scale})`;
   iframe.style.height = `calc(100% / ${scale})`;
   iframe.style.transform = `scale(${scale})`;

@@ -23,7 +23,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
 
-import { registerHtmlViewer } from "../src/extensions/html-viewer";
+import { registerHtmlViewer, applyHtmlZoom, isIdentityZoom } from "../src/extensions/html-viewer";
 import { viewerFor } from "../src/chrome/viewer/registry";
 import { fontScaleSetting, htmlScriptsSetting } from "../src/settings/app";
 
@@ -76,6 +76,70 @@ describe("registerHtmlViewer registry shape (T3)", () => {
     expect(v?.id).toBe("ext.html");
     expect(v?.extensions).toEqual(["html", "htm"]);
     expect(viewerFor("htm")?.id).toBe("ext.html");
+  });
+});
+
+describe("isIdentityZoom / applyHtmlZoom (T3, 0.17.1 — scroll-lag fix)", () => {
+  it("isIdentityZoom treats 1 and near-1 (float accumulation) as identity", () => {
+    expect(isIdentityZoom(1)).toBe(true);
+    expect(isIdentityZoom(1.0000001)).toBe(true);
+    expect(isIdentityZoom(1.1)).toBe(false);
+    expect(isIdentityZoom(0.9)).toBe(false);
+  });
+
+  it("identity scale clears width/height/transform/transformOrigin — no visual effect, so no transform cost", () => {
+    const iframe = document.createElement("iframe");
+    applyHtmlZoom(iframe, 1);
+    expect(iframe.style.transform).toBe("");
+    expect(iframe.style.transformOrigin).toBe("");
+    expect(iframe.style.width).toBe("");
+    expect(iframe.style.height).toBe("");
+  });
+
+  it("non-identity scale still applies the existing scale-up/scale-down trick", () => {
+    const iframe = document.createElement("iframe");
+    applyHtmlZoom(iframe, 1.5);
+    expect(iframe.style.transform).toBe("scale(1.5)");
+    expect(iframe.style.transformOrigin).toBe("0 0");
+    // jsdom's CSSOM folds `calc(100% / 1.5)` to a percentage (same caveat as
+    // the existing shell-zoom test above) — assert the calc() literal took
+    // effect, not jsdom's arithmetic-folded serialization of it.
+    expect(iframe.style.width).toContain("calc(");
+    expect(iframe.style.height).toContain("calc(");
+  });
+
+  it("zooming in then back to 1 fully removes the inline style — no stale slow-path residue", () => {
+    const iframe = document.createElement("iframe");
+    applyHtmlZoom(iframe, 2);
+    expect(iframe.style.transform).toBe("scale(2)");
+    applyHtmlZoom(iframe, 1);
+    expect(iframe.style.transform).toBe("");
+    expect(iframe.style.width).toBe("");
+    expect(iframe.getAttribute("style") ?? "").not.toContain("scale");
+  });
+
+  it("OFF path starts with no transform on the iframe at the default zoom", async () => {
+    // bindZoomSink is the one thing both openStaticHtmlDocument (OFF) and
+    // openScriptedHtmlDocument (ON) share (design §3.3.1) — a fix that only
+    // touched one path would leave the other still paying the identity-zoom
+    // transform cost. Split into two `it`s (rather than two opens in one
+    // test) to match this file's one-open-per-test convention — sharing a
+    // single title-bar slot across two live opens left stray nodes behind.
+    stubFetchOk("<html><body>hi</body></html>");
+    const handle = viewerFor("html")!.open("/vault/doc.html");
+    await new Promise((r) => setTimeout(r, 0));
+    const frame = document.querySelector(".html-viewer-frame") as HTMLIFrameElement;
+    expect(frame.style.transform).toBe("");
+    handle.close();
+  });
+
+  it("ON path starts with no transform on the iframe at the default zoom", async () => {
+    htmlScriptsSetting.set(true);
+    const handle = viewerFor("html")!.open("/vault/doc.html");
+    await new Promise((r) => setTimeout(r, 0));
+    const frame = document.querySelector(".html-viewer-frame") as HTMLIFrameElement;
+    expect(frame.style.transform).toBe("");
+    handle.close();
   });
 });
 
@@ -179,8 +243,11 @@ describe("openHtmlViewer: zoom is shell-local, independent of fontScale (T5, des
     const iframe = document.querySelector(".html-viewer-frame") as HTMLIFrameElement;
     // Default: fit (shell.zoom starts at 1) — applyHtmlZoom(iframe, 1) was
     // already applied by the bind-now half of shell.zoom.bind at open time.
-    expect(iframe.style.transform).toBe("scale(1)");
-    expect(iframe.style.transformOrigin).toBe("0 0");
+    // T3 (0.17.1, scroll-lag fix): an identity zoom now clears the inline
+    // transform entirely instead of setting `scale(1)` — see the
+    // "identity zoom never gets a transform" describe block below.
+    expect(iframe.style.transform).toBe("");
+    expect(iframe.style.transformOrigin).toBe("");
 
     // POSITIVE half: the shell's own zoom-in button DOES scale the iframe.
     const zoomIn = document.querySelector(".viewer-panel-zoom-in") as HTMLButtonElement;
