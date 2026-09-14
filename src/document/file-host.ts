@@ -64,6 +64,13 @@ const remoteParentAndName = (path: string): { parent: string; name: string } => 
   return slash === -1 ? { parent: "", name: path } : { parent: path.slice(0, slash), name: path.slice(slash + 1) };
 };
 
+/** How long a `remote_list_dir` listing is trusted before a repeat call
+ *  re-fetches. Short and deliberately not "forever": v1 remote vaults are
+ *  read-only from this client's POV but the host can still change underfoot
+ *  (another device edits it), so this is purely a burst-dedup window, not a
+ *  correctness cache. */
+const REMOTE_LISTING_TTL_MS = 8000;
+
 /** The real remote backend (Task 6's `remote_*` commands, Task 2's
  *  `RemoteVault`). The device token never reaches here (Ruling 4): the
  *  frontend sends only `host`+`vault`, and Rust looks the token up from its
@@ -75,11 +82,29 @@ export const remoteFileHost = (
   call: typeof invoke = invoke,
 ): FileHostBackend => {
   const base = { host: vault.host, vault: vault.remoteVaultId };
-  // `listDir` is defined once and reused by `pathExists`/`directoryExists`
-  // below - both are existence checks derived from it, not separate
-  // network shapes.
-  const listDir = (path: string, showHidden: boolean): Promise<DirEntry[]> =>
-    call("remote_list_dir", { ...base, path, showHidden });
+  // `pathExists` runs once per rendered `[[wikilink]]` (wikilink.ts's
+  // `toDOM`), and `inlinePreview`'s ViewPlugin rebuilds on every
+  // `selectionSet`/`viewportChanged` (core.ts) - so a document with N
+  // wikilinks in one folder would otherwise fire N *repeated* identical
+  // `remote_list_dir` round-trips for the same parent, and re-pay that cost
+  // again on every cursor move or scroll. `listingCache` collapses
+  // concurrent/rapid-repeat listings of the same `(path, showHidden)` to one
+  // in-flight (or recently-settled) request; it lives on this closure, so it
+  // only pays off across calls if the SAME `remoteFileHost` instance is
+  // reused — see `remoteHostFor`'s per-vaultId memoization below.
+  const listingCache = new Map<string, { expires: number; promise: Promise<DirEntry[]> }>();
+  const listDir = (path: string, showHidden: boolean): Promise<DirEntry[]> => {
+    const key = `${path} ${showHidden}`;
+    const hit = listingCache.get(key);
+    if (hit && hit.expires > Date.now()) return hit.promise;
+    const promise: Promise<DirEntry[]> = call("remote_list_dir", { ...base, path, showHidden });
+    listingCache.set(key, { expires: Date.now() + REMOTE_LISTING_TTL_MS, promise });
+    // A failed listing shouldn't poison the cache for the full TTL - evict
+    // it immediately so the next call retries instead of replaying the
+    // same error to every waiter.
+    promise.catch(() => listingCache.delete(key));
+    return promise;
+  };
   return {
     readFile: (path) => call("remote_read_file", { ...base, path }),
     listDir,
@@ -151,17 +176,36 @@ function assertNeverPersistenceKind(kind: never): never {
   throw new Error(`처리되지 않은 볼트 종류: ${JSON.stringify(kind)}`);
 }
 
+/** One `remoteFileHost` instance per `vaultId`, reused across every
+ *  `fileHostFor()` call for that vault. Required for `remoteFileHost`'s
+ *  `listingCache` (above) to ever pay off: `makeFileHost`'s `remoteFor` is
+ *  invoked fresh on every single `forVault()` call (once per read, in
+ *  practice — see `fileHostFor` below), so without this memo a brand new
+ *  instance, with a brand new empty cache, would be built on every read and
+ *  thrown away immediately after — the cache would never survive between
+ *  two `pathExists` calls for sibling wikilinks, defeating the point. */
+const remoteHostCache = new Map<string, FileHostBackend>();
+const remoteHostFor = (vault: RemoteVault): FileHostBackend => {
+  const cached = remoteHostCache.get(vault.vaultId);
+  if (cached) return cached;
+  const created = remoteFileHost(vault);
+  remoteHostCache.set(vault.vaultId, created);
+  return created;
+};
+
 /** The app-wide singleton every call site outside tests uses. `remoteFor` is
- *  now the real `remoteFileHost` (this task's change) — every call site
- *  already routed through `fileHostFor` via Task 1's chokepoint, so no
- *  further call-site change was needed to make remote vaults real.
- *  `isRemoteVault` narrows the switch's already-remote `vault` to
- *  `RemoteVault` without a cast; it can't actually fail (the `"remote"` case
- *  in `makeFileHost`'s switch guarantees it), so the fallback only exists to
- *  keep this a total function instead of asserting. */
+ *  now the real `remoteFileHost` (this task's change), routed through
+ *  `remoteHostFor` so the same instance — and its listing cache — is reused
+ *  for a given vault. Every call site already routed through `fileHostFor`
+ *  via Task 1's chokepoint, so no further call-site change was needed to
+ *  make remote vaults real. `isRemoteVault` narrows the switch's
+ *  already-remote `vault` to `RemoteVault` without a cast; it can't actually
+ *  fail (the `"remote"` case in `makeFileHost`'s switch guarantees it), so
+ *  the fallback only exists to keep this a total function instead of
+ *  asserting. */
 const fileHost = makeFileHost({
   local: localFileHost,
-  remoteFor: (vault) => (isRemoteVault(vault) ? remoteFileHost(vault) : localFileHost),
+  remoteFor: (vault) => (isRemoteVault(vault) ? remoteHostFor(vault) : localFileHost),
 });
 
 /** The backend `vault`'s reads should go through. Thin named wrapper over the

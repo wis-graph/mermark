@@ -109,6 +109,33 @@ describe("remoteFileHost", () => {
     expect(await host.pathExists("gone/note.md")).toBe(false);
   });
 
+  it("같은 폴더의 형제 위키링크 두 개가 pathExists를 부르면 remote_list_dir은 한 번만 나간다", async () => {
+    let listDirCalls = 0;
+    const call = ((cmd: string) => {
+      if (cmd === "remote_list_dir") {
+        listDirCalls++;
+        return Promise.resolve([
+          { name: "a.md", path: "notes/a.md", is_dir: false },
+          { name: "b.md", path: "notes/b.md", is_dir: false },
+        ]);
+      }
+      return Promise.reject(new Error("unexpected " + cmd));
+    }) as never;
+    const host = remoteFileHost(remoteVault, call);
+    const [existsA, existsB] = await Promise.all([
+      host.pathExists("notes/a.md"),
+      host.pathExists("notes/b.md"),
+    ]);
+    expect(existsA).toBe(true);
+    expect(existsB).toBe(true);
+    expect(listDirCalls).toBe(1);
+
+    // A third, sequential call for the same parent within the TTL window
+    // also reuses the cached listing rather than firing a new request.
+    expect(await host.pathExists("notes/a.md")).toBe(true);
+    expect(listDirCalls).toBe(1);
+  });
+
   it("directoryExists는 remote_list_dir 성공 여부로 판정한다", async () => {
     const call = ((cmd: string, args: { path: string }) => {
       if (cmd === "remote_list_dir" && args.path === "notes") return Promise.resolve([]);

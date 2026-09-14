@@ -29,7 +29,19 @@ export function wikilinkPath(target: string, baseDir: string, currentFile?: stri
   if (!file) return currentFile ?? "";
   if (file.startsWith("/")) return /\.[a-z0-9]+$/i.test(file) ? file : `${file}.md`;
   const withExt = /\.[a-z0-9]+$/i.test(file) ? file : `${file}.md`;
-  return `${baseDir.replace(/\/$/, "")}/${withExt}`;
+  const dir = baseDir.replace(/\/$/, "");
+  // A remote vault's root note carries baseDir === "" (main.ts's
+  // baseDirForVault falls back to currentExplorerFolder, which is "" for a
+  // remote vault whose explorer sits at the root) - `${dir}/${withExt}`
+  // would then produce a leading "/note.md". That reads as an absolute
+  // path locally, but it's actually a vault-relative remote path, and
+  // remote_read_file/remote_list_dir reject it (host's `resolve_within`
+  // treats a leading "/" as escaping the vault root -> 404 ->
+  // classifyRemoteError misreports it as "sharing-off"). A local vault's
+  // baseDir is always a real absolute path (never ""), so this branch is a
+  // no-op for local vaults - it only changes behavior for the remote-root
+  // case.
+  return dir ? `${dir}/${withExt}` : withExt;
 }
 
 /** Whether an embed target (`![[…]]`) is an image we can inline. */

@@ -66,6 +66,18 @@ describe("wikilinkPath", () => {
   it("keeps an explicit .txt extension (does not get relabeled .md)", () => {
     expect(wikilinkPath("note.txt", baseDir)).toBe("/home/u/notes/note.txt");
   });
+  // Task 8 fix round 1, finding 2: a remote vault's root note has
+  // baseDir === "" (main.ts's baseDirForVault falls back to
+  // currentExplorerFolder). The old `${dir}/${withExt}` join produced a
+  // leading "/note.md" for that case - readable locally as an absolute
+  // path, but wrong for a vault-relative remote path: remote_read_file
+  // rejects it and the failure surfaces to the user as "sharing-off"
+  // instead of the real cause. No leading slash should ever appear when
+  // baseDir is empty.
+  it("REGRESSION (remote vault root): an empty baseDir resolves without a leading slash", () => {
+    expect(wikilinkPath("note", "")).toBe("note.md");
+    expect(wikilinkPath("sub/note", "")).toBe("sub/note.md");
+  });
 });
 
 describe("sameFileHeadingAnchor", () => {
