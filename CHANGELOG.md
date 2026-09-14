@@ -5,7 +5,7 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전은 [유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따른다.
 
-## [Unreleased]
+## [0.17.0] - 2026-09-15
 
 ### Added
 
