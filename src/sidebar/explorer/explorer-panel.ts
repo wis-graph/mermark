@@ -4,6 +4,8 @@ import { basename, dirOf, isPathWithin, normalizePath } from "../../document/pat
 import type { DirEntry } from "../../document/types";
 import { renderSidebarButton } from "../toggle";
 import { isImeComposing } from "../../shortcuts/keys";
+import { openContextMenu, type ContextMenuItem } from "../../chrome/context-menu";
+import { nativeOpenLabel } from "./native-open-label";
 
 /** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
 const EXPLORER_ASIDE_ID = "explorer-aside";
@@ -193,6 +195,31 @@ export interface ExplorerHandlers {
    *  at the CWD. A remote listing has no local folder to bookmark in the
    *  first place, so the toggle must never even render there. */
   canBookmarkFolders?(): boolean;
+  /** T4 (0.17.1) — the file row's right-click/Shift+F10/Menu-key context
+   *  menu. All four are gated the same way: `hasLocalPath` decides whether
+   *  the row carries a LOCAL absolute path at all (a remote vault's row is
+   *  vault-relative — `rowHasLocalPath`, document-vault.ts). Omitting
+   *  `hasLocalPath` defaults to "local" (same `?? true` convention as
+   *  `canBookmarkFolders`), so existing callers/tests that never wire remote
+   *  vaults keep the menu fully enabled. Omitting any ONE of the four action
+   *  handlers still renders that item (never silently drops it — "조용한
+   *  강등 금지"), just with no `onSelect` effect; in practice main.ts always
+   *  wires all four together. */
+  hasLocalPath?(): boolean;
+  /** "기본 앱에서 열기"/"기본 브라우저에서 열기"/"미리보기에서 열기"
+   *  (label from `nativeOpenLabel`) — the opener plugin's `openPath`. */
+  onOpenInNativeApp?(absPath: string): void;
+  /** "새 창에서 열기" — mermark's own `open_path` command (a NEW mermark
+   *  window loading this file), the same call `onOpenFileNewWindow` already
+   *  makes for ⌘/Ctrl+click, exposed here as an explicit menu action
+   *  independent of any modifier key. */
+  onOpenInNewWindow?(absPath: string): void;
+  /** "Finder에서 보기" — the opener plugin's `revealItemInDir`. */
+  onRevealInFinder?(absPath: string): void;
+  /** "경로 복사" — MUST go through the backend's `copy_to_clipboard`
+   *  (arboard), never `navigator.clipboard` (blocked in the real app's
+   *  WKWebView — mermark's own established convention, clipboard.ts). */
+  onCopyPath?(absPath: string): void;
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
@@ -232,6 +259,11 @@ export function createExplorerPanel({
   isVaultRegistered,
   isRootLocked,
   canBookmarkFolders,
+  hasLocalPath,
+  onOpenInNativeApp,
+  onOpenInNewWindow,
+  onRevealInFinder,
+  onCopyPath,
 }: ExplorerHandlers): ExplorerPanel {
   /** "Does clicking/Entering this row open something?" — isEditableTextFile's
    *  reach extended by the gated viewer case: a non-editable row is only
@@ -933,6 +965,44 @@ export function createExplorerPanel({
     if (item.dataset.path) onToggleVault(item.dataset.path);
   };
 
+  /** The reason shown (via `title`) on every disabled context-menu item — one
+   *  string, reused across all four, matching the design's "조용한 강등
+   *  금지" rule: a disabled item still explains ITSELF instead of just
+   *  looking broken. */
+  const NO_LOCAL_PATH_REASON = "원격 볼트 파일에는 로컬 경로가 없습니다";
+
+  /** T4 (0.17.1): the four-item context menu for a FILE row (`.explorer-file`
+   *  only — folders and `..` don't get one; mermark's own `open_path`
+   *  command rejects a directory outright, and a folder is already one
+   *  click away from expanding). Gated as a WHOLE by `hasLocalPath` (design
+   *  §2.3): a remote vault's row carries only a vault-relative path, so
+   *  handing it to any of these local-FS commands would resolve against
+   *  THIS machine's filesystem, not the host's — every item stays VISIBLE
+   *  (never hidden) but `aria-disabled` + a `title` explaining why. Command
+   *  (void). */
+  const openRowContextMenu = (item: HTMLElement, x: number, y: number): void => {
+    const absPath = item.dataset.path;
+    if (!absPath) return;
+    const localOk = hasLocalPath?.() ?? true;
+    const disabled = !localOk;
+    const disabledReason = disabled ? NO_LOCAL_PATH_REASON : undefined;
+    const items: ContextMenuItem[] = [
+      { label: nativeOpenLabel(basename(absPath)), disabled, disabledReason, onSelect: () => onOpenInNativeApp?.(absPath) },
+      { label: "새 창에서 열기", disabled, disabledReason, onSelect: () => onOpenInNewWindow?.(absPath) },
+      { label: "Finder에서 보기", disabled, disabledReason, onSelect: () => onRevealInFinder?.(absPath) },
+      { label: "경로 복사", disabled, disabledReason, onSelect: () => onCopyPath?.(absPath) },
+    ];
+    openContextMenu({ x, y, items, returnFocusTo: item });
+  };
+
+  tree.addEventListener("contextmenu", (e) => {
+    const item = (e.target as HTMLElement).closest(".explorer-file") as HTMLElement | null;
+    if (!item) return;
+    e.preventDefault();
+    focusItem(item);
+    openRowContextMenu(item, (e as MouseEvent).clientX, (e as MouseEvent).clientY);
+  });
+
   tree.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
     const retry = target.closest(".explorer-retry");
@@ -992,6 +1062,21 @@ export function createExplorerPanel({
       case "End":
         e.preventDefault();
         focusEdge("last");
+        break;
+      case "ContextMenu":
+      case "F10":
+        // Shift+F10 (Windows/Linux convention) and the dedicated Menu key —
+        // both the standard keyboard-only ways to open a context menu,
+        // mirrored here so the T4 menu isn't mouse-only. Only fires for a
+        // FILE row (openRowContextMenu's own `.explorer-file` gate applies
+        // implicitly: folders/`..` have no dataset.path-bearing menu, so a
+        // press there is silently ignored by openRowContextMenu's guard).
+        if (e.key === "F10" && !e.shiftKey) break;
+        e.preventDefault();
+        if (item.classList.contains("explorer-file")) {
+          const rect = item.getBoundingClientRect();
+          openRowContextMenu(item, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        }
         break;
     }
   });

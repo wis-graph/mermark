@@ -50,3 +50,18 @@ export function isRemoteVault(vault: Vault | undefined): vault is RemoteVault {
  *  standard-link click sees consistent wording instead of two ad hoc
  *  phrasings of the same fact. */
 export const REMOTE_VAULT_READONLY_MESSAGE = "원격 볼트는 읽기 전용입니다";
+
+/** Does a row from `vault` have a LOCAL absolute path at all — the premise
+ *  every "open in native app"/"reveal in Finder"/"copy path" action rests
+ *  on (T4, 0.17.1 explorer context menu). A remote vault's row carries only
+ *  a vault-RELATIVE path ("노트/파일.md"); handing that to a local-FS
+ *  command (`open_path`, the opener plugin's `openPath`/`revealItemInDir`)
+ *  resolves it against THIS machine's filesystem — either a silent failure
+ *  or, worse, an unrelated same-named local file opened under the remote
+ *  file's name. This is the SAME judgment `isRemoteVault` already makes,
+ *  named for its consumer so a menu-gating call site reads as "does this
+ *  row have a local path" rather than re-deriving `!isRemoteVault(...)`
+ *  inline at each of the four gated actions. Pure query. */
+export function rowHasLocalPath(vault: Vault | undefined): boolean {
+  return !isRemoteVault(vault);
+}

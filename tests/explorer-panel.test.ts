@@ -1531,3 +1531,84 @@ describe("explorer: viewer openability refresh", () => {
     expect(sub.classList.contains("is-nonmd")).toBe(false);
   });
 });
+
+// T4 (0.17.1) — the explorer's first-ever context menu ----------------------
+describe("explorer: right-click context menu on a file row (T4)", () => {
+  it("로컬 행 우클릭은 네 항목을 활성으로 낸다", async () => {
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      onOpenInNativeApp: vi.fn(),
+      onOpenInNewWindow: vi.fn(),
+      onRevealInFinder: vi.fn(),
+      onCopyPath: vi.fn(),
+    });
+    const row = panel.aside.querySelector('.explorer-file[data-path="/root/a.md"]') as HTMLElement;
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent);
+    expect(labels).toEqual(["기본 앱에서 열기", "새 창에서 열기", "Finder에서 보기", "경로 복사"]);
+    expect([...document.querySelectorAll('[role="menuitem"][aria-disabled="true"]')]).toHaveLength(0);
+    document.querySelectorAll('[role="menu"]').forEach((n) => n.remove());
+  });
+
+  it("원격 볼트 행에서는 네 항목이 전부 비활성이다 — 로컬 절대 경로가 없다", async () => {
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      hasLocalPath: () => false,
+      onOpenInNativeApp: vi.fn(),
+      onOpenInNewWindow: vi.fn(),
+      onRevealInFinder: vi.fn(),
+      onCopyPath: vi.fn(),
+    });
+    const row = panel.aside.querySelector('.explorer-file[data-path="/root/a.md"]') as HTMLElement;
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    const menuItems = [...document.querySelectorAll('[role="menuitem"]')];
+    expect(menuItems).toHaveLength(4);
+    expect(menuItems.every((e) => e.getAttribute("aria-disabled") === "true")).toBe(true);
+
+    // Clicking a disabled item never reaches its handler.
+    const nativeApp = vi.fn();
+    for (const el of menuItems) (el as HTMLElement).click();
+    expect(nativeApp).not.toHaveBeenCalled();
+    document.querySelectorAll('[role="menu"]').forEach((n) => n.remove());
+  });
+
+  it("Shift+F10과 메뉴키로도 열리고, 경로 복사는 onCopyPath로 경로를 넘긴다", async () => {
+    const onCopyPath = vi.fn();
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      onOpenInNativeApp: vi.fn(),
+      onOpenInNewWindow: vi.fn(),
+      onRevealInFinder: vi.fn(),
+      onCopyPath,
+    });
+    const row = panel.aside.querySelector('.explorer-file[data-path="/root/a.md"]') as HTMLElement;
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true })); // focus it (roving tabindex)
+    treeOf(panel.aside).dispatchEvent(new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true }));
+    const items = [...document.querySelectorAll('[role="menuitem"]')];
+    expect(items).toHaveLength(4);
+    const copyItem = items.find((e) => e.textContent === "경로 복사") as HTMLElement;
+    copyItem.click();
+    expect(onCopyPath).toHaveBeenCalledWith("/root/a.md");
+    document.querySelectorAll('[role="menu"]').forEach((n) => n.remove());
+  });
+
+  it("폴더 행이나 `..` 행에는 컨텍스트 메뉴가 뜨지 않는다", async () => {
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+    });
+    const folder = panel.aside.querySelector(".explorer-dir") as HTMLElement;
+    folder.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
+    up.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+});

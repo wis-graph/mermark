@@ -92,7 +92,8 @@ import { isRemoteSrc } from "./markdown/image";
 import { setImageOpenHandler } from "./markdown/image-open";
 import { setDocumentOpenHandler } from "./markdown/document-open";
 import { openStandardLocalLink, markLocalLinkFailure, REMOTE_VAULT_LOCAL_LINK_MESSAGE } from "./markdown/local-doc-link";
-import { isRemoteVault } from "./document/document-vault";
+import { isRemoteVault, rowHasLocalPath } from "./document/document-vault";
+import { openPath as openInNativeAppPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { remoteCanOpen, remoteUnsupportedMessage } from "./document/remote-capability";
 import { setImageSearchRoot, owningVaultRoot } from "./markdown/image-search-root";
 import { attachImageToVault } from "./markdown/attach-image";
@@ -1115,6 +1116,34 @@ async function boot() {
     // (and its Space-key shortcut) must not even render there, or clicking
     // it sends a vault-relative name into a LOCAL canonicalize_path call.
     canBookmarkFolders: () => !isRemoteVault(currentVault()),
+    // T4 (0.17.1): the explorer's right-click context menu. Same
+    // isRemoteVault-derived gate as canBookmarkFolders just above — a
+    // remote vault's row is a vault-relative path, so every one of these
+    // four actions (which all resolve against the LOCAL filesystem) must
+    // stay disabled there (rowHasLocalPath, document-vault.ts §T4 doc
+    // comment; this repo has hit that exact leak class 6 times already).
+    hasLocalPath: () => rowHasLocalPath(currentVault()),
+    onOpenInNativeApp: (absPath) => {
+      void openInNativeAppPath(absPath).catch((err) => {
+        console.error("Failed to open in the native app", err);
+      });
+    },
+    // Mermark's own "spawn a fresh window for this file" command — the SAME
+    // invoke openInNewWindow (above) already makes for ⌘/Ctrl+click, now
+    // reachable as an explicit context-menu action too.
+    onOpenInNewWindow: (absPath) => openInNewWindow(absPath, currentVault()),
+    onRevealInFinder: (absPath) => {
+      void revealItemInDir(absPath).catch((err) => {
+        console.error("Failed to reveal in Finder", err);
+      });
+    },
+    // MUST go through the backend's copy_to_clipboard (arboard) —
+    // navigator.clipboard is blocked in the real app's WKWebView
+    // (clipboard.ts's own header comment; this repo has already reached
+    // zero navigator.clipboard call sites and this must not reopen one).
+    onCopyPath: (absPath) => {
+      void copyTextToClipboard(absPath);
+    },
   });
 
   // Ruling 9: `targetVault`, when the caller already knows it (onSelectVault/

@@ -2042,6 +2042,26 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    markdown only — a click is a no-op, not a broken read_file view). */
 .explorer-file.is-nonmd > .explorer-label { color: var(--sidebar-muted); cursor: default; }
 .explorer-file.is-nonmd > .explorer-label:hover { background: transparent; }
+
+/* T4 (0.17.1) — the reusable context-menu primitive (chrome/context-menu.ts).
+   Positioned via inline left/top (fixed), sized/painted here. Same elevated-
+   surface idiom as .recovery-modal (var(--bg)/var(--border), a real shadow),
+   not the sidebar's own dark palette — the menu can be opened over EITHER
+   the sidebar or the editor, so it stays theme-neutral rather than borrowing
+   --sidebar-* tokens that only make sense inside the aside. */
+.context-menu {
+  min-width: 180px; padding: 4px; border-radius: var(--radius-md, 8px);
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 28%, transparent);
+  z-index: 60;
+}
+.context-menu-item {
+  padding: 6px 10px; border-radius: var(--radius-sm, 6px); cursor: pointer;
+  font-size: .92em; outline: none;
+}
+.context-menu-item:hover, .context-menu-item:focus-visible { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.context-menu-item[aria-disabled="true"] { color: var(--muted); cursor: default; }
+.context-menu-item[aria-disabled="true"]:hover { background: transparent; }
 /* A folder's lazily-loaded children group: a vertical block below the label.
    Indent is on each child item (via --level), so the group itself adds none. */
 .explorer-children { display: block; }
