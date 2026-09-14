@@ -13,6 +13,23 @@ describe("WorkspaceStore", () => {
     expect(vault.explorerRoot).toBe(vault.rootPath);
   });
 
+  // Pins the invariant main.ts:434 (explorerRootForVault) leans on without a
+  // type-level guarantee: PermanentVault.explorerRoot === rootPath. registerVault
+  // (above) proves it at creation; this proves the second writer, readState's
+  // reload path (workspace-state.ts's loadState-equivalent), doesn't let the two
+  // fields drift even if a stored blob has them out of sync.
+  it("re-derives explorerRoot from rootPath on reload, even if the stored blob disagrees", () => {
+    const firstStore = new WorkspaceStore();
+    const vault = firstStore.registerVault("/notes/project", "Project");
+    const saved = JSON.parse(localStorage.getItem(workspaceStorageKey) ?? "null") as { vaults: Array<Record<string, unknown>> };
+    const tampered = { ...saved, vaults: saved.vaults.map((item) => item.vaultId === vault.vaultId ? { ...item, explorerRoot: "/somewhere/else" } : item) };
+    localStorage.setItem(workspaceStorageKey, JSON.stringify(tampered));
+
+    const restartedStore = new WorkspaceStore();
+    const reloaded = restartedStore.getVault(vault.vaultId);
+    expect(reloaded?.explorerRoot).toBe(reloaded?.rootPath);
+  });
+
   it("always exposes one runtime-only global vault without persisting it", () => {
     const store = new WorkspaceStore();
     const vault = store.getGlobalVault();

@@ -431,6 +431,10 @@ async function boot() {
   // browsing, just not as this button's default anymore).
   // Remote vaults have no filesystem rootPath (design §4.4) — explorerRoot is
   // their virtual browsing root instead, same shape as a permanent vault's.
+  // Relies on PermanentVault.explorerRoot === rootPath always holding, which
+  // the type does not enforce — pinned by tests/workspace-state.test.ts
+  // ("registers canonical permanent vaults..." and "re-derives explorerRoot
+  // from rootPath on reload...").
   const explorerRootForVault = (vault: Vault): string => vault.persistenceKind === "global" ? homeRoot : vault.explorerRoot;
   // Document navigation history (⌘[/⌘]) — ephemeral in-memory session state, NOT
   // a setting: starts empty; the first openInWindow records the launch file.
