@@ -233,6 +233,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use std::io::Read as _;
 use std::sync::{Arc, Mutex};
 
 /// Hard ceiling on a request's `path` query value, enforced in `safe_path`
@@ -306,17 +307,32 @@ pub struct PairResponse {
 /// a registered path with 405 automatically, which is how "read-only" is
 /// enforced structurally rather than by a convention a future handler could
 /// forget to honor.
+/// The GET file routes as a data table rather than a chain of `.route()`
+/// calls — this is the *single* place that names them, and `router()` and
+/// the `no_route_response_leaks_the_armed_root_absolute_path` test both
+/// build off it. axum 0.7 has no public API to enumerate a `Router`'s
+/// registered paths after the fact (only the boolean `has_routes()`), so
+/// this table is what stands in for that: a test that wants "every file
+/// route" iterates this instead of hand-copying the path list, so a route
+/// added here is automatically covered there too.
+fn get_routes() -> Vec<(&'static str, axum::routing::MethodRouter<HostState>)> {
+    vec![
+        ("/vaults", get(vaults_handler)),
+        ("/list_dir", get(list_dir_handler)),
+        ("/list_files_recursive", get(list_files_recursive_handler)),
+        ("/read_file", get(read_file_handler)),
+        ("/read_asset", get(read_asset_handler)),
+        ("/resolve_image", get(resolve_image_handler)),
+        ("/list_link_targets", get(list_link_targets_handler)),
+    ]
+}
+
 pub fn router(state: HostState) -> Router {
-    Router::new()
-        .route("/pair", post(pair_handler))
-        .route("/vaults", get(vaults_handler))
-        .route("/list_dir", get(list_dir_handler))
-        .route("/list_files_recursive", get(list_files_recursive_handler))
-        .route("/read_file", get(read_file_handler))
-        .route("/read_asset", get(read_asset_handler))
-        .route("/resolve_image", get(resolve_image_handler))
-        .route("/list_link_targets", get(list_link_targets_handler))
-        .with_state(state)
+    let mut router = Router::new().route("/pair", post(pair_handler));
+    for (path, method_router) in get_routes() {
+        router = router.route(path, method_router);
+    }
+    router.with_state(state)
 }
 
 /// Starts serving `router(state)` on `bind`. The bind address is the
@@ -516,6 +532,22 @@ fn asset_content_type(path: &std::path::Path) -> &'static str {
 /// defense, sized up because photos routinely run larger than a zip entry.
 const MAX_ASSET_BYTES: u64 = 20 * 1024 * 1024;
 
+/// Whether any component of a vault-relative path (not just the final file
+/// name) is a hidden dotfile/dir or a mermark scratch artifact. The final
+/// component alone is not enough: `.git/config`'s last component is
+/// `"config"` (not hidden), but the file is inside a hidden `.git`
+/// directory and must be excluded just the same — `.git/config` routinely
+/// carries credential-bearing remote URLs, which must never leave the host.
+/// Reuses `commands::is_hidden_entry`/`is_mermark_artifact` (the SSOT
+/// `list_dir` itself applies) rather than re-deriving the rule, just applied
+/// to every path segment instead of one.
+fn has_a_hidden_or_artifact_component(vault_relative_path: &str) -> bool {
+    Path::new(vault_relative_path).components().any(|c| {
+        let name = c.as_os_str().to_string_lossy();
+        crate::commands::is_hidden_entry(&name) || crate::commands::is_mermark_artifact(&name)
+    })
+}
+
 /// Serves the raw bytes of a file inside an armed vault (images, mainly) —
 /// unlike `read_file`, no UTF-8 decoding and no JSON envelope: the client
 /// turns the body straight into a `data:` URL, so base64-wrapping it here
@@ -528,25 +560,40 @@ async fn read_asset_handler(
     authorize(&state, &headers)?;
     let armed = armed_vault(&state, &q.vault)?;
     let path = safe_path(&armed, &q.path)?;
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let root = armed_root_canonical(&armed)?;
     // The containment gate only knows about escapes, not mermark's listing
-    // policy — reapply the same two exclusions `list_dir`/`list_files_recursive`
-    // apply (`is_hidden_entry`/`is_mermark_artifact`, the SSOT for both rules)
-    // so this route can't be used to fetch `.git/config`, `.obsidian/*`, or
-    // the editor's own scratch files just because their name happens to be
-    // known. 404, not 403 — same "don't distinguish missing from excluded"
-    // posture `safe_path` already uses.
-    if crate::commands::is_hidden_entry(file_name) || crate::commands::is_mermark_artifact(file_name) {
+    // policy — reapply the same exclusion `list_dir`/`list_files_recursive`
+    // apply (`is_hidden_entry`/`is_mermark_artifact`) so this route can't be
+    // used to fetch `.git/config`, `.obsidian/plugins/x/data.json`, or the
+    // editor's own scratch files just because their name happens to be
+    // known. Checked against *every* path component (not just the file
+    // name) — see `has_a_hidden_or_artifact_component`'s doc comment. 404,
+    // not 403 — same "don't distinguish missing from excluded" posture
+    // `safe_path` already uses.
+    if has_a_hidden_or_artifact_component(&vault_relative(&root, &path.to_string_lossy())) {
         return Err(StatusCode::NOT_FOUND);
     }
-    let meta = std::fs::metadata(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+    // Single open handle for the metadata check and the read below — two
+    // separate syscalls against the *path* (`fs::metadata` then `fs::read`)
+    // would leave a window where a host-local write between them could
+    // still land more than `MAX_ASSET_BYTES` on the wire, or swap the
+    // target entirely. Opening once and asking that same handle for its
+    // metadata makes the size check and the bytes read refer to the exact
+    // same file, no matter what happens to the path afterward.
+    let mut file = std::fs::File::open(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let meta = file.metadata().map_err(|_| StatusCode::NOT_FOUND)?;
     if meta.is_dir() {
         return Err(StatusCode::NOT_FOUND);
     }
     if meta.len() > MAX_ASSET_BYTES {
         return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
-    let bytes = std::fs::read(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    // `.take(MAX_ASSET_BYTES)` is belt-and-suspenders on top of the metadata
+    // check just above (same handle, so it can't have grown since): it
+    // guarantees the buffer can never exceed the ceiling even if a future
+    // edit removed that check.
+    file.by_ref().take(MAX_ASSET_BYTES).read_to_end(&mut bytes).map_err(|_| StatusCode::NOT_FOUND)?;
     let content_type = asset_content_type(&path);
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -1044,9 +1091,23 @@ mod tests {
     /// from any GET route may contain the armed vault's absolute host
     /// filesystem path. This is the same protection
     /// `vaults_list_never_serializes_the_local_root` pins for `/vaults`,
-    /// widened to every route that returns a path-bearing shape — so the
-    /// next route added that forgets to call `vault_relative` is caught
-    /// here too, not one incident at a time.
+    /// widened to every route that returns a path-bearing shape.
+    ///
+    /// The route list under test is `get_routes()` itself — the same table
+    /// `router()` builds from — rather than a hand-copied array: axum 0.7
+    /// has no public API to enumerate a `Router`'s registered paths after
+    /// construction (only the boolean `has_routes()`), so reading the
+    /// pre-registration table is the closest available substitute for
+    /// "derive the list from `router()`". A route added to that table is
+    /// picked up here automatically; a path this test has no query fixture
+    /// for panics loudly (see the `other =>` arm below) instead of silently
+    /// running zero iterations for it, so a genuinely new route can't slip
+    /// through unnoticed either.
+    ///
+    /// Each call also asserts 200 with a non-empty body *before* checking
+    /// for the leaked string — a route that regressed to 404 or `null`
+    /// would otherwise pass this test vacuously (an empty/absent body
+    /// trivially "doesn't contain" anything).
     #[tokio::test]
     async fn no_route_response_leaks_the_armed_root_absolute_path() {
         let (state, dir) = state_with_file("note.md", "# hi");
@@ -1055,16 +1116,22 @@ mod tests {
         let root_str = dir.canonicalize().unwrap().to_string_lossy().into_owned();
         let app = router(state);
 
-        for path in [
-            "/list_dir?vault=rv1&path=&show_hidden=false",
-            "/list_files_recursive?vault=rv1&path=&show_hidden=false",
-            "/resolve_image?vault=rv1&path=sub&name=pic.png&max_depth=1",
-            "/read_file?vault=rv1&path=note.md",
-            "/vaults",
-            "/list_link_targets?vault=rv1&path=",
-        ] {
-            let res = call_get(&app, path).await;
+        for (path, _) in get_routes() {
+            let query = match path {
+                "/vaults" => String::new(),
+                "/list_dir" | "/list_files_recursive" => "?vault=rv1&path=&show_hidden=false".into(),
+                "/resolve_image" => "?vault=rv1&path=sub&name=pic.png&max_depth=1".into(),
+                "/read_file" | "/read_asset" => "?vault=rv1&path=note.md".into(),
+                "/list_link_targets" => "?vault=rv1&path=".into(),
+                other => panic!(
+                    "새 라우트 {other}가 get_routes()에 추가됐다 — \
+                     no_route_response_leaks_the_armed_root_absolute_path에 쿼리 케이스를 추가하라"
+                ),
+            };
+            let res = call_get(&app, &format!("{path}{query}")).await;
+            assert_eq!(res.status(), http::StatusCode::OK, "{path} 는 200이어야 유효한 검증이 된다 (404/빈 바디는 통과가 아님)");
             let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            assert!(!bytes.is_empty(), "{path} 응답 바디가 비어 있음 — 확인할 실제 내용이 없다");
             let text = String::from_utf8_lossy(&bytes);
             assert!(!text.contains(&root_str), "{path} 응답이 armed root 절대경로를 노출함: {text}");
         }
@@ -1116,6 +1183,36 @@ mod tests {
         std::fs::write(dir.join(".secret.png"), b"x").unwrap();
         let app = router(state);
         let res = call_get(&app, "/read_asset?vault=rv1&path=.secret.png").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// A file directly under a hidden directory must be refused even though
+    /// its own file name isn't hidden — `.git/config`'s last path component
+    /// is `"config"`, not `".git"`. This is the fix-round-2 regression: the
+    /// gate must inspect every component of the vault-relative path, not
+    /// just the final one, or `.git/config` (which routinely carries
+    /// credential-bearing remote URLs) would be servable.
+    #[tokio::test]
+    async fn read_asset_refuses_a_file_under_a_hidden_directory() {
+        let (state, dir) = state_with_file("note.md", "x");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git").join("config"), b"[remote \"origin\"]").unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=.git/config").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Same as above, nested two levels deeper — pins that the check walks
+    /// *every* component, not just the first hidden ancestor found.
+    #[tokio::test]
+    async fn read_asset_refuses_a_file_nested_under_a_hidden_directory() {
+        let (state, dir) = state_with_file("note.md", "x");
+        std::fs::create_dir_all(dir.join(".obsidian").join("plugins").join("x")).unwrap();
+        std::fs::write(dir.join(".obsidian").join("plugins").join("x").join("data.json"), b"{}").unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=.obsidian/plugins/x/data.json").await;
         assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
         std::fs::remove_dir_all(dir).ok();
     }
