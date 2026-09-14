@@ -314,7 +314,12 @@ pub struct PathQuery {
 /// overloading `PathQuery`. `show_hidden` is accepted on the wire (kept for
 /// shape-parity with the local `list_dir`/`list_files_recursive` commands)
 /// but never actually honored by the corresponding handlers — see
-/// `IGNORE_PEER_SHOW_HIDDEN`.
+/// `IGNORE_PEER_SHOW_HIDDEN`. `Option<bool>` (not `bool`) so the field is
+/// optional: axum's `Query` extractor (serde_urlencoded) already ignores any
+/// *extra* key a client sends that isn't in this struct, so a required
+/// `bool` bought no leniency there — it only made *omitting* the key a 400,
+/// which is the opposite of what a field the handlers never read should
+/// cost a client.
 #[derive(serde::Deserialize)]
 pub struct DirQuery {
     pub vault: String,
@@ -323,7 +328,7 @@ pub struct DirQuery {
     // Kept as a field (not dropped from the wire shape) so a client that
     // still sends it isn't rejected by strict query deserialization.
     #[allow(dead_code)]
-    pub show_hidden: bool,
+    pub show_hidden: Option<bool>,
 }
 
 /// `resolve_image`'s query: `path` is the vault-relative *directory* the
@@ -1919,7 +1924,14 @@ mod tests {
                 "/vaults" => continue, // takes no vault-relative path param
                 "/list_dir" | "/list_files_recursive" => "?vault=rv1&path=.git&show_hidden=true".into(),
                 "/resolve_image" => "?vault=rv1&path=.git&name=config&max_depth=1".into(),
-                "/read_file" | "/read_asset" | "/list_link_targets" => "?vault=rv1&path=.git/config".into(),
+                "/read_file" | "/read_asset" => "?vault=rv1&path=.git/config".into(),
+                // Unlike /read_file and /read_asset, .git/config is a file
+                // that 404s on its own (list_link_targets expects a path it
+                // can read and parse as markdown) with or without the
+                // hidden-component gate — a vacuous pass. .git is a
+                // directory instead, so the gate itself is what has to
+                // reject it here, the same way /list_dir's arm above does.
+                "/list_link_targets" => "?vault=rv1&path=.git".into(),
                 other => panic!(
                     "새 라우트 {other}가 get_routes()에 추가됐다 — \
                      every_get_route_with_a_path_param_refuses_a_hidden_path_component에 쿼리 케이스를 추가하라"

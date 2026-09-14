@@ -31,8 +31,9 @@ export function wikilinkPath(target: string, baseDir: string, currentFile?: stri
   const withExt = /\.[a-z0-9]+$/i.test(file) ? file : `${file}.md`;
   const dir = baseDir.replace(/\/$/, "");
   // A remote vault's root note carries baseDir === "" (main.ts's
-  // baseDirForVault falls back to currentExplorerFolder, which is "" for a
-  // remote vault whose explorer sits at the root) - `${dir}/${withExt}`
+  // baseDirForVault falls back to currentExplorerFolder, which is
+  // REMOTE_VAULT_WIRE_ROOT === "" for a remote vault whose explorer sits at
+  // the root) - `${dir}/${withExt}`
   // would then produce a leading "/note.md". That reads as an absolute
   // path locally, but it's actually a vault-relative remote path, and
   // remote_read_file/remote_list_dir reject it (host's `resolve_within`
