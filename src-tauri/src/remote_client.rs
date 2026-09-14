@@ -487,36 +487,50 @@ mod tests {
         assert!(base_url("").is_err());
     }
 
-    /// Mirrors `tests/fixtures/remote-host-truth-table.json` row for row —
-    /// that file is the single source of truth for what a host string means
-    /// across three independent judges (this Rust `base_url`, the browser
-    /// mock's `remoteMockError`, and TS's pre-flight `hostFieldProblem`;
-    /// `tests/remote-host-truth-table.test.ts` pins the two TS surfaces
-    /// against it). Rust has no shared code path with either TS surface, so
-    /// this table is hand-copied rather than parsed from the JSON (no new
-    /// JSON-parsing dependency just for a 12-row test fixture) — **if you
-    /// change one, change both**, or the suites drift apart silently again.
+    /// One row of `tests/fixtures/remote-host-truth-table.json` — the single
+    /// source of truth for what a host string means across three
+    /// independent judges (this `base_url`, the browser mock's
+    /// `remoteMockError`, and TS's pre-flight `hostFieldProblem`).
+    /// `#[serde(deny_unknown_fields)]` is deliberately NOT set: the fixture
+    /// also carries a `why` field this test doesn't need, and a future field
+    /// added for the TS side shouldn't break this one.
+    #[derive(serde::Deserialize)]
+    struct TruthTableRow {
+        input: String,
+        rejected: bool,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct TruthTable {
+        rows: Vec<TruthTableRow>,
+    }
+
+    /// Reads and parses the shared fixture at test time (not hand-copied
+    /// into Rust source) so this file can never itself drift from what the
+    /// TS side reads — `tests/remote-host-truth-table.test.ts` pins the two
+    /// TS surfaces (mock + `hostFieldProblem`) against the exact same file.
+    /// A missing or malformed fixture fails this test loudly (`.expect`),
+    /// never silently skips — a lock that can vanish quietly isn't a lock.
+    fn load_shared_truth_table() -> TruthTable {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/remote-host-truth-table.json");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("shared truth table fixture missing at {}: {e}", path.display()));
+        serde_json::from_str(&text)
+            .unwrap_or_else(|e| panic!("shared truth table fixture at {} is not valid: {e}", path.display()))
+    }
+
     #[test]
     fn base_url_matches_the_shared_remote_host_truth_table() {
-        let rows: &[(&str, bool)] = &[
-            ("맥미니", true),
-            ("mac-mini", false),
-            ("mac-mini:9000", false),
-            ("100.64.1.2", false),
-            ("맥미니:9000", true),
-            ("ssh://맥미니", false),
-            ("MAC-MINI", false),
-            ("mac-mini.", false),
-            ("", true),
-            ("http://mac-mini", true),
-            ("mac-mini/vault", true),
-            ("ssh://mac-mini", false),
-        ];
-        for (input, rejected) in rows {
+        let table = load_shared_truth_table();
+        assert!(!table.rows.is_empty(), "truth table fixture parsed but has no rows — likely a shape mismatch");
+        for row in &table.rows {
             assert_eq!(
-                base_url(input).is_err(),
-                *rejected,
-                "base_url({input:?}) should have rejected={rejected}"
+                base_url(&row.input).is_err(),
+                row.rejected,
+                "base_url({:?}) should have rejected={}",
+                row.input,
+                row.rejected
             );
         }
     }
