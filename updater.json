@@ -1,11 +1,11 @@
 {
-  "version": "0.16.2",
-  "notes": "### Changed\n\n- **같은 단계의 영구 볼트가 제목순으로 보인다**: 볼트 목록에서 같은 단계에 있는 영구 볼트는 이름순으로 정돈된다. 폴더 계층과 등록해 둔 순서는 그대로다.\n\n### Fixed\n\n- **macOS에서 글자 조합 방식이 다른 이미지 링크도 열린다**: 디스크의 파일명과 마크다운 이미지 대상이 같은 글자를 서로 다른 유니코드 조합으로 썼어도 이미지를 찾는다.\n- **볼트 안 이미지 검색을 못 쓸 때의 안내가 분명해졌다**: 문서 폴더 검색으로 대신 찾을 때 실제 적용한 검색 범위를 진단 정보에서 확인할 수 있고, 같은 경고가 반복해서 쌓이지 않는다.",
-  "pub_date": "2026-09-08T06:17:18Z",
+  "version": "0.17.0",
+  "notes": "### Added\n\n- **다른 맥의 볼트를 원격으로 열어볼 수 있다**: 같은 머마크끼리 페어링해서 다른 맥(예: 맥미니)이 공유한 볼트를 이 기기에서 읽는다. 호스트에서 발급한 6자리 코드로 한 번만 페어링하면 된다.\n- **Tailscale이 있으면 별도 설정 없이 연결된다**: 같은 Tailscale 네트워크에 있으면 그대로 붙는다. 없으면 SSH 터널로 자동 전환된다.\n- **원격 볼트는 읽기 전용이다**: 보고 탐색할 수 있지만 지금은 편집·저장은 지원하지 않는다(⌘S를 누르면 안내가 뜬다).\n- **연결 상태가 배지로 보인다**: 볼트 목록에서 연결됨 / 연결 안 됨 / 인증 만료 / 호스트가 공유를 껐음 네 가지 상태를 바로 확인할 수 있다.",
+  "pub_date": "2026-09-14T16:39:18Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzczOFpMQXF3MDBvS0RvTjJMN1ZCdXdSeFhtYkVralUvdnFGUnFBVk9kOFk0VGd6MVZVQ2t5QS8xSmVLU1RwWWMraFh3elU0cXNJajN5bHF1YXcvVEF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4ODQ4MjE3CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CjhMbEdIZjF5c3FXR3BWTm1TNGNLV1M5T2pMUE91R3g1QVBxUzQyVjhCWldTTlYyZXE2OTEybklxZkFSSGNFTDFLd0NyVW9IYzRuRzJZdklTbTU1OEJRPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.16.2/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzM1SzJyOXI2UlIxSFhZZ0s0ZGxWY0FmVWFEQ25YRjhWVzJyaU9SNVhSWFV5TnZ3VUhRTlNxU01JaVBaaTFBVW12cWNQaC8wQ2syeWFPVHQyQmRhOHdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NDAzOTM5CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmxvcStKMm15RUNveUtJRSt4VEFKSC93eWh3bXFRbEFkQmlsUmNaL0JCN01xUzBqc2toTWZzVElNQURybTM0TFBRU01YVURCbStJc1R3YWZhVDh1ckF3PT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.17.0/mermark.app.tar.gz"
     }
   }
 }
