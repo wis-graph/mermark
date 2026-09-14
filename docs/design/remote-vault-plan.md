@@ -405,23 +405,27 @@ fn rejects_symlink_that_points_outside_the_armed_root() {
 
     let armed = ArmedVault { id: "rv1".into(), display_name: "노트".into(), root: root.clone() };
     let resolved = resolve_within(&armed, "link.md").expect("컴포넌트 검사는 통과한다");
-    assert!(!is_canonically_within(&armed, &resolved), "심볼릭 링크 탈출은 막혀야 한다");
+    assert_eq!(canonicalize_within(&armed, &resolved), None, "심볼릭 링크 탈출은 막혀야 한다");
 
     std::fs::remove_dir_all(&tmp).ok();
 }
 ```
 
-- [ ] **Step 6: 실패를 확인하고 `is_canonically_within`을 구현한다**
+- [ ] **Step 6: 실패를 확인하고 `canonicalize_within`을 구현한다**
 
 ```rust
 /// 컴포넌트 검사를 통과한 뒤의 2차 관문: 실제 파일시스템에서 정규화한 결과가
 /// 여전히 armed root 안인지 본다. 심볼릭 링크는 컴포넌트로는 보이지 않으므로
 /// 이 검사가 있어야 막힌다.
-pub fn is_canonically_within(armed: &ArmedVault, resolved: &Path) -> bool {
+///
+/// **검사한 경로를 그대로 반환한다**(Ruling 11). bool을 돌려주면 호출자가
+/// 정규화 전 경로(=심볼릭 링크)를 여는 게 자연스러워지고, 그 사이에 링크가
+/// 바뀌는 TOCTOU 창이 생긴다. 반환값을 열도록 강제해 그 창을 없앤다.
+pub fn canonicalize_within(armed: &ArmedVault, resolved: &Path) -> Option<PathBuf> {
     let (Ok(root), Ok(target)) = (armed.root.canonicalize(), resolved.canonicalize()) else {
-        return false;
+        return None;
     };
-    target.starts_with(&root)
+    target.starts_with(&root).then_some(target)
 }
 ```
 
@@ -708,8 +712,14 @@ git commit -m "feat(remote-host): 페어링 코드 수명·기기 토큰 발급�
 - Modify: `src-tauri/Cargo.toml` (`axum = "0.7"`)
 
 **Interfaces:**
-- Consumes: Task 3의 `resolve_within`/`is_canonically_within`, Task 4의 `redeem`
+- Consumes: Task 3의 `resolve_within`/`canonicalize_within`, Task 4의 `redeem`
 - Produces: `fn router(state: HostState) -> axum::Router`, `async fn serve(bind: SocketAddr, state: HostState)`
+
+**게이트 계약 — 어기면 보안 구멍이 열린다 (Ruling 12):**
+
+1. **퍼센트 디코딩은 `resolve_within` 호출 전에 정확히 한 번.** 게이트 자체는 디코딩을 하지 않는다. 게이트 뒤에 두 번째 디코딩을 하면 `%252e`가 `..`로 되살아난다. axum의 `Query` 추출기가 이미 한 번 디코딩한다는 점을 확인하고, 그 위에 또 디코딩하지 않는다. **이 셋 중 유일하게 보안에 직결되는 항목이다.**
+2. **게이트 실패는 전부 404.** 403을 쓰지 않는다(아래 `safe_path` 참조).
+3. **요청 경로 길이 상한을 게이트 앞에서 건다** (예: 4096바이트). 상한이 없으면 5000자 경로가 canonicalize까지 내려간다.
 
 라우트 표면 (이게 전부다):
 
@@ -838,11 +848,17 @@ fn armed_vault(state: &HostState, id: &str) -> Result<ArmedVault, StatusCode> {
     state.armed.lock().unwrap().iter().find(|v| v.id == id).cloned().ok_or(StatusCode::NOT_FOUND)
 }
 
-/// 봉쇄 2중 관문. 둘 중 하나라도 실패하면 403.
+/// 봉쇄 2중 관문 (Ruling 11·12).
+///
+/// **반드시 반환된 정규 경로를 연다.** `resolve_within`의 출력(정규화 전 경로)을
+/// 열면 심볼릭 링크가 검사와 open 사이에 바뀌는 TOCTOU 창이 열린다.
+///
+/// **게이트 실패는 전부 404로 통일한다.** `canonicalize`가 "파일 없음"과
+/// "탈출 시도"를 하나의 실패로 합치므로 403/404를 구분할 수 없다. 404 단일화가
+/// 존재 여부를 흘리지 않고 클라이언트의 path_exists 의미와도 맞는다.
 fn safe_path(armed: &ArmedVault, rel: &str) -> Result<std::path::PathBuf, StatusCode> {
-    let resolved = resolve_within(armed, rel).ok_or(StatusCode::FORBIDDEN)?;
-    if !is_canonically_within(armed, &resolved) { return Err(StatusCode::FORBIDDEN); }
-    Ok(resolved)
+    let resolved = resolve_within(armed, rel).ok_or(StatusCode::NOT_FOUND)?;
+    canonicalize_within(armed, &resolved).ok_or(StatusCode::NOT_FOUND)
 }
 
 async fn read_file_handler(
@@ -852,7 +868,7 @@ async fn read_file_handler(
 ) -> Result<impl IntoResponse, StatusCode> {
     authorize(&state, &headers)?;
     let armed = armed_vault(&state, &q.vault)?;
-    let path = safe_path(&armed, &q.path)?;
+    let path = safe_path(&armed, &q.path)?;   // 정규 경로. 이것을 연다.
     let content = crate::commands::read_file(path.to_string_lossy().into_owned())
         .map_err(|_| StatusCode::NOT_FOUND)?;
     Ok(Json(content))
