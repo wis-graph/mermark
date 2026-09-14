@@ -1,7 +1,7 @@
 //! Host-side containment for remote vault sharing. A remote vault is shared
 //! only if the user has explicitly checked it in settings (an "armed" root —
 //! see `ArmedVault`), and every path a peer requests must clear
-//! `resolve_within`/`is_canonically_within` before it ever touches the
+//! `resolve_within`/`canonicalize_within` before it ever touches the
 //! filesystem. This module is pure logic: no server, no pairing, no
 //! `#[tauri::command]`. Task 5 (HTTP server) and Task 4 (pairing) are the
 //! only consumers so far.
@@ -18,8 +18,13 @@
 //! `htmlview.rs` re-validates *after* the join). `is_canonically_within` is
 //! that second gate: it canonicalizes both the armed root and the resolved
 //! candidate — which resolves symlinks to their real target, not just their
-//! lexical path — and checks containment on the resolved result. Like
-//! `is_within_armed_root`, it fails closed (`false`) if either side can't be
+//! lexical path — and, if the canonicalized target is still contained,
+//! **returns that canonicalized path** rather than a bare `bool`. A caller
+//! that only got `true`/`false` back would naturally go on to open the
+//! pre-canonical path it already had (the symlink itself), leaving a TOCTOU
+//! window between this check and that open; returning the canonicalized
+//! path instead makes that mistake impossible to make. Like
+//! `is_within_armed_root`, it fails closed (`None`) if either side can't be
 //! canonicalized (e.g. the candidate doesn't exist) rather than falling back
 //! to a lexical guess.
 
@@ -44,7 +49,7 @@ pub struct ArmedVault {
 /// before any join happens — so the escaping path is never constructed in
 /// the first place. This is the lexical gate only; a candidate that passes
 /// here can still be a symlink pointing outside `armed.root`, which is what
-/// `is_canonically_within` exists to catch.
+/// `canonicalize_within` exists to catch.
 pub fn resolve_within(armed: &ArmedVault, rel: &str) -> Option<PathBuf> {
     if rel.is_empty() {
         return None;
@@ -53,23 +58,31 @@ pub fn resolve_within(armed: &ArmedVault, rel: &str) -> Option<PathBuf> {
     for component in candidate.components() {
         match component {
             Component::Normal(_) => {}
-            _ => return None, // RootDir, ParentDir, CurDir, Prefix all rejected
+            // RootDir, ParentDir, Prefix rejected outright. CurDir only ever
+            // shows up here for a *leading* "./" — std already strips
+            // interior "." components (e.g. "sub/./b.md" never produces one)
+            // — and it's rejected the same as everything else non-`Normal`.
+            _ => return None,
         }
     }
     Some(armed.root.join(candidate))
 }
 
-/// The second, post-resolve containment gate: is `resolved` still inside
-/// `armed.root` once both sides are canonicalized (symlinks resolved, `..`
-/// collapsed)? `resolve_within`'s component check can't see through a
+/// The second, post-resolve containment gate: canonicalizes `resolved` and
+/// returns that canonical path if — and only if — it's still inside
+/// `armed.root`'s own canonical form (symlinks resolved, `..` collapsed),
+/// `None` otherwise. `resolve_within`'s component check can't see through a
 /// symlink — it's an ordinary `Normal` component lexically — so a symlink
 /// planted inside the armed root that points outside it needs this check to
-/// be caught. Fails closed (`false`) if either path can't be canonicalized.
-pub fn is_canonically_within(armed: &ArmedVault, resolved: &Path) -> bool {
-    match (armed.root.canonicalize(), resolved.canonicalize()) {
-        (Ok(root), Ok(target)) => target.starts_with(&root),
-        _ => false,
-    }
+/// be caught. Returning the canonicalized path (not a `bool`) is
+/// deliberate: a caller must open *this* path, never the pre-canonical one
+/// it started with, or a symlink swapped in between the check and the open
+/// would reopen the TOCTOU window this function exists to close. Fails
+/// closed (`None`) if either path can't be canonicalized.
+pub fn canonicalize_within(armed: &ArmedVault, resolved: &Path) -> Option<PathBuf> {
+    let root = armed.root.canonicalize().ok()?;
+    let target = resolved.canonicalize().ok()?;
+    target.starts_with(&root).then_some(target)
 }
 
 #[cfg(test)]
@@ -106,7 +119,7 @@ mod tests {
     }
 
     /// A symlink inside the armed root pointing at a file outside it: the
-    /// attack `is_canonically_within` exists for. `resolve_within` alone
+    /// attack `canonicalize_within` exists for. `resolve_within` alone
     /// would let this through, since the symlink is a plain `Normal`
     /// component lexically. Uses a unique per-test/per-process temp dir
     /// (pid + atomic counter, matching `commands.rs`'s `temp_path`
@@ -127,13 +140,13 @@ mod tests {
 
         let armed = ArmedVault { id: "rv1".into(), display_name: "노트".into(), root: root.clone() };
         let resolved = resolve_within(&armed, "link.md");
-        let is_contained = resolved
+        let canonical = resolved
             .as_ref()
-            .map(|candidate| is_canonically_within(&armed, candidate));
+            .and_then(|candidate| canonicalize_within(&armed, candidate));
 
         std::fs::remove_dir_all(&tmp).ok();
 
         assert_eq!(resolved, Some(root.join("link.md")), "component check should pass");
-        assert_eq!(is_contained, Some(false), "symlink escape must be rejected");
+        assert_eq!(canonical, None, "symlink escape must be rejected");
     }
 }
