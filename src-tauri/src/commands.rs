@@ -721,7 +721,7 @@ pub fn resolve_image(base_dir: String, name: String, max_depth: u8) -> Option<St
 /// offered as a link target. Mirrors the autosave temp suffix (`.mermark-tmp.`)
 /// and the recovery marker (`.mermark-recovered`) so the picker doesn't surface
 /// the editor's own working files. Named so the exclusion rule reads as one fact.
-fn is_mermark_artifact(file_name: &str) -> bool {
+pub(crate) fn is_mermark_artifact(file_name: &str) -> bool {
     file_name.contains(".mermark-tmp.") || file_name.contains(".mermark-recovered")
 }
 
@@ -865,7 +865,7 @@ fn entry_is_dir(file_type: std::fs::FileType, path: &Path) -> bool {
 /// `starts_with('.')` buried in the classifier. Note `.test/` — user data — is
 /// also a dotfile and thus excluded from the listing; the command is read-only,
 /// so an excluded directory is never modified regardless.
-fn is_hidden_entry(file_name: &str) -> bool {
+pub(crate) fn is_hidden_entry(file_name: &str) -> bool {
     file_name.starts_with('.')
 }
 

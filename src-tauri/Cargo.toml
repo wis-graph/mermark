@@ -61,12 +61,14 @@ notify = "6"
 rhwp = { git = "https://github.com/edwardkim/rhwp", rev = "93862a4e16df59834ebce46d91e948cd739208e9", default-features = false }
 # Tauri already runs a tokio runtime under the hood but doesn't re-export the
 # crate, so `hwp.rs`'s parse/render timeouts (`tokio::time::timeout`) need it
-# declared explicitly. Kept to the one feature we use — this adds no new
-# transitive dependency, since tauri already pulls in full tokio. "net"/"rt"/
-# "macros" are added for the remote-host HTTP server (`remote_host::serve`,
-# its `#[tokio::test]`s) — still no new *transitive* dependency, only naming
-# features of the already-compiled crate.
-tokio = { version = "1", default-features = false, features = ["time", "net", "rt", "rt-multi-thread", "macros"] }
+# declared explicitly. Kept to the features actually used in the shipped
+# binary — this adds no new transitive dependency, since tauri already pulls
+# in full tokio. "net"/"rt"/"rt-multi-thread" are added for the remote-host
+# HTTP server (`remote_host::serve`'s `TcpListener::bind`/`axum::serve`).
+# "macros" (for `#[tokio::test]`) is deliberately NOT listed here — it's
+# test-only, declared instead under [dev-dependencies] below so a release
+# build never compiles it in.
+tokio = { version = "1", default-features = false, features = ["time", "net", "rt", "rt-multi-thread"] }
 # Remote vault host's read-only HTTP server (`remote_host.rs`). The one
 # runtime crate this feature is permitted to add — everything it needs
 # (tokio, hyper) is already in the build graph via tauri-plugin-updater.
@@ -119,3 +121,8 @@ unicode-normalization = "0.1"
 # the built app, so it doesn't count against the "one runtime dependency"
 # budget for this feature.
 tower = { version = "0.4", features = ["util"] }
+# Adds the "macros" feature (`#[tokio::test]`) on top of [dependencies]'
+# tokio for test builds only. Cargo unions a crate's dependency-kind feature
+# sets per build target, so `cargo test` gets "macros" while a normal
+# `cargo build`/release binary never does.
+tokio = { version = "1", features = ["macros"] }

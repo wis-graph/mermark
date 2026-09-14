@@ -376,12 +376,58 @@ fn armed_vault(state: &HostState, id: &str) -> Result<ArmedVault, StatusCode> {
 /// "missing" from "escape attempt", so refusing to guess and returning 404
 /// uniformly is what keeps this server from leaking which one happened, and
 /// matches the client's own `path_exists` semantics (Ruling 12).
+///
+/// An empty `rel` means "the vault root itself" — a freshly paired client's
+/// very first `/list_dir` has nothing to name yet but the top level, so the
+/// root has to be an addressable target. `resolve_within` itself still
+/// rejects `""` unconditionally (that rejection is load-bearing elsewhere:
+/// relaxing it there would also have to touch the same code path `..` and
+/// absolute paths go through), so the root case is handled here, before
+/// `resolve_within` ever sees it, by canonicalizing `armed.root` directly.
 fn safe_path(armed: &ArmedVault, rel: &str) -> Result<std::path::PathBuf, StatusCode> {
     if rel.len() > MAX_REQUEST_PATH_BYTES {
         return Err(StatusCode::NOT_FOUND);
     }
+    if rel.is_empty() {
+        return armed_root_canonical(armed);
+    }
     let resolved = resolve_within(armed, rel).ok_or(StatusCode::NOT_FOUND)?;
     canonicalize_within(armed, &resolved).ok_or(StatusCode::NOT_FOUND)
+}
+
+/// The armed vault's own root, canonicalized. Every path field a response
+/// body carries is expressed relative to *this* (via `vault_relative`),
+/// never as an absolute filesystem path: an absolute path would both leak
+/// the host's local layout — the exact leak `ArmedVault.root`'s
+/// `#[serde(skip)]` and `vaults_list_never_serializes_the_local_root` exist
+/// to prevent, just via a different route — and be useless to the client,
+/// since feeding an absolute path back into a query hits `resolve_within`'s
+/// `RootDir` rejection and 404s. Fails the same way `safe_path` does (404)
+/// if the root itself can't be canonicalized.
+fn armed_root_canonical(armed: &ArmedVault) -> Result<std::path::PathBuf, StatusCode> {
+    armed.root.canonicalize().map_err(|_| StatusCode::NOT_FOUND)
+}
+
+/// Rewrites an absolute filesystem path known to live under `root` into the
+/// vault-relative form every response must carry instead — forward-slash
+/// joined so the shape is consistent regardless of the host's OS. The root
+/// itself maps to `""`, matching `safe_path`'s "empty means root" convention
+/// so a client can round-trip a returned path straight back into another
+/// request's `path` query param. Falls back to just the file name if `abs`
+/// doesn't actually start with `root` (shouldn't happen — every path this is
+/// called on comes from a walk rooted at `root` — but a fallback that can't
+/// itself leak the host root is safer than passing an absolute path through
+/// unguarded).
+fn vault_relative(root: &Path, abs: &str) -> String {
+    let abs_path = Path::new(abs);
+    match abs_path.strip_prefix(root) {
+        Ok(rel) => rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/"),
+        Err(_) => abs_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+    }
 }
 
 async fn pair_handler(
@@ -459,6 +505,17 @@ fn asset_content_type(path: &std::path::Path) -> &'static str {
     }
 }
 
+/// Ceiling on `/read_asset`'s response body. This route has no chunked or
+/// range support, so the whole file is buffered into memory (`std::fs::read`)
+/// once per request regardless of size — without a cap, a multi-gigabyte
+/// file inside the vault would be read wholesale into RAM on every request a
+/// client (or an attacker with a valid token) cares to send. 20 MiB is well
+/// above any legitimate vault attachment (photos, screenshots) but far below
+/// "read a video/archive into memory"; mirrors the network-facing size-gate
+/// precedent `epubview.rs`'s `MAX_EPUB_ENTRY_BYTES` (8 MiB) sets for zip-bomb
+/// defense, sized up because photos routinely run larger than a zip entry.
+const MAX_ASSET_BYTES: u64 = 20 * 1024 * 1024;
+
 /// Serves the raw bytes of a file inside an armed vault (images, mainly) —
 /// unlike `read_file`, no UTF-8 decoding and no JSON envelope: the client
 /// turns the body straight into a `data:` URL, so base64-wrapping it here
@@ -471,6 +528,24 @@ async fn read_asset_handler(
     authorize(&state, &headers)?;
     let armed = armed_vault(&state, &q.vault)?;
     let path = safe_path(&armed, &q.path)?;
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    // The containment gate only knows about escapes, not mermark's listing
+    // policy — reapply the same two exclusions `list_dir`/`list_files_recursive`
+    // apply (`is_hidden_entry`/`is_mermark_artifact`, the SSOT for both rules)
+    // so this route can't be used to fetch `.git/config`, `.obsidian/*`, or
+    // the editor's own scratch files just because their name happens to be
+    // known. 404, not 403 — same "don't distinguish missing from excluded"
+    // posture `safe_path` already uses.
+    if crate::commands::is_hidden_entry(file_name) || crate::commands::is_mermark_artifact(file_name) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let meta = std::fs::metadata(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+    if meta.is_dir() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    if meta.len() > MAX_ASSET_BYTES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
     let bytes = std::fs::read(&path).map_err(|_| StatusCode::NOT_FOUND)?;
     let content_type = asset_content_type(&path);
     let mut headers = HeaderMap::new();
@@ -478,6 +553,10 @@ async fn read_asset_handler(
         axum::http::header::CONTENT_TYPE,
         HeaderValue::from_static(content_type),
     );
+    // The body is untrusted user file content; without this, a browser-based
+    // client could be tricked into sniffing e.g. an ".svg" that starts with
+    // `<script>`-looking bytes as HTML instead of the declared image type.
+    headers.insert(axum::http::header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     Ok((headers, Bytes::from(bytes)))
 }
 
@@ -489,8 +568,17 @@ async fn list_dir_handler(
     authorize(&state, &headers)?;
     let armed = armed_vault(&state, &q.vault)?;
     let path = safe_path(&armed, &q.path)?;
-    let entries = crate::commands::list_dir(path.to_string_lossy().into_owned(), q.show_hidden)
+    let root = armed_root_canonical(&armed)?;
+    let mut entries = crate::commands::list_dir(path.to_string_lossy().into_owned(), q.show_hidden)
         .map_err(|_| StatusCode::NOT_FOUND)?;
+    // `commands::list_dir` returns the host's absolute filesystem paths —
+    // correct for the local explorer, but here they'd both leak the armed
+    // root and be unusable by the client (an absolute path fed back into a
+    // query 404s at `resolve_within`'s `RootDir` rejection). Rewrite every
+    // entry to the vault-relative form before it ever reaches `Json`.
+    for entry in &mut entries {
+        entry.path = vault_relative(&root, &entry.path);
+    }
     Ok(Json(entries))
 }
 
@@ -502,8 +590,14 @@ async fn list_files_recursive_handler(
     authorize(&state, &headers)?;
     let armed = armed_vault(&state, &q.vault)?;
     let path = safe_path(&armed, &q.path)?;
-    let result = crate::commands::list_files_recursive(path.to_string_lossy().into_owned(), q.show_hidden)
+    let root = armed_root_canonical(&armed)?;
+    let mut result = crate::commands::list_files_recursive(path.to_string_lossy().into_owned(), q.show_hidden)
         .map_err(|_| StatusCode::NOT_FOUND)?;
+    // Same rewrite as `list_dir_handler`, same reason: `FileHit.path` comes
+    // back absolute from `commands::list_files_recursive`.
+    for hit in &mut result.files {
+        hit.path = vault_relative(&root, &hit.path);
+    }
     Ok(Json(result))
 }
 
@@ -515,7 +609,9 @@ async fn resolve_image_handler(
     authorize(&state, &headers)?;
     let armed = armed_vault(&state, &q.vault)?;
     let base = safe_path(&armed, &q.path)?;
-    let resolved = crate::commands::resolve_image(base.to_string_lossy().into_owned(), q.name, q.max_depth);
+    let root = armed_root_canonical(&armed)?;
+    let resolved = crate::commands::resolve_image(base.to_string_lossy().into_owned(), q.name, q.max_depth)
+        .map(|abs| vault_relative(&root, &abs));
     Ok(Json(resolved))
 }
 
@@ -910,5 +1006,131 @@ mod tests {
 
         let res = call(&app, http::Method::GET, "/vaults", Some(&parsed.token)).await;
         assert_eq!(res.status(), http::StatusCode::OK, "방금 받은 토큰이 즉시 통해야 한다");
+    }
+
+    // --- fix round 1: vault-root addressability, path relativization,
+    //     read_asset bounds ---
+
+    /// A freshly paired client's very first request has nothing to name but
+    /// the top level — an empty `path` must resolve to the vault root, not
+    /// 404. Without this, sharing a vault would be unusable: there would be
+    /// no way to ever see what's in it.
+    #[tokio::test]
+    async fn vault_root_is_addressable_via_an_empty_path() {
+        let (state, dir) = state_with_file("note.md", "x");
+        let app = router(state);
+        let res = call_get(&app, "/list_dir?vault=rv1&path=&show_hidden=false").await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        let entries: Vec<crate::commands::DirEntry> = json_body(res).await;
+        assert!(entries.iter().any(|e| e.name == "note.md"), "{:?}", entries.iter().map(|e| &e.name).collect::<Vec<_>>());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// The empty-path root carve-out in `safe_path` must not have loosened
+    /// the escape gates it sits next to — `..` and an absolute path must
+    /// still 404 on every route, not just `read_file`.
+    #[tokio::test]
+    async fn list_dir_still_refuses_dotdot_and_absolute_paths() {
+        let (state, dir) = state_with_file("note.md", "x");
+        let app = router(state);
+        let res = call_get(&app, "/list_dir?vault=rv1&path=..&show_hidden=false").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND, "dotdot escape");
+        let res = call_get(&app, "/list_dir?vault=rv1&path=%2Fetc&show_hidden=false").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND, "absolute path escape");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// General regression guard, not scoped to one route: no response body
+    /// from any GET route may contain the armed vault's absolute host
+    /// filesystem path. This is the same protection
+    /// `vaults_list_never_serializes_the_local_root` pins for `/vaults`,
+    /// widened to every route that returns a path-bearing shape — so the
+    /// next route added that forgets to call `vault_relative` is caught
+    /// here too, not one incident at a time.
+    #[tokio::test]
+    async fn no_route_response_leaks_the_armed_root_absolute_path() {
+        let (state, dir) = state_with_file("note.md", "# hi");
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub").join("pic.png"), b"\x89PNG").unwrap();
+        let root_str = dir.canonicalize().unwrap().to_string_lossy().into_owned();
+        let app = router(state);
+
+        for path in [
+            "/list_dir?vault=rv1&path=&show_hidden=false",
+            "/list_files_recursive?vault=rv1&path=&show_hidden=false",
+            "/resolve_image?vault=rv1&path=sub&name=pic.png&max_depth=1",
+            "/read_file?vault=rv1&path=note.md",
+            "/vaults",
+            "/list_link_targets?vault=rv1&path=",
+        ] {
+            let res = call_get(&app, path).await;
+            let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(!text.contains(&root_str), "{path} 응답이 armed root 절대경로를 노출함: {text}");
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// `list_dir`'s entries must additionally be *usable* — a client that
+    /// feeds a returned `path` straight into another request's `path` query
+    /// param must get the same file back, which only works if the value is
+    /// vault-relative (an absolute path 404s at `resolve_within`'s `RootDir`
+    /// rejection).
+    #[tokio::test]
+    async fn list_dir_entries_are_vault_relative_and_round_trip() {
+        let (state, dir) = state_with_file("note.md", "# 안녕");
+        let app = router(state);
+        let res = call_get(&app, "/list_dir?vault=rv1&path=&show_hidden=false").await;
+        let entries: Vec<crate::commands::DirEntry> = json_body(res).await;
+        let note = entries.iter().find(|e| e.name == "note.md").unwrap();
+        assert_eq!(note.path, "note.md");
+
+        let res = call_get(&app, &format!("/read_file?vault=rv1&path={}", note.path)).await;
+        assert_eq!(res.status(), http::StatusCode::OK, "list_dir가 돌려준 path는 read_file에 그대로 되먹여도 통해야 한다");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn read_asset_serves_image_bytes_with_nosniff() {
+        let (state, dir) = state_with_file("note.md", "x");
+        std::fs::write(dir.join("pic.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=pic.png").await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        assert_eq!(res.headers().get("content-type").unwrap(), "image/png");
+        assert_eq!(
+            res.headers().get("x-content-type-options").unwrap(),
+            "nosniff",
+            "바이너리 응답에는 MIME 스니핑 방지 헤더가 있어야 한다"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// `/read_asset` must apply the same hidden-file exclusion `list_dir`
+    /// does — the containment gate alone has no opinion on `.git/config` or
+    /// `.obsidian/*` since they're lexically and canonically inside the
+    /// armed root.
+    #[tokio::test]
+    async fn read_asset_refuses_a_hidden_file() {
+        let (state, dir) = state_with_file("note.md", "x");
+        std::fs::write(dir.join(".secret.png"), b"x").unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=.secret.png").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// A file over `MAX_ASSET_BYTES` must be refused by a metadata check,
+    /// not read into memory and then rejected — refusing after buffering the
+    /// whole thing would defeat the point of the ceiling.
+    #[tokio::test]
+    async fn read_asset_refuses_a_file_over_the_size_ceiling() {
+        let (state, dir) = state_with_file("note.md", "x");
+        let big = vec![0u8; (MAX_ASSET_BYTES + 1) as usize];
+        std::fs::write(dir.join("big.bin"), &big).unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=big.bin").await;
+        assert_eq!(res.status(), http::StatusCode::PAYLOAD_TOO_LARGE);
+        std::fs::remove_dir_all(dir).ok();
     }
 }
