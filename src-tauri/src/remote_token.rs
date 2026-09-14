@@ -166,22 +166,37 @@ impl ClientTokens {
         self.tokens.lock().unwrap().get(host).cloned()
     }
 
+    /// Builds the post-insert map, persists *that*, and only swaps it into
+    /// the live map once the write to disk has actually succeeded. Never
+    /// mutates `self.tokens` first: a disk-then-memory ordering means
+    /// memory can never run ahead of what's durable, so a failed write
+    /// (full disk, read-only volume, permissions) can't leave this launch
+    /// remembering a token that vanishes the next time the store is loaded.
     pub fn remember(&self, host: &str, token: &str) -> Result<(), String> {
-        self.tokens.lock().unwrap().insert(host.to_string(), token.to_string());
-        self.persist()
+        let mut candidate = self.tokens.lock().unwrap().clone();
+        candidate.insert(host.to_string(), token.to_string());
+        self.persist(&candidate)?;
+        *self.tokens.lock().unwrap() = candidate;
+        Ok(())
     }
 
+    /// Mirror of `remember`'s disk-first ordering: on a failed persist the
+    /// token must still be considered present (both on disk and in
+    /// memory), never treated as forgotten. Reporting `forget` as
+    /// successful when the removal didn't actually make it to disk would
+    /// let a caller believe a device was un-paired while its token still
+    /// authorizes reads on the next launch.
     pub fn forget(&self, host: &str) -> Result<(), String> {
-        self.tokens.lock().unwrap().remove(host);
-        self.persist()
+        let mut candidate = self.tokens.lock().unwrap().clone();
+        candidate.remove(host);
+        self.persist(&candidate)?;
+        *self.tokens.lock().unwrap() = candidate;
+        Ok(())
     }
 
-    fn persist(&self) -> Result<(), String> {
+    fn persist(&self, tokens: &std::collections::HashMap<String, String>) -> Result<(), String> {
         std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
-        let json = {
-            let map = self.tokens.lock().unwrap();
-            serde_json::to_string_pretty(&*map).map_err(|e| e.to_string())?
-        };
+        let json = serde_json::to_string_pretty(tokens).map_err(|e| e.to_string())?;
         atomic_write_0600(&client_store_path(&self.dir), json.as_bytes())
     }
 }
@@ -277,6 +292,57 @@ mod tests {
 
         let reloaded = ClientTokens::load(&dir);
         assert_eq!(reloaded.token_for("wis-macmini").as_deref(), Some("deadbeef"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Pins the disk-first ordering in `remember`: when the write to disk
+    /// fails (here, a directory with no write permission), the in-memory
+    /// map must be left exactly as it was — `token_for` must still say
+    /// `None` — rather than accepting the token in memory while the disk
+    /// silently falls behind.
+    #[cfg(unix)]
+    #[test]
+    fn remember_leaves_memory_untouched_when_persist_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp();
+        let store = ClientTokens::load(&dir);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = store.remember("wis-macmini", "deadbeef");
+
+        // Restore write permission before any cleanup, regardless of outcome.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err(), "쓰기 실패는 Err로 보고돼야 한다");
+        assert_eq!(
+            store.token_for("wis-macmini"),
+            None,
+            "디스크 쓰기가 실패하면 메모리도 갱신되지 않아야 한다"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Mirror of the test above for `forget`: a token already remembered
+    /// must survive in memory if the removal can't be made durable — the
+    /// worse failure mode, since a caller that saw `Ok` would believe the
+    /// device was un-paired while its token still authorizes reads.
+    #[cfg(unix)]
+    #[test]
+    fn forget_leaves_token_present_when_persist_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp();
+        let store = ClientTokens::load(&dir);
+        store.remember("wis-macmini", "deadbeef").unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = store.forget("wis-macmini");
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err(), "쓰기 실패는 Err로 보고돼야 한다");
+        assert_eq!(
+            store.token_for("wis-macmini").as_deref(),
+            Some("deadbeef"),
+            "디스크 쓰기가 실패하면 이미 있던 토큰이 유지돼야 한다"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
