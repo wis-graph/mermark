@@ -1,0 +1,17 @@
+{
+  "$comment": "The SINGLE source of truth for what a remote-vault host string means to reach — rejected or accepted — across all three places that judge it: Rust `base_url` (src-tauri/src/remote_client.rs), the browser mock's `remoteMockError` (src/mocks/tauri-core.ts), and TS's pre-flight `hostFieldProblem` (src/document/remote-host-field.ts). Each of the three implements this same rule independently (different languages, no shared code) — that's the drift risk. This table is what pins them together: tests/remote-host-truth-table.test.ts checks every row against BOTH TS surfaces (mock + hostFieldProblem) and fails loudly the moment either diverges from this table. The Rust side has its own cargo tests asserting the exact same rows (remote_client.rs's `#[cfg(test)]` module) — if you change what any ONE of the three accepts/rejects, update this table AND the Rust test data in the same change, or the two suites silently drift again.",
+  "rows": [
+    { "input": "맥미니", "rejected": true, "why": "non-ASCII host" },
+    { "input": "mac-mini", "rejected": false, "why": "plain ASCII host, no port" },
+    { "input": "mac-mini:9000", "rejected": false, "why": "ASCII host with a valid port" },
+    { "input": "100.64.1.2", "rejected": false, "why": "Tailscale IPv4 literal" },
+    { "input": "맥미니:9000", "rejected": true, "why": "non-ASCII host, port present — whole string is checked, not just the host part before ':'" },
+    { "input": "ssh://맥미니", "rejected": false, "why": "ssh:// prefix short-circuits every other check (base_url treats the whole string as an SSH target, not host[:port])" },
+    { "input": "MAC-MINI", "rejected": false, "why": "uppercase ASCII is still ASCII — case is not part of this rule" },
+    { "input": "mac-mini.", "rejected": false, "why": "a trailing dot is still ASCII — not rejected by this rule (DNS trailing-dot syntax is not this function's concern)" },
+    { "input": "", "rejected": true, "why": "empty host — checked FIRST, before the ssh:// prefix check" },
+    { "input": "http://mac-mini", "rejected": true, "why": "carries its own scheme — base_url's job is \"name a host\", not \"parse an arbitrary URL\"" },
+    { "input": "mac-mini/vault", "rejected": true, "why": "carries a path — same scheme/path rejection as above, via the bare '/' check" },
+    { "input": "ssh://mac-mini", "rejected": false, "why": "ssh:// prefix on an otherwise-valid ASCII target" }
+  ]
+}
