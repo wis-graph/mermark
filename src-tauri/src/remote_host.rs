@@ -2,9 +2,12 @@
 //! only if the user has explicitly checked it in settings (an "armed" root —
 //! see `ArmedVault`), and every path a peer requests must clear
 //! `resolve_within`/`canonicalize_within` before it ever touches the
-//! filesystem. This module is pure logic: no server, no pairing, no
-//! `#[tauri::command]`. Task 5 (HTTP server) and Task 4 (pairing) are the
-//! only consumers so far.
+//! filesystem. This module owns the pure containment logic, the pairing
+//! state machine, and the axum HTTP server — but no `#[tauri::command]`
+//! itself. `remote_share.rs` (Task 9) is the module that turns this into a
+//! host control surface: it owns `RemoteShareState`, starts/stops the
+//! server via `bind`/`run` below, and is what the settings UI actually
+//! talks to over IPC.
 //!
 //! Also owns pairing: a short-lived, human-typeable code
 //! (`issue_pairing_code`/`PairingState`/`redeem`) that exchanges once for a
@@ -140,6 +143,16 @@ impl PairingState {
         Self { code: Some(code), used: false, failed_attempts: 0 }
     }
 
+    /// The initial state before any pairing code has ever been issued —
+    /// `redeem` reports `NotArmed` for it, same as it would for any other
+    /// session whose `code` is `None`. This is what `RemoteShareState`
+    /// constructs at startup and after `remote_share_stop`: sharing being
+    /// off must not leave a stale, still-redeemable code lying around from
+    /// a previous session.
+    pub fn unarmed() -> Self {
+        Self { code: None, used: false, failed_attempts: 0 }
+    }
+
     /// The code this session was armed with, or `""` if never armed. Exists
     /// so callers (and tests) can read back what to type without reaching
     /// into the private `code` field.
@@ -244,14 +257,21 @@ use std::sync::{Arc, Mutex};
 const MAX_REQUEST_PATH_BYTES: usize = 4096;
 
 /// Everything a request handler needs, shared across connections. `armed` is
-/// the live list of vaults the user has checked to share (mutated by the
-/// settings UI, Task 9's concern — this module only reads it);
-/// `devices`/`pairing` back the token-auth and pairing-exchange gates.
+/// the live list of vaults the user has checked to share (mutated by
+/// `remote_share_start`, Task 9's host control surface — this module only
+/// reads it here); `devices`/`pairing` back the token-auth and
+/// pairing-exchange gates. `config_dir` is the app's config directory,
+/// carried on `HostState` itself (not looked up separately by each handler)
+/// so `pair_handler` and revocation can persist the device list via
+/// `remote_token::save` without threading an extra parameter through every
+/// call site — see `persist_new_device`'s doc comment for why persisting at
+/// all is the point of this field's existence.
 #[derive(Clone)]
 pub struct HostState {
     pub armed: Arc<Mutex<Vec<ArmedVault>>>,
     pub devices: Arc<Mutex<Vec<crate::remote_token::PairedDevice>>>,
     pub pairing: Arc<Mutex<PairingState>>,
+    pub config_dir: PathBuf,
 }
 
 /// Query shape shared by every file route that takes just a vault id plus a
@@ -335,22 +355,62 @@ pub fn router(state: HostState) -> Router {
     router.with_state(state)
 }
 
-/// Starts serving `router(state)` on `bind`. The bind address is the
-/// caller's choice — a Tailscale interface address, or `127.0.0.1` behind an
-/// SSH tunnel — never decided here. This function is never called on its
-/// own: sharing defaults to off, so `serve` only runs once the user turns
-/// sharing on (Task 9 wires that). Returns once the listener fails or the
-/// server is shut down; a bind failure is reported as `Err`, never a panic.
-pub async fn serve(bind: std::net::SocketAddr, state: HostState) -> Result<(), String> {
-    let listener = tokio::net::TcpListener::bind(bind)
+/// Binds `addr`, mapping any failure (port already in use, or — for a
+/// Tailscale bind mode — the interface not being up) to a human-readable
+/// `Err` rather than a panic. Split out from `run` so `remote_share_start`
+/// (the host control surface, `remote_share.rs`) can `.await` this alone and
+/// observe a bind failure synchronously, *before* ever spawning the task
+/// that runs the server loop — a failure that only surfaced inside a
+/// detached background task would have nowhere to report back to.
+pub async fn bind(addr: std::net::SocketAddr) -> Result<tokio::net::TcpListener, String> {
+    tokio::net::TcpListener::bind(addr).await.map_err(|e| format!("bind {addr}: {e}"))
+}
+
+/// Runs `router(state)` on an already-bound `listener` until `shutdown`
+/// fires. `with_graceful_shutdown` is what makes `remote_share_stop` able to
+/// actually free the port: axum stops accepting new connections and this
+/// future resolves (dropping `listener`, closing the fd) as soon as
+/// `shutdown` resolves, instead of running forever with no way to ask it to
+/// quit. A bind failure can't happen here — `listener` is already bound by
+/// the caller (`bind`, above) — so the only `Err` this returns is a genuine
+/// server-loop I/O failure.
+pub async fn run(
+    listener: tokio::net::TcpListener,
+    state: HostState,
+    shutdown: tokio::sync::oneshot::Receiver<()>,
+) -> Result<(), String> {
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(async {
+            let _ = shutdown.await;
+        })
         .await
-        .map_err(|e| format!("bind {bind}: {e}"))?;
-    axum::serve(listener, router(state)).await.map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())
+}
+
+/// Convenience "serve forever" wrapper (`bind` then `run` with a shutdown
+/// signal that never fires) for a caller with no need to ever stop the
+/// server — currently only this module's own tests. The host control
+/// surface (`remote_share.rs`) does not use this: it needs `bind`+`run`
+/// split so `remote_share_stop` can actually shut the server down, which
+/// this convenience form has no way to do.
+#[allow(dead_code)]
+pub async fn serve(bind_addr: std::net::SocketAddr, state: HostState) -> Result<(), String> {
+    let listener = bind(bind_addr).await?;
+    let (never_send, shutdown) = tokio::sync::oneshot::channel();
+    // Leaked deliberately: dropping the sender resolves `shutdown`
+    // immediately (a closed sender is itself observed as "fire" by the
+    // receiver), which would make this "serve forever" wrapper return right
+    // after binding instead of actually running until an external stop.
+    std::mem::forget(never_send);
+    run(listener, state, shutdown).await
 }
 
 /// Milliseconds since the Unix epoch, for `redeem`'s `now_ms`. A thin wrapper
 /// so the handler body doesn't repeat the `SystemTime` dance inline.
-fn now_ms() -> u64 {
+/// `pub(crate)` so `remote_share.rs`'s `remote_issue_code` command can stamp
+/// a freshly issued code with the same clock `pair_handler` checks it
+/// against, rather than reading `SystemTime` a second, independent way.
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -468,8 +528,52 @@ async fn pair_handler(
         label: req.label,
         paired_at_ms: now,
     };
-    state.devices.lock().unwrap().push(device);
+    // Must be durable before this handler answers 200: if the process is
+    // killed or crashes right after, the client has already persisted the
+    // token (`ClientTokens::remember`) and will offer it on every future
+    // request. Without this the host would have no memory of the device at
+    // all after a restart, and every one of that client's requests would
+    // 401 forever — the exact bug this task exists to fix (see module doc).
+    persist_new_device(&state, device)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(PairResponse { id, token }))
+}
+
+/// Disk-first device registration: builds the post-insert device list,
+/// persists *that* via `remote_token::save`, and only pushes into the live
+/// `devices` list once the write to disk has actually succeeded. Mirrors
+/// `ClientTokens::remember`'s ordering (see that doc comment) for the same
+/// reason: memory must never run ahead of what's durable, or a failed write
+/// (full disk, read-only volume, permissions) would leave this process
+/// believing a device is paired that a restart would silently forget.
+pub(crate) fn persist_new_device(
+    state: &HostState,
+    device: crate::remote_token::PairedDevice,
+) -> Result<(), String> {
+    let mut candidate = state.devices.lock().unwrap().clone();
+    candidate.push(device);
+    crate::remote_token::save(&state.config_dir, &candidate)?;
+    *state.devices.lock().unwrap() = candidate;
+    Ok(())
+}
+
+/// Disk-first device revocation, the mirror image of `persist_new_device`.
+/// Returns whether a device was actually removed, same as
+/// `remote_token::revoke`, so a caller revoking an already-gone id can tell
+/// the two cases apart. When the id doesn't match anything there is nothing
+/// to persist, so this is a pure no-op rather than a needless disk write.
+/// On a failed persist the in-memory list is left untouched — following
+/// `ClientTokens::forget`'s ordering — because the *worse* failure mode here
+/// is reporting a device revoked when its token still authorizes requests
+/// (the disk write, not the memory update, is the one that must not lie).
+pub(crate) fn revoke_and_persist(state: &HostState, id: &str) -> Result<bool, String> {
+    let mut candidate = state.devices.lock().unwrap().clone();
+    if !crate::remote_token::revoke(&mut candidate, id) {
+        return Ok(false);
+    }
+    crate::remote_token::save(&state.config_dir, &candidate)?;
+    *state.devices.lock().unwrap() = candidate;
+    Ok(true)
 }
 
 /// Maps `redeem`'s `PairError` to an HTTP status. Every variant means "this
@@ -830,6 +934,16 @@ mod tests {
     /// that need not contain anything) and one paired device whose token is
     /// `"test-token"`, for tests that only care about routing/auth shape and
     /// never touch a real file.
+    /// A fresh scratch directory for a `HostState.config_dir` in tests that
+    /// don't care about its contents (most routing/auth tests never write
+    /// to it) — pid+counter-unique, matching this file's existing temp-dir
+    /// convention, so parallel test runs never collide even if a future
+    /// test does start writing device persistence into it.
+    fn scratch_config_dir() -> PathBuf {
+        let n = TEST_SEQ.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("mermark-rv-config-{}-{n}", std::process::id()))
+    }
+
     fn test_state() -> HostState {
         HostState {
             armed: Arc::new(Mutex::new(vec![ArmedVault {
@@ -844,6 +958,7 @@ mod tests {
                 paired_at_ms: 0,
             }])),
             pairing: Arc::new(Mutex::new(PairingState::armed(issue_pairing_code(0)))),
+            config_dir: scratch_config_dir(),
         }
     }
 
@@ -871,6 +986,7 @@ mod tests {
                 paired_at_ms: 0,
             }])),
             pairing: Arc::new(Mutex::new(PairingState::armed(issue_pairing_code(0)))),
+            config_dir: scratch_config_dir(),
         };
         (state, dir)
     }
@@ -1031,6 +1147,7 @@ mod tests {
         // sees a decades-old code and reports `Expired` before ever comparing
         // digits.
         let issued_at_ms = now_ms();
+        let config_dir = scratch_config_dir();
         let state = HostState {
             armed: Arc::new(Mutex::new(vec![])),
             devices: Arc::new(Mutex::new(vec![])),
@@ -1038,6 +1155,7 @@ mod tests {
                 code: code.clone(),
                 issued_at_ms,
             }))),
+            config_dir: config_dir.clone(),
         };
         let app = router(state);
         let body = serde_json::to_vec(&serde_json::json!({ "code": code, "label": "맥북" })).unwrap();
@@ -1053,6 +1171,164 @@ mod tests {
 
         let res = call(&app, http::Method::GET, "/vaults", Some(&parsed.token)).await;
         assert_eq!(res.status(), http::StatusCode::OK, "방금 받은 토큰이 즉시 통해야 한다");
+        std::fs::remove_dir_all(&config_dir).ok();
+    }
+
+    /// The bug this task exists to fix, pinned directly: pairing must
+    /// persist the new device to disk, not just push it into the in-memory
+    /// list — a fresh `remote_token::load` of the same `config_dir` after
+    /// pairing must see it too, exactly as a restarted host process would.
+    #[tokio::test]
+    async fn pair_persists_the_new_device_to_disk() {
+        let code = "111222".to_string();
+        let issued_at_ms = now_ms();
+        let config_dir = scratch_config_dir();
+        let state = HostState {
+            armed: Arc::new(Mutex::new(vec![])),
+            devices: Arc::new(Mutex::new(vec![])),
+            pairing: Arc::new(Mutex::new(PairingState::armed(PairingCode {
+                code: code.clone(),
+                issued_at_ms,
+            }))),
+            config_dir: config_dir.clone(),
+        };
+        let app = router(state);
+        let body = serde_json::to_vec(&serde_json::json!({ "code": code, "label": "맥북" })).unwrap();
+        let req = Request::builder()
+            .method(http::Method::POST)
+            .uri("/pair")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), http::StatusCode::OK);
+        let parsed: PairResponse = json_body(res).await;
+
+        let on_disk = crate::remote_token::load(&config_dir).unwrap();
+        assert_eq!(on_disk.len(), 1, "페어링된 기기가 디스크에 저장돼야 한다");
+        assert_eq!(on_disk[0].id, parsed.id);
+        assert_eq!(on_disk[0].token, parsed.token);
+        assert_eq!(on_disk[0].label, "맥북");
+        std::fs::remove_dir_all(&config_dir).ok();
+    }
+
+    /// Pins `persist_new_device`'s disk-first ordering directly: when the
+    /// write to `config_dir` fails, the in-memory device list must be left
+    /// exactly as it was, not silently ahead of what's durable — mirrors
+    /// `remote_token.rs`'s `remember_leaves_memory_untouched_when_persist_fails`.
+    #[cfg(unix)]
+    #[test]
+    fn persist_new_device_leaves_memory_untouched_when_persist_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let config_dir = scratch_config_dir();
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let state = HostState {
+            armed: Arc::new(Mutex::new(vec![])),
+            devices: Arc::new(Mutex::new(vec![])),
+            pairing: Arc::new(Mutex::new(PairingState::unarmed())),
+            config_dir: config_dir.clone(),
+        };
+        let device = crate::remote_token::PairedDevice {
+            id: "dev1".into(),
+            token: "tok".into(),
+            label: "맥북".into(),
+            paired_at_ms: 0,
+        };
+        let result = persist_new_device(&state, device);
+
+        std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err(), "쓰기 실패는 Err로 보고돼야 한다");
+        assert!(state.devices.lock().unwrap().is_empty(), "디스크 쓰기가 실패하면 메모리도 갱신되지 않아야 한다");
+        std::fs::remove_dir_all(&config_dir).ok();
+    }
+
+    /// `revoke_and_persist`'s happy path: an existing device is removed from
+    /// memory and the removal survives a fresh `remote_token::load`.
+    #[test]
+    fn revoke_and_persist_removes_the_device_and_persists_it() {
+        let config_dir = scratch_config_dir();
+        let devices = vec![
+            crate::remote_token::PairedDevice { id: "dev1".into(), token: "aa".into(), label: "맥북".into(), paired_at_ms: 1 },
+            crate::remote_token::PairedDevice { id: "dev2".into(), token: "bb".into(), label: "폰".into(), paired_at_ms: 2 },
+        ];
+        crate::remote_token::save(&config_dir, &devices).unwrap();
+        let state = HostState {
+            armed: Arc::new(Mutex::new(vec![])),
+            devices: Arc::new(Mutex::new(devices)),
+            pairing: Arc::new(Mutex::new(PairingState::unarmed())),
+            config_dir: config_dir.clone(),
+        };
+
+        let removed = revoke_and_persist(&state, "dev1").unwrap();
+        assert!(removed);
+        assert_eq!(state.devices.lock().unwrap().len(), 1);
+
+        let on_disk = crate::remote_token::load(&config_dir).unwrap();
+        assert_eq!(on_disk.len(), 1, "철회가 디스크에도 반영돼야 한다");
+        assert_eq!(on_disk[0].id, "dev2");
+        std::fs::remove_dir_all(&config_dir).ok();
+    }
+
+    /// Revoking an id that doesn't exist is a no-op, not an error — and
+    /// must not touch the disk (nothing changed, nothing to persist).
+    #[test]
+    fn revoke_and_persist_is_a_noop_for_an_unknown_id() {
+        let config_dir = scratch_config_dir();
+        let state = HostState {
+            armed: Arc::new(Mutex::new(vec![])),
+            devices: Arc::new(Mutex::new(vec![crate::remote_token::PairedDevice {
+                id: "dev1".into(),
+                token: "aa".into(),
+                label: "맥북".into(),
+                paired_at_ms: 1,
+            }])),
+            pairing: Arc::new(Mutex::new(PairingState::unarmed())),
+            config_dir: config_dir.clone(),
+        };
+        let removed = revoke_and_persist(&state, "zz").unwrap();
+        assert!(!removed);
+        assert_eq!(state.devices.lock().unwrap().len(), 1);
+        assert!(!crate::remote_token::store_path(&config_dir).exists(), "변경이 없으면 디스크에 쓰지 않는다");
+    }
+
+    // --- server lifecycle (bind/run) ---
+
+    /// `bind` then `run`, stopped via the shutdown channel, then `bind` again
+    /// on the exact same port: this is the start→stop→start guarantee
+    /// `remote_share_stop`/`remote_share_start` depend on — the port must be
+    /// fully released by the time the first `run` future resolves, not just
+    /// eventually.
+    #[tokio::test]
+    async fn stop_then_start_on_the_same_port_succeeds() {
+        let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let listener = bind(addr).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let state = test_state();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(run(listener, state.clone(), rx));
+        tx.send(()).unwrap();
+        handle.await.unwrap().unwrap();
+
+        let addr2: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+        let listener2 = bind(addr2).await;
+        assert!(listener2.is_ok(), "정지 후 같은 포트로 재시작이 성공해야 한다: {listener2:?}");
+        std::fs::remove_dir_all(&state.config_dir).ok();
+    }
+
+    /// A bind on a port already held by another listener must come back as
+    /// `Err`, never panic — the caller (`remote_share_start`) surfaces this
+    /// straight to the UI.
+    #[tokio::test]
+    async fn bind_to_an_occupied_port_is_an_err_not_a_panic() {
+        let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let first = bind(addr).await.unwrap();
+        let port = first.local_addr().unwrap().port();
+        let addr2: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+        let result = bind(addr2).await;
+        assert!(result.is_err());
     }
 
     // --- fix round 1: vault-root addressability, path relativization,

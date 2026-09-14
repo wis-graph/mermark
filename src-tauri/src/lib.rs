@@ -11,17 +11,24 @@ mod epubview;
 mod htmlview;
 mod hwp;
 mod qa_trace;
-// `remote_host` is library code with no `#[tauri::command]` caller yet: Task
-// 9 (host-side sharing UI/wiring) is what will call into it. Suppressed at
-// the module level until that wiring lands and the suppression is removed
-// naturally by a real call site appearing.
-#[allow(dead_code)]
+// `remote_host` owns the pure containment logic, pairing state machine, and
+// axum HTTP server for remote vault sharing. It has no `#[tauri::command]`
+// of its own — `remote_share.rs` (Task 9a, the host control surface) is
+// what turns `bind`/`run` into commands a settings UI can call.
 mod remote_host;
-// `remote_client.rs` owns every `remote_*` Tauri command (the client half of
-// the remote vault feature) and is this module's only caller of
-// `ClientTokens` — see that module's doc comment for why the device token
-// lives here and never crosses into TypeScript.
+// `remote_client.rs` owns every `remote_*` Tauri command for the *client*
+// half of remote vault sharing (reading a vault another host is sharing),
+// and is this module's only caller of `ClientTokens` — see that module's
+// doc comment for why the device token lives here and never crosses into
+// TypeScript.
 mod remote_client;
+// `remote_share.rs` owns the *host* half's control surface: the
+// `#[tauri::command]`s that turn sharing on/off, arm vaults, issue pairing
+// codes, and list/revoke paired devices. Sibling of `remote_client.rs`
+// (client commands) rather than folded into it — the two sides have
+// disjoint command sets and disjoint managed state (`ClientTokens` vs.
+// `RemoteShareState`).
+mod remote_share;
 mod remote_token;
 mod single_instance;
 mod sqlite;
@@ -427,7 +434,12 @@ pub fn run() {
             remote_client::remote_read_file,
             remote_client::remote_read_image,
             remote_client::remote_resolve_image,
-            remote_client::remote_list_link_targets
+            remote_client::remote_list_link_targets,
+            remote_share::remote_share_status,
+            remote_share::remote_share_start,
+            remote_share::remote_share_stop,
+            remote_share::remote_issue_code,
+            remote_share::remote_revoke_device
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -447,6 +459,20 @@ pub fn run() {
                     format!("failed to resolve app config dir for remote vault tokens: {e}")
                 })?;
                 app.manage(remote_token::ClientTokens::load(&config_dir));
+
+                // Host-side remote sharing control surface (Task 9a,
+                // `remote_share.rs`). Loading the paired-device list here —
+                // not starting with an empty `Vec` — is what makes a device
+                // paired in a previous session still be recognized after
+                // this restart; a corrupt store degrades to "no devices"
+                // with a warning rather than failing app launch outright,
+                // since remote sharing is a non-critical, off-by-default
+                // feature and shouldn't be able to block opening the editor.
+                let devices = remote_token::load(&config_dir).unwrap_or_else(|e| {
+                    eprintln!("mermark: failed to load paired remote devices, starting empty: {e}");
+                    Vec::new()
+                });
+                app.manage(remote_share::RemoteShareState::new(config_dir, devices));
             }
 
             // `class` was fully decided pre-builder (above); `Headless`

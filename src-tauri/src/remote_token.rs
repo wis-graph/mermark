@@ -88,12 +88,7 @@ pub struct PairedDevice {
 }
 
 /// Where the host's paired-device list lives under the app config dir.
-// Host-side pairing UI (Task 9) is this function's real call site; until
-// that wiring lands it has no caller of its own outside this module's tests
-// (mirrors the module-level suppression `lib.rs` used to carry for all of
-// `remote_token`, now narrowed to just the host-side pieces `remote_client`
-// doesn't touch).
-#[allow(dead_code)]
+/// Called by `save`/`load` below, and directly by `remote_host.rs`'s tests.
 pub fn store_path(config_dir: &Path) -> PathBuf {
     config_dir.join("remote-devices.json")
 }
@@ -104,7 +99,6 @@ pub fn store_path(config_dir: &Path) -> PathBuf {
 /// is reported as `Err` instead of silently collapsing to empty: swallowing
 /// that error would look to the user like every paired device vanished,
 /// when what actually happened is the store is corrupt and needs attention.
-#[allow(dead_code)] // Task 9's host-side pairing UI call site.
 pub fn load(config_dir: &Path) -> Result<Vec<PairedDevice>, String> {
     let path = store_path(config_dir);
     let text = match std::fs::read_to_string(&path) {
@@ -118,7 +112,6 @@ pub fn load(config_dir: &Path) -> Result<Vec<PairedDevice>, String> {
 /// Saves the host's paired-device list via `atomic_write_0600` (see module
 /// doc comment for why: no truncate-then-write window, no create-then-chmod
 /// window).
-#[allow(dead_code)] // Task 9's host-side pairing UI call site.
 pub fn save(config_dir: &Path, devices: &[PairedDevice]) -> Result<(), String> {
     std::fs::create_dir_all(config_dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(devices).map_err(|e| e.to_string())?;
@@ -131,7 +124,6 @@ pub fn save(config_dir: &Path, devices: &[PairedDevice]) -> Result<(), String> {
 /// apart instead of silently no-opping either way. Plain equality is fine
 /// here (not `constant_time_eq`): `id` is a handle, not a secret, so there
 /// is nothing for a timing side channel to leak.
-#[allow(dead_code)] // Task 9's host-side pairing UI call site.
 pub fn revoke(devices: &mut Vec<PairedDevice>, id: &str) -> bool {
     let before = devices.len();
     devices.retain(|d| d.id != id);

@@ -67,8 +67,13 @@ rhwp = { git = "https://github.com/edwardkim/rhwp", rev = "93862a4e16df59834ebce
 # HTTP server (`remote_host::serve`'s `TcpListener::bind`/`axum::serve`).
 # "macros" (for `#[tokio::test]`) is deliberately NOT listed here — it's
 # test-only, declared instead under [dev-dependencies] below so a release
-# build never compiles it in.
-tokio = { version = "1", default-features = false, features = ["time", "net", "rt", "rt-multi-thread"] }
+# build never compiles it in. "sync" is for `tokio::sync::oneshot`, the
+# remote-host control surface's (`remote_share.rs`) graceful-shutdown signal
+# — `remote_share_stop` sends on it, `remote_host::run`'s
+# `with_graceful_shutdown` awaits it, which is what lets a later
+# `remote_share_start` re-bind the same port instead of finding it still
+# held by a server with no way to have been asked to quit.
+tokio = { version = "1", default-features = false, features = ["time", "net", "rt", "rt-multi-thread", "sync"] }
 # Remote vault host's read-only HTTP server (`remote_host.rs`). The one
 # runtime crate this feature is permitted to add — everything it needs
 # (tokio, hyper) is already in the build graph via tauri-plugin-updater.
