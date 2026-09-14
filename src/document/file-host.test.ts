@@ -6,9 +6,20 @@ import {
   classifyRemoteError,
   ensureSshTunnel,
   evictSshTunnelMemo,
+  fileHostFor,
+  __resetRemoteCachesForTests,
   type FileHostBackend,
 } from "./file-host";
 import type { RemoteVault } from "../workspace/workspace-state";
+
+// Only the __resetRemoteCachesForTests suite (bottom of this file) needs a
+// real invoke() spy — fileHostFor's remoteHostFor memo (unlike
+// remoteFileHost) has no way to inject a `call` spy, since it's reached
+// through the app-wide singleton. Every other suite in this file passes its
+// own `call` directly to remoteFileHost/ensureSshTunnel and never touches
+// this import.
+const coreInvokeMock = vi.fn(async (_cmd: string, _args?: unknown) => [] as unknown);
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (cmd: string, args?: unknown) => coreInvokeMock(cmd, args) }));
 
 const backend = (): FileHostBackend => ({
   readFile: vi.fn(async () => ({ text: "hi", mtime: 1 })),
@@ -298,5 +309,50 @@ describe("classifyRemoteError", () => {
     expect(classifyRemoteError(new Error("REMOTE:AuthExpired"))).toBe("auth-expired");
     expect(classifyRemoteError(new Error("REMOTE:SharingOff"))).toBe("sharing-off");
     expect(classifyRemoteError(new Error("연결 실패: timeout"))).toBe("unreachable");
+  });
+});
+
+// Minor (final review): module-level singletons (sshTunnelReady,
+// remoteHostCache) have no reset seam — tests dodge cross-pollution by using
+// unique vaultIds/hosts instead, which is fragile (a copy-pasted fixture
+// that forgets to change its id silently shares another test's cache).
+describe("__resetRemoteCachesForTests", () => {
+  const remoteVault: RemoteVault = {
+    vaultId: "vault-reset-seam",
+    workspaceId: "w1",
+    displayName: "원격",
+    rootPath: null,
+    persistenceKind: "remote",
+    explorerRoot: "",
+    host: "wis-reset-seam-host",
+    remoteVaultId: "rv1",
+  };
+
+  it("clears remoteHostCache so fileHostFor's listingCache does not survive the reset", async () => {
+    coreInvokeMock.mockResolvedValue([{ name: "a.md", path: "a.md", is_dir: false }] as unknown);
+    coreInvokeMock.mockClear();
+
+    await fileHostFor(remoteVault).listDir("", false);
+    await fileHostFor(remoteVault).listDir("", false); // same cached backend instance -> dedup'd by listingCache
+    expect(coreInvokeMock).toHaveBeenCalledTimes(1);
+
+    __resetRemoteCachesForTests();
+
+    await fileHostFor(remoteVault).listDir("", false); // fresh backend instance -> real call again
+    expect(coreInvokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears sshTunnelReady so a memoized tunnel connect is re-run after reset", async () => {
+    const host = "ssh://wis@reset-seam";
+    const call = vi.fn(async () => undefined) as never;
+
+    await ensureSshTunnel(host, call);
+    await ensureSshTunnel(host, call); // memoized -> no second call
+    expect(call).toHaveBeenCalledTimes(1);
+
+    __resetRemoteCachesForTests();
+
+    await ensureSshTunnel(host, call);
+    expect(call).toHaveBeenCalledTimes(2);
   });
 });

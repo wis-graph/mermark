@@ -45,6 +45,16 @@ const badgeCache = new Map<string, { expires: number; state: RemoteConnectionSta
  *  shape, same reason. */
 const badgeProbes = new Map<string, Promise<RemoteConnectionState>>();
 
+/** Test-only escape hatch, same reasoning as file-host.ts's sibling
+ *  `__resetRemoteCachesForTests` (Minor, final review): `badgeCache`/
+ *  `badgeProbes` have no reset seam, so this file's own tests dodge
+ *  cross-test pollution by giving every test a unique host/vaultId instead
+ *  — this lets a `beforeEach` opt into real isolation. */
+export function __resetBadgeCachesForTests(): void {
+  badgeCache.clear();
+  badgeProbes.clear();
+}
+
 /** The single probe for `vault`'s connection state — reuses an in-flight
  *  request for the same vaultId instead of starting a second one, and
  *  populates `badgeCache` on settle. Command in effect (mutates the two

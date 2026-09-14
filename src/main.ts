@@ -628,11 +628,12 @@ async function boot() {
     if (shouldPreserveGlobalExplorerRoot(selected)) return currentExplorerFolder;
     const vault = currentVault();
     if (!vault) return currentBaseDir;
-    switch (vault.persistenceKind) {
+    const kind = vault.persistenceKind;
+    switch (kind) {
       case "permanent": return vault.explorerRoot;
       case "global": return currentBaseDir;
       case "remote": return vault.explorerRoot;
-      default: return assertNever(vault);
+      default: return assertNever(kind);
     }
   };
   // Entering the Global Vault always lands on HOME (00_request.md #2), never
@@ -643,21 +644,22 @@ async function boot() {
   // the type does not enforce — pinned by tests/workspace-state.test.ts
   // ("registers canonical permanent vaults..." and "re-derives explorerRoot
   // from rootPath on reload...").
-  // Task 10: a remote vault's `explorerRoot` ("/" — see registerRemoteVault,
-  // workspace-state.ts) IS now a valid Explorer target. Nothing else in the
-  // explorer needed to change to make this work: `listDir` (below) already
-  // routes through `fileHostFor(currentVault())`, which was ALWAYS
-  // vault-kind-generic (file-host.ts's makeFileHost switch) — the only thing
-  // stopping remote browsing was this function itself refusing to hand the
-  // explorer a root to jump to. `isRootLocked` already returns true for
-  // remote (main.ts's own switch, above), so "up" past the vault root is
-  // still refused exactly like a permanent vault.
+  // Task 10: a remote vault's `explorerRoot` (REMOTE_VAULT_WIRE_ROOT, "" —
+  // see registerRemoteVault, workspace-state.ts) IS now a valid Explorer
+  // target. Nothing else in the explorer needed to change to make this work:
+  // `listDir` (below) already routes through `fileHostFor(currentVault())`,
+  // which was ALWAYS vault-kind-generic (file-host.ts's makeFileHost switch)
+  // — the only thing stopping remote browsing was this function itself
+  // refusing to hand the explorer a root to jump to. `isRootLocked` already
+  // returns true for remote (main.ts's own switch, above), so "up" past the
+  // vault root is still refused exactly like a permanent vault.
   const explorerRootForVault = (vault: Vault): string | null => {
-    switch (vault.persistenceKind) {
+    const kind = vault.persistenceKind;
+    switch (kind) {
       case "permanent": return vault.explorerRoot;
       case "global": return homeRoot;
       case "remote": return vault.explorerRoot;
-      default: return assertNever(vault);
+      default: return assertNever(kind);
     }
   };
   // Command wrapper around `explorer.jumpToRoot`. `explorerRootForVault` now
@@ -1275,11 +1277,12 @@ async function boot() {
   // the Global Vault.
   const baseDirForVault = (vault: Vault | undefined): string => {
     if (!vault) return currentExplorerFolder;
-    switch (vault.persistenceKind) {
+    const kind = vault.persistenceKind;
+    switch (kind) {
       case "permanent": return vault.rootPath;
       case "global": return currentExplorerFolder;
       case "remote": return currentExplorerFolder;
-      default: return assertNever(vault);
+      default: return assertNever(kind);
     }
   };
 

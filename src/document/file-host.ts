@@ -337,3 +337,16 @@ const fileHost = makeFileHost({
  *  singleton so call sites read `fileHostFor(vault).readFile(...)` instead of
  *  reaching into `fileHost` directly. */
 export const fileHostFor = (vault: Vault): FileHostBackend => fileHost.forVault(vault);
+
+/** Test-only escape hatch, mirrors `image.ts`'s `clearRemoteImageCache`.
+ *  Minor (final review): this module's module-level singletons
+ *  (`sshTunnelReady`, `remoteHostCache`) have no reset seam, so a test suite
+ *  that wants isolation between cases has had to dodge cross-test pollution
+ *  by giving every test a UNIQUE `vaultId`/`host` instead — workable, but
+ *  fragile (a copy-pasted fixture that forgets to change its host silently
+ *  shares state with an unrelated test). Clears both caches so a `beforeEach`
+ *  can opt into real isolation instead. */
+export function __resetRemoteCachesForTests(): void {
+  sshTunnelReady.clear();
+  remoteHostCache.clear();
+}
