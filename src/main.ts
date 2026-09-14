@@ -108,7 +108,7 @@ import {
   shouldMigrateLegacyFavorites,
 } from "./workspace/favorite-vault-migration";
 import { createWorkspaceSidebar } from "./workspace/workspace-sidebar";
-import { selectVaultView, VaultTabStore } from "./workspace/vault-tabs";
+import { selectVaultView, VaultTabStore, type TabPersistenceScope } from "./workspace/vault-tabs";
 import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
 import { registerSqliteViewer } from "./chrome/viewer/sqlite-viewer";
@@ -132,6 +132,57 @@ const SAFE_EXPLORER_BASE_PATH = "/";
 
 export function shouldPreserveGlobalExplorerRoot(vault: Pick<Vault, "persistenceKind"> | undefined): boolean {
   return vault?.persistenceKind === "global";
+}
+
+/** Unreachable-branch guard for `Vault.persistenceKind` switches below. Widening
+ *  `Vault` (RemoteVault's addition) only made `tsc` flag ONE hand-rolled
+ *  ternary in this file (`explorerRootForVault`) — every other kind check was
+ *  `=== "permanent"` / `=== "global"`, so a vault kind neither of those
+ *  silently fell into an `else` written for local vaults. Routing every kind
+ *  check below through a `switch (...) { default: return assertNever(x) }`
+ *  makes the NEXT new vault kind fail `tsc` at every one of these sites, not
+ *  just one (task-2b brief). */
+function assertNever(x: never): never {
+  throw new Error(`처리되지 않은 볼트 종류: ${JSON.stringify(x)}`);
+}
+
+/** Whether the Explorer must refuse to navigate above a vault's own root.
+ *  Permanent vaults are locked to their registered filesystem folder; remote
+ *  vaults are locked too, for a different reason — the host only serves paths
+ *  inside the shared vault root, so there is no "above" to browse to even in
+ *  principle. The Global Vault is the only unlocked kind (it deliberately
+ *  roams the whole filesystem from HOME). `undefined` (no vault selected yet)
+ *  defaults to unlocked, matching the pre-existing `currentVault()?.persistenceKind
+ *  === "permanent"` check this replaces. */
+export function isVaultRootLocked(vault: Pick<Vault, "persistenceKind"> | undefined): boolean {
+  if (!vault) return false;
+  switch (vault.persistenceKind) {
+    case "permanent": return true;
+    case "global": return false;
+    case "remote": return true;
+    default: return assertNever(vault as never);
+  }
+}
+
+/** Which persistence tier a vault's open-tab list belongs to. Permanent
+ *  vaults restore tabs from localStorage across app restarts; every other
+ *  kind is session-only. Remote vaults are deliberately session-scoped, not
+ *  promoted to "permanent" alongside local vaults: persisting a tab list
+ *  across restarts risks reopening a document the host no longer shares (the
+ *  Mac mini offline, or the shared vault renamed/withdrawn on its side)
+ *  before the host connection is even re-established — re-deriving remote
+ *  tabs fresh each session is the safe default until v1's read-only scope
+ *  grows a sync story. This was already the ACCIDENTAL behavior of every
+ *  `=== "permanent" ? "permanent" : "session"` ternary this replaces (remote
+ *  fell into the `else`); this function just makes that choice explicit and
+ *  exhaustive so it survives the next vault kind. */
+export function tabScopeForVault(vault: Pick<Vault, "persistenceKind">): TabPersistenceScope {
+  switch (vault.persistenceKind) {
+    case "permanent": return "permanent";
+    case "global": return "session";
+    case "remote": return "session";
+    default: return assertNever(vault as never);
+  }
 }
 
 /** The user's home directory, resolved through the EXISTING `canonicalize_path`
@@ -421,21 +472,53 @@ async function boot() {
   let currentFile = initialFile ?? "";
   let currentBaseDir = initialFile ? dirOf(initialFile) || SAFE_EXPLORER_BASE_PATH : SAFE_EXPLORER_BASE_PATH;
   let currentExplorerFolder = reloadHandoff.globalExplorerRoot ?? currentBaseDir;
+  // A remote vault's `explorerRoot` is a virtual browsing root on the HOST,
+  // not a path this window's local filesystem can `list_dir` — it must never
+  // reach the local Explorer's `getBaseDir`/`jumpToRoot` as if it were one
+  // (task-2b brief: this exact confusion is what made the local explorer jump
+  // to a bogus root). Until a real remote-browsing surface exists (Task 10+),
+  // both fall back to whatever local folder the Explorer was already showing,
+  // same as the Global Vault — never `vault.explorerRoot` for a remote vault.
   const explorerRootForCurrentSelection = (): string => {
     const selected = selectedWorkspaceVault();
-    return shouldPreserveGlobalExplorerRoot(selected) ? currentExplorerFolder : currentVault()?.explorerRoot ?? currentBaseDir;
+    if (shouldPreserveGlobalExplorerRoot(selected)) return currentExplorerFolder;
+    const vault = currentVault();
+    if (!vault) return currentBaseDir;
+    switch (vault.persistenceKind) {
+      case "permanent": return vault.explorerRoot;
+      case "global": return currentBaseDir;
+      case "remote": return currentExplorerFolder;
+      default: return assertNever(vault);
+    }
   };
   // Entering the Global Vault always lands on HOME (00_request.md #2), never
   // wherever the explorer was last sitting (`currentExplorerFolder` — that's
   // still tracked for the reload-restore path and the breadcrumb while
   // browsing, just not as this button's default anymore).
-  // Remote vaults have no filesystem rootPath (design §4.4) — explorerRoot is
-  // their virtual browsing root instead, same shape as a permanent vault's.
   // Relies on PermanentVault.explorerRoot === rootPath always holding, which
   // the type does not enforce — pinned by tests/workspace-state.test.ts
   // ("registers canonical permanent vaults..." and "re-derives explorerRoot
   // from rootPath on reload...").
-  const explorerRootForVault = (vault: Vault): string => vault.persistenceKind === "global" ? homeRoot : vault.explorerRoot;
+  // Returns `null` for a remote vault: its `explorerRoot` is a HOST-side
+  // virtual path, not a local filesystem root the Explorer (`jumpToRoot`) can
+  // navigate to — callers must treat `null` as "not a local-explorer target"
+  // and skip the jump, not fall through to some other local path.
+  const explorerRootForVault = (vault: Vault): string | null => {
+    switch (vault.persistenceKind) {
+      case "permanent": return vault.explorerRoot;
+      case "global": return homeRoot;
+      case "remote": return null;
+      default: return assertNever(vault);
+    }
+  };
+  // Command wrapper around `explorer.jumpToRoot` that honors `null`
+  // ("not a local-explorer target") by simply not jumping — a remote vault's
+  // Explorer entry point does not exist yet (Task 10+), so the safest thing
+  // this window can do today is leave the Explorer wherever it already was.
+  const jumpExplorerToVaultRoot = (vault: Vault): void => {
+    const root = explorerRootForVault(vault);
+    if (root !== null) explorer.jumpToRoot(root);
+  };
   // Document navigation history (⌘[/⌘]) — ephemeral in-memory session state, NOT
   // a setting: starts empty; the first openInWindow records the launch file.
   // Distinct from the recent MRU list (recentDocsSetting) — see nav-history.ts.
@@ -753,7 +836,7 @@ async function boot() {
     },
     onToggleVault: (root) => toggleExplorerVault(root),
     isVaultRegistered: (root) => isVaultRegistered(root),
-    isRootLocked: () => currentVault()?.persistenceKind === "permanent",
+    isRootLocked: () => isVaultRootLocked(currentVault()),
   });
 
   const openDocument = async (absPath: string, requestId = beginLifecycleRequest(), onCommit?: () => void): Promise<boolean> => {
@@ -858,6 +941,24 @@ async function boot() {
     })(),
   });
 
+  // The local filesystem folder the welcome pane anchors "open a file"
+  // dialogs to once no document is open. A permanent vault anchors to its own
+  // registered root, same as always. A remote vault has NO local filesystem
+  // presence to anchor to yet (v1 is read-only network browsing — Task 10+
+  // wires actual host listing, not a local path) — using its virtual
+  // `explorerRoot` here would hand a host-side string to a local `dirOf`/open
+  // dialog, so it falls back to `currentExplorerFolder`, same safe default as
+  // the Global Vault.
+  const baseDirForVault = (vault: Vault | undefined): string => {
+    if (!vault) return currentExplorerFolder;
+    switch (vault.persistenceKind) {
+      case "permanent": return vault.rootPath;
+      case "global": return currentExplorerFolder;
+      case "remote": return currentExplorerFolder;
+      default: return assertNever(vault);
+    }
+  };
+
   const renderWelcomeForVault = (): void => {
     closeOpenViewer();
     closeConflict();
@@ -866,7 +967,7 @@ async function boot() {
     currentFile = "";
     explorer.setActiveFile(null); // no document open — clear the tree highlight
     const vault = currentVault();
-    currentBaseDir = vault?.persistenceKind === "permanent" ? vault.rootPath : currentExplorerFolder;
+    currentBaseDir = baseDirForVault(vault);
     host.classList.add("welcome-host");
     host.append(welcomePane);
   };
@@ -876,7 +977,7 @@ async function boot() {
     const vault = currentVault();
     const identity = currentConflictIdentity();
     if (vault && identity) {
-      const scope = vault.persistenceKind === "permanent" ? "permanent" : "session";
+      const scope = tabScopeForVault(vault);
       vaultTabs.close(vault.vaultId, identity.tabId, scope);
     }
     renderWelcomeForVault();
@@ -965,7 +1066,7 @@ async function boot() {
         const commitSelection = (): void => {
           workspaceStore.selectVault(selectedVault.vaultId);
           routedVault = selectedVault;
-          explorer.jumpToRoot(explorerRootForVault(selectedVault));
+          jumpExplorerToVaultRoot(selectedVault);
         };
         if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path, commitSelection);
         else commitSelection();
@@ -980,13 +1081,13 @@ async function boot() {
           workspaceStore.selectVault(selectedVault.vaultId);
           routedVault = selectedVault;
           renderWelcomeForVault();
-          explorer.jumpToRoot(explorerRootForVault(selectedVault));
+          jumpExplorerToVaultRoot(selectedVault);
         });
       }
     },
     onSelectTab: (vault, tab) => {
       const selectedVault = workspaceStore.get().vaults.find((candidate) => candidate.vaultId === vault.vaultId) ?? vault;
-      const scope = selectedVault.persistenceKind === "permanent" ? "permanent" : "session";
+      const scope = tabScopeForVault(selectedVault);
       return openDocumentSafely(tab.path, () => {
         workspaceStore.selectVault(selectedVault.vaultId);
         routedVault = selectedVault;
@@ -996,7 +1097,7 @@ async function boot() {
     onCloseTab: (vault, tab) => {
       const currentTabs = vaultTabs.get(vault.vaultId);
       const wasActive = currentTabs.activeTabId === tab.tabId;
-      const scope = vault.persistenceKind === "permanent" ? "permanent" : "session";
+      const scope = tabScopeForVault(vault);
       if (!wasActive || currentVault()?.vaultId !== vault.vaultId) {
         vaultTabs.close(vault.vaultId, tab.tabId, scope);
         return;
@@ -1295,7 +1396,7 @@ async function boot() {
     host.classList.remove("welcome-host");
     currentFile = file;
     currentBaseDir = dirOf(file) || SAFE_EXPLORER_BASE_PATH;
-    if (selectedVault) vaultTabs.open(selectedVault.vaultId, file, selectedVault.persistenceKind === "permanent" ? "permanent" : "session");
+    if (selectedVault) vaultTabs.open(selectedVault.vaultId, file, tabScopeForVault(selectedVault));
     const { text, mtime } = fresh;
 
     current = mountEditor(host, text, currentBaseDir, file, {

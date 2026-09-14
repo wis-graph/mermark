@@ -365,6 +365,30 @@ describe("main workspace wiring", () => {
     expect(shouldPreserveGlobalExplorerRoot(undefined)).toBe(false);
   });
 
+  // task-2b (Ruling 5 follow-up): widening `Vault` with `RemoteVault` only
+  // made `tsc` flag ONE hand-rolled ternary (`explorerRootForVault`) — every
+  // other vault-kind branch in main.ts was `=== "permanent"` / `=== "global"`,
+  // so a remote vault silently fell into the local-vault `else`. These three
+  // pure functions replace those ternaries with exhaustive switches
+  // (`default: assertNever(vault)`) and pin every vault kind's expected value
+  // so the NEXT new vault kind fails `tsc` at all of these sites, not just one.
+  it("locks the Explorer root for permanent and remote vaults, not global or no vault", async () => {
+    const { isVaultRootLocked } = await import("../src/main");
+
+    expect(isVaultRootLocked({ persistenceKind: "permanent" })).toBe(true);
+    expect(isVaultRootLocked({ persistenceKind: "remote" })).toBe(true);
+    expect(isVaultRootLocked({ persistenceKind: "global" })).toBe(false);
+    expect(isVaultRootLocked(undefined)).toBe(false);
+  });
+
+  it("scopes remote vault tabs to the session, same as global, never persisted like permanent", async () => {
+    const { tabScopeForVault } = await import("../src/main");
+
+    expect(tabScopeForVault({ persistenceKind: "permanent" })).toBe("permanent");
+    expect(tabScopeForVault({ persistenceKind: "global" })).toBe("session");
+    expect(tabScopeForVault({ persistenceKind: "remote" })).toBe("session");
+  });
+
   // Windows-home fix regression lock: when the backend can't resolve a home
   // directory (real-world case: expand_home's HOME-only home_dir() on a
   // Windows session — see src-tauri/src/commands.rs), canonicalize_path("~")
