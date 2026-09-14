@@ -298,14 +298,19 @@ function normalizeMockPath(path: string): string {
 // magic *host value*, not a magic branch buried in each case, so it's
 // discoverable from the call site instead of ambient.
 function remoteMockError(host: string): string | null {
-  // T2 (0.17.1): mirrors Rust `base_url`'s non-ASCII guard (remote_client.rs)
-  // verbatim — same message, same trigger (any byte outside ASCII, e.g. a
-  // Korean host like "맥미니"). The frontend's `hostFieldProblem` pre-flight
-  // check (remote-host-field.ts) is meant to catch this before pairing is
-  // ever attempted, but the mock must ALSO reject it, exactly like the real
-  // backend does, so a test that bypasses the pre-flight check (or an older
-  // client that never ran it) can't get a false "2450 tests pass" green
-  // while the real app would 400/never-resolve on the punycode-encoded host.
+  // T2 (0.17.1): mirrors Rust `base_url`'s guards (remote_client.rs:46-70)
+  // verbatim — same three rejections, in the same order Rust checks them,
+  // so the mock can't be more lenient than the real backend on ANY of
+  // them (QA finding: the empty-host and scheme/path checks were missing
+  // here even though the non-ASCII one was covered — a pre-flight-bypassing
+  // test, or a future remote_* caller that skips hostFieldProblem, would
+  // have gotten a false "passes in the mock" while the real app 400s).
+  if (host === "") {
+    return "호스트가 비어 있습니다";
+  }
+  if (!host.startsWith("ssh://") && (host.includes("://") || host.includes("/"))) {
+    return `호스트에는 이름과 포트만 적습니다: ${host}`;
+  }
   if (!host.startsWith("ssh://") && !/^[\x00-\x7f]*$/.test(host)) {
     return `호스트 이름에는 영문·숫자·점·하이픈만 쓸 수 있습니다: ${host}`;
   }
