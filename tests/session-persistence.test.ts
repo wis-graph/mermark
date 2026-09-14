@@ -63,7 +63,7 @@ describe("Session State Persistence", () => {
   });
 
   it("saves state to localStorage when cursor moves and restores it on mount", async () => {
-    const sessionKey = "mermark.session./tmp/test-doc.md";
+    const sessionKey = "mermark.session.vault-global./tmp/test-doc.md"; // GLOBAL_VAULT_ID scoping (Minor, final review: session key must not collide across vaults)
     localStorage.setItem(
       sessionKey,
       JSON.stringify({ scroll: 150, cursor: 12 }) // "line 2\n" cursor position
@@ -104,7 +104,7 @@ describe("Session State Persistence", () => {
   });
 
   it("saves state to localStorage on close requested and destroys window", async () => {
-    const sessionKey = "mermark.session./tmp/test-doc.md";
+    const sessionKey = "mermark.session.vault-global./tmp/test-doc.md"; // GLOBAL_VAULT_ID scoping (Minor, final review: session key must not collide across vaults)
     
     // Import main to trigger boot
     await import("../src/main");

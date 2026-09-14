@@ -559,6 +559,25 @@ async function boot() {
   // `current` actually has mounted, set at the exact moment `mountEditor`
   // decided it (mirrors editor.ts's own `remoteReadOnly` local).
   let currentIsRemote = false;
+  /** The CURRENTLY OPEN document's own vault id — same "property of the
+   *  mounted document, not app-selection state" reasoning as `currentIsRemote`
+   *  just above, set at the same site. Feeds `sessionStateKey` (Minor, final
+   *  review): `currentFile` alone is not a unique document identity — a
+   *  remote document's path is vault-relative ("노트.md"), so two different
+   *  remote vaults with a same-named document at their root used to collide
+   *  on the exact same `mermark.session.*` localStorage key. */
+  let currentOpenVaultId: string | null = null;
+
+  /** The localStorage key `mermark.session.*` state is keyed by — ONE named
+   *  function so the save site and the restore site (both below) can never
+   *  drift onto two different key shapes. `vaultId ?? ""` keeps a legacy/no-
+   *  vault key stable in shape (still 4 dot-segments after the prefix would
+   *  change grep-ability for no benefit) while still disambiguating from a
+   *  DIFFERENT vault's same-named file, which is the actual bug this exists
+   *  to close. */
+  function sessionStateKey(vaultId: string | null, file: string): string {
+    return `mermark.session.${vaultId ?? ""}.${file}`;
+  }
   /** The mode indicator's single source of truth (Task 11): folds the global
    *  `modeSetting` and the open document's remote-forced read-only state into
    *  one render call, so the title-bar toggle can never show "편집" for a
@@ -1587,7 +1606,7 @@ async function boot() {
       const scroll = scroller ? scroller.scrollTop : 0;
       const cursor = current.view.state.selection.main.anchor;
       try {
-        localStorage.setItem(`mermark.session.${currentFile}`, JSON.stringify({ scroll, cursor }));
+        localStorage.setItem(sessionStateKey(currentOpenVaultId, currentFile), JSON.stringify({ scroll, cursor }));
       } catch (err) {
         console.error("Failed to save session state to localStorage", err);
       }
@@ -1755,6 +1774,7 @@ async function boot() {
       findReplaceHint: replaceHintEntry,
     });
     currentIsRemote = isRemoteVault(selectedVault);
+    currentOpenVaultId = selectedVault.vaultId;
     syncModeIndicator();
 
     const scroller = host.querySelector(".cm-scroller");
@@ -1767,7 +1787,7 @@ async function boot() {
     // Restore session state for this file's key.
     let savedSession: string | null = null;
     try {
-      savedSession = localStorage.getItem(`mermark.session.${file}`);
+      savedSession = localStorage.getItem(sessionStateKey(selectedVault.vaultId, file));
     } catch (err) {
       console.error("Failed to read session state from localStorage", err);
     }

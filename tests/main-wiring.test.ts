@@ -1470,6 +1470,39 @@ describe("main workspace wiring", () => {
       expect(invokeMock).not.toHaveBeenCalledWith("bundle_doc", expect.anything());
     });
 
+    // Minor (final review): `mermark.session.${currentFile}` keyed scroll/
+    // cursor state by the bare (possibly vault-relative) path alone — two
+    // remote vaults sharing a same-named document ("노트.md" at each of
+    // their roots) collide on the SAME localStorage key.
+    it("scopes session (scroll/cursor) state by vault, not just the bare document path — two remote vaults with same-named documents don't collide", async () => {
+      documentContents.set("노트.md", "# 원격 문서\n\nline2\nline3\nline4\nline5");
+      localStorage.setItem("mermark.workspaceState", JSON.stringify({
+        workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-sess"], currentVaultId: "vault-remote-sess", lastSelectedPermanentVaultId: null }],
+        vaults: [{ vaultId: "vault-remote-sess", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-sess" }],
+        currentWorkspaceId: "workspace-default",
+      }));
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+
+      document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="노트.md"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.explorer-file[data-path="노트.md"]')?.click();
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toContain("원격 문서"));
+
+      const mermark = (window as any).__mermark;
+      mermark.view.dispatch({ selection: { anchor: 5 } });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // The OLD unscoped key must never be written (a second remote vault's
+      // same-named "노트.md" would otherwise read it back as its own state).
+      expect(localStorage.getItem("mermark.session.노트.md")).toBeNull();
+      // The actual key must be scoped by this vault's id.
+      const scopedKey = Object.keys(localStorage).find((k) => k.startsWith("mermark.session.") && k.includes("vault-remote-sess"));
+      expect(scopedKey).toBeDefined();
+      expect(JSON.parse(localStorage.getItem(scopedKey!) ?? "{}").cursor).toBe(5);
+    });
+
     // Task 11: the persistent read-only indicator and the explicit
     // unsupported-file refusal, driven through the real boot + Explorer
     // click path (not the pure remote-capability.ts functions in isolation —
