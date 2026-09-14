@@ -8,6 +8,7 @@ import { RENDER, runTeardown, tryDismissNested } from "./controls";
 import type { Setting, Control } from "../store";
 import { icon } from "../../icons";
 import { renderVersionPane } from "./version-pane";
+import { renderRemoteSharePane, type VaultOption } from "../remote-share-panel";
 
 /** Build a ⚙ chrome button that opens the settings modal. Boot-cheap: only the
  *  button is created now; the modal DOM is built on first open. Position is the
@@ -15,7 +16,7 @@ import { renderVersionPane } from "./version-pane";
  *  this function does not append it anywhere, unlike the old mountSettingsButton
  *  it replaces (that one assumed "append = far right", which broke once
  *  .window-controls started owning the far-right slot on win/linux). */
-export function createSettingsButton(): HTMLButtonElement {
+export function createSettingsButton(getShareableVaults: () => readonly VaultOption[] = () => []): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.className = "chrome-btn settings-btn icon-only";
   const label = document.createElement("span");
@@ -28,7 +29,7 @@ export function createSettingsButton(): HTMLButtonElement {
   btn.setAttribute("aria-label", "설정");
   let modal: SettingsModal | null = null;
   btn.addEventListener("click", () => {
-    if (!modal) modal = buildModal(); // lazy build on first open
+    if (!modal) modal = buildModal(getShareableVaults); // lazy build on first open
     modal.open();
   });
   return btn;
@@ -42,7 +43,7 @@ interface SettingsModal {
 /** Build the modal DOM once (backdrop + 2-pane: sidebar + pane). The sidebar is
  *  groups() in insertion order; clicking a category swaps the pane. Open/close
  *  handle ESC, backdrop click, focus restore, and editor inert. */
-function buildModal(): SettingsModal {
+function buildModal(getShareableVaults: () => readonly VaultOption[]): SettingsModal {
   const backdrop = document.createElement("div");
   backdrop.className = "settings-backdrop";
   backdrop.hidden = true;
@@ -115,6 +116,17 @@ function buildModal(): SettingsModal {
   sidebar.appendChild(versionCatBtn);
   allCatButtons.push(versionCatBtn);
 
+  // "원격 공유"도 "버전"과 같은 이유로 registry 밖에 있다: 편집 대상이
+  // localStorage Setting이 아니라 백엔드 ShareStatus라 registerSetting의
+  // 1-Setting↔1-control 틀에 맞지 않는다(remote-share-panel.ts 모듈 doc).
+  const remoteShareCatBtn = document.createElement("button");
+  remoteShareCatBtn.type = "button";
+  remoteShareCatBtn.className = "settings-cat";
+  remoteShareCatBtn.textContent = "원격 공유";
+  remoteShareCatBtn.addEventListener("click", () => selectRemoteShareCategory());
+  sidebar.appendChild(remoteShareCatBtn);
+  allCatButtons.push(remoteShareCatBtn);
+
   /** Tear down every control currently in the pane (run their stashed unsubscribe
    *  fns) before the DOM is discarded, so no stale subscription survives a swap or
    *  close. Command/CQS: void. */
@@ -126,7 +138,7 @@ function buildModal(): SettingsModal {
   // rebuilds it with fresh subscriptions (close() tears the old ones down). The
   // "버전" pane carries no Setting subscription, so it's tracked as a bare tag
   // rather than a Group.
-  type ActiveCategory = { kind: "group"; group: Group } | { kind: "version" };
+  type ActiveCategory = { kind: "group"; group: Group } | { kind: "version" } | { kind: "remote-share" };
   let active: ActiveCategory | null = null;
 
   /** Swap the pane to a category's controls and mark its sidebar button active.
@@ -159,6 +171,18 @@ function buildModal(): SettingsModal {
     pane.appendChild(renderVersionPane());
     markActive(versionCatBtn);
     active = { kind: "version" };
+  }
+
+  /** Swap the pane to the 원격 공유 category. Same teardown discipline — the
+   *  pane's countdown interval is released via attachTeardown inside
+   *  renderRemoteSharePane, picked up by the generic runTeardown(child) loop
+   *  above (no special-casing needed here). */
+  function selectRemoteShareCategory(): void {
+    teardownPane();
+    pane.replaceChildren();
+    pane.appendChild(renderRemoteSharePane(getShareableVaults));
+    markActive(remoteShareCatBtn);
+    active = { kind: "remote-share" };
   }
 
   // First category ("테마") selected on open.
@@ -200,6 +224,7 @@ function buildModal(): SettingsModal {
       // a pane whose reflect closures are dead.
       if (active?.kind === "group") selectCategory(active.group);
       else if (active?.kind === "version") selectVersionCategory();
+      else if (active?.kind === "remote-share") selectRemoteShareCategory();
       backdrop.hidden = false;
       editorHost()?.setAttribute("inert", ""); // editor underneath is non-interactive
       document.addEventListener("keydown", onKeydown, true);

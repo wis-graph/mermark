@@ -48,6 +48,7 @@ import {
 import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink, headingFontSink } from "./settings/sinks";
 import { createSidebarSash } from "./sidebar/sash";
 import { createSettingsButton } from "./settings/panel/modal";
+import { shareableVaultsFrom } from "./settings/remote-share-panel";
 import { copyBundleToClipboard } from "./document/bundle";
 import { copyTextToClipboard } from "./clipboard";
 import { registerHandler, installDispatcher, bindKeybindings, effectiveBinding } from "./shortcuts/registry";
@@ -1294,7 +1295,7 @@ async function boot() {
     viewerSlot: createViewerSlot(),
     mode: mode.btn,
     theme: themeBtn.btn,
-    settings: createSettingsButton(),
+    settings: createSettingsButton(() => shareableVaultsFrom(workspaceStore.get())),
   });
   // Footer order (single contract, arrangeStatusBar owns it): 브레드크럼 ·
   // spacer · update · width · save · pos (pos far right). M3: the placeholder

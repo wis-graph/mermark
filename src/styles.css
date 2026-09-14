@@ -2664,6 +2664,34 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   opacity: 0.5;
 }
 
+/* "원격 공유" 카테고리 (remote-share-panel.ts) — 버전 패널처럼 registry 밖의
+   단독 뷰. 행 셸(.settings-row)은 재사용하고, 볼트/기기 목록은
+   .settings-vtoggle-item 레이아웃을 그대로 빌려 쓴다(새 리스트 CSS를 또
+   만들지 않음). */
+.remote-share-pane { display: flex; flex-direction: column; gap: .4em; max-width: 480px; }
+.remote-share-heading { font-size: 16px; font-weight: 600; color: var(--fg); margin-bottom: .4em; }
+.remote-share-error {
+  color: #dc2626; background: color-mix(in srgb, #dc2626 10%, transparent);
+  padding: 8px 10px; border-radius: var(--radius-md, 8px); font-size: 13px; line-height: 1.5;
+}
+.remote-share-notice {
+  color: var(--fg); background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 8px 10px; border-radius: var(--radius-md, 8px); font-size: 13px; line-height: 1.5;
+}
+.remote-share-hint { font-size: 12px; color: var(--muted); }
+.remote-share-vault-list, .remote-share-device-list { display: flex; flex-direction: column; width: 100%; }
+.remote-share-vault-item { cursor: pointer; gap: .6em; justify-content: flex-start; }
+.remote-share-checkbox { accent-color: var(--accent); width: 15px; height: 15px; flex: none; }
+.remote-share-empty { color: var(--muted); font-size: 13px; padding: 5px 0; }
+.remote-share-issue-btn, .remote-share-revoke-btn {
+  background: transparent; color: var(--fg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px); font: inherit; font-size: 12px;
+  padding: 4px 10px; cursor: pointer; transition: background-color .12s ease, border-color .12s ease;
+}
+.remote-share-issue-btn:hover, .remote-share-revoke-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.remote-share-issue-btn:disabled { opacity: .5; cursor: default; }
+.remote-share-code { font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; letter-spacing: .06em; color: var(--fg); }
+
 /* ── 웰컴 화면 스타일 ──────────────────────────────────────────────────────── */
 .welcome-host {
   display: flex;

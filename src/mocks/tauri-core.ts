@@ -293,6 +293,48 @@ function remoteMockError(host: string): string | null {
   return CODES[m[1]] ?? null;
 }
 
+// ── remote_share_* mock state (the HOST side — task 9b) ─────────────────────
+// Mirrors `RemoteShareState`/`HostState` (src-tauri/src/remote_share.rs,
+// remote_host.rs): in-memory only, starts off, remembers the last-configured
+// bind_mode/port/vaults even after a stop (checked against task-9a-report.md
+// §2: "서버가 꺼져 있어도 유지된다" — the real backend does NOT clear armed
+// vaults on stop, only the axum server task).
+interface MockDevice { id: string; label: string; pairedAtMs: number }
+const hostShare: {
+  running: boolean;
+  bindMode: "tailscale" | "localhost-only";
+  port: number;
+  vaults: Array<{ id: string; display_name: string }>;
+  devices: MockDevice[];
+  codeIssuedAtMs: number | null;
+} = {
+  running: false,
+  bindMode: "tailscale",
+  port: 8787,
+  vaults: [],
+  // Pre-seeded so the "연결 해제" affordance is exercisable in dev:browser
+  // without a second real device to pair from — same "exercise every feature
+  // by default" philosophy as SAMPLE's kitchen-sink doc above.
+  devices: [{ id: "dev-demo", label: "맥북 프로 (데모)", pairedAtMs: Date.now() - 86_400_000 }],
+  codeIssuedAtMs: null,
+};
+
+/** Explicit test hook for `remote_share_start`'s failure paths, mirroring
+ *  `remoteMockError`'s magic-VALUE convention above (not a magic branch
+ *  buried in the case body): a vault whose `root` literally equals one of
+ *  these strings makes the mocked start fail the way the real backend does —
+ *  `"mock-error:tailscale-unavailable"` mirrors `resolve_bind_ip`'s Err when
+ *  the `tailscale` CLI can't resolve an IP (message names "Tailscale", the
+ *  only signal remote-share-panel.ts's `looksLikeTailscaleUnavailable` reacts
+ *  to); `"mock-error:missing-root"` mirrors `arm_vaults`'s pre-flight
+ *  `.is_dir()` guard (task-9a-report.md Finding 2 — names the vault). */
+function hostShareMockError(vaults: readonly { id: string; display_name: string; root: string }[]): string | null {
+  const missing = vaults.find((v) => v.root === "mock-error:missing-root");
+  if (missing) return `"${missing.display_name}" 볼트의 경로를 찾을 수 없습니다: ${missing.root}`;
+  if (vaults.some((v) => v.root === "mock-error:tailscale-unavailable")) return "Tailscale 주소를 찾을 수 없습니다 (tailscale ip -4 실패)";
+  return null;
+}
+
 const TREE: Record<string, DirEntry[]> = {
   "/mock/vault": [
     // .config sorts first within the folder group (ascii '.' < letters),
@@ -978,6 +1020,70 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       if (err) throw err;
       console.info("[mock] remote_list_link_targets", host, a.vault, a.path);
       return [] as T;
+    }
+    case "remote_share_status": {
+      // Mirrors `remote_share_status() -> ShareStatus` (remote_share.rs, no
+      // args). `bind_mode`/`port`/`vaults` are the "last configured" values
+      // and stay populated even while `running` is false, same as the real
+      // HostState (task-9a-report.md §2) — this mock never clears them on stop.
+      console.info("[mock] remote_share_status", hostShare.running);
+      return {
+        running: hostShare.running,
+        bind_mode: hostShare.bindMode,
+        port: hostShare.port,
+        vaults: hostShare.vaults,
+        devices: hostShare.devices.map((d) => ({ id: d.id, label: d.label, paired_at_ms: d.pairedAtMs })),
+      } as T;
+    }
+    case "remote_share_start": {
+      // Mirrors `remote_share_start(bind_mode, port, vaults) ->
+      // Result<(), String>`. Checked against `VaultToArm` (remote_share.rs):
+      // no `rename_all`, so each element's JSON key is `display_name`
+      // (snake_case), not `displayName` — same trap the remote_vaults mock's
+      // comment above already documents for `RemoteVault`.
+      const bindMode = String(a.bindMode ?? "tailscale") as "tailscale" | "localhost-only";
+      const port = Number(a.port ?? 8787);
+      const vaults = (a.vaults ?? []) as Array<{ id: string; display_name: string; root: string }>;
+      if (vaults.length === 0) throw "공유할 볼트를 선택하세요"; // mirrors the backend's zero-vault refusal
+      const err = hostShareMockError(vaults);
+      if (err) throw err;
+      // stop→start always (task-9a-report.md: "재시작은 항상 stop→start"),
+      // and a fresh start invalidates any outstanding pairing code
+      // (PairingState::unarmed() on restart).
+      hostShare.running = true;
+      hostShare.bindMode = bindMode;
+      hostShare.port = port;
+      hostShare.vaults = vaults.map((v) => ({ id: v.id, display_name: v.display_name }));
+      hostShare.codeIssuedAtMs = null;
+      console.info("[mock] remote_share_start", bindMode, port, vaults.length, "vaults");
+      return undefined as T;
+    }
+    case "remote_share_stop": {
+      // Mirrors `remote_share_stop() -> Result<(), String>`. bind_mode/port/
+      // vaults are left as-is (last configured) — only `running` flips, same
+      // as remote_share_status's contract above.
+      hostShare.running = false;
+      console.info("[mock] remote_share_stop");
+      return undefined as T;
+    }
+    case "remote_issue_code": {
+      // Mirrors `remote_issue_code() -> Result<IssuedCode, String>`. The real
+      // backend refuses when no server is running (a code would have no
+      // `/pair` to redeem against) — same refusal here.
+      if (!hostShare.running) throw "공유가 꺼져 있어 페어링 코드를 발급할 수 없습니다";
+      hostShare.codeIssuedAtMs = Date.now();
+      console.info("[mock] remote_issue_code");
+      return { code: "123456", issued_at_ms: hostShare.codeIssuedAtMs } as T;
+    }
+    case "remote_revoke_device": {
+      // Mirrors `remote_revoke_device(id) -> Result<bool, String>` — id, never
+      // a token (remote_share.rs's DeviceInfo never carries one either).
+      const id = String(a.id ?? "");
+      const before = hostShare.devices.length;
+      hostShare.devices = hostShare.devices.filter((d) => d.id !== id);
+      const revoked = hostShare.devices.length < before;
+      console.info("[mock] remote_revoke_device", id, revoked);
+      return revoked as T;
     }
     case "check":
       // `@tauri-apps/plugin-updater`'s `check()` calls
