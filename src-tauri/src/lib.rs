@@ -11,12 +11,13 @@ mod epubview;
 mod htmlview;
 mod hwp;
 mod qa_trace;
-// `constant_time_eq`/pairing consumed by remote_token.rs; the rest awaits
-// Task 5's (unused until then, so still allow(dead_code) on the module as
-// a whole would hide real dead code — left ungated now that remote_token
-// depends on it).
+// `remote_host` and `remote_token` are both library code with no
+// `#[tauri::command]` caller yet: Task 5 (HTTP server) and Task 6/9
+// (command registration) are what will call into them. Both are suppressed
+// at the module level, consistently, until that wiring lands and the
+// suppression is removed naturally by real call sites appearing.
+#[allow(dead_code)]
 mod remote_host;
-// Unused until Task 6/9 register `#[tauri::command]`s that call into it.
 #[allow(dead_code)]
 mod remote_token;
 mod single_instance;

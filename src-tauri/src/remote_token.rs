@@ -6,22 +6,82 @@
 //! `host`/`vault` and Rust looks the token up itself — from `ClientTokens`
 //! on the client side, or from the paired-device list here on the host
 //! side. The token never crosses the IPC boundary into TypeScript in either
-//! direction.
+//! direction. Revoking a device instead identifies it by `PairedDevice::id`
+//! (see below) — a non-secret handle a host UI *can* pass through IPC
+//! without ever exposing the token itself.
 //!
 //! Stored in the app config dir at 0600 (owner read/write only). The
 //! textbook-correct place for a long-lived secret like this is the OS
 //! Keychain, but this token only ever grants "read a vault the user already
 //! chose to share" — bounded blast radius — so a permissioned file is judged
 //! sufficient for v1. See `docs/design/remote-vault.md` §5.
+//!
+//! Every store write goes through `atomic_write_0600`: a sibling temp file
+//! (0600 set at creation) followed by `rename` over the target, mirroring
+//! `commands.rs`'s `write_file` atomicity. A plain truncate-then-write would
+//! leave a half-written (or empty) file behind if the process died
+//! mid-write; `rename` is atomic on the same filesystem, so readers only
+//! ever see the old complete file or the new complete file, never a partial
+//! one. `load` in turn treats "file missing" (not paired yet — legitimate
+//! empty state) and "file present but unparseable" (corruption) as
+//! different outcomes rather than collapsing both into a silent empty
+//! result — a corrupt store should be reported, not misread as "you have no
+//! paired devices anymore".
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// One device the host has paired with: its long-lived token, a
-/// human-readable label (e.g. the device name offered during pairing), and
-/// when pairing happened.
+/// Process-unique counter for this module's atomic-write temp file names,
+/// mirroring `commands.rs`'s `TMP_SEQ` — kept as a separate counter (not
+/// shared) so the two concerns don't share state across module boundaries,
+/// same rationale as `lib.rs`'s `STDIN_SEQ`.
+static TOKEN_TMP_SEQ: AtomicU64 = AtomicU64::new(1);
+
+/// Writes `bytes` to `path` atomically at 0600: a sibling temp file (0600
+/// set at `open()` time, not chmod'd after) followed by `rename` over the
+/// target. On Unix, `rename` replaces the destination's inode wholesale, so
+/// the temp file's own mode is what the final path ends up with — there is
+/// no second chmod step on the destination that could race a concurrent
+/// reader. Shared by every store in this module (host device list, client
+/// token map) so the atomicity guarantee isn't duplicated per call site.
+fn atomic_write_0600(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp_name = format!(
+        "{}.tmp-{}-{}",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("remote-store"),
+        std::process::id(),
+        TOKEN_TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let tmp = path.with_file_name(tmp_name);
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let write_result = opts.open(&tmp).and_then(|mut f| f.write_all(bytes));
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("write {}: {e}", tmp.display()));
+    }
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("rename {} -> {}: {e}", tmp.display(), path.display())
+    })
+}
+
+/// One device the host has paired with: a non-secret `id` a UI can name it
+/// by (e.g. a "연결 해제" button — see this module's doc comment on why the
+/// `token` itself must never make that round trip), its long-lived
+/// `token`, a human-readable `label`, and when pairing happened. `id` is
+/// minted the same way as the token (`htmlview::mint_view_token`, OS
+/// CSPRNG) so it's unguessable too — an attacker who can enumerate ids
+/// shouldn't gain anything toward guessing the corresponding token.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct PairedDevice {
+    pub id: String,
     pub token: String,
     pub label: String,
     pub paired_at_ms: u64,
@@ -32,77 +92,102 @@ pub fn store_path(config_dir: &Path) -> PathBuf {
     config_dir.join("remote-devices.json")
 }
 
-/// Loads the host's paired-device list. A missing or unparseable file reads
-/// as "no devices paired yet" rather than an error — the file doesn't exist
-/// until the first successful pairing.
-pub fn load(config_dir: &Path) -> Vec<PairedDevice> {
-    std::fs::read_to_string(store_path(config_dir))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+/// Loads the host's paired-device list. A *missing* file reads as "no
+/// devices paired yet" (`Ok(vec![])`) — that's the normal state before the
+/// first successful pairing. A file that exists but fails to read or parse
+/// is reported as `Err` instead of silently collapsing to empty: swallowing
+/// that error would look to the user like every paired device vanished,
+/// when what actually happened is the store is corrupt and needs attention.
+pub fn load(config_dir: &Path) -> Result<Vec<PairedDevice>, String> {
+    let path = store_path(config_dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))
 }
 
-/// Saves the host's paired-device list at 0600. The mode is set **at
-/// creation** via `OpenOptionsExt::mode`, not `chmod`'d afterward — a
-/// create-then-chmod sequence leaves a window where the file exists on disk
-/// with the default (world-readable-ish) permissions before the chmod
-/// lands, and a concurrent reader could win that race. Setting the mode in
-/// the same `open()` call that creates the file closes that window
-/// entirely: the file is never observable with any mode but 0600.
+/// Saves the host's paired-device list via `atomic_write_0600` (see module
+/// doc comment for why: no truncate-then-write window, no create-then-chmod
+/// window).
 pub fn save(config_dir: &Path, devices: &[PairedDevice]) -> Result<(), String> {
     std::fs::create_dir_all(config_dir).map_err(|e| e.to_string())?;
-    let path = store_path(config_dir);
     let json = serde_json::to_string_pretty(devices).map_err(|e| e.to_string())?;
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut f = opts.open(&path).map_err(|e| e.to_string())?;
-    f.write_all(json.as_bytes()).map_err(|e| e.to_string())
+    atomic_write_0600(&store_path(config_dir), json.as_bytes())
 }
 
-/// Removes every `PairedDevice` whose token matches `token` (compared in
-/// constant time, reusing `remote_host::constant_time_eq` rather than a
-/// second minter/comparator). Returns whether anything was actually
-/// removed, so a caller revoking an already-gone token can tell the two
-/// cases apart instead of silently no-opping either way.
-pub fn revoke(devices: &mut Vec<PairedDevice>, token: &str) -> bool {
+/// Removes the `PairedDevice` with the given non-secret `id` (never the
+/// token — see module doc comment). Returns whether anything was actually
+/// removed, so a caller revoking an already-gone id can tell the two cases
+/// apart instead of silently no-opping either way. Plain equality is fine
+/// here (not `constant_time_eq`): `id` is a handle, not a secret, so there
+/// is nothing for a timing side channel to leak.
+pub fn revoke(devices: &mut Vec<PairedDevice>, id: &str) -> bool {
     let before = devices.len();
-    devices.retain(|d| !crate::remote_host::constant_time_eq(&d.token, token));
+    devices.retain(|d| d.id != id);
     devices.len() != before
 }
 
 /// Client-side token store: "which token do I use when I talk to host
 /// `X`". The mirror image of `PairedDevice` — that's the host's record of
 /// who it trusts; this is the client's record of what it was given. Held as
-/// Tauri managed state (`Mutex<HashMap>`) rather than round-tripped through
-/// the frontend on every call, which is precisely what keeps the token out
-/// of the webview: a `remote_*` command takes `host`, looks the token up
-/// here, and TypeScript never sees the value in either direction.
-#[derive(Default)]
-pub struct ClientTokens(pub std::sync::Mutex<std::collections::HashMap<String, String>>);
+/// Tauri managed state, constructed once via `load` with the app's config
+/// dir, so a `remote_*` command can take just `host`, look the token up
+/// here, and never let TypeScript see the value in either direction.
+///
+/// `remember`/`forget` persist immediately (through `atomic_write_0600`)
+/// rather than leaving the caller to remember a separate save step — pairing
+/// is meant to happen once per host, ever; if persistence depended on some
+/// later save that never came (a crash, a missed call), every relaunch
+/// would force the user back to the host to re-pair, and the host's device
+/// list would grow a duplicate entry each time it tried. Persisting inside
+/// `remember` itself closes that gap structurally instead of relying on
+/// every call site to get it right.
+pub struct ClientTokens {
+    dir: PathBuf,
+    tokens: std::sync::Mutex<std::collections::HashMap<String, String>>,
+}
 
 impl ClientTokens {
+    /// Loads whatever was persisted under `config_dir` (or starts empty if
+    /// nothing has been paired yet) and remembers `config_dir` so later
+    /// `remember`/`forget` calls can persist without the caller re-supplying
+    /// it every time.
+    pub fn load(config_dir: &Path) -> Self {
+        let tokens = std::fs::read_to_string(client_store_path(config_dir))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Self { dir: config_dir.to_path_buf(), tokens: std::sync::Mutex::new(tokens) }
+    }
+
     pub fn token_for(&self, host: &str) -> Option<String> {
-        self.0.lock().unwrap().get(host).cloned()
+        self.tokens.lock().unwrap().get(host).cloned()
     }
 
-    pub fn remember(&self, host: &str, token: &str) {
-        self.0.lock().unwrap().insert(host.to_string(), token.to_string());
+    pub fn remember(&self, host: &str, token: &str) -> Result<(), String> {
+        self.tokens.lock().unwrap().insert(host.to_string(), token.to_string());
+        self.persist()
     }
 
-    pub fn forget(&self, host: &str) {
-        self.0.lock().unwrap().remove(host);
+    pub fn forget(&self, host: &str) -> Result<(), String> {
+        self.tokens.lock().unwrap().remove(host);
+        self.persist()
+    }
+
+    fn persist(&self) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        let json = {
+            let map = self.tokens.lock().unwrap();
+            serde_json::to_string_pretty(&*map).map_err(|e| e.to_string())?
+        };
+        atomic_write_0600(&client_store_path(&self.dir), json.as_bytes())
     }
 }
 
 /// Where the client's per-host token map is persisted across restarts under
-/// the app config dir. (`ClientTokens` itself is the in-memory managed-state
-/// mirror; a future task that loads/saves this file on startup/pairing will
-/// use the same 0600-at-creation approach as `save` above.)
+/// the app config dir.
 pub fn client_store_path(config_dir: &Path) -> PathBuf {
     config_dir.join("remote-client-tokens.json")
 }
@@ -124,9 +209,14 @@ mod tests {
     #[test]
     fn round_trips_devices() {
         let dir = tmp();
-        let devices = vec![PairedDevice { token: "aa".into(), label: "맥북".into(), paired_at_ms: 1 }];
+        let devices = vec![PairedDevice {
+            id: "dev1".into(),
+            token: "aa".into(),
+            label: "맥북".into(),
+            paired_at_ms: 1,
+        }];
         save(&dir, &devices).unwrap();
-        assert_eq!(load(&dir), devices);
+        assert_eq!(load(&dir).unwrap(), devices);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -141,25 +231,64 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// A store file that exists but isn't valid JSON (simulating a crash
+    /// mid-write under the old truncate-then-write scheme, or plain disk
+    /// corruption) must be reported as an error, never silently read back
+    /// as "no devices paired" — that would look like every paired device
+    /// quietly vanished.
     #[test]
-    fn client_tokens_are_keyed_by_host_and_never_leave_rust() {
-        let store = ClientTokens::default();
-        assert_eq!(store.token_for("wis-macmini"), None);
-        store.remember("wis-macmini", "deadbeef");
-        assert_eq!(store.token_for("wis-macmini").as_deref(), Some("deadbeef"));
-        store.forget("wis-macmini");
-        assert_eq!(store.token_for("wis-macmini"), None);
+    fn load_reports_a_corrupt_store_rather_than_silently_emptying() {
+        let dir = tmp();
+        std::fs::write(store_path(&dir), b"not json").unwrap();
+        let err = load(&dir).unwrap_err();
+        assert!(err.contains("parse"), "got: {err}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn revoke_removes_only_the_named_token() {
+    fn missing_store_is_not_an_error() {
+        let dir = tmp();
+        assert_eq!(load(&dir).unwrap(), Vec::<PairedDevice>::new());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn client_tokens_are_keyed_by_host_and_never_leave_rust() {
+        let dir = tmp();
+        let store = ClientTokens::load(&dir);
+        assert_eq!(store.token_for("wis-macmini"), None);
+        store.remember("wis-macmini", "deadbeef").unwrap();
+        assert_eq!(store.token_for("wis-macmini").as_deref(), Some("deadbeef"));
+        store.forget("wis-macmini").unwrap();
+        assert_eq!(store.token_for("wis-macmini"), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The whole point of persisting `ClientTokens` (Finding 3): a token
+    /// remembered in one process must still be there after the process
+    /// exits and a fresh one loads from the same directory — otherwise
+    /// every relaunch forces the user back to the host to re-pair.
+    #[test]
+    fn remembered_token_survives_a_store_reload() {
+        let dir = tmp();
+        let store = ClientTokens::load(&dir);
+        store.remember("wis-macmini", "deadbeef").unwrap();
+        drop(store);
+
+        let reloaded = ClientTokens::load(&dir);
+        assert_eq!(reloaded.token_for("wis-macmini").as_deref(), Some("deadbeef"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn revoke_removes_only_the_named_device() {
         let mut devices = vec![
-            PairedDevice { token: "aa".into(), label: "맥북".into(), paired_at_ms: 1 },
-            PairedDevice { token: "bb".into(), label: "폰".into(), paired_at_ms: 2 },
+            PairedDevice { id: "dev1".into(), token: "aa".into(), label: "맥북".into(), paired_at_ms: 1 },
+            PairedDevice { id: "dev2".into(), token: "bb".into(), label: "폰".into(), paired_at_ms: 2 },
         ];
-        assert!(revoke(&mut devices, "aa"));
+        assert!(revoke(&mut devices, "dev1"));
         assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].token, "bb");
-        assert!(!revoke(&mut devices, "zz"), "없는 토큰 철회는 false");
+        assert_eq!(devices[0].id, "dev2");
+        assert!(!revoke(&mut devices, "zz"), "없는 id 철회는 false");
     }
 }
