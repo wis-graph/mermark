@@ -939,7 +939,9 @@ case "remote_vaults":
 case "remote_read_file":
   return { text: "# 원격 데모\n\n브라우저 mock이 만든 원격 문서입니다.", mtime: 1 } as T;
 case "remote_list_dir":
-  return [{ name: "원격노트.md", path: "원격노트.md", isDir: false }] as T;
+  // `is_dir`는 snake_case를 유지한다 — Rust DirEntry에 rename_all이 없어
+  // serde가 필드명을 그대로 직렬화한다(commands.rs:833 주석, 기존 list_dir mock).
+  return [{ name: "원격노트.md", path: "원격노트.md", is_dir: false }] as T;
 case "remote_list_files_recursive":
   return { files: [{ name: "원격노트.md", path: "원격노트.md" }], truncated: false } as T;
 case "remote_resolve_image":
