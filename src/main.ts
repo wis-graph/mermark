@@ -7,7 +7,8 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createOutlinePanel } from "./sidebar/outline/outline-panel";
 import { createExplorerPanel } from "./sidebar/explorer/explorer-panel";
-import { localFileHost, fileHostFor } from "./document/file-host";
+import { localFileHost, fileHostFor, classifyRemoteError } from "./document/file-host";
+import { badgeFor } from "./workspace/add-remote-vault";
 import { mountEditor, type EditorController, type PreviewMode, type SaveStatus } from "./editor";
 import { onFeaturesChanged } from "./markdown/live-preview";
 import { activateExtensions } from "./extensions";
@@ -775,8 +776,19 @@ async function boot() {
   // remote vault selected in the sidebar while a local CLI/path-prompt open
   // fails would then retry through `remote_read_file` for a plain local
   // path — Ruling 33's exact symptom, one click later.
+  // Minor (final review): a remote read failure used to reach the recovery
+  // modal's diagnostic details as the raw `REMOTE:…` tag `remote_client.rs`
+  // embeds in its `Err` string — the same four connection states the
+  // sidebar badge already distinguishes (badgeFor/classifyRemoteError)
+  // reduced to unlabeled text nowhere near where the user actually hit the
+  // failure. Only remaps for a remote vault's failure; a local read error's
+  // detail (a real filesystem error string) passes through unchanged.
+  function recoveryDetailFor(detail: string, vault: Vault | undefined): string {
+    return isRemoteVault(vault) ? badgeFor(classifyRemoteError(detail)).label : detail;
+  }
+
   function showOpenRecovery(path: string, detail: string, vault?: Vault): void {
-    showRecovery("open-read", detail, async (action) => {
+    showRecovery("open-read", recoveryDetailFor(detail, vault), async (action) => {
       if (action === "open-another") {
         prompt.button.click();
         return "succeeded";

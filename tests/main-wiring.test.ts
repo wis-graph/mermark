@@ -97,6 +97,7 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
     // Same C1 regression guard as remote_list_dir above, applied to reads —
     // a vault-relative name never starts with "/" on the wire.
     if (remotePath.startsWith("/")) return Promise.reject(new Error("REMOTE:SharingOff"));
+    if (rejectedRemotePaths.has(remotePath)) return Promise.reject(new Error("REMOTE:SharingOff"));
     return Promise.resolve({ text: documentContents.get(remotePath) ?? "# 원격 문서", mtime: 1 });
   }
   if (command === "remote_read_image") {
@@ -119,6 +120,7 @@ const watcherEvents: string[] = [];
 const deferredReads = new Map<string, { readonly promise: Promise<unknown> }>();
 const deferredWatches = new Map<string, { readonly promise: Promise<void> }>();
 const rejectedReads = new Set<string>();
+const rejectedRemotePaths = new Set<string>();
 const eventListeners = new Map<string, Set<(event: { readonly payload: unknown }) => void>>();
 let scanResult: unknown = { files: [], truncated: false };
 // Phase F (Todo 3 document-open seam): paths that `path_exists` should report
@@ -195,6 +197,7 @@ describe("main workspace wiring", () => {
     deferredReads.clear();
     deferredWatches.clear();
     rejectedReads.clear();
+    rejectedRemotePaths.clear();
     eventListeners.clear();
     scanResult = { files: [], truncated: false };
     pathExistsPaths.clear();
@@ -1501,6 +1504,34 @@ describe("main workspace wiring", () => {
       const scopedKey = Object.keys(localStorage).find((k) => k.startsWith("mermark.session.") && k.includes("vault-remote-sess"));
       expect(scopedKey).toBeDefined();
       expect(JSON.parse(localStorage.getItem(scopedKey!) ?? "{}").cursor).toBe(5);
+    });
+
+    // Minor (final review): a remote read failure reached the recovery
+    // modal's diagnostic details as raw `REMOTE:…` text instead of one of
+    // the four connection states the sidebar badge already distinguishes
+    // (badgeFor/classifyRemoteError, add-remote-vault.ts). The four states
+    // are only meaningful in the badge, nowhere near where the failure
+    // actually surfaced to the user.
+    it("recovery modal's diagnostic detail shows the classified connection state for a remote read failure, not raw REMOTE:… text", async () => {
+      rejectedRemotePaths.add("노트.md");
+      localStorage.setItem("mermark.workspaceState", JSON.stringify({
+        workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-detail"], currentVaultId: "vault-remote-detail", lastSelectedPermanentVaultId: null }],
+        vaults: [{ vaultId: "vault-remote-detail", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" }],
+        currentWorkspaceId: "workspace-default",
+      }));
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+
+      document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="노트.md"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.explorer-file[data-path="노트.md"]')?.click();
+      await vi.waitFor(() => expect(document.querySelector(".recovery-modal")).not.toBeNull());
+
+      document.querySelector<HTMLElement>(".recovery-modal details summary")?.click();
+      const detailText = document.querySelector(".recovery-modal details code")?.textContent ?? "";
+      expect(detailText).toContain("호스트가 공유를 껐음"); // badgeFor("sharing-off").label
+      expect(detailText).not.toContain("REMOTE:");
     });
 
     // Task 11: the persistent read-only indicator and the explicit
