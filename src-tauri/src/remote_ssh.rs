@@ -690,6 +690,42 @@ mod tests {
         script.to_string_lossy().into_owned()
     }
 
+    /// Picks a fresh ephemeral port, spawns a background acceptor standing
+    /// in for `ssh`'s own successful bind, and calls `connect_with` against
+    /// it — retrying with a brand-new port up to 5 times whenever the
+    /// probe-then-release-then-reclaim gap loses the port to an unrelated
+    /// concurrent test in the same `cargo test` binary (see the doc comment
+    /// on `connect_reuses_the_same_host_and_refuses_a_second_one`, the first
+    /// test that hit this). Shared by that test and
+    /// `tunnel_serves_flips_to_the_new_host_after_a_dead_tunnel_is_reaped_and_replaced`,
+    /// which hits the identical race — do not let a third test reimplement
+    /// this loop.
+    #[cfg(unix)]
+    async fn connect_with_retrying_port_race(program: &str, host: &str, timeout: Duration, poll: Duration, state: &SshTunnels) -> u16 {
+        for _ in 0..5 {
+            let port = {
+                let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                probe.local_addr().unwrap().port()
+            };
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                if let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+                    loop {
+                        if listener.accept().await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
+            match connect_with(program, host, port, timeout, poll, state).await {
+                Ok(()) => return port,
+                Err(e) if e.starts_with("SSH_PORT_BUSY") => continue,
+                Err(e) => panic!("unexpected connect_with failure: {e}"),
+            }
+        }
+        panic!("connect_with kept losing the port race after 5 retries");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn connect_reuses_the_same_host_and_refuses_a_second_one() {
@@ -721,42 +757,11 @@ mod tests {
         // some other test's socket, not ours, ended up holding for a
         // moment. That's test-infra noise, not a regression in the guard
         // this test exists to exercise, so a few retries with a fresh port
-        // absorb it rather than the test flaking outright.
-        async fn try_connect_once(
-            program: &str,
-            timeout: Duration,
-            poll: Duration,
-            state: &SshTunnels,
-        ) -> Result<u16, String> {
-            let port = {
-                let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-                probe.local_addr().unwrap().port()
-            };
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-                if let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
-                    loop {
-                        if listener.accept().await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            });
-            connect_with(program, "ssh://wis@macmini", port, timeout, poll, state).await.map(|()| port)
-        }
-
-        let mut port = None;
-        for _ in 0..5 {
-            match try_connect_once(&program, timeout, poll, &state).await {
-                Ok(p) => {
-                    port = Some(p);
-                    break;
-                }
-                Err(e) if e.starts_with("SSH_PORT_BUSY") => continue,
-                Err(e) => panic!("unexpected connect_with failure: {e}"),
-            }
-        }
-        let port = port.expect("connect_with kept losing the port race after 5 retries");
+        // (`connect_with_retrying_port_race`, shared with
+        // `tunnel_serves_flips_to_the_new_host_after_a_dead_tunnel_is_reaped_and_replaced`
+        // below, which hits the exact same race) absorb it rather than the
+        // test flaking outright.
+        let port = connect_with_retrying_port_race(&program, "ssh://wis@macmini", timeout, poll, &state).await;
         match &*state.active.lock().unwrap() {
             TunnelSlot::Active(t) => assert_eq!(t.host, "ssh://wis@macmini"),
             _ => panic!("expected TunnelSlot::Active after a successful connect"),
@@ -904,18 +909,12 @@ mod tests {
         assert!(tunnel_serves(&state, "ssh://a@h1"));
 
         // A connect for a different host reaps the dead slot and claims it.
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
-        tokio::spawn(async move {
-            if let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
-                let _ = listener.accept().await;
-            }
-        });
-        connect_with(&program, "ssh://b@h2", port, Duration::from_secs(2), Duration::from_millis(20), &state)
-            .await
-            .unwrap();
+        // Uses the same retrying probe-bind as
+        // `connect_reuses_the_same_host_and_refuses_a_second_one` — this
+        // test hits the identical concurrent-port-reuse race under a full
+        // `cargo test` run and would otherwise panic on the same
+        // `SSH_PORT_BUSY` a bare single-shot bind can lose to.
+        connect_with_retrying_port_race(&program, "ssh://b@h2", Duration::from_secs(2), Duration::from_millis(20), &state).await;
 
         assert!(
             !tunnel_serves(&state, "ssh://a@h1"),
