@@ -223,6 +223,80 @@ git commit -m "feat(workspace): RemoteVault 볼트 종류 추가"
 
 ---
 
+### Task 2b: `main.ts`의 볼트 종류 분기를 exhaustive switch로
+
+**Ruling 5로 신설된 태스크.** Task 2 리뷰에서 드러난 계획 결함을 메운다. **Task 10(원격 볼트를 실제로 만들 수 있게 되는 첫 태스크)보다 먼저 실행해야 한다.**
+
+`Vault` 유니온을 넓혔을 때 tsc가 잡아준 곳은 `explorerRootForVault` 한 군데뿐이었다. 나머지 분기가 전부 `=== "permanent"` / `=== "global"` 삼항식이라 remote가 조용히 else로 떨어지기 때문이다. 원격 볼트를 만들 수 있게 되는 순간 이것들은 전부 오동작한다.
+
+**Files:**
+- Modify: `src/main.ts` (아래 지점들)
+- Test: `tests/main-wiring.test.ts` 또는 해당 로직을 감싸는 새 순수 함수의 테스트
+
+**알려진 분기 지점** (Task 2 리뷰가 확인한 목록):
+
+| 위치 | 현재 remote가 받는 값 | 올바른 동작 |
+|------|----------------------|-------------|
+| `main.ts:434` `explorerRootForVault` | `explorerRoot`("/") → 로컬 탐색기가 파일시스템 루트로 점프 | 원격은 로컬 탐색기 대상이 아님 — 원격 분기로 분리 |
+| `main.ts:752` `isRootLocked` | `false` | 원격 볼트는 루트 고정(사용자가 상위로 올라갈 수 없음) → `true` |
+| `main.ts:865` `currentBaseDir` | `currentExplorerFolder` (로컬 fs 폴더) | 원격의 base dir은 로컬 경로가 아니다 — 원격 분기 필요 |
+| `main.ts:875/985/995/1294` 탭 scope | `"session"` | 판단해서 명시적으로 정한다(원격 볼트 탭의 영속성) |
+
+- [ ] **Step 1: 실패하는 테스트를 쓴다**
+
+각 분기를 순수 함수로 뽑고, 세 볼트 종류 각각에 대한 기대값을 테스트로 고정한다.
+
+```ts
+// 예: explorerRootForVault
+it("볼트 종류마다 탐색기 루트가 명시적으로 정해진다", () => {
+  expect(explorerRootForVault(permanentVault)).toBe("/Users/me/vault");
+  expect(explorerRootForVault(globalVault)).toBeNull();
+  expect(explorerRootForVault(remoteVault)).toBeNull(); // 원격은 로컬 탐색기 대상이 아니다
+});
+
+it("원격 볼트는 루트가 고정된다", () => {
+  expect(isRootLocked(remoteVault)).toBe(true);
+});
+```
+
+- [ ] **Step 2: 실패를 확인한다**
+
+Run: `npx vitest run tests/main-wiring.test.ts`
+Expected: FAIL
+
+- [ ] **Step 3: 삼항식을 exhaustive switch로 바꾼다**
+
+```ts
+const assertNever = (x: never): never => {
+  throw new Error(`처리되지 않은 볼트 종류: ${JSON.stringify(x)}`);
+};
+
+const explorerRootForVault = (vault: Vault): string | null => {
+  switch (vault.persistenceKind) {
+    case "permanent": return vault.explorerRoot;
+    case "global": return null;
+    case "remote": return null;
+    default: return assertNever(vault);
+  }
+};
+```
+
+`default: assertNever(vault)`가 이 태스크의 핵심이다 — 다음에 볼트 종류가 하나 더 늘면 tsc가 **모든** 분기를 잡아준다. 이번처럼 한 군데만 걸리는 일이 다시 없다.
+
+- [ ] **Step 4: 테스트 통과를 확인한다**
+
+Run: `npx vitest run && npx tsc --noEmit && npm test`
+Expected: PASS — 로컬 볼트 동작은 변하지 않아야 한다(순수 리팩터 + remote 분기 추가)
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add src/main.ts tests/main-wiring.test.ts
+git commit -m "refactor(main): 볼트 종류 분기를 exhaustive switch로 (remote 분기 명시)"
+```
+
+---
+
 ### Task 3: 호스트 봉쇄 검사 (`remote_host.rs`)
 
 서버 없이 순수 로직만. `htmlview.rs`의 탈출 테스트를 본뜬다.
@@ -533,6 +607,26 @@ pub fn save(config_dir: &Path, devices: &[PairedDevice]) -> Result<(), String> {
     f.write_all(json.as_bytes()).map_err(|e| e.to_string())
 }
 
+/// 클라이언트 측 토큰 보관(Ruling 4). 호스트의 `PairedDevice`와 같은 파일 기구를
+/// 쓰지만 방향이 반대다 — 이쪽은 "내가 어느 호스트에 붙을 때 쓸 토큰"이다.
+/// Tauri 관리 상태로 들고 있어 프론트엔드는 토큰을 한 번도 보지 않는다.
+#[derive(Default)]
+pub struct ClientTokens(pub std::sync::Mutex<std::collections::HashMap<String, String>>);
+
+impl ClientTokens {
+    pub fn token_for(&self, host: &str) -> Option<String> {
+        self.0.lock().unwrap().get(host).cloned()
+    }
+    pub fn remember(&self, host: &str, token: &str) {
+        self.0.lock().unwrap().insert(host.to_string(), token.to_string());
+    }
+    pub fn forget(&self, host: &str) {
+        self.0.lock().unwrap().remove(host);
+    }
+}
+
+pub fn client_store_path(config_dir: &Path) -> PathBuf { config_dir.join("remote-client-tokens.json") }
+
 pub fn revoke(devices: &mut Vec<PairedDevice>, token: &str) -> bool {
     let before = devices.len();
     devices.retain(|d| !crate::remote_host::constant_time_eq(&d.token, token));
@@ -567,6 +661,16 @@ mod tests {
         let mode = std::fs::metadata(store_path(&dir)).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "토큰 파일은 소유자만 읽을 수 있어야 한다");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn client_tokens_are_keyed_by_host_and_never_leave_rust() {
+        let store = ClientTokens::default();
+        assert_eq!(store.token_for("wis-macmini"), None);
+        store.remember("wis-macmini", "deadbeef");
+        assert_eq!(store.token_for("wis-macmini").as_deref(), Some("deadbeef"));
+        store.forget("wis-macmini");
+        assert_eq!(store.token_for("wis-macmini"), None);
     }
 
     #[test]
@@ -890,9 +994,15 @@ fn client() -> Result<reqwest::Client, String> {
 }
 
 #[tauri::command]
-pub async fn remote_read_file(host: String, token: String, vault: String, path: String)
-    -> Result<crate::commands::FileContent, String>
+pub async fn remote_read_file(
+    host: String,
+    vault: String,
+    path: String,
+    store: tauri::State<'_, crate::remote_token::ClientTokens>,
+) -> Result<crate::commands::FileContent, String>
 {
+    // 토큰은 프론트엔드에서 오지 않는다(Ruling 4) — host를 키로 여기서 찾는다.
+    let token = store.token_for(&host).ok_or("REMOTE:AuthExpired")?;
     let url = format!("{}/read_file", base_url(&host)?);
     let res = client()?
         .get(&url)
@@ -974,7 +1084,8 @@ git commit -m "test(mock): remote_* 커맨드 브라우저 mock 추가 (경계�
 
 **Interfaces:**
 - Consumes: Task 6의 `remote_*` 커맨드, Task 2의 `RemoteVault`
-- Produces: `remoteFileHost(vault: RemoteVault, token: string): FileHostBackend`
+- Produces: `remoteFileHost(vault: RemoteVault): FileHostBackend`
+- **토큰은 이 계층에 존재하지 않는다** (Ruling 4). 프론트엔드는 `host`와 `vault`만 넘기고, Rust가 자기 저장소에서 토큰을 찾아 헤더에 싣는다.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
@@ -983,12 +1094,12 @@ it("원격 볼트는 remote_* 커맨드로 간다", async () => {
   const calls: Array<[string, unknown]> = [];
   const host = remoteFileHost(
     { persistenceKind: "remote", host: "wis-macmini", remoteVaultId: "rv1" } as never,
-    "tok",
     (cmd, args) => { calls.push([cmd, args]); return Promise.resolve({ text: "", mtime: 0 }) as never; },
   );
   await host.readFile("note.md");
   expect(calls[0][0]).toBe("remote_read_file");
-  expect(calls[0][1]).toMatchObject({ host: "wis-macmini", token: "tok", vault: "rv1", path: "note.md" });
+  expect(calls[0][1]).toMatchObject({ host: "wis-macmini", vault: "rv1", path: "note.md" });
+  expect(calls[0][1]).not.toHaveProperty("token");
 });
 
 it("원격 실패는 4종 상태로 분류된다", () => {
@@ -1015,12 +1126,13 @@ export const classifyRemoteError = (e: unknown): RemoteConnectionState => {
   return "unreachable";
 };
 
+// 토큰은 여기 없다. 웹뷰에 토큰을 절대 들이지 않기 위해(Ruling 4)
+// Rust가 host를 키로 자기 0600 저장소에서 조회해 헤더에 싣는다.
 export const remoteFileHost = (
   vault: RemoteVault,
-  token: string,
   call: typeof invoke = invoke,
 ): FileHostBackend => {
-  const base = { host: vault.host, token, vault: vault.remoteVaultId };
+  const base = { host: vault.host, vault: vault.remoteVaultId };
   return {
     readFile: (path) => call("remote_read_file", { ...base, path }),
     listDir: (path) => call("remote_list_dir", { ...base, path }),
