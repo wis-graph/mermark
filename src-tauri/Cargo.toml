@@ -114,12 +114,34 @@ zip = "8"
 # text. This crate is the one correct way to fold both sides to a canonical
 # form before comparing; hand-rolling NFC decomposition tables is out of scope.
 unicode-normalization = "0.1"
-# Remote vault client's HTTP calls (`remote_client.rs`). Not a new dependency
-# in spirit: reqwest 0.13.x is already compiled in this build graph
-# transitively (tauri's own updater plumbing depends on it), so naming it
-# directly here adds no new crate — just an explicit edge, with the "json"
-# feature this module's `.json()` response decoding needs.
-reqwest = { version = "0.13", features = ["json", "query"] }
+# Remote vault client's HTTP calls (`remote_client.rs`). reqwest 0.13.x is
+# already compiled in this build graph transitively (tauri's own updater
+# plumbing depends on it, via `tauri-plugin-updater = { features = ["json",
+# "stream"] }` with `default-features = false`) — naming it directly here
+# with the *same* `default-features = false` keeps that small footprint.
+# Enabling reqwest's defaults (as an earlier version of this line did) pulls
+# in a second TLS stack (rustls + aws-lc-rs/aws-lc-sys, which compiles all of
+# AWS-LC from C), HTTP/2, QUIC, and system-proxy detection — 18 extra
+# packages in Cargo.lock — for a client that only ever speaks plain `http://`
+# to a Tailscale/SSH-tunnel peer and needs none of it. "json" is this
+# module's `.json()` response decoding; "query" is `.query(&[...])` (both are
+# feature-gated in reqwest 0.13, off by default).
+reqwest = { version = "0.13", default-features = false, features = ["json", "query"] }
+# `rustls`'s default crypto provider install (`remote_client.rs`'s
+# `ensure_crypto_provider_installed`) — required because turning off
+# reqwest's default features (immediately above) also turned off the
+# automatic provider install its "default-tls" feature used to trigger, but
+# the graph still compiles in rustls/ring (pulled in transitively by
+# tauri-plugin-updater's own TLS use), so `reqwest::Client::builder().build()`
+# would otherwise panic the first time anything in this process builds one
+# (confirmed: reproduced that exact panic with reqwest's default-features
+# off and no explicit provider install — see task-6-report.md). `ring` is
+# the only feature named — NOT plain `rustls = "0.23"` — because rustls
+# 0.23's own *default* features pull in `aws_lc_rs` (a second crypto
+# backend, with its from-C `aws-lc-sys` build), which is exactly the bloat
+# `default-features = false` on reqwest above was trying to avoid; naming
+# only "ring" keeps this to the one backend already compiled transitively.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 # Client-side data: URL construction for `remote_read_image` (`remote_client.rs`).
 # Already compiled transitively as reqwest's own dependency (see above); naming
 # it directly avoids hand-rolling base64 encoding without adding a new crate to

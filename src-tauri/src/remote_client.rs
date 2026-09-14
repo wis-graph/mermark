@@ -78,12 +78,44 @@ pub fn status_for(http_status: u16) -> RemoteStatus {
 /// Builds the `reqwest::Client` every command shares, pinned to the two
 /// timeouts above. A separate client per call would also work, but building
 /// one is cheap and this keeps the timeout policy in exactly one place.
+/// `.redirect(Policy::none())`: reqwest's default follows up to 10 redirects
+/// and only strips `Authorization`/`Cookie` on a cross-origin hop — our own
+/// `x-mermark-token` header isn't one of those, so a redirecting (compromised
+/// or misconfigured) host would otherwise have the client forward the bearer
+/// token to wherever it points. This client has no legitimate reason to
+/// follow a redirect at all — every route it calls is a fixed path on the
+/// host named by `host` — so redirects are refused outright rather than
+/// followed and merely re-authorized.
 fn client() -> Result<reqwest::Client, String> {
+    ensure_crypto_provider_installed();
     reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(RESPONSE_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| e.to_string())
+}
+
+/// `reqwest`'s rustls TLS backend (pulled in transitively — this build
+/// links `rustls`/`ring` regardless of the `reqwest` feature flags we
+/// request, because `tauri-plugin-updater` needs TLS for its own HTTPS
+/// update checks) requires an explicit default `CryptoProvider` installed
+/// exactly once per process before *any* `reqwest::Client` is built, or
+/// `Client::builder().build()` panics with "No rustls crypto provider is
+/// configured" — even though this module's client only ever speaks plain
+/// `http://` and never negotiates TLS at all. Whatever else in the app might
+/// install one first (e.g. the updater plugin building its own client) is
+/// not something this module can rely on running before it does; `Once`
+/// makes the install idempotent and safe regardless of call order or
+/// concurrent first calls. `.install_default()`'s `Err` (a provider was
+/// already installed by someone else) is intentionally ignored — either way,
+/// a provider now exists.
+static CRYPTO_PROVIDER_INSTALLED: std::sync::Once = std::sync::Once::new();
+
+fn ensure_crypto_provider_installed() {
+    CRYPTO_PROVIDER_INSTALLED.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
 }
 
 /// A transport-level failure (timeout, DNS failure, connection refused, TLS
@@ -105,9 +137,18 @@ fn token_for_or_expired(store: &crate::remote_token::ClientTokens, host: &str) -
     store.token_for(host).ok_or_else(|| format!("REMOTE:{:?}", RemoteStatus::AuthExpired))
 }
 
+/// Formats a non-success HTTP status as the `REMOTE:` error string the
+/// frontend classifies on. The one place that formatting happens — both
+/// `send_authorized` (every authorized route) and `remote_pair` (the one
+/// route with no token to attach yet) go through this, rather than each
+/// re-deriving `format!("REMOTE:{:?}", status_for(...))` on its own.
+fn classify(http_status: u16) -> String {
+    format!("REMOTE:{:?}", status_for(http_status))
+}
+
 /// Sends `req` with `token` attached as the bearer header, then classifies
 /// the outcome: a transport failure maps to `Unreachable` (via
-/// `unreachable`), and a non-success HTTP status maps through `status_for`
+/// `unreachable`), and a non-success HTTP status maps through `classify`
 /// into the matching `REMOTE:` error — the one place every command's
 /// "did the call succeed" check lives, so a future route can't reimplement
 /// (and drift from) this classification.
@@ -116,8 +157,32 @@ async fn send_authorized(req: reqwest::RequestBuilder, token: &str) -> Result<re
     if res.status().is_success() {
         Ok(res)
     } else {
-        Err(format!("REMOTE:{:?}", status_for(res.status().as_u16())))
+        Err(classify(res.status().as_u16()))
     }
+}
+
+/// Decodes `res`'s JSON body into `T`, classifying a transport failure that
+/// happens *during* the read (a response timeout, a connection dropped
+/// mid-body, ...) the same way `unreachable` classifies one that happens
+/// before any response arrives — `reqwest::Error` doesn't distinguish "never
+/// connected" from "connection died while reading the body" by variant, only
+/// by these predicate methods, and both must surface as `REMOTE:Unreachable`
+/// so the frontend's classifier recognizes them. Only a genuine decode
+/// failure (the host sent something that isn't valid JSON / doesn't match
+/// `T`) falls through as plain text — that's a bug, not a connectivity
+/// state, so it has no `REMOTE:` prefix for the frontend to key off of.
+async fn decode_response<T: serde::de::DeserializeOwned>(res: reqwest::Response) -> Result<T, String> {
+    res.json().await.map_err(|e| if is_transport_error(&e) { unreachable(e) } else { e.to_string() })
+}
+
+/// A `reqwest::Error` that means "the network/host misbehaved" rather than
+/// "the host answered but the body was garbage". Extracted as its own
+/// function (rather than left inline in `decode_response`) so the rule is
+/// unit-testable against a real `reqwest::Error` without needing a body-read
+/// failure specifically — any transport-level error exercises the same
+/// predicate.
+fn is_transport_error(e: &reqwest::Error) -> bool {
+    e.is_timeout() || e.is_connect() || e.is_request()
 }
 
 /// One vault a host is currently sharing, as seen by a client: `id` (used to
@@ -152,9 +217,9 @@ pub async fn remote_pair(
         .await
         .map_err(unreachable)?;
     if !res.status().is_success() {
-        return Err(format!("REMOTE:{:?}", status_for(res.status().as_u16())));
+        return Err(classify(res.status().as_u16()));
     }
-    let parsed: crate::remote_host::PairResponse = res.json().await.map_err(|e| e.to_string())?;
+    let parsed: crate::remote_host::PairResponse = decode_response(res).await?;
     store.remember(&host, &parsed.token)
 }
 
@@ -166,7 +231,7 @@ pub async fn remote_vaults(
     let token = token_for_or_expired(&store, &host)?;
     let url = format!("{}/vaults", base_url(&host)?);
     let res = send_authorized(client()?.get(&url), &token).await?;
-    res.json().await.map_err(|e| e.to_string())
+    decode_response(res).await
 }
 
 #[tauri::command]
@@ -185,7 +250,7 @@ pub async fn remote_list_dir(
         ("show_hidden", if show_hidden { "true" } else { "false" }),
     ]);
     let res = send_authorized(req, &token).await?;
-    res.json().await.map_err(|e| e.to_string())
+    decode_response(res).await
 }
 
 #[tauri::command]
@@ -204,7 +269,7 @@ pub async fn remote_list_files_recursive(
         ("show_hidden", if show_hidden { "true" } else { "false" }),
     ]);
     let res = send_authorized(req, &token).await?;
-    res.json().await.map_err(|e| e.to_string())
+    decode_response(res).await
 }
 
 #[tauri::command]
@@ -218,7 +283,7 @@ pub async fn remote_read_file(
     let url = format!("{}/read_file", base_url(&host)?);
     let req = client()?.get(&url).query(&[("vault", vault.as_str()), ("path", path.as_str())]);
     let res = send_authorized(req, &token).await?;
-    res.json().await.map_err(|e| e.to_string())
+    decode_response(res).await
 }
 
 /// Fetches an image's raw bytes from the host and returns them as a
@@ -242,14 +307,28 @@ pub async fn remote_read_image(
     let url = format!("{}/read_asset", base_url(&host)?);
     let req = client()?.get(&url).query(&[("vault", vault.as_str()), ("path", path.as_str())]);
     let res = send_authorized(req, &token).await?;
-    let content_type = res
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream")
-        .to_string();
+    let content_type = as_image_mime(
+        res.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or(""),
+    );
     let bytes = res.bytes().await.map_err(unreachable)?;
     Ok(data_url(&content_type, &bytes))
+}
+
+/// Restricts a response's declared content type to `image/*` before it's
+/// trusted for a `data:` URL, stripping any `; charset=...`-style parameter
+/// first. Falls back to `application/octet-stream` for anything else. This
+/// function is the only thing standing between whatever a host claims in its
+/// `Content-Type` header and a value this module hands the frontend as fact
+/// — the app's CSP and today's `img.src`-only usage happen to contain a
+/// wrong MIME, but that's incidental to both, not enforced by this function
+/// itself, so the restriction belongs here rather than being left implicit.
+fn as_image_mime(content_type: &str) -> String {
+    let base = content_type.split(';').next().unwrap_or("").trim();
+    if base.starts_with("image/") {
+        base.to_string()
+    } else {
+        "application/octet-stream".to_string()
+    }
 }
 
 /// Assembles a `data:` URL from a MIME type and raw bytes. Pure and
@@ -283,7 +362,7 @@ pub async fn remote_resolve_image(
         ("max_depth", max_depth_str.as_str()),
     ]);
     let res = send_authorized(req, &token).await?;
-    res.json().await.map_err(|e| e.to_string())
+    decode_response(res).await
 }
 
 #[tauri::command]
@@ -297,7 +376,7 @@ pub async fn remote_list_link_targets(
     let url = format!("{}/list_link_targets", base_url(&host)?);
     let req = client()?.get(&url).query(&[("vault", vault.as_str()), ("path", path.as_str())]);
     let res = send_authorized(req, &token).await?;
-    res.json().await.map_err(|e| e.to_string())
+    decode_response(res).await
 }
 
 #[cfg(test)]
@@ -362,10 +441,98 @@ mod tests {
     /// underlying `reqwest::Error` detail for human debugging.
     #[tokio::test]
     async fn unreachable_maps_a_transport_failure_to_the_exact_spelling() {
+        ensure_crypto_provider_installed();
         // A connection to a closed local port fails fast without touching the
         // network — no real server needed for this to exercise the mapping.
         let res = reqwest::Client::new().get("http://127.0.0.1:1").send().await;
         let err = unreachable(res.unwrap_err());
         assert!(err.contains("REMOTE:Unreachable"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn a_connect_failure_is_a_transport_error() {
+        ensure_crypto_provider_installed();
+        let res = reqwest::Client::new().get("http://127.0.0.1:1").send().await;
+        assert!(is_transport_error(&res.unwrap_err()));
+    }
+
+    /// Finding 2 (fix round 1): a failure that happens *while reading the
+    /// response body* — not just one that happens before any response
+    /// arrives — must still classify as `REMOTE:Unreachable`. Simulated with
+    /// a real socket that sends headers promising a body it then never
+    /// delivers, against a client whose own timeout is short enough to fire
+    /// during that read; `decode_response`'s `.json()` call is what observes
+    /// the resulting timeout.
+    #[tokio::test]
+    async fn decode_response_classifies_a_body_read_timeout_as_unreachable() {
+        ensure_crypto_provider_installed();
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf); // drain the request so the client isn't stuck writing
+                // Headers promise a body that never actually arrives.
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n",
+                );
+                std::thread::sleep(Duration::from_secs(5)); // outlives the test either way
+            }
+        });
+
+        let short_timeout_client =
+            reqwest::Client::builder().timeout(Duration::from_millis(200)).build().unwrap();
+        let res = short_timeout_client.get(format!("http://{addr}/")).send().await.unwrap();
+
+        #[derive(Debug, serde::Deserialize)]
+        struct Anything {}
+        let err = decode_response::<Anything>(res).await.unwrap_err();
+        assert!(err.contains("REMOTE:Unreachable"), "got: {err}");
+    }
+
+    /// The other half of Finding 2: a response that arrives complete but
+    /// isn't valid JSON is a genuine decode bug, not a connectivity failure
+    /// — it must NOT carry the `REMOTE:` prefix, or the frontend would
+    /// wrongly treat "the host sent garbage" as "try reconnecting".
+    #[tokio::test]
+    async fn decode_response_leaves_a_genuine_decode_failure_unprefixed() {
+        ensure_crypto_provider_installed();
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 8\r\n\r\nnot json",
+                );
+            }
+        });
+
+        let res = reqwest::Client::new().get(format!("http://{addr}/")).send().await.unwrap();
+        #[derive(Debug, serde::Deserialize)]
+        struct Anything {}
+        let err = decode_response::<Anything>(res).await.unwrap_err();
+        assert!(!err.starts_with("REMOTE:"), "got: {err}");
+    }
+
+    #[test]
+    fn image_mime_is_passed_through_and_stripped_of_parameters() {
+        assert_eq!(as_image_mime("image/png"), "image/png");
+        assert_eq!(as_image_mime("image/png; charset=binary"), "image/png");
+        assert_eq!(as_image_mime("image/svg+xml"), "image/svg+xml");
+    }
+
+    #[test]
+    fn non_image_mime_falls_back_to_octet_stream() {
+        assert_eq!(as_image_mime("text/html"), "application/octet-stream");
+        assert_eq!(as_image_mime("text/html; charset=utf-8"), "application/octet-stream");
+        assert_eq!(as_image_mime(""), "application/octet-stream");
     }
 }
