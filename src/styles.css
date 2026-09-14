@@ -1006,6 +1006,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .save-status[data-state="saving"] .save-label .icon { animation: status-spin .8s linear infinite; }
 @keyframes status-spin { to { transform: rotate(360deg); } }
 
+/* Mode toggle's persistent remote-read-only state (Task 11): same amber the
+   save-status conflict state already uses, so "you can't write here" reads
+   consistently across the two indicators rather than inventing a new tone. */
+.mode-toggle[data-remote="true"] { color: #d97706; }
+.mode-toggle[data-remote="true"]:hover { background: color-mix(in srgb, #d97706 12%, transparent); }
+
 .recovery-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, #000 45%, transparent); }
 .recovery-modal { display: flex; flex-direction: column; gap: 14px; width: min(520px, 92vw); padding: 20px; border-radius: var(--radius-lg, 12px); background: var(--bg); color: var(--fg); border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent); box-shadow: 0 16px 48px color-mix(in srgb, #000 35%, transparent); }
 .recovery-title { margin: 0; font-size: 16px; }

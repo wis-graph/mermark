@@ -91,6 +91,7 @@ import { setImageOpenHandler } from "./markdown/image-open";
 import { setDocumentOpenHandler } from "./markdown/document-open";
 import { openStandardLocalLink, markLocalLinkFailure, REMOTE_VAULT_LOCAL_LINK_MESSAGE } from "./markdown/local-doc-link";
 import { isRemoteVault } from "./document/document-vault";
+import { remoteCanOpen, remoteUnsupportedMessage } from "./document/remote-capability";
 import { setImageSearchRoot, owningVaultRoot } from "./markdown/image-search-root";
 import { attachImageToVault } from "./markdown/attach-image";
 import {
@@ -327,10 +328,24 @@ function makeSaveStatus(): {
   };
 }
 
-/** Edit/read toggle that lives in the title-bar (icon + label). */
-function makeModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode) => void } {
+/** Edit/read toggle that lives in the title-bar (icon + label). Also carries
+ *  the PERSISTENT remote-read-only indicator (Task 11): a remote document is
+ *  forced to read mode end to end (editor.ts's `remoteReadOnly`), but before
+ *  this the toggle only ever reflected the global `modeSetting` — so it could
+ *  still show "편집" while the open document was, in fact, uneditable, and the
+ *  user only learned the truth from a transient error toast on the next
+ *  keystroke/save attempt. `remote: true` replaces the edit/read label
+ *  outright with a fixed "읽기 전용 (원격)" state, for as long as this document
+ *  stays open — not a toast, so it can't scroll away or get missed. */
+function makeModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode, remote: boolean) => void } {
   const btn = el("button", "chrome-btn mode-toggle icon-only");
-  const render = (m: PreviewMode) => {
+  const render = (m: PreviewMode, remote: boolean) => {
+    btn.dataset.remote = String(remote);
+    if (remote) {
+      setButtonContent(btn, "lock", "읽기 전용 (원격)");
+      btn.title = "읽기 전용 (원격) — 원격 볼트는 편집할 수 없습니다";
+      return;
+    }
     setButtonContent(btn, m === "edit" ? "square-pen" : "eye", m === "edit" ? "편집" : "리더");
     btn.title = m === "edit" ? "편집 모드 (⌘E: 리더 모드로)" : "리더 모드 (⌘E: 편집 모드로)";
   };
@@ -504,6 +519,23 @@ async function boot() {
   // read the mutable `current` (set by openInWindow), so they always reach the
   // live editor.
   const mode = makeModeToggle();
+  // Whether the CURRENTLY OPEN document belongs to a remote vault — set once
+  // per `openInWindow` mount (see below), read by `syncModeIndicator`. Kept
+  // as its own cell rather than re-deriving from `currentVault()` at render
+  // time: `currentVault()` is APP-selection state (routedVault/workspace
+  // selection) and can briefly point elsewhere mid vault-crossing switch
+  // (see its own doc comment); this flag is a property of the document
+  // `current` actually has mounted, set at the exact moment `mountEditor`
+  // decided it (mirrors editor.ts's own `remoteReadOnly` local).
+  let currentIsRemote = false;
+  /** The mode indicator's single source of truth (Task 11): folds the global
+   *  `modeSetting` and the open document's remote-forced read-only state into
+   *  one render call, so the title-bar toggle can never show "편집" for a
+   *  document that is actually uneditable. Bound to modeSetting's own change
+   *  event AND called once more right after every mount (modeSetting alone
+   *  doesn't change when a document with a DIFFERENT remote-ness opens while
+   *  the setting itself stays "edit"). Command (void). */
+  const syncModeIndicator = () => mode.render(modeSetting.get(), currentIsRemote);
   const pos = el("span", "status-pos");
   const spacer = el("span", "status-spacer");
   const widthSlider = makeWidthSlider();
@@ -773,6 +805,18 @@ async function boot() {
   function openWithViewer(absPath: string): void {
     const v = viewerForEntry(basename(absPath));
     if (!v) return;
+    // Remote vaults (v1, read-only) only ever serve markdown + images through
+    // `remote_read_file`/asset-src reads — every OTHER registered viewer's
+    // open() reads through a Tauri command or local-disk path with no remote
+    // counterpart (remote-capability.ts's own doc comment has the full list).
+    // Refuse with an explicit, visible message here rather than letting the
+    // viewer open and fail silently/partially (this repo forbids silent
+    // degradation) — the row itself stays clickable, it just reports the
+    // truth instead of opening a broken pane.
+    if (isRemoteVault(currentVault()) && !remoteCanOpen(basename(absPath))) {
+      save.set("error", remoteUnsupportedMessage(basename(absPath)));
+      return;
+    }
     const handle = viewerSlot.open(() => v.open(absPath));
     // The footer breadcrumb points at the folder of whatever the CONTENT AREA
     // is showing. While the viewer was a floating modal OVER the document,
@@ -1564,6 +1608,8 @@ async function boot() {
       // below has executed at boot.
       findReplaceHint: replaceHintEntry,
     });
+    currentIsRemote = isRemoteVault(selectedVault);
+    syncModeIndicator();
 
     const scroller = host.querySelector(".cm-scroller");
     if (scroller) {
@@ -1986,7 +2032,7 @@ async function boot() {
   activateExtensions();
   // mode is the SSOT: the button label binds to it; the live editor reacts to
   // changes. Persistence is handled by the store.
-  modeSetting.bind(mode.render); // initial label + on change
+  modeSetting.bind(() => syncModeIndicator()); // initial label + on change
   modeSetting.subscribe((m) => current?.setMode(m));
   // Boot-time auto-check for updates (design C-5): deferred via setTimeout so
   // it costs nothing on cold load / first paint, and placed BEFORE the

@@ -71,7 +71,15 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
   // workspace-sidebar click path, not just a spied fileHostFor call.
   if (command === "remote_list_dir") {
     const a = args as Record<string, unknown>;
-    if (a.path === "/") return Promise.resolve([{ name: "노트.md", path: "노트.md", is_dir: false }]);
+    // "책.epub" (task 11): a remote vault CAN list a non-viewable file — the
+    // listing itself is just names/paths — but opening it must be refused
+    // (remote-capability.ts's remoteCanOpen), not silently mis-rendered.
+    if (a.path === "/") {
+      return Promise.resolve([
+        { name: "노트.md", path: "노트.md", is_dir: false },
+        { name: "책.epub", path: "책.epub", is_dir: false },
+      ]);
+    }
     return Promise.resolve([]);
   }
   if (command === "remote_read_file") {
@@ -1283,6 +1291,42 @@ describe("main workspace wiring", () => {
       // exact click path would have hit via onSelectTab's
       // `workspaceStore.selectVault(selectedVault.vaultId)`.
       expect(document.querySelector(".workspace-error")?.hasAttribute("hidden")).toBe(true);
+    });
+
+    // Task 11: the persistent read-only indicator and the explicit
+    // unsupported-file refusal, driven through the real boot + Explorer
+    // click path (not the pure remote-capability.ts functions in isolation —
+    // those are covered in src/document/remote-capability.test.ts).
+    it("shows a persistent '읽기 전용 (원격)' mode indicator for an open remote document, and refuses an unsupported remote file type with an explicit message instead of opening a broken viewer", async () => {
+      localStorage.setItem("mermark.workspaceState", JSON.stringify({
+        workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-y"], currentVaultId: "vault-remote-y", lastSelectedPermanentVaultId: null }],
+        vaults: [{ vaultId: "vault-remote-y", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: "/", host: "wis-macmini", remoteVaultId: "rv-1" }],
+        currentWorkspaceId: "workspace-default",
+      }));
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+
+      document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="노트.md"]')).not.toBeNull());
+
+      // Opening the remote markdown document mounts it read-only, and the
+      // title-bar mode toggle reports the persistent, fixed state — not a
+      // transient toast, and not the edit/read label modeSetting would
+      // otherwise drive.
+      document.querySelector<HTMLElement>('.explorer-file[data-path="노트.md"]')?.click();
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("원격 문서"));
+      const modeToggle = document.querySelector<HTMLButtonElement>(".mode-toggle");
+      expect(modeToggle?.dataset.remote).toBe("true");
+      expect(modeToggle?.textContent).toContain("읽기 전용 (원격)");
+
+      // Clicking the EPUB row must not open a (broken/empty) viewer overlay —
+      // it must report the explicit "아직 지원하지 않습니다" refusal instead.
+      const epubRow = document.querySelector<HTMLElement>('.explorer-file[data-path="책.epub"]');
+      expect(epubRow).not.toBeNull();
+      epubRow?.click();
+      await vi.waitFor(() => expect(document.querySelector(".save-status")?.textContent).toContain("원격 볼트에서는 아직 지원하지 않습니다"));
+      expect(document.querySelector(".viewer-panel")).toBeNull();
     });
   });
 });
