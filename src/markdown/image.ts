@@ -1,5 +1,6 @@
 import { EditorView, WidgetType } from "@codemirror/view";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { localFileHost } from "../document/file-host";
 import { recursiveImageSearchSetting } from "../settings/app";
 import { attachAltClickEdit } from "./wikilink";
 import { requestImageOpen } from "./image-open";
@@ -213,11 +214,9 @@ export class ImageWidget extends WidgetType {
       const key = searchCacheKey(plan.baseDir, this.rawSrc);
       let pending = searchCache.get(key);
       if (!pending) {
-        pending = invoke<string | null>("resolve_image", {
-          baseDir: plan.baseDir,
-          name: this.rawSrc,
-          maxDepth: plan.maxDepth,
-        }).catch(() => null); // best-effort: a backend error leaves the broken image as-is
+        pending = localFileHost
+          .resolveImage(plan.baseDir, this.rawSrc, plan.maxDepth)
+          .catch(() => null); // best-effort: a backend error leaves the broken image as-is
         searchCache.put(key, pending);
       }
       pending.then((found) => {

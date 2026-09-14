@@ -1,5 +1,6 @@
 import { EditorView, WidgetType } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
+import { localFileHost } from "../document/file-host";
 import { openPath as openAsset } from "@tauri-apps/plugin-opener";
 import { findHeadingByText } from "./outline";
 import { jumpTo } from "./footnote-nav";
@@ -185,7 +186,7 @@ export class WikilinkWidget extends WidgetType {
       }
     });
 
-    invoke<boolean>("path_exists", { path: this.path }).then((exists) => {
+    localFileHost.pathExists(this.path).then((exists) => {
       fileExists = exists;
       a.classList.remove("cm-wikilink-pending");
       a.classList.add(exists ? "cm-wikilink-active" : "cm-wikilink-missing");

@@ -15,21 +15,16 @@ import {
   type CompletionSource,
 } from "@codemirror/autocomplete";
 import type { EditorView } from "@codemirror/view";
-import { invoke } from "@tauri-apps/api/core";
+import type { LinkTarget } from "../document/types";
+import { localFileHost } from "../document/file-host";
 
 /** One linkable file in the base folder. Mirrors the Rust `LinkTarget` serde
  *  shape 1:1 (name/rel/kind) so the IPC boundary, the browser mock, and this
  *  source agree. `kind` drives the insert rule (markdown → basename, image →
- *  filename with extension). */
-export interface LinkTarget {
-  /** Insert label: markdown = basename (no `.md`); image = filename (with ext). */
-  name: string;
-  /** Path relative to the base dir — kept for future dedup/recursive expansion. */
-  rel: string;
-  /** "markdown" | "image" — selects the insert rule. The Rust `LinkTarget.kind`
-   *  is the SSOT for these exact strings (see commands.rs classify_link_target). */
-  kind: "markdown" | "image";
-}
+ *  filename with extension). Canonicalized in `document/types.ts`
+ *  (file-host.ts needs it alongside DirEntry/ScanResult); re-exported here so
+ *  existing imports are unchanged. */
+export type { LinkTarget };
 
 /** Matches a still-open `[[` query directly before the cursor. A `]`, `[`, or
  *  `|` in the tail breaks the match (already-closed or alias region). `![[`
@@ -88,7 +83,7 @@ let cachedAt = 0;
 export async function loadTargetsOnce(baseDir: string): Promise<LinkTarget[]> {
   const fresh = cache !== null && cachedDir === baseDir && Date.now() - cachedAt < TTL_MS;
   if (fresh) return cache!;
-  const list = await invoke<LinkTarget[]>("list_link_targets", { dir: baseDir });
+  const list = await localFileHost.listLinkTargets(baseDir);
   cache = list;
   cachedDir = baseDir;
   cachedAt = Date.now();

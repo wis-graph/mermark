@@ -1,6 +1,7 @@
 import { icon } from "../../icons";
 import { renderEntryGlyph, isEditableTextFile } from "./file-icons";
 import { basename, dirOf, isPathWithin, normalizePath } from "../../document/path";
+import type { DirEntry } from "../../document/types";
 import { renderSidebarButton } from "../toggle";
 import { isImeComposing } from "../../shortcuts/keys";
 
@@ -38,12 +39,10 @@ const EXPLORER_ASIDE_ID = "explorer-aside";
 /** A single directory entry as returned by the backend `list_dir` command.
  *  serde serializes field names verbatim, so `is_dir` stays snake_case here to
  *  mirror the Rust `DirEntry` struct and the browser mock — the 3-way boundary
- *  parity (Rust ↔ this interface ↔ tauri-core mock) is a first-class contract. */
-export interface DirEntry {
-  name: string;
-  path: string;
-  is_dir: boolean;
-}
+ *  parity (Rust ↔ this interface ↔ tauri-core mock) is a first-class contract.
+ *  Canonicalized in `document/types.ts` (file-host.ts needs it alongside
+ *  ScanResult/LinkTarget); re-exported here so existing imports are unchanged. */
+export type { DirEntry };
 
 export interface ExplorerPanel {
   /** The button to place in the status bar (toggles the sidebar). */

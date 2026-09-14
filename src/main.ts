@@ -6,7 +6,8 @@ import { createOpenPathPrompt } from "./document/open-file/path-prompt";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createOutlinePanel } from "./sidebar/outline/outline-panel";
-import { createExplorerPanel, type DirEntry } from "./sidebar/explorer/explorer-panel";
+import { createExplorerPanel } from "./sidebar/explorer/explorer-panel";
+import { localFileHost, fileHostFor } from "./document/file-host";
 import { mountEditor, type EditorController, type PreviewMode, type SaveStatus } from "./editor";
 import { onFeaturesChanged } from "./markdown/live-preview";
 import { activateExtensions } from "./extensions";
@@ -65,7 +66,7 @@ import {
 import { registerSidebarPanel, closeOtherSidebarPanels, installSidebarPanels } from "./sidebar/registry";
 import { createBreadcrumb } from "./chrome/breadcrumb";
 import { createRecentPanel } from "./sidebar/recent/recent-panel";
-import { createSearchPanel, type ScanResult } from "./sidebar/search/search-panel";
+import { createSearchPanel } from "./sidebar/search/search-panel";
 import { openFindPanel, enterEditModeForReplace } from "./markdown/find";
 import { pushRecent } from "./sidebar/recent/recent-docs";
 import { createWelcomePane } from "./chrome/welcome/welcome-pane";
@@ -359,7 +360,7 @@ async function boot() {
       await migrateFavoriteFoldersToVaults(
         workspaceStore,
         readLegacyFavoriteFolders(),
-        async (path) => invoke<boolean>("directory_exists", { path }),
+        async (path) => localFileHost.directoryExists(path),
         (path) => canonicalizeLegacyFavoriteFolder((candidate) => invoke("canonicalize_path", { path: candidate }), path),
       );
     } catch (error) {
@@ -804,7 +805,7 @@ async function boot() {
 
   const explorer = createExplorerPanel({
     listDir: (p) =>
-      invoke<DirEntry[]>("list_dir", { path: p, showHidden: showHiddenFilesSetting.get() === "on" }),
+      fileHostFor(currentVault() ?? workspaceStore.getGlobalVault()).listDir(p, showHiddenFilesSetting.get() === "on"),
     getBaseDir: explorerRootForCurrentSelection,
     onOpenFile: async (absPath) => {
       if (!currentFile) {
@@ -845,7 +846,7 @@ async function boot() {
     const sourceEditor = current;
     let fresh: { text: string; mtime: number };
     try {
-      fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: absPath });
+      fresh = await fileHostFor(currentVault() ?? workspaceStore.getGlobalVault()).readFile(absPath);
     } catch (error: unknown) {
       if (requestId === lifecycleRequest) throw error;
       return false;
@@ -1112,7 +1113,7 @@ async function boot() {
         let fresh: { text: string; mtime: number } | undefined;
         if (nextTab) {
           try {
-            fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: nextTab.path });
+            fresh = await fileHostFor(vault).readFile(nextTab.path);
           } catch (error: unknown) {
             if (requestId === lifecycleRequest) showOpenRecovery(nextTab.path, String(error));
             return;
@@ -1166,7 +1167,7 @@ async function boot() {
   //    §보안·성능) — no atomic-write/conflict-guard surface touched. ───────
   const searchPanel = createSearchPanel({
     scan: (root) =>
-      invoke<ScanResult>("list_files_recursive", { root, showHidden: showHiddenFilesSetting.get() === "on" }),
+      fileHostFor(currentVault() ?? workspaceStore.getGlobalVault()).listFilesRecursive(root, showHiddenFilesSetting.get() === "on"),
     getRoot: () => explorer.currentRootPath() ?? currentBaseDir,
     onOpenFile: async (absPath) => {
       if (!currentFile) {
@@ -1508,7 +1509,7 @@ async function boot() {
     if (!target) return;
     let fresh: { text: string; mtime: number };
     try {
-      fresh = await invoke<{ text: string; mtime: number }>("read_file", { path: target });
+      fresh = await fileHostFor(currentVault() ?? workspaceStore.getGlobalVault()).readFile(target);
     } catch {
       // The target file is gone: forget it and skip (no navigation).
       navHistory = pruneAt(navHistory, next.index);

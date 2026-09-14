@@ -5,6 +5,7 @@ import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap, highlightActiveLine, drawSelection } from "@codemirror/view";
 import { vim } from "@replit/codemirror-vim";
 import { invoke } from "@tauri-apps/api/core";
+import { localFileHost } from "./document/file-host";
 import { blockPreview, inlinePreview, modeFacet, refreshBlocks, type PreviewMode } from "./markdown/live-preview";
 import { findExtensions, resyncFindPanelForMode } from "./markdown/find";
 import { footnoteNav } from "./markdown/footnote-nav";
@@ -252,7 +253,7 @@ function makeAutosave(
     },
     async retryOriginal(text: string): Promise<boolean> {
       try {
-        const fresh = await invoke<{ text: string; mtime: number }>("read_file", { path });
+        const fresh = await localFileHost.readFile(path);
         baseline = fresh.mtime;
         suspended = false;
         conflicted = false;

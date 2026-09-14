@@ -13,6 +13,7 @@
 // reuses `parseLocalDocumentHref` itself so decoration-time judgment and
 // click-time validation can never drift apart.
 import { invoke } from "@tauri-apps/api/core";
+import { localFileHost } from "../document/file-host";
 import { dirOf, basename } from "../document/path";
 import { isEditableTextFile } from "../sidebar/explorer/file-icons";
 
@@ -220,7 +221,7 @@ export async function resolveLocalDocumentLink(
     return { ok: false, reason: "document-not-in-vault" };
   }
   if (!isPathInsideRoot(canonRoot, canonDoc)) return { ok: false, reason: "document-not-in-vault" };
-  if (!(await invoke<boolean>("path_exists", { path: canonDoc }))) {
+  if (!(await localFileHost.pathExists(canonDoc))) {
     return { ok: false, reason: "document-not-in-vault" };
   }
 
@@ -232,7 +233,7 @@ export async function resolveLocalDocumentLink(
     return { ok: false, reason: "missing-target" };
   }
   if (!isPathInsideRoot(canonRoot, canonTarget)) return { ok: false, reason: "outside-vault" };
-  if (!(await invoke<boolean>("path_exists", { path: canonTarget }))) {
+  if (!(await localFileHost.pathExists(canonTarget))) {
     return { ok: false, reason: "not-a-regular-file" };
   }
   if (!isEditableTextFile(basename(canonTarget))) return { ok: false, reason: "non-document-extension" };

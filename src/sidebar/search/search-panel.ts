@@ -2,6 +2,7 @@ import { renderEntryGlyph, isEditableTextFile } from "../explorer/file-icons";
 import { renderSidebarButton } from "../toggle";
 import { rankHits, MAX_RESULTS, type FuzzyMatch } from "./fuzzy";
 import { isImeComposing } from "../../shortcuts/keys";
+import type { FileHit, ScanResult } from "../../document/types";
 
 // ---------------------------------------------------------------------------
 // File-finder LEFT SIDEBAR panel (⌘⇧F) — VS Code ⌘P-style quick open: one
@@ -22,23 +23,13 @@ import { isImeComposing } from "../../shortcuts/keys";
 
 const SEARCH_ASIDE_ID = "search-aside";
 
-/** One file hit from the backend recursive scan — mirrors the Rust `FileHit`
- *  struct verbatim (serde field names, snake_case `rel_path`) so the 3-way
- *  boundary (Rust ↔ this interface ↔ tauri-core mock) stays parity-checked,
- *  same contract as explorer-panel.ts's `DirEntry`. */
-export interface FileHit {
-  name: string;
-  path: string;
-  rel_path: string;
-}
-
-/** The recursive scan's result — mirrors the Rust `ScanResult` struct.
- *  `truncated` is surfaced to the user (a silently-clipped result set would
- *  be a lie about what's actually on disk). */
-export interface ScanResult {
-  files: FileHit[];
-  truncated: boolean;
-}
+/** `FileHit`/`ScanResult` mirror the Rust structs verbatim (serde field
+ *  names, snake_case `rel_path`) so the 3-way boundary (Rust ↔ these
+ *  interfaces ↔ tauri-core mock) stays parity-checked, same contract as
+ *  explorer-panel.ts's `DirEntry`. Canonicalized in `document/types.ts`
+ *  (file-host.ts needs them alongside DirEntry/LinkTarget); re-exported here
+ *  so existing imports are unchanged. */
+export type { FileHit, ScanResult };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
