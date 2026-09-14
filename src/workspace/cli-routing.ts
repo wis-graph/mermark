@@ -12,7 +12,14 @@ export interface CliRoute {
 const currentWorkspace = (state: WorkspaceState) =>
   state.workspaces.find((workspace) => workspace.workspaceId === state.currentWorkspaceId);
 
-const permanentVaultForPath = (state: WorkspaceState, path: string): Vault | undefined => {
+/** Which registered permanent vault's root contains `path` (longest-root-wins,
+ *  same rule `routeCanonicalPath` uses), or `undefined` if none does — a PURE
+ *  query, unlike `routeCliFile`/`routeCanonicalPath`: it never calls
+ *  `store.selectVault`, so it's safe to call in bulk (e.g. migrating many
+ *  recent-doc entries at once) without flipping the workspace's current
+ *  selection as a side effect. Exported for exactly that use
+ *  (`recent-vault-migration.ts`, Task 11 fix round 3). */
+export const permanentVaultForPath = (state: WorkspaceState, path: string): Vault | undefined => {
   const workspace = currentWorkspace(state);
   if (!workspace) return undefined;
   return state.vaults

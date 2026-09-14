@@ -8,7 +8,7 @@ describe("isBlankSlate", () => {
   });
 
   it("is false when a recent document exists", () => {
-    expect(isBlankSlate(["note.md"])).toBe(false);
+    expect(isBlankSlate([{ path: "note.md", vaultId: "vault-A" }])).toBe(false);
   });
 });
 
@@ -58,12 +58,13 @@ describe("createWelcomePane", () => {
 
   it("renders recent documents and opens one when selected", () => {
     const onOpenFile = vi.fn();
-    const pane = makePane({ getRecent: () => ["/a/y.md"], onOpenFile });
+    const entry = { path: "/a/y.md", vaultId: "vault-A" };
+    const pane = makePane({ getRecent: () => [entry], onOpenFile });
     host.append(pane);
 
     const row = host.querySelector<HTMLElement>(".welcome-file-row");
     row?.click();
-    expect(onOpenFile).toHaveBeenCalledWith("/a/y.md");
+    expect(onOpenFile).toHaveBeenCalledWith(entry);
     expect(pane.classList.contains("is-blank-slate")).toBe(false);
   });
 
@@ -72,7 +73,7 @@ describe("createWelcomePane", () => {
     host.append(pane);
     expect(pane.querySelectorAll(".welcome-file-row")).toHaveLength(0);
 
-    recentDocsSetting.set(["/a/y.md"]);
+    recentDocsSetting.set([{ path: "/a/y.md", vaultId: "vault-A" }]);
     expect(pane.querySelectorAll(".welcome-file-row")).toHaveLength(1);
     expect(pane.classList.contains("is-blank-slate")).toBe(false);
   });

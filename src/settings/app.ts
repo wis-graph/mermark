@@ -9,6 +9,7 @@ import { systemTheme, type Theme } from "../theme";
 import { builtInTheme, parseTheme, serializeTheme, type Theme as ThemeJson, type PresetName } from "./theme-schema";
 import type { PreviewMode } from "../markdown/live-preview";
 import type { EpubReadingPosition } from "../chrome/viewer/epub-position";
+import type { RecentEntry } from "../sidebar/recent/recent-docs";
 
 const numberParse = (raw: string | null): number | null => {
   if (raw == null) return null;
@@ -581,19 +582,32 @@ registerSetting<null>({
 
 // ── 최근 문서 (Recent documents) — SSOT-only, no panel ui ─────────────────────
 
-/** Recently opened document paths, most-recent-first. SSOT-only (no panel row):
- *  the status-bar recent panel subscribes to render, and openInWindow is the
- *  single writer (via pushRecent). Persisted as a JSON array in localStorage —
- *  WKWebView keeps it across restarts, so no backend command is needed. Corrupt
- *  value / non-array → [] (empty history). */
-export const recentDocsSetting = defineSetting<string[]>({
+/** Recently opened documents ({path, vaultId}), most-recent-first. SSOT-only
+ *  (no panel row): the status-bar recent panel + the welcome pane subscribe
+ *  to render, and openInWindow is the single writer (via pushRecent).
+ *  Persisted as a JSON array in localStorage — WKWebView keeps it across
+ *  restarts, so no backend command is needed. Corrupt value / non-array →
+ *  [] (empty history); a malformed individual entry (missing/non-string
+ *  `path` or `vaultId`) is dropped on its own rather than discarding the
+ *  whole list (same per-element-tolerant posture as epubPositionsSetting).
+ *
+ *  Task 11 fix round 3: this used to be a flat `string[]` of paths with no
+ *  vault identity — a `parse` this strict silently drops a legacy string
+ *  element (it isn't `{path, vaultId}`), which is exactly what lets a plain
+ *  `string[]` value migrate cleanly: `readLegacyRecentDocPaths`
+ *  (recent-vault-migration.ts) reads the SAME raw localStorage value
+ *  looking for exactly the shape this `parse` rejects, so the two can never
+ *  double-count an entry as both "current" and "legacy". main.ts's boot
+ *  runs that migration once, before this setting is ever read for real. */
+export const recentDocsSetting = defineSetting<RecentEntry[]>({
   key: "mermark.recentDocs",
   default: [],
   parse: (raw) => {
     if (raw == null) return null;
     try {
-      const a = JSON.parse(raw);
-      return Array.isArray(a) ? a.filter((x) => typeof x === "string") : null;
+      const a: unknown = JSON.parse(raw);
+      if (!Array.isArray(a)) return null;
+      return a.filter((x): x is RecentEntry => typeof x === "object" && x !== null && typeof (x as RecentEntry).path === "string" && typeof (x as RecentEntry).vaultId === "string");
     } catch {
       return null;
     }

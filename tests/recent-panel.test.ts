@@ -24,7 +24,7 @@ describe("recent panel", () => {
 
   it("renders each recent doc as basename + full path", () => {
     const { button, aside } = createRecentPanel({
-      getRecent: () => ["/notes/alpha.md", "/x/beta.md"],
+      getRecent: () => [{ path: "/notes/alpha.md", vaultId: "vault-A" }, { path: "/x/beta.md", vaultId: "vault-A" }],
       onOpenFile: () => {},
     });
     host.append(button, aside);
@@ -38,7 +38,7 @@ describe("recent panel", () => {
 
   it("omits the .path-label when the path has no directory component (redundant with the name)", () => {
     const { button, aside } = createRecentPanel({
-      getRecent: () => ["x.md", "/a/y.md"],
+      getRecent: () => [{ path: "x.md", vaultId: "vault-A" }, { path: "/a/y.md", vaultId: "vault-A" }],
       onOpenFile: () => {},
     });
     host.append(button, aside);
@@ -59,19 +59,19 @@ describe("recent panel", () => {
   it("calls onOpenFile with the path on item mousedown, and closes the panel", () => {
     const onOpenFile = vi.fn();
     const { button, aside } = createRecentPanel({
-      getRecent: () => ["/notes/a.md"],
+      getRecent: () => [{ path: "/notes/a.md", vaultId: "vault-A" }],
       onOpenFile,
     });
     host.append(button, aside);
     button.click();
     const item = aside.querySelector<HTMLElement>(".recent-item")!;
     item.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-    expect(onOpenFile).toHaveBeenCalledWith("/notes/a.md");
+    expect(onOpenFile).toHaveBeenCalledWith({ path: "/notes/a.md", vaultId: "vault-A" });
     expect(aside.hidden).toBe(true);
   });
 
   it("re-renders on refresh() when the live list changed (subscription sink)", () => {
-    let list = ["/a.md"];
+    let list = [{ path: "/a.md", vaultId: "vault-A" }];
     const { button, aside, refresh } = createRecentPanel({
       getRecent: () => list,
       onOpenFile: () => {},
@@ -79,14 +79,14 @@ describe("recent panel", () => {
     host.append(button, aside);
     button.click();
     expect(aside.querySelectorAll(".recent-item").length).toBe(1);
-    list = ["/b.md", "/a.md"];
+    list = [{ path: "/b.md", vaultId: "vault-A" }, { path: "/a.md", vaultId: "vault-A" }];
     refresh();
     expect(aside.querySelectorAll(".recent-item").length).toBe(2);
     expect(aside.querySelector(".recent-name")?.textContent).toBe("b.md");
   });
 
   it("refresh() is a no-op while the panel is closed (cost 0)", () => {
-    const getRecent = vi.fn(() => ["/a.md"]);
+    const getRecent = vi.fn(() => [{ path: "/a.md", vaultId: "vault-A" }]);
     const { refresh } = createRecentPanel({ getRecent, onOpenFile: () => {} });
     refresh(); // closed → should not read the list
     expect(getRecent).not.toHaveBeenCalled();

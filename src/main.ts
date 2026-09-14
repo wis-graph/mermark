@@ -69,7 +69,8 @@ import { createBreadcrumb } from "./chrome/breadcrumb";
 import { createRecentPanel } from "./sidebar/recent/recent-panel";
 import { createSearchPanel } from "./sidebar/search/search-panel";
 import { openFindPanel, enterEditModeForReplace } from "./markdown/find";
-import { pushRecent } from "./sidebar/recent/recent-docs";
+import { pushRecent, type RecentEntry } from "./sidebar/recent/recent-docs";
+import { readLegacyRecentDocPaths, migrateLegacyRecentPaths } from "./sidebar/recent/recent-vault-migration";
 import { createWelcomePane } from "./chrome/welcome/welcome-pane";
 import {
   makeHistory,
@@ -445,6 +446,16 @@ async function boot() {
     }
   }) : undefined;
   const file = cliRoute?.path ?? requestedFile;
+  // One-time recentDocsSetting migration (Task 11 fix round 3): the OLD
+  // shape was a bare string[] with no vault identity. Runs here — AFTER any
+  // CLI-arg permanent vault just got auto-registered above (`cliRoute`), so
+  // a legacy recent path under that exact root resolves to it rather than
+  // falling back to Global — and BEFORE the welcome pane / recent panel
+  // below are ever asked to render. `readLegacyRecentDocPaths` is empty
+  // (and this a no-op) on every boot after the first — see its own comment
+  // for why no separate "completed" flag is needed.
+  const legacyRecentPaths = readLegacyRecentDocPaths();
+  if (legacyRecentPaths.length > 0) recentDocsSetting.set(migrateLegacyRecentPaths(workspaceStore, legacyRecentPaths));
   // Fixed default for clicking the Global Vault (00_request.md #2) — resolved
   // once at boot, not re-derived per click, so it can never observe a
   // mid-session `currentExplorerFolder` drift.
@@ -1141,9 +1152,35 @@ async function boot() {
       globalExplorerRoot: reloadHandoff.globalExplorerRoot,
     };
 
+  /** Open a recent-documents entry (welcome pane / recent panel share this —
+   *  same resolution, same failure mode). Resolves the vault the entry
+   *  actually belongs to from `entry.vaultId` (`workspaceStore.getVault`),
+   *  never from `currentVault()` — Task 11 fix round 3: recentDocsSetting
+   *  used to be a bare path list with no vault identity, so opening a
+   *  recent entry silently read through whichever vault happened to be
+   *  selected at click time, not the one that recorded the entry. A vault
+   *  that no longer exists (removed/unpaired since the entry was recorded)
+   *  fails loudly via the status bar rather than throwing or silently
+   *  falling back to whatever is currently selected. Mirrors Explorer's own
+   *  `onOpenFile` reload-vs-open-in-place branch (Task 10): a remote vault
+   *  has no way to encode itself in a reload URL, so it always opens in
+   *  place instead. Command (void). */
+  async function openRecentEntry(entry: RecentEntry): Promise<void> {
+    const targetVault = workspaceStore.getVault(entry.vaultId);
+    if (!targetVault) {
+      save.set("error", "이 최근 문서가 속한 볼트를 찾을 수 없습니다 (삭제되었거나 연결이 해제됨)");
+      return;
+    }
+    if (!currentFile && targetVault.persistenceKind !== "remote") {
+      location.href = createDocumentReloadUrl(entry.path, targetVault.persistenceKind === "global" ? currentExplorerFolder : null);
+      return;
+    }
+    await openDocumentSafely(entry.path, undefined, targetVault);
+  }
+
   const welcomePane = createWelcomePane({
     getRecent: () => recentDocsSetting.get(),
-    onOpenFile: openDocumentSafely,
+    onOpenFile: openRecentEntry,
     onOpenFolder: () => explorer.button.click(),
     openFolderChord: (() => {
       const bound = effectiveBinding("explorer.toggle");
@@ -1353,13 +1390,7 @@ async function boot() {
   //    single recentDocsSetting.subscribe below. ────────────────────────────────
   const recent = createRecentPanel({
     getRecent: () => recentDocsSetting.get(),
-    onOpenFile: async (absPath) => {
-      if (!currentFile) {
-        location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
-      } else {
-        await openDocumentSafely(absPath);
-      }
-    },
+    onOpenFile: openRecentEntry,
     onOpen: () => closeOtherSidebarPanels("recent"),
   });
 
@@ -1372,15 +1403,25 @@ async function boot() {
   //    disagree about what's openable. list_files_recursive is READ-ONLY
   //    (backend-engineer's command; see _workspace/01_architect_design.md
   //    §보안·성능) — no atomic-write/conflict-guard surface touched. ───────
+  // `searchScanVault` captures the vault a scan actually ran against, so
+  // `onOpenFile` (below) resolves through THAT vault rather than re-reading
+  // `currentVault()` at click time — Task 11 fix round 3: the sidebar's
+  // selection can change while the search panel stays open (nothing closes
+  // it on a vault switch), so re-deriving at click time could read a result
+  // through a vault it was never scanned from.
+  let searchScanVault: Vault | undefined;
   const searchPanel = createSearchPanel({
-    scan: (root) =>
-      fileHostFor(currentVault() ?? workspaceStore.getGlobalVault()).listFilesRecursive(root, showHiddenFilesSetting.get() === "on"),
+    scan: (root) => {
+      searchScanVault = currentVault() ?? workspaceStore.getGlobalVault();
+      return fileHostFor(searchScanVault).listFilesRecursive(root, showHiddenFilesSetting.get() === "on");
+    },
     getRoot: () => explorer.currentRootPath() ?? currentBaseDir,
     onOpenFile: async (absPath) => {
-      if (!currentFile) {
-        location.href = createDocumentReloadUrl(absPath, currentVault()?.persistenceKind === "global" ? currentExplorerFolder : null);
+      const targetVault = searchScanVault ?? currentVault() ?? workspaceStore.getGlobalVault();
+      if (!currentFile && targetVault.persistenceKind !== "remote") {
+        location.href = createDocumentReloadUrl(absPath, targetVault.persistenceKind === "global" ? currentExplorerFolder : null);
       } else {
-        await openDocumentSafely(absPath);
+        await openDocumentSafely(absPath, undefined, targetVault);
       }
     },
     onOpenFileNewWindow: (absPath) => {
@@ -1708,7 +1749,11 @@ async function boot() {
     // Record this document as most-recent — the SINGLE write point for the recent
     // list (dedup → front → cap via pushRecent). The recent panel re-renders from
     // its recentDocsSetting subscription; localStorage persists it across restarts.
-    recentDocsSetting.set(pushRecent(recentDocsSetting.get(), file));
+    // `selectedVault.vaultId` rides along (Task 11 fix round 3) — without it a
+    // remote document's vault-relative `file` ("노트.md") would be
+    // indistinguishable from an unrelated local/other-remote entry, and
+    // opening it later would have nothing to resolve the right backend from.
+    recentDocsSetting.set(pushRecent(recentDocsSetting.get(), { path: file, vaultId: selectedVault.vaultId }));
 
     // Record the navigation in the back/forward history — the SAME single locus
     // as the recent write. A back/forward move (viaHistory) must NOT re-push (the

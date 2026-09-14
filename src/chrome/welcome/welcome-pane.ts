@@ -9,6 +9,7 @@ import { basename } from "../../document/path";
 import { icon } from "../../icons";
 import { redundantPathLabel } from "../path-label";
 import { recentDocsSetting } from "../../settings/app";
+import type { RecentEntry } from "../../sidebar/recent/recent-docs";
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
   const e = document.createElement(tag);
@@ -21,15 +22,18 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
  *  stacked under the CTA — only when recent docs are empty. A recent entry
  *  means there's real content to show, so the
  *  pane falls back to the existing grid layout. Pure query. */
-export function isBlankSlate(recent: string[]): boolean {
+export function isBlankSlate(recent: readonly RecentEntry[]): boolean {
   return recent.length === 0;
 }
 
 export interface WelcomePaneHandlers {
   /** The current recent-documents list, most-recent-first. */
-  getRecent(): string[];
-  /** Open an absolute document path in the current window. */
-  onOpenFile(path: string): void;
+  getRecent(): readonly RecentEntry[];
+  /** Open a recent entry in the current window. Takes the WHOLE entry, not
+   *  just `path` — a remote entry's `path` is only vault-relative (Task 11
+   *  fix round 3), so the caller needs `vaultId` to resolve the right
+   *  backend. */
+  onOpenFile(entry: RecentEntry): void;
   /** The CTA's primary action: open a folder. Main injects
    *  `() => explorer.button.click()` — reuses the existing explorer-toggle
    *  flow instead of a new native folder picker (IPC-surface constraint). */
@@ -84,22 +88,22 @@ export function createWelcomePane({
       empty.textContent = "최근 열어본 문서가 없습니다.";
       listContainer.append(empty);
     } else {
-      docs.forEach((doc) => {
+      docs.forEach((entry) => {
         const row = el("div", "welcome-row welcome-file-row");
         const iconSpan = el("span", "welcome-icon");
         iconSpan.append(icon("file-text"));
 
         const nameEl = el("span", "welcome-name");
-        nameEl.textContent = basename(doc);
+        nameEl.textContent = basename(entry.path);
         row.append(iconSpan, nameEl);
 
-        if (!redundantPathLabel(doc)) {
+        if (!redundantPathLabel(entry.path)) {
           const pathInfo = el("span", "welcome-path");
-          pathInfo.textContent = doc;
+          pathInfo.textContent = entry.path;
           row.append(pathInfo);
         }
 
-        row.addEventListener("click", () => onOpenFile(doc));
+        row.addEventListener("click", () => onOpenFile(entry));
         listContainer.append(row);
       });
     }

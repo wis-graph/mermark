@@ -1431,5 +1431,117 @@ describe("main workspace wiring", () => {
       expect(invokeMock.mock.calls.some(([command, args]) => command === "read_file" && pathArg(args) === "/A/note.md")).toBe(true);
       expect(document.querySelector(".recovery-backdrop")).toBeNull();
     });
+
+    // Task 11 fix round 3: recentDocsSetting used to be a bare string[] with
+    // no vault identity, so opening a recent entry always read through
+    // whichever vault happened to be SELECTED at click time, not the vault
+    // that actually owns the entry. Reproduces both directions in one boot:
+    // open a REMOTE doc (records a recent entry tagged with the remote
+    // vault), then open a LOCAL doc via the CLI route (switches the
+    // selected vault to the permanent one, per fix round 2) — now click the
+    // REMOTE entry back (selected vault is LOCAL) and assert it reads
+    // through `remote_read_file`, then click the LOCAL entry (selected
+    // vault is now REMOTE again, since opening the remote entry re-selects
+    // it) and assert it reads through `read_file`, never `remote_read_file`.
+    it("a recent entry opens through the vault that OWNS it, not whichever vault is currently selected — both directions", async () => {
+      documentContents.set("/A/note.md", "# 로컬 문서");
+      localStorage.setItem("mermark.workspaceState", permanentPlusRemoteState);
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+
+      // 1) Open the remote doc via the Explorer (currentVaultId is already
+      //    the remote vault, per permanentPlusRemoteState) — records a
+      //    recent entry tagged vault-remote-z.
+      document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="노트.md"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.explorer-file[data-path="노트.md"]')?.click();
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("원격 문서"));
+
+      // 2) Open the local doc via CLI — routeCliFile resolves + selects the
+      //    permanent vault "/A" (fix round 2), so the selected vault is now
+      //    LOCAL. Records a second recent entry tagged vault-%2FA.
+      emitEvent("cli-open-request", { id: 31, path: "/A/note.md" });
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("로컬 문서"));
+
+      // 3) Click the REMOTE recent entry while the LOCAL vault is selected —
+      //    must read through remote_read_file, not the local backend.
+      invokeMock.mockClear();
+      document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
+      const remoteRecentItem = document.querySelector<HTMLElement>('.recent-item[data-path="노트.md"]');
+      expect(remoteRecentItem).not.toBeNull();
+      expect(remoteRecentItem?.dataset.vaultId).toBe("vault-remote-z");
+      remoteRecentItem?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledWith("remote_read_file", expect.objectContaining({ host: "wis-macmini", vault: "rv-1", path: "노트.md" })));
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("원격 문서"));
+
+      // 4) Click the LOCAL recent entry while the REMOTE vault is now
+      //    selected (step 3 re-selected it) — must read through read_file,
+      //    never remote_read_file.
+      invokeMock.mockClear();
+      document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
+      const localRecentItem = document.querySelector<HTMLElement>('.recent-item[data-path="/A/note.md"]');
+      expect(localRecentItem).not.toBeNull();
+      expect(localRecentItem?.dataset.vaultId).toBe("vault-%2FA");
+      localRecentItem?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("로컬 문서"));
+      expect(invokeMock.mock.calls.some(([command]) => command === "remote_read_file")).toBe(false);
+      expect(invokeMock.mock.calls.some(([command, args]) => command === "read_file" && pathArg(args) === "/A/note.md")).toBe(true);
+    });
+
+    // Migration: an old plain string[] recentDocs value (pre-Task-11) must
+    // load without loss — each legacy path attaches to the local vault that
+    // owns it and stays clickable through the recent panel exactly as
+    // before.
+    it("migrates a legacy string[] recentDocs value and opens it correctly through the recent panel", async () => {
+      documentContents.set("/A/legacy.md", "# 레거시 문서");
+      localStorage.setItem("mermark.recentDocs", JSON.stringify(["/A/legacy.md"]));
+      vi.stubGlobal("location", { search: "?file=/A/start.md" });
+
+      await import("../src/main");
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("document"));
+      invokeMock.mockClear();
+
+      document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
+      const item = document.querySelector<HTMLElement>('.recent-item[data-path="/A/legacy.md"]');
+      expect(item).not.toBeNull();
+      // Migrated to the permanent vault "/A" auto-registered by the ?file=
+      // cold launch above (routeCliFileResolved), not left un-migrated or
+      // dropped.
+      expect(item?.dataset.vaultId).not.toBe("");
+      item?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("레거시 문서"));
+      expect(invokeMock.mock.calls.some(([command]) => command === "remote_read_file")).toBe(false);
+    });
+
+    // A recent entry whose vault no longer exists (a remote vault unpaired,
+    // or any vault removed, since the entry was recorded) must fail
+    // gracefully — a clear status-bar message, never a thrown error and
+    // never a silent fall-through to whatever vault happens to be selected
+    // (that fallback is exactly the bug this whole round fixes).
+    it("a recent entry whose vault no longer exists fails gracefully via the status bar, not a throw or a wrong-vault open", async () => {
+      documentContents.set("/A/start.md", "# start");
+      localStorage.setItem("mermark.recentDocs", JSON.stringify([{ path: "유령.md", vaultId: "vault-ghost-removed" }]));
+      vi.stubGlobal("location", { search: "?file=/A/start.md" });
+
+      await import("../src/main");
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("start"));
+      invokeMock.mockClear();
+
+      document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
+      const item = document.querySelector<HTMLElement>('.recent-item[data-path="유령.md"]');
+      expect(item).not.toBeNull();
+      expect(item?.dataset.vaultId).toBe("vault-ghost-removed");
+      item?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+
+      await vi.waitFor(() => expect(document.querySelector(".save-status")?.textContent).toContain("볼트를 찾을 수 없습니다"));
+      // Never reached any backend for the ghost entry, and the still-open
+      // local document stayed exactly as it was — no wrong-vault read, no
+      // crash, no recovery modal.
+      expect(invokeMock.mock.calls.some(([command]) => command === "remote_read_file")).toBe(false);
+      expect(invokeMock.mock.calls.some(([, args]) => pathArg(args) === "유령.md")).toBe(false);
+      expect(document.querySelector(".cm-content")?.textContent).toBe("start");
+      expect(document.querySelector(".recovery-backdrop")).toBeNull();
+    });
   });
 });

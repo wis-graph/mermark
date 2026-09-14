@@ -2,6 +2,7 @@ import { renderSidebarButton } from "../toggle";
 import { basename } from "../../document/path";
 import { redundantPathLabel, truncatedPathLabel } from "../../chrome/path-label";
 import { icon } from "../../icons";
+import type { RecentEntry } from "./recent-docs";
 
 // ---------------------------------------------------------------------------
 // Recent-documents LEFT SIDEBAR chrome — the same shell as the file explorer /
@@ -46,12 +47,16 @@ export interface RecentPanel {
 export interface RecentHandlers {
   /** The current recent list, most-recent-first. A closure over the setting so
    *  the panel always reads the live value (SSOT), never a captured snapshot. */
-  getRecent(): string[];
-  /** Open an absolute path in the current window. Injected so the panel reuses
+  getRecent(): readonly RecentEntry[];
+  /** Open a recent entry in the current window. Injected so the panel reuses
    *  main's open path (read_file → commitBeforeSwitch → openInWindow). Named
    *  onOpenFile (not onOpen) to keep "open a document" distinct from the
-   *  panel-opened notification below. */
-  onOpenFile(path: string): void;
+   *  panel-opened notification below. Takes the WHOLE entry (not just
+   *  `path`) — Task 11 fix round 3: a remote entry's `path` is only
+   *  vault-relative, so the caller needs `vaultId` to resolve the correct
+   *  backend rather than falling back to whatever vault happens to be
+   *  selected. */
+  onOpenFile(entry: RecentEntry): void;
   /** Called when this sidebar opens, so main can close the other left
    *  sidebars (mutual exclusion). Optional — omitted in unit tests /
    *  standalone use. Same signature as explorer/outline's onOpen. */
@@ -92,9 +97,10 @@ export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandl
     const recent = getRecent();
     listEl.replaceChildren();
     empty.hidden = recent.length > 0;
-    for (const path of recent) {
+    for (const { path, vaultId } of recent) {
       const item = create("button", "recent-item");
       item.dataset.path = path;
+      item.dataset.vaultId = vaultId;
       const nameRow = create("span", "recent-name-row");
       const glyph = create("span", "recent-glyph");
       glyph.append(icon("file-text"));
@@ -129,9 +135,9 @@ export function createRecentPanel({ getRecent, onOpenFile, onOpen }: RecentHandl
   // shifts, matching outline/footnoteNav. One delegated listener (single path).
   listEl.addEventListener("mousedown", (e) => {
     const item = (e.target as HTMLElement).closest(".recent-item") as HTMLElement | null;
-    if (!item?.dataset.path) return;
+    if (!item?.dataset.path || !item.dataset.vaultId) return;
     e.preventDefault();
-    onOpenFile(item.dataset.path);
+    onOpenFile({ path: item.dataset.path, vaultId: item.dataset.vaultId });
     close();
   });
 
