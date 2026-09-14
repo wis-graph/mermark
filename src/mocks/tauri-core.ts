@@ -161,7 +161,22 @@ interface MockWatchSession {
 let mockWatchSession: MockWatchSession | null = null;
 let mockWatcherGeneration = 0;
 
+/** C2 regression guard (final review's mock-tightening requirement): the
+ *  real backend's `watch_file` (`watcher.rs`'s `set_watch`) calls
+ *  `notify::Watcher::watch(Path::new(path))` directly — for a RELATIVE path
+ *  (exactly the shape a remote vault's vault-relative document name takes,
+ *  e.g. `"노트.md"`) that resolves against the process's CWD, which almost
+ *  always has no such file, so the real call fails with `PathNotFound`. This
+ *  mock used to accept ANY string unconditionally, including a relative one
+ *  — which is exactly what let a remote document's open silently succeed at
+ *  arming a LOCAL watch in every test run against this mock, while the real
+ *  app either failed outright or (worse) watched an unrelated same-named
+ *  local file. `shouldWatchDocument`'s gate in file-watch.ts is supposed to
+ *  prevent `watch_file` from ever being called for a remote document at all
+ *  — this makes a regression of that gate fail loudly here too, instead of
+ *  this mock quietly "succeeding" against nothing. */
 function beginMockWatch(path: string): MockWatchSession {
+  if (!path.startsWith("/")) throw `watch ${path}: No such file or directory (os error 2)`;
   const session = { path, generation: String(++mockWatcherGeneration) };
   mockWatchedPath = path;
   mockWatchSession = session;
@@ -291,6 +306,21 @@ function remoteMockError(host: string): string | null {
     unreachable: "REMOTE:Unreachable",
   };
   return CODES[m[1]] ?? null;
+}
+
+/** C1 regression guard, mirrored in this mock (final review's mock-tightening
+ *  requirement): the real host's `safe_path` (remote_host.rs) treats ONLY the
+ *  empty string as "the vault root" — any non-empty path starting with "/"
+ *  goes through `resolve_within`, which rejects a leading `RootDir`
+ *  component and 404s (mapped to `REMOTE:SharingOff` by `remote_client.rs`'s
+ *  `classify`). Every `remote_*` handler below that takes a vault-relative
+ *  `path`/`baseDir`/`dir` argument checks this FIRST, the same order the
+ *  real host's `safe_path` runs in (before anything else) — so this mock
+ *  can no longer silently accept the exact wire-contract violation (a
+ *  literal `"/"`) that made the real feature 404 against a real host while
+ *  every test against this mock kept passing. */
+function rejectsUnparsableRemotePath(path: unknown): void {
+  if (typeof path === "string" && path.startsWith("/")) throw "REMOTE:SharingOff";
 }
 
 // ── remote_ssh_* mock state (client-side SSH tunnel fallback — task 12) ────
@@ -966,6 +996,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
+      rejectsUnparsableRemotePath(a.path);
       console.info("[mock] remote_list_dir", host, a.vault, a.path, "showHidden", a.showHidden);
       return [{ name: "원격노트.md", path: "원격노트.md", is_dir: false }] as T;
     }
@@ -979,6 +1010,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
+      rejectsUnparsableRemotePath(a.path);
       console.info("[mock] remote_list_files_recursive", host, a.vault, a.path, "showHidden", a.showHidden);
       return {
         files: [{ name: "원격노트.md", path: "원격노트.md", rel_path: "원격노트.md" }],
@@ -992,6 +1024,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
+      rejectsUnparsableRemotePath(a.path);
       console.info("[mock] remote_read_file", host, a.vault, a.path);
       return { text: "# 원격 데모\n\n브라우저 mock이 만든 원격 문서입니다.", mtime: 1 } as T;
     }
@@ -1003,6 +1036,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
+      rejectsUnparsableRemotePath(a.path);
       console.info("[mock] remote_read_image", host, a.vault, a.path);
       return "data:image/png;base64,iVBORw0KGgo=" as T;
     }
@@ -1017,6 +1051,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
+      rejectsUnparsableRemotePath(a.path);
       console.info("[mock] remote_resolve_image", host, a.vault, a.path, a.name, a.maxDepth);
       return null as T;
     }
@@ -1029,6 +1064,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
+      rejectsUnparsableRemotePath(a.path);
       console.info("[mock] remote_list_link_targets", host, a.vault, a.path);
       return [] as T;
     }
