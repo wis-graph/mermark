@@ -26,6 +26,26 @@ export interface ViewerHandle {
   onClose(cb: () => void): void;
 }
 
+// T6 (0.18.0, _workspace/01_architect_design.md §4.4): a remote (read-only)
+// vault's row carries only a VAULT-RELATIVE path, never a local absolute
+// path — handing that to `open(absPath)` would resolve it against THIS
+// machine's filesystem (the L1/L2/L3 leak class this repo has hit 6 times,
+// design §6). `RemoteViewerSource` makes that mistake IMPOSSIBLE to make by
+// accident: there is no field here named anything an author could confuse
+// for a local path, and `openRemote`'s existence is how a viewer OPTS IN to
+// remote support at all — no viewer accidentally receives a remote source
+// through its `open(absPath: string)` overload, because that overload's type
+// never changed.
+export interface RemoteViewerSource {
+  /** The remote vault's pairing host — same string `RemoteVault.host` (docs
+   *  §Task 2) carries, threaded straight through to `remote_read_asset`. */
+  host: string;
+  /** The host's stable id for this vault (`RemoteVault.remoteVaultId`). */
+  remoteVaultId: string;
+  /** Vault-relative path ("노트/파일.md") — never a local absolute path. */
+  path: string;
+}
+
 export interface Viewer {
   /** NEVER-RENAME — same reason a ShortcutAction/SidebarPanel id never
    *  renames (shortcuts/registry.ts, sidebar/registry.ts): a future
@@ -48,6 +68,23 @@ export interface Viewer {
    *  see design §5 (a registry that owned the slot would become the God
    *  object R9 explicitly avoided, sidebar/registry.ts:15-17). */
   open(absPath: string): ViewerHandle;
+  /** T6 (0.18.0): open this viewer against a REMOTE vault's bytes. Optional —
+   *  a viewer that does not implement this is, by construction, remote-
+   *  unsupported (`viewerSupportsRemote` below); there is no separate
+   *  hand-kept "which extensions are remote-capable" list to drift out of
+   *  sync (the exact drift `remote-capability.ts`'s old
+   *  `REMOTE_UNSUPPORTED_EXTENSIONS` Set was retired for — design §4.4). A
+   *  viewer that reads through local-disk-only Tauri commands (sqlite/hwp/
+   *  epub) simply never implements this. */
+  openRemote?(source: RemoteViewerSource): ViewerHandle;
+}
+
+/** Does `v` support opening against a remote vault — the SINGLE place this
+ *  question is asked, so a caller never re-derives `typeof v.openRemote ===
+ *  "function"` inline (and risks a future refactor drifting the two apart).
+ *  Pure query. */
+export function viewerSupportsRemote(v: Viewer): boolean {
+  return typeof v.openRemote === "function";
 }
 
 const viewers: Viewer[] = [];

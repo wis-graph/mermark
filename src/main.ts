@@ -94,7 +94,7 @@ import { setDocumentOpenHandler } from "./markdown/document-open";
 import { openStandardLocalLink, markLocalLinkFailure, REMOTE_VAULT_LOCAL_LINK_MESSAGE } from "./markdown/local-doc-link";
 import { isRemoteVault, rowHasLocalPath } from "./document/document-vault";
 import { openPath as openInNativeAppPath, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { remoteCanOpen, remoteUnsupportedMessage } from "./document/remote-capability";
+import { remoteUnsupportedMessage } from "./document/remote-capability";
 import { setImageSearchRoot, owningVaultRoot } from "./markdown/image-search-root";
 import { attachImageToVault } from "./markdown/attach-image";
 import {
@@ -122,7 +122,7 @@ import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
 import { registerSqliteViewer } from "./chrome/viewer/sqlite-viewer";
 import { registerEpubViewer } from "./chrome/viewer/epub-viewer";
-import { registerViewer, viewerFor, type Viewer } from "./chrome/viewer/registry";
+import { registerViewer, viewerFor, viewerSupportsRemote, type Viewer } from "./chrome/viewer/registry";
 import { createDontStackSlot } from "./chrome/viewer/dont-stack-slot";
 import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
 import { icon, type IconName } from "./icons";
@@ -898,16 +898,27 @@ async function boot() {
   function openWithViewer(absPath: string, targetVault: Vault): void {
     const v = viewerForEntry(basename(absPath));
     if (!v) return;
-    // Remote vaults (v1, read-only) only ever serve markdown + images through
-    // `remote_read_file`/asset-src reads — every OTHER registered viewer's
-    // open() reads through a Tauri command or local-disk path with no remote
-    // counterpart (remote-capability.ts's own doc comment has the full list).
-    // Refuse with an explicit, visible message here rather than letting the
-    // viewer open and fail silently/partially (this repo forbids silent
-    // degradation) — the row itself stays clickable, it just reports the
-    // truth instead of opening a broken pane.
-    if (isRemoteVault(targetVault) && !remoteCanOpen(basename(absPath))) {
-      save.set("error", remoteUnsupportedMessage(basename(absPath)));
+    // T6 (0.18.0): a remote (read-only) vault's row carries a VAULT-RELATIVE
+    // path, not a local absolute one — `absPath` here is that relative path
+    // for a remote row. Whether this viewer can open it at all is now the
+    // viewer's OWN declaration (`openRemote`), not a hand-kept extension
+    // list (design §4.4) — a viewer that never implements `openRemote` is,
+    // by construction, remote-unsupported. Refuse with an explicit, visible
+    // message rather than letting `open()` run against a relative path as if
+    // it were absolute (this repo forbids silent degradation, and that exact
+    // leak class has recurred 6 times — design §6).
+    if (isRemoteVault(targetVault)) {
+      if (!viewerSupportsRemote(v)) {
+        save.set("error", remoteUnsupportedMessage(basename(absPath)));
+        return;
+      }
+      const handle = viewerSlot.open(() =>
+        v.openRemote!({ host: targetVault.host, remoteVaultId: targetVault.remoteVaultId, path: absPath }),
+      );
+      // No breadcrumb rewrite here (L4, design §6): `dirOf(absPath)` would
+      // treat a vault-relative path as though it named a local folder. A
+      // remote open leaves the breadcrumb exactly where it already was.
+      handle.onClose(() => breadcrumb.render(currentBaseDir));
       return;
     }
     const handle = viewerSlot.open(() => v.open(absPath));

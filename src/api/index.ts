@@ -88,9 +88,18 @@ export { renderSidebarButton } from "../sidebar/toggle";
 // deliberately NOT re-exported — only main.ts (the composition root) queries
 // "which viewer opens this file"; an extension registers its own viewer and
 // has no legitimate reason to query another's.
-export { registerViewer, type Viewer, type ViewerHandle } from "../chrome/viewer/registry";
+export { registerViewer, type Viewer, type ViewerHandle, type RemoteViewerSource } from "../chrome/viewer/registry";
 export { openViewerShell, type ViewerShell } from "../chrome/viewer/shell";
-export { readLocalFileBytes } from "../chrome/viewer/file-bytes";
+export {
+  readLocalFileBytes,
+  // T6 (0.18.0): the remote counterpart of `readLocalFileBytes` + its
+  // size-cap error helpers, so the four bytes-only viewer extensions
+  // (pdf/docx/excel/html-OFF) can implement `openRemote` without reaching
+  // outside the facade.
+  readRemoteFileBytes,
+  isRemoteAssetTooLarge,
+  REMOTE_ASSET_TOO_LARGE_MESSAGE,
+} from "../chrome/viewer/file-bytes";
 
 // R11 2단계 (_workspace/01_html_viewer.md §6): the HTML viewer's ⌘± zoom sink
 // (a parent-side transform scale, since an iframe document can't inherit

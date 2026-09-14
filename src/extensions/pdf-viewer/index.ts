@@ -22,8 +22,10 @@ import {
   registerViewer,
   openViewerShell,
   readLocalFileBytes,
+  readRemoteFileBytes,
   type Viewer,
   type ViewerHandle,
+  type RemoteViewerSource,
 } from "../../api";
 import { fitWidthScale } from "./fit-width-scale";
 
@@ -1302,14 +1304,18 @@ export function ensureReadableStreamAsyncIterator(): void {
   };
 }
 
-function openPdfViewer(absPath: string): ViewerHandle {
+/** Open the PDF viewer against a bytes source — `pathForCaption` is used only
+ *  for the shell's basename caption, never for IO (`getBytes` supplies the
+ *  actual fetch, local or remote — see `openPdfViewer`/`openPdfViewerRemote`
+ *  below). Command. */
+function openPdfViewerFromBytes(pathForCaption: string, getBytes: () => Promise<ArrayBuffer>): ViewerHandle {
   ensureStyleInjected();
   ensureReadableStreamAsyncIterator();
   const content = document.createElement("div");
   content.className = "pdf-viewer-status";
   content.textContent = "문서 불러오는 중…";
 
-  const shell = openViewerShell({ absPath, paneClass: "pdf-viewer", content });
+  const shell = openViewerShell({ absPath: pathForCaption, paneClass: "pdf-viewer", content });
 
   let observerHandle: { disconnect(): void } | null = null;
   let loadingTask: PdfLoadingTask | null = null;
@@ -1349,7 +1355,7 @@ function openPdfViewer(absPath: string): ViewerHandle {
 
   (async () => {
     const [bytes, pdfjsMod] = await Promise.all([
-      readLocalFileBytes(absPath),
+      getBytes(),
       import("pdfjs-dist") as unknown as Promise<PdfjsModule>,
       import("pdfjs-dist/web/pdf_viewer.css" as string),
     ]);
@@ -1487,11 +1493,23 @@ function openPdfViewer(absPath: string): ViewerHandle {
   return { close: () => shell.close(), onClose: (cb) => shell.onTeardown(cb) };
 }
 
+/** Open `absPath` (local) in the PDF viewer. Command. */
+function openPdfViewer(absPath: string): ViewerHandle {
+  return openPdfViewerFromBytes(absPath, () => readLocalFileBytes(absPath));
+}
+
+/** T6 (0.18.0): open a remote vault's PDF — same render pipeline, only the
+ *  byte source differs. Command. */
+function openPdfViewerRemote(source: RemoteViewerSource): ViewerHandle {
+  return openPdfViewerFromBytes(source.path, () => readRemoteFileBytes(source));
+}
+
 const PDF_VIEWER: Viewer = {
   id: "ext.pdf",
   extensions: ["pdf"],
   label: "PDF",
   open: openPdfViewer,
+  openRemote: openPdfViewerRemote,
 };
 
 /** Register the PDF viewer. Called once from activateExtensions() at boot

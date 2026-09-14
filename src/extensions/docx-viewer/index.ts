@@ -28,8 +28,10 @@ import {
   registerViewer,
   openViewerShell,
   readLocalFileBytes,
+  readRemoteFileBytes,
   type Viewer,
   type ViewerHandle,
+  type RemoteViewerSource,
 } from "../../api";
 import { docxContainerKind, type DocxContainerKind } from "./container-kind";
 
@@ -129,17 +131,20 @@ export function docxOpenErrorMessage(kind: DocxContainerKind, err?: unknown): st
   return `문서를 열 수 없습니다: ${err instanceof Error ? err.message : String(err)}`;
 }
 
-/** Open `absPath` in the docx viewer: shell up immediately with a loading
- *  status, then fetch bytes + dynamic-import docx-preview in the background,
- *  gate on `docxContainerKind`, and swap in the rendered pages (or an error
- *  status) when ready. Mirrors excel-viewer's openExcelViewer shape. Command. */
-function openDocxViewer(absPath: string): ViewerHandle {
+/** Open the docx viewer against a bytes source: shell up immediately with a
+ *  loading status, then fetch bytes (via `getBytes` — see
+ *  `openDocxViewer`/`openDocxViewerRemote` below) + dynamic-import
+ *  docx-preview in the background, gate on `docxContainerKind`, and swap in
+ *  the rendered pages (or an error status) when ready. `pathForCaption` is
+ *  used only for the shell's basename caption — never for IO. Mirrors
+ *  excel-viewer's `openExcelViewerFromBytes` shape. Command. */
+function openDocxViewerFromBytes(pathForCaption: string, getBytes: () => Promise<ArrayBuffer>): ViewerHandle {
   ensureStyleInjected();
   const content = document.createElement("div");
   content.className = "docx-viewer-status";
   content.textContent = "문서 불러오는 중…";
 
-  const shell = openViewerShell({ absPath, paneClass: "docx-viewer", content });
+  const shell = openViewerShell({ absPath: pathForCaption, paneClass: "docx-viewer", content });
 
   // Set the instant `shell.close()` runs, even mid-flight — the async IIFE
   // below checks this before ever touching `content` again (design §핵심
@@ -152,7 +157,7 @@ function openDocxViewer(absPath: string): ViewerHandle {
 
   (async () => {
     const [bytes, docxPreview] = await Promise.all([
-      readLocalFileBytes(absPath),
+      getBytes(),
       import("docx-preview") as unknown as Promise<DocxPreviewModule>,
     ]);
 
@@ -233,11 +238,23 @@ function openDocxViewer(absPath: string): ViewerHandle {
   return { close: () => shell.close(), onClose: (cb) => shell.onTeardown(cb) };
 }
 
+/** Open `absPath` (local) in the docx viewer. Command. */
+function openDocxViewer(absPath: string): ViewerHandle {
+  return openDocxViewerFromBytes(absPath, () => readLocalFileBytes(absPath));
+}
+
+/** T6 (0.18.0): open a remote vault's docx — same render pipeline, only the
+ *  byte source differs. Command. */
+function openDocxViewerRemote(source: RemoteViewerSource): ViewerHandle {
+  return openDocxViewerFromBytes(source.path, () => readRemoteFileBytes(source));
+}
+
 const DOCX_VIEWER: Viewer = {
   id: "ext.docx", // NEVER-RENAME (registry.ts) — disabledViewersSetting persists this id
   extensions: ["docx"], // .doc is NOT claimed — docx-preview cannot read a CFB container
   label: "Word (docx)",
   open: openDocxViewer,
+  openRemote: openDocxViewerRemote,
 };
 
 /** Register the docx viewer. Called once from activateExtensions() at boot

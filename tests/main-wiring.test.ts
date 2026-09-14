@@ -82,7 +82,10 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
     if (remotePath.startsWith("/")) return Promise.reject(new Error("REMOTE:SharingOff"));
     // "책.epub" (task 11): a remote vault CAN list a non-viewable file — the
     // listing itself is just names/paths — but opening it must be refused
-    // (remote-capability.ts's remoteCanOpen), not silently mis-rendered.
+    // (T6, 0.18.0: the epub viewer never implements `openRemote` —
+    // registry.ts's `viewerSupportsRemote` — so main.ts's openWithViewer
+    // refuses it via remote-capability.ts's remoteUnsupportedMessage),
+    // not silently mis-rendered.
     if (remotePath === REMOTE_VAULT_WIRE_ROOT) {
       return Promise.resolve([
         { name: "노트.md", path: "노트.md", is_dir: false },
@@ -1562,11 +1565,14 @@ describe("main workspace wiring", () => {
       expect(modeToggle?.textContent).toContain("읽기 전용 (원격)");
 
       // Clicking the EPUB row must not open a (broken/empty) viewer overlay —
-      // it must report the explicit "아직 지원하지 않습니다" refusal instead.
+      // it must report an explicit refusal instead. T6 (0.18.0) gave EPUB its
+      // own per-kind wording (design §4.3) rather than the old generic
+      // "아직 지원하지 않습니다" every unsupported type used to share — see
+      // src/document/remote-capability.test.ts for the full per-kind matrix.
       const epubRow = document.querySelector<HTMLElement>('.explorer-file[data-path="책.epub"]');
       expect(epubRow).not.toBeNull();
       epubRow?.click();
-      await vi.waitFor(() => expect(document.querySelector(".save-status")?.textContent).toContain("원격 볼트에서는 아직 지원하지 않습니다"));
+      await vi.waitFor(() => expect(document.querySelector(".save-status")?.textContent).toContain("원격 볼트의 EPUB은 아직 지원하지 않습니다"));
       expect(document.querySelector(".viewer-panel")).toBeNull();
     });
 

@@ -372,6 +372,45 @@ function refusesStaleSshTunnel(host: string): void {
   }
 }
 
+// ── remote_read_asset mock (T6, 0.18.0) ─────────────────────────────────────
+/** T6 regression guard, mirroring the real host's 20 MiB `MAX_ASSET_BYTES`
+ *  cap (remote_host.rs, design §4.5): the mock has no real oversized fixture
+ *  to serve, so a path whose basename starts with "too-large" is a
+ *  discoverable magic value (same idiom `remoteMockError`'s "mock-error:"
+ *  host prefix already uses) that forces the SAME `REMOTE_ASSET_TOO_LARGE:`
+ *  prefix the real backend returns for a 413 — the exact QA finding this
+ *  round fixes ("413 reported as Unreachable") must stay caught by a mock
+ *  that can actually produce a 413-shaped rejection. */
+function refusesRemoteAssetOverCap(path: string): void {
+  const base = path.split("/").pop() ?? path;
+  if (base.startsWith("too-large")) throw `REMOTE_ASSET_TOO_LARGE: ${path}`;
+}
+
+/** Real fixture files this mock can already serve as LOCAL bytes (Vite's
+ *  browser-mode publicDir, mock-assets/mock/vault/*) — reused here so a
+ *  remote-vault open of the SAME basename renders the SAME real content a
+ *  local open would (a golden-master scenario can assert on actual
+ *  rendered rows/pages, not just "did not throw"), instead of every remote
+ *  asset being opaque placeholder bytes. Any other path falls back to
+ *  deterministic placeholder bytes — real content is a nice-to-have here,
+ *  never a requirement (no test asserts byte VALUES for those). */
+const REMOTE_ASSET_LOCAL_FIXTURES = new Set(["report.xlsx", "guide.pdf", "sample.pdf", "sample.docx", "sample.html", "sample-asset.png"]);
+
+async function mockRemoteAssetBytes(path: string): Promise<Uint8Array> {
+  const base = path.split("/").pop() ?? path;
+  if (REMOTE_ASSET_LOCAL_FIXTURES.has(base)) {
+    try {
+      const res = await fetch(`/mock/vault/${base}`);
+      if (res.ok) return new Uint8Array(await res.arrayBuffer());
+    } catch {
+      // fall through to the placeholder below — a fetch failure here is a
+      // dev:browser environment quirk, not something remote_read_asset's
+      // OWN contract should ever surface as a rejection.
+    }
+  }
+  return new TextEncoder().encode(`mock remote asset: ${path}`);
+}
+
 // ── remote_ssh_* mock state (client-side SSH tunnel fallback — task 12) ────
 // Mirrors `SshTunnels` (src-tauri/src/remote_ssh.rs): at most one tunneled
 // host at a time, reused when the same host connects again, refused when a
@@ -846,6 +885,23 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       console.info("[mock] arm_html_view_root", a.dir, "->", token);
       return token as T;
     }
+    case "arm_remote_html_view_root": {
+      // T7 (0.18.0): mirrors the real
+      // `arm_remote_html_view_root(host, vault, dir) -> Result<String, String>`
+      // (design §5.5) — the remote counterpart of `arm_html_view_root` just
+      // above, same rationale for a FIXED token (determinism for spy
+      // assertions, no real `htmlview://` handler in a plain browser).
+      // Distinct token string so a test can tell "which arm call produced
+      // this iframe.src" apart without inspecting the invoke args again.
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      refusesStaleSshTunnel(host);
+      refusesEscapingRemotePath(a.dir);
+      const token = "mock-remote-view-token";
+      console.info("[mock] arm_remote_html_view_root", host, a.vault, a.dir, "->", token);
+      return token as T;
+    }
     case "arm_epub_view": {
       // Mirrors the real `arm_epub_view(path) -> Result<String, String>`
       // (_workspace/01_architect_design_epub.md §2). There is no `epub://`
@@ -1092,6 +1148,27 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       refusesEscapingRemotePath(a.path);
       console.info("[mock] remote_read_image", host, a.vault, a.path);
       return "data:image/png;base64,iVBORw0KGgo=" as T;
+    }
+    case "remote_read_asset": {
+      // Mirrors `remote_read_asset(host, vault, path) -> Result<tauri::ipc::Response, String>`
+      // (design §4.5/§8-B): the JS side of a `tauri::ipc::Response` is an
+      // `ArrayBuffer`, so this mock hands one back too — the same shape
+      // `readRemoteFileBytes`'s `toArrayBuffer` normalizer already accepts,
+      // so a browser-mode caller exercises the exact code path a real
+      // WKWebView would. `refusesRemoteAssetOverCap` fires FIRST (mirrors
+      // the real backend intercepting 413 before `send_authorized` — design
+      // §4.5) so the mock can't be more lenient than the real host on the
+      // one failure class this round's own QA finding was about (413 being
+      // reported as "연결 안 됨").
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      refusesStaleSshTunnel(host);
+      refusesEscapingRemotePath(a.path);
+      refusesRemoteAssetOverCap(String(a.path ?? ""));
+      console.info("[mock] remote_read_asset", host, a.vault, a.path);
+      const bytes = await mockRemoteAssetBytes(String(a.path ?? ""));
+      return bytes.buffer as T;
     }
     case "remote_resolve_image": {
       // Mirrors `remote_resolve_image(host, vault, path, name, max_depth) ->

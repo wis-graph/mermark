@@ -85,10 +85,12 @@ import {
   registerViewer,
   openViewerShell,
   readLocalFileBytes,
+  readRemoteFileBytes,
   htmlViewerScripts,
   type Viewer,
   type ViewerHandle,
   type ViewerShell,
+  type RemoteViewerSource,
 } from "../../api";
 import { decodeHtmlBytes, rewriteRelativeSrcAttrs } from "./prepare-html";
 import { htmlViewUrl } from "./scripted-url";
@@ -263,8 +265,25 @@ function scriptExecutionEnabled(): boolean {
  *  iframe end to end — it shares nothing about iframe creation/sandbox/source
  *  with `openScriptedHtmlDocument` below (see this file's header comment: a
  *  shared iframe-build path is exactly where a stray allow-* token could
- *  creep into this path). Command. */
-function openStaticHtmlDocument(absPath: string, shell: ViewerShell, content: HTMLElement): void {
+ *  creep into this path).
+ *
+ *  T6 (0.18.0): `getBytes`/`rewriteBaseDir` are the ONLY seams that differ
+ *  between a local and a remote open (see `openStaticHtmlDocument`/
+ *  `openStaticHtmlDocumentRemote` below) — `rewriteBaseDir: null` skips
+ *  `rewriteRelativeSrcAttrs` entirely for a remote document: that rewrite
+ *  turns a relative sibling asset (`<img src="./chart.png">`) into a LOCAL
+ *  `convertFileSrc` asset URL, which has no remote counterpart yet (that
+ *  would need a `remote_read_asset` round trip per sibling reference — out
+ *  of this round's scope). A remote document's own relative asset
+ *  references simply don't resolve, same as any other broken relative URL —
+ *  the viewer itself still opens and renders the document's TEXT correctly,
+ *  never a broken pane. Command. */
+function openStaticHtmlDocumentFromBytes(
+  shell: ViewerShell,
+  content: HTMLElement,
+  getBytes: () => Promise<ArrayBuffer>,
+  rewriteBaseDir: string | null,
+): void {
   const iframe = document.createElement("iframe");
   iframe.className = "html-viewer-frame";
   // THE SECURITY-CRITICAL LINE (design §0/§2/§7 T1): setAttribute with an
@@ -284,9 +303,9 @@ function openStaticHtmlDocument(absPath: string, shell: ViewerShell, content: HT
   bindZoomSink(shell, iframe);
 
   (async () => {
-    const bytes = await readLocalFileBytes(absPath);
+    const bytes = await getBytes();
     const decoded = decodeHtmlBytes(bytes);
-    const prepared = rewriteRelativeSrcAttrs(decoded, parentDir(absPath), convertFileSrc);
+    const prepared = rewriteBaseDir !== null ? rewriteRelativeSrcAttrs(decoded, rewriteBaseDir, convertFileSrc) : decoded;
 
     content.className = "html-viewer-frame-wrap";
     content.replaceChildren(iframe);
@@ -298,6 +317,16 @@ function openStaticHtmlDocument(absPath: string, shell: ViewerShell, content: HT
     // above.
     iframe.srcdoc = prepared;
   })().catch((err) => showOpenError(content, err));
+}
+
+/** Open `absPath` (local) via the OFF path. Command. */
+function openStaticHtmlDocument(absPath: string, shell: ViewerShell, content: HTMLElement): void {
+  openStaticHtmlDocumentFromBytes(shell, content, () => readLocalFileBytes(absPath), parentDir(absPath));
+}
+
+/** T6 (0.18.0): open a remote vault's HTML via the OFF path. Command. */
+function openStaticHtmlDocumentRemote(source: RemoteViewerSource, shell: ViewerShell, content: HTMLElement): void {
+  openStaticHtmlDocumentFromBytes(shell, content, () => readRemoteFileBytes(source), null);
 }
 
 /** Scripted-mode signal (design §5): a small "JS" badge next to the viewer's
@@ -330,15 +359,29 @@ function attachJsBadge(caption: HTMLElement): void {
  *  `<meta charset>` natively (design §2's "부수 이득"), so none of the
  *  static path's byte-level prep applies here. Owns its own iframe end to
  *  end, same as `openStaticHtmlDocument` — see this file's header comment
- *  for why the two never share iframe construction. Command. */
-function openScriptedHtmlDocument(absPath: string, shell: ViewerShell, content: HTMLElement): void {
+ *  for why the two never share iframe construction.
+ *
+ *  T7 (0.18.0, design §5/§8.3): `armToken`/`docFileName` are the ONLY seams
+ *  that differ between a local and a remote open (see
+ *  `openScriptedHtmlDocument`/`openScriptedHtmlDocumentRemote` below) —
+ *  everything from the sandbox tokens down to `htmlViewUrl`'s URL shape is
+ *  unchanged either way, since the backend's per-open TOKEN (not the path)
+ *  is what the URL host carries, and the `htmlview://` handler resolves
+ *  siblings against whatever directory (local or remote) that token was
+ *  armed for. Command. */
+function openScriptedHtmlDocumentFromToken(
+  docFileName: string,
+  shell: ViewerShell,
+  content: HTMLElement,
+  armToken: () => Promise<string>,
+): void {
   const iframe = document.createElement("iframe");
   iframe.className = "html-viewer-frame";
 
   bindZoomSink(shell, iframe);
   attachJsBadge(shell.caption);
 
-  invoke<string>("arm_html_view_root", { dir: parentDir(absPath) })
+  armToken()
     .then((token) => {
       // THE SECURITY-CRITICAL LINE for this path (design §10.3): exactly
       // these two tokens, never more. `allow-same-origin` makes the frame
@@ -349,12 +392,37 @@ function openScriptedHtmlDocument(absPath: string, shell: ViewerShell, content: 
       content.replaceChildren(iframe);
       // `src`, not `srcdoc` — this is what makes the document load through
       // the `htmlview://` handler (and its own, handler-issued CSP) instead
-      // of inheriting the app's CSP (design §2's ⓔ decision). `fileName`,
-      // not `absPath` — the token already pins the directory; only the doc's
-      // own file name is left to name within it (design §10.7).
-      iframe.src = htmlViewUrl(token, fileName(absPath));
+      // of inheriting the app's CSP (design §2's ⓔ decision). `docFileName`,
+      // not the full path — the token already pins the directory; only the
+      // doc's own file name is left to name within it (design §10.7).
+      iframe.src = htmlViewUrl(token, docFileName);
     })
     .catch((err) => showOpenError(content, err));
+}
+
+/** Open `absPath` (local) via the ON (scripted) path: arms a LOCAL directory
+ *  root (`arm_html_view_root`). Command. */
+function openScriptedHtmlDocument(absPath: string, shell: ViewerShell, content: HTMLElement): void {
+  openScriptedHtmlDocumentFromToken(fileName(absPath), shell, content, () =>
+    invoke<string>("arm_html_view_root", { dir: parentDir(absPath) }),
+  );
+}
+
+/** T7 (0.18.0): open a remote vault's HTML via the ON (scripted) path: arms
+ *  a REMOTE directory root (`arm_remote_html_view_root`) instead — the
+ *  `htmlview://` handler's remote branch then fetches every sibling request
+ *  (the document itself, and any same-folder CSS/JS/image it references)
+ *  through `fetch_vault_asset`, never the local filesystem (design §5.5's
+ *  `HtmlViewRoot::Remote` — a type-level guarantee, not just a runtime
+ *  check). `dir`/`docFileName` are both derived from `source.path` — a
+ *  VAULT-RELATIVE string, never a local absolute one — using the exact same
+ *  `parentDir`/`fileName` string-splitting this module already uses for a
+ *  local absolute path (both are plain "last `/`" splits, so a relative
+ *  path works identically). Command. */
+function openScriptedHtmlDocumentRemote(source: RemoteViewerSource, shell: ViewerShell, content: HTMLElement): void {
+  openScriptedHtmlDocumentFromToken(fileName(source.path), shell, content, () =>
+    invoke<string>("arm_remote_html_view_root", { host: source.host, vault: source.remoteVaultId, dir: parentDir(source.path) }),
+  );
 }
 
 /** Open `absPath` in the HTML viewer: shell up immediately with a loading
@@ -381,11 +449,33 @@ function openHtmlViewer(absPath: string): ViewerHandle {
   return { close: () => shell.close(), onClose: (cb) => shell.onTeardown(cb) };
 }
 
+/** T6/T7 (0.18.0): open a remote vault's HTML — the same static/scripted
+ *  branch point as `openHtmlViewer`, only every leaf it dispatches to reads
+ *  through `source` (host/remoteVaultId/vault-relative path) instead of a
+ *  local absolute path. Command. */
+function openHtmlViewerRemote(source: RemoteViewerSource): ViewerHandle {
+  ensureStyleInjected();
+  const content = document.createElement("div");
+  content.className = "html-viewer-status";
+  content.textContent = "문서 불러오는 중…";
+
+  const shell = openViewerShell({ absPath: source.path, paneClass: "html-viewer", content });
+
+  if (scriptExecutionEnabled()) {
+    openScriptedHtmlDocumentRemote(source, shell, content);
+  } else {
+    openStaticHtmlDocumentRemote(source, shell, content);
+  }
+
+  return { close: () => shell.close(), onClose: (cb) => shell.onTeardown(cb) };
+}
+
 const HTML_VIEWER: Viewer = {
   id: "ext.html",
   extensions: ["html", "htm"],
   label: "HTML",
   open: openHtmlViewer,
+  openRemote: openHtmlViewerRemote,
 };
 
 /** Register the HTML viewer. Called once from activateExtensions() at boot

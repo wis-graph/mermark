@@ -190,6 +190,9 @@ describe("api fence (design §2.3 / plan Stage C-1)", () => {
     expect(api.openViewerShell).toBe(viewerShell.openViewerShell);
     const fileBytes = await import("../src/chrome/viewer/file-bytes");
     expect(api.readLocalFileBytes).toBe(fileBytes.readLocalFileBytes);
+    // T6 (0.18.0): the remote bytes fetch + its size-cap helpers.
+    expect(api.readRemoteFileBytes).toBe(fileBytes.readRemoteFileBytes);
+    expect(api.isRemoteAssetTooLarge).toBe(fileBytes.isRemoteAssetTooLarge);
     // Report-style table auto-align (2026-07-20): looksNumeric re-export.
     const numericCell = await import("../src/text/numeric-cell");
     expect(api.looksNumeric).toBe(numericCell.looksNumeric);

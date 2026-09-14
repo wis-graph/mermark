@@ -23,9 +23,11 @@ import {
   registerViewer,
   openViewerShell,
   readLocalFileBytes,
+  readRemoteFileBytes,
   looksNumeric,
   type Viewer,
   type ViewerHandle,
+  type RemoteViewerSource,
 } from "../../api";
 import {
   sheetToRows,
@@ -487,29 +489,35 @@ function renderWorkbook(
   renderActive();
 }
 
-/** Open `absPath` in the Excel viewer: shell up immediately with a loading
- *  status, then fetch bytes + dynamic-import xlsx + parse in the background
- *  and swap in the workbook (or an error status) when ready. Command. */
-function openExcelViewer(absPath: string): ViewerHandle {
+/** Open the Excel viewer against a bytes source: shell up immediately with a
+ *  loading status, then fetch bytes (via `getBytes` — the local/remote
+ *  difference is entirely the caller's, see `openExcelViewer`/
+ *  `openExcelViewerRemote` below) + dynamic-import xlsx + parse in the
+ *  background, and swap in the workbook (or an error status) when ready.
+ *  `pathForCaption` is used ONLY for the shell's basename caption and
+ *  `decodeSpreadsheetInput`'s extension check (csv vs. binary) — never for
+ *  IO, so a vault-relative remote path works here exactly like a local
+ *  absolute one. Command. */
+function openExcelViewerFromBytes(pathForCaption: string, getBytes: () => Promise<ArrayBuffer>): ViewerHandle {
   ensureStyleInjected();
   const content = document.createElement("div");
   content.className = "excel-viewer-status";
   content.textContent = "문서 불러오는 중…";
 
-  const shell = openViewerShell({ absPath, paneClass: "excel-viewer", content });
+  const shell = openViewerShell({ absPath: pathForCaption, paneClass: "excel-viewer", content });
   // openViewerShell sets the caption to basename(absPath) initially (shell.ts
   // owns that computation, the single "compute a viewer's file identity"
   // rule) — captured here so renderWorkbook can keep it once the caption
   // switches to per-sheet text, without this module re-deriving a basename.
-  const fileName = shell.caption.textContent ?? absPath;
+  const fileName = shell.caption.textContent ?? pathForCaption;
 
   (async () => {
-    const [bytes, XLSX] = await Promise.all([readLocalFileBytes(absPath), import("xlsx")]);
+    const [bytes, XLSX] = await Promise.all([getBytes(), import("xlsx")]);
     // csv = text, xlsx/xls = binary (decode-input.ts's isTextSpreadsheet) —
     // SheetJS needs a DIFFERENT `type` for each, or a BOM-less UTF-8 CSV
     // mojibakes (it reads the raw bytes as latin1 — real bug, real file, see
     // decode-input.ts's header comment).
-    const input = decodeSpreadsheetInput(absPath, bytes);
+    const input = decodeSpreadsheetInput(pathForCaption, bytes);
     const wb = XLSX.read(input, { type: typeof input === "string" ? "string" : "array" });
     const sheets: RenderedSheet[] = wb.SheetNames.map((name) => {
       const table = sheetToRows(XLSX, wb.Sheets[name]);
@@ -532,6 +540,18 @@ function openExcelViewer(absPath: string): ViewerHandle {
   // onClose forwards the shell teardown so the OPENER learns about closes
   // it did not initiate (Esc / header ✕) — see ViewerHandle.onClose.
   return { close: () => shell.close(), onClose: (cb) => shell.onTeardown(cb) };
+}
+
+/** Open `absPath` (local) in the Excel viewer. Command. */
+function openExcelViewer(absPath: string): ViewerHandle {
+  return openExcelViewerFromBytes(absPath, () => readLocalFileBytes(absPath));
+}
+
+/** T6 (0.18.0): open a remote vault's spreadsheet — same render pipeline as
+ *  `openExcelViewer`, only the byte source differs (`remote_read_asset` via
+ *  `readRemoteFileBytes`, not the asset protocol). Command. */
+function openExcelViewerRemote(source: RemoteViewerSource): ViewerHandle {
+  return openExcelViewerFromBytes(source.path, () => readRemoteFileBytes(source));
 }
 
 const EXCEL_VIEWER: Viewer = {
@@ -559,6 +579,7 @@ const EXCEL_VIEWER: Viewer = {
   extensions: ["xlsx", "xls", "csv"],
   label: "스프레드시트 (Excel·CSV)",
   open: openExcelViewer,
+  openRemote: openExcelViewerRemote,
 };
 
 /** Register the Excel viewer. Called once from activateExtensions() at boot
