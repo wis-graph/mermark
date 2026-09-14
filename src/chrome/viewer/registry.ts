@@ -72,7 +72,7 @@ export interface Viewer {
    *  a viewer that does not implement this is, by construction, remote-
    *  unsupported (`viewerSupportsRemote` below); there is no separate
    *  hand-kept "which extensions are remote-capable" list to drift out of
-   *  sync (the exact drift `remote-capability.ts`'s old
+   *  sync (the exact drift `remote-unsupported-message.ts`'s old
    *  `REMOTE_UNSUPPORTED_EXTENSIONS` Set was retired for — design §4.4). A
    *  viewer that reads through local-disk-only Tauri commands (sqlite/hwp/
    *  epub) simply never implements this. */
@@ -82,8 +82,14 @@ export interface Viewer {
 /** Does `v` support opening against a remote vault — the SINGLE place this
  *  question is asked, so a caller never re-derives `typeof v.openRemote ===
  *  "function"` inline (and risks a future refactor drifting the two apart).
- *  Pure query. */
-export function viewerSupportsRemote(v: Viewer): boolean {
+ *  A TYPE PREDICATE, not a bare boolean — this is the point of making
+ *  `openRemote` optional in the first place (design §4.4's "a type-level
+ *  guarantee, not just a runtime check"): a caller that gates on this
+ *  narrows `v.openRemote` to a definitely-present function and can call it
+ *  with NO non-null assertion. A boolean return would have thrown that
+ *  guarantee away one step from the finish line — `main.ts`'s only call
+ *  site would still need `v.openRemote!(...)`. Pure query. */
+export function viewerSupportsRemote(v: Viewer): v is Viewer & { openRemote: (source: RemoteViewerSource) => ViewerHandle } {
   return typeof v.openRemote === "function";
 }
 

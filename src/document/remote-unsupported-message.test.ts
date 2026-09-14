@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { remoteUnsupportedMessage } from "./remote-capability";
+import { remoteUnsupportedMessage } from "./remote-unsupported-message";
 
 // T6 (0.18.0): `remoteCanOpen`/`REMOTE_UNSUPPORTED_EXTENSIONS` are gone — a
 // registered Viewer's own `openRemote` (chrome/viewer/registry.ts) now

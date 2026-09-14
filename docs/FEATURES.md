@@ -2,7 +2,8 @@
 
 > mermark의 전체 기능을 아키텍처 계층별로 구조화한 단일 참조. **기능을 추가/변경하면 이 문서를 갱신한다**(mermark-dev 파이프라인 Phase 6 규약). 정체성: 가벼운 마크다운 파일 편집·렌더링을 중심으로, 선택 가능한 workspace/vault 탐색과 탭을 제공하는 경량 에디터.
 >
-> 기준 버전: v0.16.2 (`package.json`, 배포됨) + 미배포 변경분(원격 볼트 — 호스트/클라이언트/SSH 폴백/공유 설정/원격 볼트 추가/연결 배지 · 원격 볼트 추가 시 호스트 형식 사전 검증 · 탐색기 우클릭 컨텍스트 메뉴) · 최종 갱신: 2026-09-15
+> 기준 버전: v0.17.1 (`package.json`, 배포됨) + 미배포 변경분(0.18.0 — 원격 볼트에서 PDF·DOCX·
+> XLSX/XLS/CSV·HTML을 열 수 있음, 원격 HTML 스크립트 실행) · 최종 갱신: 2026-09-15
 
 ---
 
@@ -35,6 +36,7 @@
 - **`remote_ssh.rs`** — Tailscale이 없는 사용자를 위한 `ssh -L` 터널 폴백. mermark는 SSH 키를 전혀 만지지 않는다(`ssh -N -L <port>:localhost:<port> user@host`를 자식 프로세스로 띄우고 사용자의 `~/.ssh` 설정이 인증을 전담). 터널은 항상 1개만(고정 로컬 포트 재바인드 충돌 방지), 재부팅 후 페어링 세션이 끝나도 `file-host.ts`가 첫 읽기 시점에 지연 재연결한다(fix round 2).
 - **`remote_share.rs`** — 호스트 쪽 제어면: 공유 켜기/끄기(`remote_share_start`/`stop`), 볼트 arm(`ArmedVault` 목록), 페어링 코드 발급(`remote_issue_code`), 기기 목록·해제(`remote_revoke_device`). 공유는 **기본 꺼짐**(`RemoteShareState::new`가 서버를 스스로 켜지 않음, 최소 볼트 1개 이상 명시 지정 후에만 시작). 응답에서도 토큰 필드는 절대 나오지 않는다(`DeviceInfo`에 `token` 없음).
 - **`remote_token.rs`** — 기기 토큰 보관(호스트·클라이언트 양쪽). 앱 config 디렉터리에 **0600**(소유자만 읽기/쓰기)으로, `atomic_write_0600`(temp+rename)으로 원자적 저장. Keychain이 교과서적 정답이지만 이 토큰의 권한 범위가 "사용자가 이미 공유하기로 한 볼트 읽기"로 제한적이라 v1은 권한 파일로 충분하다고 판단(의도적 트레이드오프, `docs/design/remote-vault.md` §5).
+- **원격 볼트에서 여는 비마크다운 파일 확장** (0.18.0, T6/T7) — PDF·DOCX·XLSX/XLS/CSV·HTML(스크립트 실행 ON 포함)이 원격 볼트에서도 정상 렌더된다. **`remote_read_asset`**(신규 커맨드, `remote_client.rs`) — `remote_read_image`와 전송 경로를 공유하는 `fetch_vault_asset` 공용 헬퍼 위에서 원시 바이트를 `tauri::ipc::Response`(JS `ArrayBuffer`)로 돌려준다(이미지처럼 `data:` URL로 33% 부풀리지 않음 — PDF/xlsx 규모에서 그 비용이 안 맞는다). 프론트: `chrome/viewer/registry.ts`의 각 `Viewer`가 선택적 `openRemote(source)` 메서드로 **스스로** 원격 지원을 선언(손으로 유지하던 확장자 목록 삭제 — 새 뷰어가 등록만 되면 절대 드리프트하지 않는다); sqlite/hwp/epub/image 넷은 구현하지 않아 여전히 로컬 전용이다. 호스트 20 MiB 전송 상한 초과는 4-state 연결 실패(`Unreachable`)와 구분되는 `REMOTE_ASSET_TOO_LARGE:` 접두로 분리 보고돼 "너무 큽니다" 문구로 뜬다(구 동작은 "연결 안 됨"으로 거짓 보고). SQLite(구조적 영구 미지원 — 페이지 단위 읽기가 이 뷰어의 존재 이유)·EPUB·HWP/HWPX(이번 라운드는 범위 밖, 영구 아님)는 종류별로 다른 거절 문구를 낸다(`document/remote-unsupported-message.ts`). HTML 스크립트 실행 ON 경로는 **`arm_remote_html_view_root`**(신규 커맨드, `htmlview.rs`)가 원격 디렉터리를 armed root로 잡아 `htmlview://` 커스텀 스킴이 문서 자신뿐 아니라 같은 폴더의 CSS/JS/이미지까지 서빙한다 — 스킴 등록을 `register_uri_scheme_protocol`(동기)에서 `register_asynchronous_uri_scheme_protocol`로 전환해 원격 분기가 네트워크 fetch를 await할 수 있게 했고, 로컬 분기의 동작·CSP·토큰 게이트는 바이트 단위로 불변(테스트로 잠금). 알려진 갭: 원격 정적 HTML(스크립트 OFF)의 상대 형제 자산(`<img src="./x.png">` 등)은 이번 라운드에서 로드되지 않는다 — 참조마다 별도 왕복이 필요해 범위 밖으로 남겨뒀다.
 
 ### 1.3 보안 설정
 - **CSP** — `img-src`/`font-src`(asset:·data:·https:), `media-src`(로컬 비디오), `frame-src`(youtube-nocookie/youtube), `connect-src`(ipc:·asset:), `object-src 'none'`.

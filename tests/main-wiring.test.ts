@@ -84,7 +84,7 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
     // listing itself is just names/paths — but opening it must be refused
     // (T6, 0.18.0: the epub viewer never implements `openRemote` —
     // registry.ts's `viewerSupportsRemote` — so main.ts's openWithViewer
-    // refuses it via remote-capability.ts's remoteUnsupportedMessage),
+    // refuses it via remote-unsupported-message.ts's remoteUnsupportedMessage),
     // not silently mis-rendered.
     if (remotePath === REMOTE_VAULT_WIRE_ROOT) {
       return Promise.resolve([
@@ -1539,8 +1539,8 @@ describe("main workspace wiring", () => {
 
     // Task 11: the persistent read-only indicator and the explicit
     // unsupported-file refusal, driven through the real boot + Explorer
-    // click path (not the pure remote-capability.ts functions in isolation —
-    // those are covered in src/document/remote-capability.test.ts).
+    // click path (not the pure remote-unsupported-message.ts functions in isolation —
+    // those are covered in src/document/remote-unsupported-message.test.ts).
     it("shows a persistent '읽기 전용 (원격)' mode indicator for an open remote document, and refuses an unsupported remote file type with an explicit message instead of opening a broken viewer", async () => {
       localStorage.setItem("mermark.workspaceState", JSON.stringify({
         workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-y"], currentVaultId: "vault-remote-y", lastSelectedPermanentVaultId: null }],
@@ -1568,7 +1568,7 @@ describe("main workspace wiring", () => {
       // it must report an explicit refusal instead. T6 (0.18.0) gave EPUB its
       // own per-kind wording (design §4.3) rather than the old generic
       // "아직 지원하지 않습니다" every unsupported type used to share — see
-      // src/document/remote-capability.test.ts for the full per-kind matrix.
+      // src/document/remote-unsupported-message.test.ts for the full per-kind matrix.
       const epubRow = document.querySelector<HTMLElement>('.explorer-file[data-path="책.epub"]');
       expect(epubRow).not.toBeNull();
       epubRow?.click();

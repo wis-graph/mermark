@@ -425,23 +425,35 @@ function openScriptedHtmlDocumentRemote(source: RemoteViewerSource, shell: Viewe
   );
 }
 
-/** Open `absPath` in the HTML viewer: shell up immediately with a loading
- *  status, then dispatch to the static or scripted open path (design §6) —
- *  the ONE branch point in this file, decided once per open() and never
- *  re-checked afterward. Mirrors excel-viewer's openExcelViewer shape
- *  (design §7 step 4). Command. */
-function openHtmlViewer(absPath: string): ViewerHandle {
+/** Shell up + dispatch to the static or scripted open path (design §6) — the
+ *  ONE branch point in this file, decided once per open() and never
+ *  re-checked afterward. Mirrors excel-viewer's `openExcelViewerFromBytes`
+ *  shape (design §7 step 4): `openHtmlViewer`/`openHtmlViewerRemote` below
+ *  are both thin wrappers around this, supplying only WHICH concrete
+ *  static/scripted function to call for their source (local vs. remote) —
+ *  this function is the only place that ever calls `scriptExecutionEnabled()`
+ *  or builds the shell, so a future edit to the loading status/shell options
+ *  can't drift between the local and remote open paths the way a full
+ *  top-to-bottom duplicate risked. `pathForCaption` is used only for the
+ *  shell's basename caption, never for IO. Command. */
+function openHtmlViewerWith(
+  pathForCaption: string,
+  dispatch: {
+    static: (shell: ViewerShell, content: HTMLElement) => void;
+    scripted: (shell: ViewerShell, content: HTMLElement) => void;
+  },
+): ViewerHandle {
   ensureStyleInjected();
   const content = document.createElement("div");
   content.className = "html-viewer-status";
   content.textContent = "문서 불러오는 중…";
 
-  const shell = openViewerShell({ absPath, paneClass: "html-viewer", content });
+  const shell = openViewerShell({ absPath: pathForCaption, paneClass: "html-viewer", content });
 
   if (scriptExecutionEnabled()) {
-    openScriptedHtmlDocument(absPath, shell, content);
+    dispatch.scripted(shell, content);
   } else {
-    openStaticHtmlDocument(absPath, shell, content);
+    dispatch.static(shell, content);
   }
 
   // onClose forwards the shell teardown so the OPENER learns about closes
@@ -449,25 +461,23 @@ function openHtmlViewer(absPath: string): ViewerHandle {
   return { close: () => shell.close(), onClose: (cb) => shell.onTeardown(cb) };
 }
 
-/** T6/T7 (0.18.0): open a remote vault's HTML — the same static/scripted
- *  branch point as `openHtmlViewer`, only every leaf it dispatches to reads
- *  through `source` (host/remoteVaultId/vault-relative path) instead of a
- *  local absolute path. Command. */
+/** Open `absPath` (local) in the HTML viewer. Command. */
+function openHtmlViewer(absPath: string): ViewerHandle {
+  return openHtmlViewerWith(absPath, {
+    static: (shell, content) => openStaticHtmlDocument(absPath, shell, content),
+    scripted: (shell, content) => openScriptedHtmlDocument(absPath, shell, content),
+  });
+}
+
+/** T6/T7 (0.18.0): open a remote vault's HTML — same branch point as
+ *  `openHtmlViewer`, only every leaf it dispatches to reads through `source`
+ *  (host/remoteVaultId/vault-relative path) instead of a local absolute
+ *  path. Command. */
 function openHtmlViewerRemote(source: RemoteViewerSource): ViewerHandle {
-  ensureStyleInjected();
-  const content = document.createElement("div");
-  content.className = "html-viewer-status";
-  content.textContent = "문서 불러오는 중…";
-
-  const shell = openViewerShell({ absPath: source.path, paneClass: "html-viewer", content });
-
-  if (scriptExecutionEnabled()) {
-    openScriptedHtmlDocumentRemote(source, shell, content);
-  } else {
-    openStaticHtmlDocumentRemote(source, shell, content);
-  }
-
-  return { close: () => shell.close(), onClose: (cb) => shell.onTeardown(cb) };
+  return openHtmlViewerWith(source.path, {
+    static: (shell, content) => openStaticHtmlDocumentRemote(source, shell, content),
+    scripted: (shell, content) => openScriptedHtmlDocumentRemote(source, shell, content),
+  });
 }
 
 const HTML_VIEWER: Viewer = {

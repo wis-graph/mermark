@@ -94,7 +94,7 @@ import { setDocumentOpenHandler } from "./markdown/document-open";
 import { openStandardLocalLink, markLocalLinkFailure, REMOTE_VAULT_LOCAL_LINK_MESSAGE } from "./markdown/local-doc-link";
 import { isRemoteVault, rowHasLocalPath } from "./document/document-vault";
 import { openPath as openInNativeAppPath, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { remoteUnsupportedMessage } from "./document/remote-capability";
+import { remoteUnsupportedMessage } from "./document/remote-unsupported-message";
 import { setImageSearchRoot, owningVaultRoot } from "./markdown/image-search-root";
 import { attachImageToVault } from "./markdown/attach-image";
 import {
@@ -913,7 +913,7 @@ async function boot() {
         return;
       }
       const handle = viewerSlot.open(() =>
-        v.openRemote!({ host: targetVault.host, remoteVaultId: targetVault.remoteVaultId, path: absPath }),
+        v.openRemote({ host: targetVault.host, remoteVaultId: targetVault.remoteVaultId, path: absPath }),
       );
       // No breadcrumb rewrite here (L4, design §6): `dirOf(absPath)` would
       // treat a vault-relative path as though it named a local folder. A

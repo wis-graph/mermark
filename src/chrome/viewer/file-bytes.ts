@@ -73,31 +73,26 @@ export function isRemoteAssetTooLarge(e: unknown): boolean {
  *  wording lives, so a caller never hand-writes its own paraphrase. */
 export const REMOTE_ASSET_TOO_LARGE_MESSAGE = "원격 파일이 너무 큽니다(20MB 초과). 호스트 기기에서 직접 열어 주세요.";
 
-/** Normalize whatever shape `invoke("remote_read_asset", …)` hands back into
- *  an `ArrayBuffer` — Tauri's documented contract for a Rust
- *  `tauri::ipc::Response` is an `ArrayBuffer` on the JS side, but this
- *  function tolerates a `Uint8Array`/plain byte array too so a backend
- *  fallback (design §8-B: a `Vec<u8>` JSON array, if `ipc::Response` turns
- *  out not to behave as documented in this Tauri version) doesn't require a
- *  matching frontend change. Pure query. */
+/** Assert `invoke("remote_read_asset", …)`'s response is the `ArrayBuffer`
+ *  Tauri's `tauri::ipc::Response` contract promises — CONFIRMED against this
+ *  Tauri version's actual `scripts/ipc-protocol.js` (be-0180, §8-B: a Raw
+ *  IPC body ships `Content-Type: application/octet-stream` and the injected
+ *  client routes anything other than `application/json`/`text/plain`
+ *  through `response.arrayBuffer()`), so this is no longer a "tolerate
+ *  several possible shapes" normalizer — there is exactly one real shape.
+ *  Pure query (throws on anything else, never silently coerces). */
 function toArrayBuffer(raw: unknown): ArrayBuffer {
-  // `Object.prototype.toString.call` (not `instanceof ArrayBuffer`/
-  // `ArrayBuffer.isView`) — a test/embedder environment can hand back an
-  // ArrayBuffer/typed array minted in a DIFFERENT realm than this module's
-  // own global (jsdom's `window.ArrayBuffer` vs. Node's, in vitest);
-  // `instanceof` and `ArrayBuffer.isView` both fail across that boundary
-  // even though the value is a perfectly real ArrayBuffer/view (confirmed:
-  // a jsdom-realm check on a Node-realm TextEncoder buffer returned
-  // `instanceof` false with `constructor.name` still "ArrayBuffer"). The
-  // tag string survives the realm difference — it reads the internal
-  // `[[Class]]` slot, not the constructor identity.
-  const tag = Object.prototype.toString.call(raw);
-  if (tag === "[object ArrayBuffer]") return raw as ArrayBuffer;
-  if (tag.startsWith("[object ") && ArrayBuffer.isView(raw as ArrayBufferView)) {
-    const view = raw as ArrayBufferView;
-    return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength) as ArrayBuffer;
-  }
-  if (Array.isArray(raw)) return new Uint8Array(raw as number[]).buffer;
+  // `Object.prototype.toString.call` (not `instanceof ArrayBuffer`) reads
+  // the internal `[[Class]]` slot rather than comparing constructor
+  // identity — REQUIRED, not stylistic: a test/embedder environment can
+  // hand back an ArrayBuffer minted in a DIFFERENT realm than this module's
+  // own global (jsdom's `window.ArrayBuffer` vs. Node's, in vitest), and
+  // `instanceof` fails across that boundary even though the value is a
+  // perfectly real ArrayBuffer (confirmed: a jsdom-realm check on a
+  // Node-realm `TextEncoder` buffer returned `instanceof` false with
+  // `constructor.name` still "ArrayBuffer"). The tag string survives the
+  // realm difference; `instanceof` does not.
+  if (Object.prototype.toString.call(raw) === "[object ArrayBuffer]") return raw as ArrayBuffer;
   throw new Error("readRemoteFileBytes: unexpected response shape from remote_read_asset");
 }
 
