@@ -210,14 +210,15 @@ export class ImageWidget extends WidgetType {
     // no config change) and swaps them in once they arrive. A literal
     // remote/data rawSrc (an external image pasted into a remote document)
     // needs none of this — resolveImageUrl already passed it through as-is.
-    const vault = view.state?.facet(documentVault);
+    const vault = view.state.facet(documentVault);
     if (isRemoteVault(vault) && this.rawSrc && !isRemoteSrc(this.rawSrc)) {
-      const remoteVault = vault as RemoteVault;
+      // `isRemoteVault` is a type guard — `vault` is narrowed to `RemoteVault`
+      // here, no cast needed.
       const path = resolveImageSrc(this.rawSrc, this.baseDir);
-      const key = remoteImageCacheKey(remoteVault, path);
+      const key = remoteImageCacheKey(vault, path);
       let pending = remoteImageCache.get(key);
       if (!pending) {
-        pending = invoke<string>("remote_read_image", { host: remoteVault.host, vault: remoteVault.remoteVaultId, path });
+        pending = invoke<string>("remote_read_image", { host: vault.host, vault: vault.remoteVaultId, path });
         remoteImageCache.put(key, pending);
       }
       pending

@@ -14,27 +14,34 @@
 // already (routeDocumentPath / the explicit vault passed by tab-select
 // handlers) and injects it here at mount time; widgets and inline-feature
 // contexts read it back via `view.state.facet(documentVault)` /
-// `ctx.state.facet(documentVault)`.
+// `ctx.state.facet(documentVault)` — `view.state` itself is NEVER optional:
+// every real `EditorView` has one. Widgets must read it directly (no `?.`
+// guard on `.state`) so a caller that somehow mounts a document with no
+// vault context fails loudly (see openInWindow's own runtime assertion)
+// instead of silently falling back to "local" and reading this machine's
+// disk for a document that might not even be local.
 //
-// `undefined` (no provider registered — e.g. a widget mounted directly in a
-// test with a bare `{}` view/state) combines to "local, unknown vault" —
-// the ONLY meaning `isRemoteVault` ever assigns to it. This is what keeps
-// every pre-existing test (which stubs `view` as `{} as EditorView` and
-// never wires the facet) exercising exactly its old, local-only behavior
-// with no test edits required.
+// The facet's VALUE, unlike `.state` itself, legitimately can be `undefined`
+// — that's the combine's own "no provider registered" case (a widget
+// exercised directly against a bare `EditorState.create({})`, as every
+// leaf-module test does) — and `isRemoteVault` treats that the same as any
+// non-remote vault: "local, unknown vault" behavior, unchanged from before
+// this facet existed.
 import { Facet } from "@codemirror/state";
-import type { Vault } from "../workspace/workspace-state";
+import type { RemoteVault, Vault } from "../workspace/workspace-state";
 
 export const documentVault = Facet.define<Vault | undefined, Vault | undefined>({
   combine: (values) => (values.length ? values[0] : undefined),
 });
 
-/** Whether `vault` is a remote (v1: read-only) vault. The single place that
- *  question is decided, so every read-only guard in the markdown layer
- *  (wikilink auto-create, image loading, standard-link resolution, …) asks
- *  the same thing instead of re-deriving `persistenceKind === "remote"`
+/** Whether `vault` is a remote (v1: read-only) vault — a real discriminant
+ *  narrowing type guard, not a boolean, so a caller that checks this can use
+ *  `vault.host`/`vault.remoteVaultId` afterward without a cast. The single
+ *  place this question is decided, so every read-only guard in the markdown
+ *  layer (wikilink auto-create, image loading, standard-link resolution, …)
+ *  asks the same thing instead of re-deriving `persistenceKind === "remote"`
  *  ad hoc and risking one of them drifting. Pure query. */
-export function isRemoteVault(vault: Vault | undefined): boolean {
+export function isRemoteVault(vault: Vault | undefined): vault is RemoteVault {
   return vault?.persistenceKind === "remote";
 }
 

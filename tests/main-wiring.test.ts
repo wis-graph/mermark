@@ -1150,30 +1150,64 @@ describe("main workspace wiring", () => {
   });
 
   // task-8a (Ruling 9/10): vault attribution for opening/history/standard
-  // links. A running remote vault can't be driven into this test's boot
-  // state yet (RemoteVault is intentionally NOT accepted by the localStorage
-  // deserializer — see workspace-state.ts's persisted-vault type guard — so
-  // there is no way to reach `currentVault()?.persistenceKind === "remote"`
-  // through this suite's existing fixtures until a later task adds a way to
-  // register/select one at runtime). These assertions pin the SOURCE-LEVEL
-  // fixes instead, the same way this file already pins other not-yet-fully-
-  // exercisable wiring (see e.g. the CLI-routing/document-open sections
-  // above); the leaf-module behavior itself (wikilink.ts/image.ts honoring a
-  // remote vault) is covered end-to-end, with a real facet value, by
-  // tests/wikilink.test.ts's "remote-vault read-only guard" and
-  // tests/image.test.ts's "remote-vault loading" suites.
+  // links. main.ts extracts each fix's actual DECISION as a small top-level
+  // pure function (routingTrustsCurrentVault / resolveTargetVault /
+  // standardLinkRejectionFor) — the exact same pattern this file already
+  // uses for isVaultRootLocked/tabScopeForVault above — so it can be called
+  // directly with a REAL RemoteVault object and asserted on for real,
+  // instead of only pinning main.ts's source text (which can't fail for a
+  // genuine logic regression that happens to keep the same strings). A
+  // running remote vault still can't be driven through the FULL app boot in
+  // this suite (RemoteVault is intentionally NOT accepted by the
+  // localStorage deserializer — see workspace-state.ts's persisted-vault
+  // type guard — so onSelectTab/navigateHistory can't be exercised
+  // end-to-end with a live RemoteVault until a later task adds a way to
+  // register/select one at runtime); the leaf-module behavior itself
+  // (wikilink.ts/image.ts honoring a real remote facet value) IS covered
+  // end-to-end by tests/wikilink.test.ts's "remote-vault read-only guard"
+  // and tests/image.test.ts's "remote-vault loading" suites. A thin wiring
+  // check confirms main.ts's call sites actually USE these functions (a
+  // fact no pure-function test can prove on its own).
   describe("task-8a: vault attribution for open/history/standard-links (Ruling 9/10)", () => {
-    it("routeDocumentPath short-circuits for remote exactly like it already does for global", () => {
-      expect(mainSource).toContain(
-        'if (current?.persistenceKind === "global" || current?.persistenceKind === "remote") return current;',
-      );
+    const permanentVault = { vaultId: "vault-P", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent" as const, explorerRoot: "/P" };
+    const globalVault = { vaultId: "vault-global", workspaceId: "workspace-default", displayName: "글로벌 볼트", rootPath: null, persistenceKind: "global" as const, explorerRoot: null };
+    const remoteVault = { vaultId: "vault-remote-1", workspaceId: "workspace-default", displayName: "원격 볼트", rootPath: null, persistenceKind: "remote" as const, explorerRoot: "remote://wis-macmini/", host: "wis-macmini", remoteVaultId: "rv-1" };
+
+    it("routingTrustsCurrentVault: true for global/remote (never re-derive by path), false for permanent (path re-derivation is meaningful) and undefined", async () => {
+      const { routingTrustsCurrentVault } = await import("../src/main");
+      expect(routingTrustsCurrentVault("global")).toBe(true);
+      expect(routingTrustsCurrentVault("remote")).toBe(true);
+      expect(routingTrustsCurrentVault("permanent")).toBe(false);
+      expect(routingTrustsCurrentVault(undefined)).toBe(false);
     });
 
-    it("openDocument/openDocumentSafely/openInWindow thread an explicit targetVault, not just currentVault()", () => {
-      expect(mainSource).toContain("onCommit?: () => void,\n    targetVault?: Vault,\n  ): Promise<boolean> => {");
-      expect(mainSource).toContain("fileHostFor(targetVault ?? currentVault() ?? workspaceStore.getGlobalVault()).readFile(absPath);");
+    it("resolveTargetVault: an explicit target wins over the fallback (the exact bug — reading through the switch's SOURCE vault)", async () => {
+      const { resolveTargetVault } = await import("../src/main");
+      // The core of the Ruling 9 fix: switching FROM permanentVault TO
+      // remoteVault must read through remoteVault, not permanentVault.
+      expect(resolveTargetVault(remoteVault, permanentVault, globalVault)).toBe(remoteVault);
+      // No explicit target (every non-vault-crossing caller) falls back to
+      // whatever is currently open — unchanged pre-existing behavior.
+      expect(resolveTargetVault(undefined, permanentVault, globalVault)).toBe(permanentVault);
+      // Neither known (e.g. a history entry whose vault was unregistered) —
+      // falls all the way back to the Global Vault, never throws/undefined.
+      expect(resolveTargetVault(undefined, undefined, globalVault)).toBe(globalVault);
+    });
+
+    it("standardLinkRejectionFor: a remote vault always rejects with the exact Korean message; permanent/global/undefined defer to the pipeline (null)", async () => {
+      const { standardLinkRejectionFor } = await import("../src/main");
+      expect(standardLinkRejectionFor(remoteVault)).toBe("원격 볼트에서는 지원하지 않습니다");
+      expect(standardLinkRejectionFor(permanentVault)).toBeNull();
+      expect(standardLinkRejectionFor(globalVault)).toBeNull();
+      expect(standardLinkRejectionFor(undefined)).toBeNull();
+    });
+
+    it("wires routeDocumentPath/openDocument/navigateHistory to actually USE routingTrustsCurrentVault/resolveTargetVault (not a parallel inline copy of the same rule)", () => {
+      expect(mainSource).toContain("if (current && routingTrustsCurrentVault(current.persistenceKind)) return current;");
+      expect(mainSource).toContain("fileHostFor(resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault())).readFile(absPath);");
+      expect(mainSource).toContain("resolveTargetVault(workspaceStore.getVault(entry.vaultId), currentVault(), workspaceStore.getGlobalVault());");
       expect(mainSource).toContain("openInWindow(absPath, fresh, { watcherReady: true }, targetVault);");
-      expect(mainSource).toContain("const openDocumentSafely = (absPath: string, onCommit?: () => void, targetVault?: Vault): Promise<boolean> => {");
+      expect(mainSource).toContain("openInWindow(target, fresh, { viaHistory: true, watcherReady: true }, targetVault);");
     });
 
     it("onSelectVault/onSelectTab pass their own already-known target vault through, not the sidebar's currentVault()", () => {
@@ -1181,20 +1215,14 @@ describe("main workspace wiring", () => {
       expect(mainSource).toContain("}, selectedVault);");
     });
 
-    it("navigateHistory looks up the history entry's OWN vault (navVaultByPath) instead of currentVault()", () => {
-      expect(mainSource).toContain("const navVaultByPath = new Map<string, Vault>();");
-      expect(mainSource).toContain("navVaultByPath.get(normalizePath(target)) ?? currentVault() ?? workspaceStore.getGlobalVault();");
-      expect(mainSource).toContain("openInWindow(target, fresh, { viaHistory: true, watcherReady: true }, targetVault);");
-    });
-
-    it("openInWindow records every open's vault into navVaultByPath and passes it into mountEditor's documentVault facet", () => {
-      expect(mainSource).toContain("navVaultByPath.set(normalizePath(file), selectedVault);");
+    it("openInWindow throws rather than silently mounting a document with no vault, and passes the resolved vault into mountEditor's documentVault facet", () => {
+      expect(mainSource).toContain('if (!selectedVault) throw new Error(`openInWindow: no vault resolved for "${file}"`);');
       expect(mainSource).toContain("vault: selectedVault,");
     });
 
-    it("blocks a standard-link click in a remote vault BEFORE building a canonicalize_path context, with the remote-specific message", () => {
-      expect(mainSource).toContain("if (isRemoteVault(vault)) {");
-      expect(mainSource).toContain("markLocalLinkFailure(request.feedbackEl, REMOTE_VAULT_LOCAL_LINK_MESSAGE);");
+    it("wires setDocumentOpenHandler to standardLinkRejectionFor BEFORE building a canonicalize_path context", () => {
+      expect(mainSource).toContain("const rejection = standardLinkRejectionFor(vault);");
+      expect(mainSource).toContain("markLocalLinkFailure(request.feedbackEl, rejection);");
     });
   });
 });

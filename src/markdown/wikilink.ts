@@ -102,7 +102,7 @@ export class WikilinkWidget extends WidgetType {
     // chokepoint instead of always hitting this machine's disk, so a
     // remote-vault document's link state reflects the REMOTE file, not a
     // same-path local file that happens to exist (or doesn't).
-    const vault: Vault | undefined = view.state?.facet(documentVault);
+    const vault: Vault | undefined = view.state.facet(documentVault);
     const host = vault ? fileHostFor(vault) : localFileHost;
 
     if (this.externalUrl !== null) {

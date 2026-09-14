@@ -28,6 +28,14 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: (...args: any[]) => mockOpenUrl(...args),
 }));
 
+// wikilink.ts reads `view.state.facet(documentVault)` with no `?.` guard (a
+// real EditorView's `.state` is never optional) — so every `toDOM` stub below
+// needs a real (if extension-less) `.state`, not a bare `{}`. No
+// `documentVault` extension registered ⇒ the facet combines to `undefined`,
+// i.e. "local, unknown vault" — the exact behavior these fixtures had before
+// the facet existed.
+const localView = { state: EditorState.create({}) } as any;
+
 describe("wikilinkPath", () => {
   const baseDir = "/home/u/notes";
   it("appends .md when no extension", () => {
@@ -102,7 +110,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
 
   it("resolves bare same-file link immediately with no path_exists call", () => {
     const widget = new WikilinkWidget("alias", "");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
     expect(dom.className).toContain("cm-wikilink-active");
     expect(dom.className).not.toContain("cm-wikilink-pending");
     expect(mockInvoke).not.toHaveBeenCalled();
@@ -115,7 +123,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     });
 
     const widget = new WikilinkWidget("alias", "existing.md");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
 
     // wait for promise microtasks
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -137,7 +145,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     mockOpenAsset.mockResolvedValue(undefined);
 
     const widget = new WikilinkWidget("alias", "existing.pdf");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -160,7 +168,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     });
 
     const widget = new WikilinkWidget("alias", "missing.md");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -190,7 +198,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     });
 
     const widget = new WikilinkWidget("alias", "existing.txt");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(dom.className).toContain("cm-wikilink-active");
 
@@ -212,7 +220,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     });
 
     const widget = new WikilinkWidget("alias", "missing.txt");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(dom.className).toContain("cm-wikilink-missing");
 
@@ -232,7 +240,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     });
 
     const widget = new WikilinkWidget("alias", "missing.pdf");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -247,7 +255,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
 
   it("[[#heading]] anchor: cm-wikilink-active immediately, zero IPC (path skipped entirely)", () => {
     const widget = new WikilinkWidget("x", "", "Target");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
     expect(dom.className).toContain("cm-wikilink-active");
     expect(dom.className).not.toContain("cm-wikilink-pending");
     expect(mockInvoke).not.toHaveBeenCalled();
@@ -259,7 +267,7 @@ describe("WikilinkWidget toDOM click behaviors", () => {
       return Promise.resolve();
     });
     const widget = new WikilinkWidget("x", "/abs/note.md");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
     await new Promise((resolve) => setTimeout(resolve, 0));
     dom.click();
     expect(documentOpenSpy).toHaveBeenCalledWith({ kind: "resolved-document", path: "/abs/note.md" });
@@ -281,7 +289,7 @@ describe("WikilinkWidget external URL branch (E)", () => {
 
   it("renders cm-wikilink-active + cm-wikilink-external, no cm-wikilink-pending, zero IPC", () => {
     const widget = new WikilinkWidget("구글", "", null, "https://example.com");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
     expect(dom.className).toContain("cm-wikilink-active");
     expect(dom.className).toContain("cm-wikilink-external");
     expect(dom.className).not.toContain("cm-wikilink-pending");
@@ -292,7 +300,7 @@ describe("WikilinkWidget external URL branch (E)", () => {
   it("click opens via openUrl (plugin-opener) and never touches path_exists/create_markdown_file/open_path", async () => {
     mockOpenUrl.mockResolvedValue(undefined);
     const widget = new WikilinkWidget("구글", "", null, "https://example.com");
-    const dom = widget.toDOM({} as any);
+    const dom = widget.toDOM(localView);
     dom.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(mockOpenUrl).toHaveBeenCalledWith("https://example.com");
@@ -352,7 +360,7 @@ describe("WikilinkWidget remote-vault read-only guard (F, Ruling 8)", () => {
       return Promise.resolve();
     });
     const widget = new WikilinkWidget("alias", "missing.md");
-    const dom = widget.toDOM({} as any); // no `.state` at all — same fixture every other test in this file uses
+    const dom = widget.toDOM(localView); // no documentVault extension registered — same "local" fixture every other test in this file uses
     await new Promise((resolve) => setTimeout(resolve, 0));
     dom.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -372,7 +380,7 @@ describe("WikilinkWidget external URL branch (E) — eq()", () => {
 // ---------------------------------------------------------------------------
 // [[#heading]] click navigation — mounted integration. The anchor is resolved
 // against the LIVE document at click time (findHeadingByText), so this needs a
-// real EditorView with the markdown parser, not a bare toDOM({} as any) stub.
+// real EditorView with the markdown parser, not a bare toDOM(localView) stub.
 // ---------------------------------------------------------------------------
 import { mountEditor } from "../src/editor";
 

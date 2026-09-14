@@ -31,7 +31,13 @@ import type { RemoteVault } from "../src/workspace/workspace-state";
 // that satisfies the type without a real editor is enough here — mounting a
 // full EditorView per test would test nothing this file doesn't already
 // cover elsewhere (wikilink*.test.ts owns the real Alt+click-edit assertion).
-const fakeView = {} as unknown as EditorView;
+// `.state` is a REAL (if extension-less) EditorState, not omitted — image.ts
+// reads `view.state.facet(documentVault)` with no `?.` guard (a real
+// EditorView's `.state` is never optional), so a fake `view` must still have
+// one. No `documentVault` extension registered ⇒ the facet combines to
+// `undefined`, i.e. "local, unknown vault" — same behavior this fixture had
+// before the facet existed.
+const fakeView = { state: EditorState.create({}) } as unknown as EditorView;
 
 describe("resolveImageSrc", () => {
   const baseDir = "/home/u/notes";
