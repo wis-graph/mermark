@@ -487,6 +487,40 @@ mod tests {
         assert!(base_url("").is_err());
     }
 
+    /// Mirrors `tests/fixtures/remote-host-truth-table.json` row for row —
+    /// that file is the single source of truth for what a host string means
+    /// across three independent judges (this Rust `base_url`, the browser
+    /// mock's `remoteMockError`, and TS's pre-flight `hostFieldProblem`;
+    /// `tests/remote-host-truth-table.test.ts` pins the two TS surfaces
+    /// against it). Rust has no shared code path with either TS surface, so
+    /// this table is hand-copied rather than parsed from the JSON (no new
+    /// JSON-parsing dependency just for a 12-row test fixture) — **if you
+    /// change one, change both**, or the suites drift apart silently again.
+    #[test]
+    fn base_url_matches_the_shared_remote_host_truth_table() {
+        let rows: &[(&str, bool)] = &[
+            ("맥미니", true),
+            ("mac-mini", false),
+            ("mac-mini:9000", false),
+            ("100.64.1.2", false),
+            ("맥미니:9000", true),
+            ("ssh://맥미니", false),
+            ("MAC-MINI", false),
+            ("mac-mini.", false),
+            ("", true),
+            ("http://mac-mini", true),
+            ("mac-mini/vault", true),
+            ("ssh://mac-mini", false),
+        ];
+        for (input, rejected) in rows {
+            assert_eq!(
+                base_url(input).is_err(),
+                *rejected,
+                "base_url({input:?}) should have rejected={rejected}"
+            );
+        }
+    }
+
     /// The backstop for the "맥미니" incident: a frontend pre-flight check
     /// (`hostFieldProblem`) is supposed to catch this first, but this must
     /// refuse the same input for the same reason even if that gate is
