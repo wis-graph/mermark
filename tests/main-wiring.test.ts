@@ -1380,5 +1380,56 @@ describe("main workspace wiring", () => {
       await vi.waitFor(() => expect(document.querySelector(".viewer-panel")).not.toBeNull());
       expect(document.querySelector(".save-status")?.textContent ?? "").not.toContain("원격 볼트에서는 아직 지원하지 않습니다");
     });
+
+    // Task 11 fix round 2: the SAME bug lived in `openPathEntry`'s DOCUMENT
+    // branch too — `openDoc(path)` was called with no vault, so `openDocument`
+    // fell back to `currentVault()` (the sidebar's selection). With a remote
+    // vault selected, a raw local absolute `.md` path got read through
+    // `remoteFileHost` (→ `remote_read_file` with a local path the host
+    // rejects) instead of the local backend, surfacing a generic
+    // open-failure recovery modal for a perfectly valid local file. Fixed by
+    // having `openPathEntry` resolve ONE `targetVault` (via `routeCliFile`)
+    // and threading it through BOTH branches — these two tests assert the
+    // document branch specifically: the file actually opens (content is
+    // readable / the CLI ack is "opened"), through the LOCAL backend
+    // (`read_file`, never `remote_read_file`), with no recovery modal.
+    it("a CLI-routed LOCAL markdown document opens normally through the local backend, even while a remote vault is selected", async () => {
+      documentContents.set("/A/note.md", "# 로컬 문서");
+      localStorage.setItem("mermark.workspaceState", permanentPlusRemoteState);
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+      await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+      invokeMock.mockClear();
+
+      emitEvent("cli-open-request", { id: 22, path: "/A/note.md" });
+
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("로컬 문서"));
+      await vi.waitFor(() => expect(cliAcks).toEqual([{ id: 22, outcome: "opened" }]));
+      expect(invokeMock.mock.calls.some(([command]) => command === "remote_read_file")).toBe(false);
+      expect(invokeMock.mock.calls.some(([command, args]) => command === "read_file" && pathArg(args) === "/A/note.md")).toBe(true);
+      expect(document.querySelector(".recovery-backdrop")).toBeNull();
+    });
+
+    it("the open-path prompt opens a LOCAL markdown document normally through the local backend, even while a remote vault is selected", async () => {
+      documentContents.set("/A/note.md", "# 로컬 문서");
+      localStorage.setItem("mermark.workspaceState", permanentPlusRemoteState);
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+      invokeMock.mockClear();
+
+      const openPathBtn = document.querySelector<HTMLButtonElement>(".open-path");
+      openPathBtn?.click();
+      const input = document.querySelector<HTMLInputElement>(".open-path-input");
+      expect(input).not.toBeNull();
+      input!.value = "/A/note.md";
+      input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("로컬 문서"));
+      expect(invokeMock.mock.calls.some(([command]) => command === "remote_read_file")).toBe(false);
+      expect(invokeMock.mock.calls.some(([command, args]) => command === "read_file" && pathArg(args) === "/A/note.md")).toBe(true);
+      expect(document.querySelector(".recovery-backdrop")).toBeNull();
+    });
   });
 });

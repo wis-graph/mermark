@@ -672,9 +672,9 @@ async function boot() {
       // immediately — `openDocumentSafely` alone only does the former (it
       // swallows the error after showing recovery), so this branch calls
       // `openDocument` directly and does both itself.
-      await openPathEntry(target, async (path) => {
+      await openPathEntry(target, async (path, targetVault) => {
         try {
-          await openDocument(path);
+          await openDocument(path, undefined, undefined, targetVault);
           return true;
         } catch (error: unknown) {
           showOpenRecovery(path, String(error));
@@ -878,22 +878,28 @@ async function boot() {
    *  boot-time initial file) hands in a raw LOCAL filesystem path — never a
    *  vault-relative remote path (a remote vault has no restored tabs to
    *  reopen this way; see `restoredTabs`'s own `persistenceKind === "permanent"`
-   *  guard) — so the viewer branch resolves its vault via `routeCliFile`
+   *  guard) — so BOTH branches resolve their vault via `routeCliFile`
    *  (path-based: the permanent vault whose root actually contains `path`,
    *  else the Global Vault), the SAME local-only resolution `routeDocumentPath`
-   *  falls back to for a non-trusted vault. It deliberately does NOT consult
+   *  falls back to for a non-trusted vault, computed ONCE here and handed to
+   *  whichever branch runs. This deliberately does NOT consult
    *  `currentVault()`/`routedVault`: those name whatever vault is currently
    *  SELECTED in the sidebar, which can be a remote vault with nothing to do
-   *  with this path (Task 11 fix round 1's finding). */
+   *  with this path. Task 11 fix round 1 caught this for the viewer branch;
+   *  round 2 found the SAME bug, live, in the document branch — every
+   *  `openDoc` caller below now receives (and must thread through) the
+   *  resolved `targetVault` instead of leaving it to `openDocument`'s own
+   *  `currentVault() ?? global` fallback. */
   async function openPathEntry(
     path: string,
-    openDoc: (path: string) => Promise<boolean>,
+    openDoc: (path: string, targetVault: Vault) => Promise<boolean>,
   ): Promise<"opened" | "recovered"> {
+    const targetVault = routeCliFile(workspaceStore, path).vault;
     if (viewerForEntry(basename(path))) {
-      openWithViewer(path, routeCliFile(workspaceStore, path).vault);
+      openWithViewer(path, targetVault);
       return "opened";
     }
-    return (await openDoc(path)) ? "opened" : "recovered";
+    return (await openDoc(path, targetVault)) ? "opened" : "recovered";
   }
 
   /** Wired to image.ts's `requestImageOpen` (via `setImageOpenHandler`,
@@ -1016,10 +1022,18 @@ async function boot() {
   // whatever is STILL open (the switch's SOURCE, not its target) — onCommit
   // (which flips `routedVault` to the target) only runs AFTER this read
   // succeeds, so a vault-crossing open would read through the wrong
-  // backend. Every other caller (CLI open, wikilink/standard-link clicks,
-  // recent/welcome-pane opens) never crosses a vault boundary within one
-  // call, so the `currentVault() ?? global` fallback keeps their existing
-  // behavior unchanged.
+  // backend. Wikilink/standard-link clicks and recent/welcome-pane opens
+  // never cross a vault boundary within one call, so the
+  // `currentVault() ?? global` fallback is correct for them. CLI open (the
+  // cli-open-request listener, the open-path prompt, the boot-time initial
+  // file) is DIFFERENT: it now always threads an explicit `targetVault`
+  // resolved by `openPathEntry` via `routeCliFile` — Task 11 fix round 2
+  // found that leaning on this function's own fallback for those callers
+  // read a raw local absolute path through `currentVault()` (the SIDEBAR's
+  // selection), which is wrong whenever a remote vault happens to be
+  // selected: `fileHostFor(remoteVault)` sent the local path to
+  // `remote_read_file`, the host rejected it, and a perfectly valid local
+  // file showed the open-failure recovery modal instead of opening.
   const openDocument = async (
     absPath: string,
     requestId = beginLifecycleRequest(),
@@ -1075,7 +1089,7 @@ async function boot() {
     await listen<{ id: number; path: string }>(
       "cli-open-request",
       async (e) => {
-        const outcome = await openPathEntry(e.payload.path, openDocumentSafely);
+        const outcome = await openPathEntry(e.payload.path, (path, targetVault) => openDocumentSafely(path, undefined, targetVault));
         void invoke("acknowledge_open_request", { id: e.payload.id, outcome });
       },
       { target: label },
@@ -2100,7 +2114,7 @@ async function boot() {
   // (a read failure means the launch file is gone; it already shows the
   // error in place of the editor via `showOpenRecovery` — the same recovery
   // call this used to make by hand, not a second copy of it).
-  await openPathEntry(initialFile, openDocumentSafely);
+  await openPathEntry(initialFile, (path, targetVault) => openDocumentSafely(path, undefined, targetVault));
   await registerCliOpenRouting();
 }
 
