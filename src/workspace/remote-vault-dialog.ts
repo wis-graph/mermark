@@ -5,6 +5,7 @@
 // via `remote_vaults` right after a successful pair.
 import { icon } from "../icons";
 import { makeAddRemoteForm } from "./add-remote-vault";
+import { hostFieldProblem } from "../document/remote-host-field";
 import type { WorkspaceStore } from "./workspace-state";
 import type { invoke } from "@tauri-apps/api/core";
 
@@ -115,8 +116,17 @@ export function createRemoteVaultDialog({ store, call, onRegistered }: RemoteVau
   pairBtn.addEventListener("click", () => {
     if (!form.canSubmit()) return;
     clearError();
-    pairBtn.disabled = true;
     const { host, code } = form.values();
+    // T2 (0.17.1): reject an unreachable-shaped host (e.g. "맥미니") BEFORE
+    // ever attempting to pair — without this, it went out punycode-encoded
+    // and failed as an opaque `REMOTE:Unreachable`, giving the user no way
+    // to connect the failure back to "wrong kind of input" (remote-host-field.ts).
+    const problem = hostFieldProblem(host);
+    if (problem) {
+      showError(problem);
+      return;
+    }
+    pairBtn.disabled = true;
     void (async (): Promise<void> => {
       try {
         // An `ssh://`-typed host has no listener at all until mermark's own
