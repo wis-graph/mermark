@@ -3,7 +3,7 @@ import { normalizePath } from "../document/path";
 export const GLOBAL_VAULT_ID = "vault-global";
 export const GLOBAL_VAULT_NAME = "글로벌 볼트";
 
-export type PersistenceKind = "permanent" | "global";
+export type PersistenceKind = "permanent" | "global" | "remote";
 interface VaultBase {
   readonly vaultId: string;
   readonly workspaceId: string;
@@ -19,7 +19,16 @@ export interface GlobalVault extends VaultBase {
   readonly persistenceKind: "global";
   readonly explorerRoot: string | null;
 }
-export type Vault = PermanentVault | GlobalVault;
+export interface RemoteVault extends VaultBase {
+  readonly rootPath: null;
+  readonly persistenceKind: "remote";
+  readonly explorerRoot: string;
+  /** `wis-macmini` 또는 `wis-macmini:9000` 또는 `ssh://user@host`. */
+  readonly host: string;
+  /** 호스트가 공유 목록에서 이 볼트에 붙인 안정 id. */
+  readonly remoteVaultId: string;
+}
+export type Vault = PermanentVault | GlobalVault | RemoteVault;
 export interface Workspace { readonly workspaceId: string; readonly vaultIds: readonly string[]; readonly currentVaultId: string | null; readonly lastSelectedPermanentVaultId: string | null; }
 export interface WorkspaceState { readonly workspaces: readonly Workspace[]; readonly vaults: readonly Vault[]; readonly currentWorkspaceId: string; }
 export type WorkspaceStateErrorCode = "duplicate-root" | "missing-vault" | "invalid-path";
