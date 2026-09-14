@@ -44,6 +44,17 @@ export const workspaceStorageKey = STORAGE_KEY;
 export const canonicalRootPath = (path: string): string => normalizePath(path);
 export const canonicalPath = canonicalRootPath;
 
+/** Whether any *remaining* remote vault is still registered against `host`
+ *  — the SSH tunnel for a host (`remote_ssh.rs`, Task 12) is per-HOST, not
+ *  per-vault: `registerRemoteVault` above dedupes on `(host, remoteVaultId)`
+ *  only, so two vaults from the same host's share list CAN legitimately
+ *  coexist. Fix round 2, Important B: removing one must not tear the
+ *  tunnel down while a sibling vault on the same host is still registered
+ *  (the caller checks this *after* the removal it's guarding, against
+ *  `vaults` post-removal — see workspace-sidebar.ts's remote "해제" button). */
+export const anyVaultStillUsesHost = (vaults: readonly Vault[], host: string): boolean =>
+  vaults.some((v) => v.persistenceKind === "remote" && v.host === host);
+
 export const globalVaultForWorkspace = (workspaceId: string): Vault => ({
   vaultId: GLOBAL_VAULT_ID,
   workspaceId,

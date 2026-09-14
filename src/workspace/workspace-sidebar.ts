@@ -3,7 +3,7 @@ import { renderSidebarButton } from "../sidebar/toggle";
 import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
 import { basename, dirOf, isPathWithin } from "../document/path";
 import { extensionOf, renderEntryGlyph } from "../sidebar/explorer/file-icons";
-import { WorkspaceStateError, type RemoteVault, type Vault, type WorkspaceState, type WorkspaceStore } from "./workspace-state";
+import { WorkspaceStateError, anyVaultStillUsesHost, type RemoteVault, type Vault, type WorkspaceState, type WorkspaceStore } from "./workspace-state";
 import type { VaultTabs } from "./vault-tabs";
 import { isVaultCollapsed, setVaultCollapsed } from "./vault-collapse";
 import { badgeFor } from "./add-remote-vault";
@@ -416,13 +416,20 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
           const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = "원격 볼트 해제"; remove.setAttribute("aria-label", `${vault.displayName} 원격 볼트 해제`); remove.append(icon("x")); remove.addEventListener("click", () => {
             try {
               store.unregisterVault(vault.vaultId);
-              // Best-effort: free the local tunnel port as soon as this
-              // vault (the only reason this device was tunneling to that
-              // host) is removed, rather than waiting for app exit's own
-              // cleanup (remote_ssh.rs's RunEvent::Exit hook) to get to it.
-              // Fire-and-forget — a failure here has nothing left to act on,
-              // the vault registration is already gone either way.
-              if (vault.host.startsWith("ssh://")) void call("remote_ssh_disconnect", { host: vault.host }).catch(() => {});
+              // Best-effort: free the local tunnel port as soon as the LAST
+              // vault on this host is removed, rather than waiting for app
+              // exit's own cleanup (remote_ssh.rs's RunEvent::Exit hook) to
+              // get to it. Checked AFTER the removal above, against the
+              // post-removal vault list — registerRemoteVault dedupes by
+              // (host, remoteVaultId), not by host alone, so two vaults CAN
+              // share one ssh host (fix round 2, Important B); disconnecting
+              // unconditionally here would cut the tunnel out from under a
+              // sibling vault that's still registered. Fire-and-forget — a
+              // failure here has nothing left to act on, the vault
+              // registration is already gone either way.
+              if (vault.host.startsWith("ssh://") && !anyVaultStillUsesHost(store.get().vaults, vault.host)) {
+                void call("remote_ssh_disconnect", { host: vault.host }).catch(() => {});
+              }
             } catch (error) { showError(error); }
           });
           row.append(remove);

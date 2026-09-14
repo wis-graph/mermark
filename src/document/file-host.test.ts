@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { makeFileHost, remoteFileHost, classifyRemoteError, type FileHostBackend } from "./file-host";
+import { makeFileHost, remoteFileHost, remoteConnectionStateFor, classifyRemoteError, type FileHostBackend } from "./file-host";
 import type { RemoteVault } from "../workspace/workspace-state";
 
 const backend = (): FileHostBackend => ({
@@ -144,6 +144,88 @@ describe("remoteFileHost", () => {
     const host = remoteFileHost(remoteVault, call);
     expect(await host.directoryExists("notes")).toBe(true);
     expect(await host.directoryExists("gone")).toBe(false);
+  });
+});
+
+// Fix round 2, Important A: nothing reconnected an `ssh://` vault's tunnel
+// after an app restart — `remote-vault-dialog.ts` only calls
+// `remote_ssh_connect` once, during the pairing session itself. These tests
+// exercise `remoteFileHost`/`remoteConnectionStateFor` exactly as a *fresh*
+// process would see them (a brand-new `remoteFileHost(...)` call, no prior
+// `remote_ssh_connect` in this test's history) — standing in for "the app
+// just restarted and the user opens a note in a previously-paired ssh://
+// vault" without needing a real process restart.
+describe("remoteFileHost / remoteConnectionStateFor — ssh tunnel reconnect (fix round 2, Important A)", () => {
+  const sshVault = (host: string): RemoteVault => ({
+    vaultId: `v-${host}`,
+    workspaceId: "w1",
+    displayName: "원격(ssh)",
+    rootPath: null,
+    persistenceKind: "remote",
+    explorerRoot: "",
+    host,
+    remoteVaultId: "rv1",
+  });
+
+  it("a fresh remoteFileHost call for an ssh:// vault connects the tunnel before its first read", async () => {
+    const calls: string[] = [];
+    const call = ((cmd: string) => {
+      calls.push(cmd);
+      if (cmd === "remote_ssh_connect") return Promise.resolve(undefined);
+      if (cmd === "remote_read_file") return Promise.resolve({ text: "본문", mtime: 1 });
+      return Promise.reject(new Error("unexpected " + cmd));
+    }) as never;
+    const host = remoteFileHost(sshVault("ssh://wis@restart-test-1"), call);
+    await host.readFile("note.md");
+    expect(calls).toEqual(["remote_ssh_connect", "remote_read_file"]);
+  });
+
+  it("never calls remote_ssh_connect for a non-ssh (Tailscale-style) host", async () => {
+    const calls: string[] = [];
+    const call = ((cmd: string) => {
+      calls.push(cmd);
+      return Promise.resolve({ text: "", mtime: 0 });
+    }) as never;
+    const host = remoteFileHost(sshVault("wis-macmini"), call);
+    await host.readFile("note.md");
+    expect(calls).toEqual(["remote_read_file"]);
+  });
+
+  it("reconnects only once across several reads of the same ssh:// vault", async () => {
+    const connectCalls: string[] = [];
+    const call = ((cmd: string) => {
+      if (cmd === "remote_ssh_connect") { connectCalls.push(cmd); return Promise.resolve(undefined); }
+      if (cmd === "remote_read_file") return Promise.resolve({ text: "본문", mtime: 1 });
+      if (cmd === "remote_list_dir") return Promise.resolve([]);
+      return Promise.reject(new Error("unexpected " + cmd));
+    }) as never;
+    const host = remoteFileHost(sshVault("ssh://wis@restart-test-2"), call);
+    await host.readFile("a.md");
+    await host.listDir("sub", false);
+    await host.readFile("b.md");
+    expect(connectCalls.length).toBe(1);
+  });
+
+  it("a tunnel failure surfaces as one of the four connection states (via the badge probe), not a silent dead vault", async () => {
+    const call = ((cmd: string) => {
+      if (cmd === "remote_ssh_connect") return Promise.reject("REMOTE:Unreachable: SSH 터널이 8초 내에 준비되지 않았습니다");
+      return Promise.reject(new Error("unexpected " + cmd));
+    }) as never;
+    const state = await remoteConnectionStateFor(sshVault("ssh://wis@restart-test-3"), call);
+    expect(state).toBe("unreachable");
+  });
+
+  it("remoteConnectionStateFor also reconnects the tunnel for an ssh:// vault before probing", async () => {
+    const calls: string[] = [];
+    const call = ((cmd: string) => {
+      calls.push(cmd);
+      if (cmd === "remote_ssh_connect") return Promise.resolve(undefined);
+      if (cmd === "remote_list_dir") return Promise.resolve([]);
+      return Promise.reject(new Error("unexpected " + cmd));
+    }) as never;
+    const state = await remoteConnectionStateFor(sshVault("ssh://wis@restart-test-4"), call);
+    expect(state).toBe("connected");
+    expect(calls).toEqual(["remote_ssh_connect", "remote_list_dir"]);
   });
 });
 

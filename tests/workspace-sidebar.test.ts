@@ -497,6 +497,52 @@ describe("workspace sidebar", () => {
     expect(onOpen).toHaveBeenCalledOnce();
   });
 
+  // Fix round 2, Important B: registerRemoteVault dedupes on
+  // (host, remoteVaultId), not host alone — two vaults from the same ssh
+  // host can coexist, and removing one must not disconnect the shared
+  // tunnel out from under the other.
+  describe("remote vault removal and SSH tunnel sharing", () => {
+    it("removing one of two vaults sharing an ssh host leaves the tunnel connected; removing the last one disconnects it", () => {
+      // Host/remoteVaultId pairs used here are deliberately unique within
+      // this test file: `workspace-sidebar.ts`'s badge caches
+      // (`badgeCache`/`badgeProbes`) are module-level singletons that
+      // persist across tests, keyed by `vaultId` — which is derived
+      // deterministically from `(host, remoteVaultId)` — so reusing a pair
+      // another test in this file already used would leak a cached badge
+      // state into this test (or vice versa) rather than testing this
+      // fix in isolation.
+      const store = new WorkspaceStore();
+      const first = store.registerRemoteVault("ssh://wis@t12b-shared-host", "rv-t12b-1", "볼트1");
+      const second = store.registerRemoteVault("ssh://wis@t12b-shared-host", "rv-t12b-2", "볼트2");
+      const call = vi.fn(async () => undefined) as never;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+
+      const removeButtonFor = (vaultId: string): HTMLButtonElement =>
+        sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vaultId}"] .workspace-vault-action`)!;
+
+      removeButtonFor(first.vaultId).click();
+      // Sibling (rv-t12b-2) still registered on the same host — must not disconnect.
+      expect(call).not.toHaveBeenCalledWith("remote_ssh_disconnect", expect.anything());
+      expect(store.get().vaults.map((v) => v.vaultId)).toEqual([second.vaultId]);
+
+      removeButtonFor(second.vaultId).click();
+      // Now nothing remains on that host — safe (and expected) to disconnect.
+      expect(call).toHaveBeenCalledWith("remote_ssh_disconnect", { host: "ssh://wis@t12b-shared-host" });
+    });
+
+    it("removing a vault on a non-ssh host never calls remote_ssh_disconnect", () => {
+      const store = new WorkspaceStore();
+      const vault = store.registerRemoteVault("t12b-nonssh-host", "rv-t12b-3", "볼트");
+      const call = vi.fn(async () => undefined) as never;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+
+      sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-action`)!.click();
+      expect(call).not.toHaveBeenCalledWith("remote_ssh_disconnect", expect.anything());
+    });
+  });
+
   // 볼트 목록 부모-자식 인덴트 (00_request.md #1): a child vault whose root sits
   // inside a registered parent vault's root renders one level deeper
   // (--level on the row), immediately after its parent — reusing isPathWithin

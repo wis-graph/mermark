@@ -59,6 +59,55 @@ export const classifyRemoteError = (e: unknown): RemoteConnectionState => {
   return "unreachable";
 };
 
+/** Memoized per-host "the SSH tunnel for this `ssh://` vault is up" promise
+ *  — same shape as `remoteFileHost`'s `listingCache` below and
+ *  workspace-sidebar.ts's `badgeProbes`. Fix round 2, Important A: nothing
+ *  reconnected an `ssh://` vault's tunnel after an app restart —
+ *  `remote-vault-dialog.ts` only calls `remote_ssh_connect` once, during
+ *  the pairing flow itself — so a registered `ssh://` vault silently died
+ *  the moment the pairing session ended. Every remote command for such a
+ *  vault now goes through here first.
+ *
+ *  Chose **lazy, on first request** over a boot-time reconnect sweep: this
+ *  module is already the single chokepoint every remote read passes
+ *  through (module doc above), reconnecting here needs no separate startup
+ *  scan of `WorkspaceState` for `ssh://` vaults (some of which the user may
+ *  never even open this session), and `remote_ssh_connect` is already
+ *  idempotent/cheap to call repeatedly (its own `AlreadyConnected` fast
+ *  path) — the memo below just avoids paying even that idempotent round
+ *  trip on every single read. A non-`ssh://` host resolves immediately
+ *  without ever touching `call`, so this is a no-op for the common
+ *  Tailscale case. A failure is evicted immediately (same "don't poison the
+ *  cache with an error" rule `listingCache` uses) so the very next read —
+ *  not just the next app launch — gets to retry; the failure itself
+ *  propagates as this read's own rejection, which `classifyRemoteError`
+ *  already resolves to one of the four states (an SSH-prefixed error like
+ *  `SSH_PORT_BUSY:`/`REMOTE:Unreachable` doesn't match `auth-expired`/
+ *  `sharing-off`, so it falls to `unreachable` — actionable, not silent). */
+const sshTunnelReady = new Map<string, Promise<void>>();
+export const ensureSshTunnel = (host: string, call: typeof invoke): Promise<void> => {
+  if (!host.startsWith("ssh://")) return Promise.resolve();
+  const hit = sshTunnelReady.get(host);
+  if (hit) return hit;
+  const promise = call("remote_ssh_connect", { host }).then(() => undefined);
+  sshTunnelReady.set(host, promise);
+  promise.catch(() => sshTunnelReady.delete(host));
+  return promise;
+};
+
+/** Runs `makeCall` — skipping straight through to it, with NO extra
+ *  microtask hop, for a non-`ssh://` host. `await`ing even an
+ *  already-resolved `Promise.resolve()` (what `ensureSshTunnel` returns for
+ *  every non-`ssh://` vault — the overwhelming majority, still) always
+ *  defers by one microtask per the language spec; several existing tests
+ *  (`workspace-sidebar.test.ts`'s badge-probe dedup, `file-host.test.ts`'s
+ *  sibling-wikilink listing dedup) assert the underlying `remote_*` call
+ *  happened synchronously-ish, within the same tick a render/click
+ *  triggered it — so this only pays that one-tick cost on the `ssh://` path
+ *  that actually needs it. */
+const afterTunnel = <T>(host: string, call: typeof invoke, makeCall: () => Promise<T>): Promise<T> =>
+  host.startsWith("ssh://") ? ensureSshTunnel(host, call).then(makeCall) : makeCall();
+
 /** Probes a paired remote vault's reachability for the sidebar's connection
  *  badge (Task 10). Reuses `remote_list_dir` on the vault's own root rather
  *  than adding a dedicated ping command — a directory listing already proves
@@ -66,13 +115,17 @@ export const classifyRemoteError = (e: unknown): RemoteConnectionState => {
  *  sharing still on), and `classifyRemoteError` already turns its failure
  *  shape into exactly the 4 states the badge renders. `call` defaults to the
  *  real `invoke`, swappable for a spy in tests — same pattern as
- *  `remoteFileHost`. */
+ *  `remoteFileHost`. `ensureSshTunnel` first so an `ssh://` vault's badge
+ *  reconnects the tunnel itself rather than reporting "unreachable" forever
+ *  after a restart with no way to recover short of re-pairing. */
 export const remoteConnectionStateFor = async (
   vault: RemoteVault,
   call: typeof invoke = invoke,
 ): Promise<RemoteConnectionState> => {
   try {
-    await call("remote_list_dir", { host: vault.host, vault: vault.remoteVaultId, path: vault.explorerRoot, showHidden: false });
+    await afterTunnel(vault.host, call, () =>
+      call("remote_list_dir", { host: vault.host, vault: vault.remoteVaultId, path: vault.explorerRoot, showHidden: false }),
+    );
     return "connected";
   } catch (e) {
     return classifyRemoteError(e);
@@ -117,7 +170,9 @@ export const remoteFileHost = (
     const key = `${path} ${showHidden}`;
     const hit = listingCache.get(key);
     if (hit && hit.expires > Date.now()) return hit.promise;
-    const promise: Promise<DirEntry[]> = call("remote_list_dir", { ...base, path, showHidden });
+    const promise: Promise<DirEntry[]> = afterTunnel(vault.host, call, () =>
+      call("remote_list_dir", { ...base, path, showHidden }),
+    );
     listingCache.set(key, { expires: Date.now() + REMOTE_LISTING_TTL_MS, promise });
     // A failed listing shouldn't poison the cache for the full TTL - evict
     // it immediately so the next call retries instead of replaying the
@@ -125,12 +180,20 @@ export const remoteFileHost = (
     promise.catch(() => listingCache.delete(key));
     return promise;
   };
+  // Every method below goes through `afterTunnel` first (fix round 2,
+  // Important A) — for a non-`ssh://` vault this is a direct passthrough
+  // with no extra round trip or microtask (see `afterTunnel`'s doc
+  // comment), so it costs nothing for the common Tailscale case; for an
+  // `ssh://` vault it's what makes a read work at all after an app
+  // restart, not just during the pairing session.
   return {
-    readFile: (path) => call("remote_read_file", { ...base, path }),
+    readFile: (path) => afterTunnel(vault.host, call, () => call("remote_read_file", { ...base, path })),
     listDir,
-    listFilesRecursive: (root, showHidden) => call("remote_list_files_recursive", { ...base, path: root, showHidden }),
-    resolveImage: (baseDir, name, maxDepth) => call("remote_resolve_image", { ...base, path: baseDir, name, maxDepth }),
-    listLinkTargets: (dir) => call("remote_list_link_targets", { ...base, path: dir }),
+    listFilesRecursive: (root, showHidden) =>
+      afterTunnel(vault.host, call, () => call("remote_list_files_recursive", { ...base, path: root, showHidden })),
+    resolveImage: (baseDir, name, maxDepth) =>
+      afterTunnel(vault.host, call, () => call("remote_resolve_image", { ...base, path: baseDir, name, maxDepth })),
+    listLinkTargets: (dir) => afterTunnel(vault.host, call, () => call("remote_list_link_targets", { ...base, path: dir })),
     // remote_client.rs exposes no `path_exists`/`directory_exists` command
     // (this task makes no Rust changes, so none can be added here either),
     // and stubbing this to unconditional `true` - as an earlier draft of

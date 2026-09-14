@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore, canonicalRootPath, workspaceStorageKey } from "../src/workspace/workspace-state";
+import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore, anyVaultStillUsesHost, canonicalRootPath, workspaceStorageKey } from "../src/workspace/workspace-state";
 
 describe("WorkspaceStore", () => {
   beforeEach(() => localStorage.clear());
@@ -219,6 +219,36 @@ describe("WorkspaceStore", () => {
       const remote = store.registerRemoteVault("wis-macmini", "rv-1", "원격");
       expect(store.unregisterVault(remote.vaultId).persistenceKind).toBe("remote");
       expect(store.get().vaults).toEqual([]);
+    });
+
+    // Fix round 2, Important B: registerRemoteVault dedupes on
+    // (host, remoteVaultId), not host alone — two vaults from the same
+    // host's share list can coexist, and removing one must not signal that
+    // the shared SSH tunnel is safe to tear down while the other still
+    // needs it.
+    describe("anyVaultStillUsesHost (SSH tunnel sharing, fix round 2 Important B)", () => {
+      it("two vaults can share one ssh host, and removing one still leaves the host in use", () => {
+        const store = new WorkspaceStore();
+        const first = store.registerRemoteVault("ssh://wis@macmini", "rv-1", "볼트1");
+        const second = store.registerRemoteVault("ssh://wis@macmini", "rv-2", "볼트2");
+        expect(anyVaultStillUsesHost(store.get().vaults, "ssh://wis@macmini")).toBe(true);
+
+        store.unregisterVault(first.vaultId);
+        // The sibling (rv-2) is still registered against the same host — the
+        // tunnel must NOT be torn down.
+        expect(anyVaultStillUsesHost(store.get().vaults, "ssh://wis@macmini")).toBe(true);
+        expect(store.get().vaults.map((v) => v.vaultId)).toEqual([second.vaultId]);
+
+        store.unregisterVault(second.vaultId);
+        // Now nothing on that host remains — safe to disconnect.
+        expect(anyVaultStillUsesHost(store.get().vaults, "ssh://wis@macmini")).toBe(false);
+      });
+
+      it("a vault on a different host never counts toward the removed vault's host", () => {
+        const store = new WorkspaceStore();
+        store.registerRemoteVault("ssh://wis@other-host", "rv-1", "다른호스트");
+        expect(anyVaultStillUsesHost(store.get().vaults, "ssh://wis@macmini")).toBe(false);
+      });
     });
   });
 });

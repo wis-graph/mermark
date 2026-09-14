@@ -23,13 +23,27 @@
 //! (worst case) this same Mac's own `remote_share` running in
 //! `LocalhostOnly` mode would all make the readiness probe below succeed
 //! against *their* listener, not ours — silently reading a stranger's (or
-//! the user's own) vault under this vault's name. Two defenses, not one:
-//! `port_is_free` refuses to even spawn when something is already listening,
-//! and `-o ExitOnForwardFailure=yes` (in `tunnel_args`) makes `ssh` itself
-//! exit immediately if a race loses it the bind, so `wait_until_ready`'s
-//! child-exited check (not the TCP probe, which runs second and *after* a
-//! full poll interval — seeChild-exited-first the wait loop below) catches
-//! it.
+//! the user's own) vault under this vault's name. Two defenses:
+//! `port_is_free` refuses to even spawn when something is *already*
+//! listening, which is what actually closes the realistic case (a
+//! long-lived orphan or rival that predates this connect attempt); `-o
+//! ExitOnForwardFailure=yes` (in `tunnel_args`) makes `ssh` itself exit if
+//! it loses a bind race instead of warning and staying up forever, and
+//! `wait_until_ready`'s per-iteration child-exited check will notice that
+//! exit whenever it happens over the full `READY_TIMEOUT` window.
+//!
+//! **What that second defense does NOT do** (corrected fix round 2 — an
+//! earlier version of this comment claimed the poll loop's sleep gave `ssh`
+//! "time to die before the TCP probe could run": wrong. OpenSSH sets up a
+//! `-L` forward only *after* authentication finishes, seconds later, not
+//! within one `READY_POLL_INTERVAL`): if a rival binds the port in the
+//! narrow window between `port_is_free`'s check and `ssh`'s own eventual
+//! bind attempt, the TCP probe can still connect to that rival and report
+//! success before `ssh` ever tries. That residual window's *duration* is
+//! roughly however long `ssh` takes to authenticate, not milliseconds — but
+//! it only matters if a rival happens to start listening in that exact
+//! gap, which `port_is_free` has already ruled out for anything already
+//! there. Narrow, accepted for v1.
 
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
@@ -270,12 +284,15 @@ fn stderr_suffix(log: &StderrLog) -> String {
 /// stderr tail so "wrong password" and "host is down" no longer look
 /// identical to the person reading the error.
 ///
-/// Sleeps *before* the first check rather than checking immediately (fix
-/// round 1, Critical 1's other half): a lost bind race is only caught by
-/// `has_exited` once `ssh` has actually had a moment to attempt the bind and
-/// die from `ExitOnForwardFailure=yes` — checking at t=0 would let the very
-/// first TCP probe connect to whatever *was already there* before that
-/// death registers, misreporting success.
+/// Sleeps *before* the first check rather than checking immediately — a
+/// cheap way to avoid a guaranteed-wasted iteration at t=0 (nothing can be
+/// listening yet a moment after spawn). It is NOT what protects against a
+/// lost bind race (corrected fix round 2, see this module's doc comment for
+/// why): OpenSSH only attempts the `-L` bind *after* authentication
+/// completes, well past one `poll` interval, so `has_exited` catches that
+/// failure whenever it actually happens over the full `timeout` window —
+/// the sleep changes when the loop starts polling, not how fast a lost race
+/// is detected.
 async fn wait_until_ready(
     child: &mut Child,
     port: u16,
