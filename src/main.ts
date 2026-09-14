@@ -801,8 +801,19 @@ async function boot() {
    *  single owner of that rule — every viewer open (built-in image, any
    *  extension) for an on-disk file funnels through here. No-op if no viewer
    *  claims the file (defensive; canOpenWithViewer should already have gated
-   *  the caller). Command (void). */
-  function openWithViewer(absPath: string): void {
+   *  the caller).
+   *
+   *  `targetVault` is REQUIRED (not read from `currentVault()` internally) —
+   *  Task 11 fix round 1's finding: `currentVault()` is the SIDEBAR's
+   *  selection, which can name a remote vault while `absPath` is a raw LOCAL
+   *  filesystem path (a CLI launch, or the open-path prompt) that has
+   *  nothing to do with it. Trusting `currentVault()` here refused a
+   *  perfectly valid local EPUB with the remote "아직 지원하지 않습니다"
+   *  message whenever a remote vault happened to be selected — the same
+   *  class of bug `resolveTargetVault`/Explorer's `onOpenFile` `targetVault`
+   *  already exist to prevent (see their own comments) for document opens.
+   *  Every caller below now threads the vault it actually means. Command (void). */
+  function openWithViewer(absPath: string, targetVault: Vault): void {
     const v = viewerForEntry(basename(absPath));
     if (!v) return;
     // Remote vaults (v1, read-only) only ever serve markdown + images through
@@ -813,7 +824,7 @@ async function boot() {
     // viewer open and fail silently/partially (this repo forbids silent
     // degradation) — the row itself stays clickable, it just reports the
     // truth instead of opening a broken pane.
-    if (isRemoteVault(currentVault()) && !remoteCanOpen(basename(absPath))) {
+    if (isRemoteVault(targetVault) && !remoteCanOpen(basename(absPath))) {
       save.set("error", remoteUnsupportedMessage(basename(absPath)));
       return;
     }
@@ -861,13 +872,25 @@ async function boot() {
    *  or "recovered" when the document branch fails but stays visibly
    *  reported (never silently dropped) — the exact vocabulary
    *  `acknowledge_open_request` needs, reused by every other caller as a
-   *  plain success/fail signal. */
+   *  plain success/fail signal.
+   *
+   *  Every caller here (CLI launch/route, the open-path prompt, the
+   *  boot-time initial file) hands in a raw LOCAL filesystem path — never a
+   *  vault-relative remote path (a remote vault has no restored tabs to
+   *  reopen this way; see `restoredTabs`'s own `persistenceKind === "permanent"`
+   *  guard) — so the viewer branch resolves its vault via `routeCliFile`
+   *  (path-based: the permanent vault whose root actually contains `path`,
+   *  else the Global Vault), the SAME local-only resolution `routeDocumentPath`
+   *  falls back to for a non-trusted vault. It deliberately does NOT consult
+   *  `currentVault()`/`routedVault`: those name whatever vault is currently
+   *  SELECTED in the sidebar, which can be a remote vault with nothing to do
+   *  with this path (Task 11 fix round 1's finding). */
   async function openPathEntry(
     path: string,
     openDoc: (path: string) => Promise<boolean>,
   ): Promise<"opened" | "recovered"> {
     if (viewerForEntry(basename(path))) {
-      openWithViewer(path);
+      openWithViewer(path, routeCliFile(workspaceStore, path).vault);
       return "opened";
     }
     return (await openDoc(path)) ? "opened" : "recovered";
@@ -884,14 +907,18 @@ async function boot() {
    *  `openWithViewer`'s breadcrumb rewrite, since there is no on-disk folder
    *  to point the breadcrumb at. A local absolute path reuses `openWithViewer`
    *  as-is (breadcrumb included), the same path the explorer already takes.
-   *  Command (void). */
+   *  A local `source` belongs to the CURRENTLY MOUNTED document, not to
+   *  whatever the sidebar happens to have selected — `currentVault()` is
+   *  correct here (no ambiguity: this fires from a click inside the document
+   *  that IS the open one, so it can't be mid-vault-crossing-switch the way
+   *  a fresh open can). Command (void). */
   function openImageFromEditor(source: string): void {
     if (!isViewerEnabled(disabledViewersSetting.get(), "image")) return;
     if (isRemoteSrc(source)) {
       viewerSlot.open(() => openImageViewer(source));
       return;
     }
-    openWithViewer(source);
+    openWithViewer(source, currentVault() ?? workspaceStore.getGlobalVault());
   }
   setImageOpenHandler(openImageFromEditor);
 
@@ -958,7 +985,13 @@ async function boot() {
     // drifting; if you add a new way to open a path, reach for `openPathEntry`,
     // not for a third copy of this branch.
     canOpenWithViewer: (name) => viewerForEntry(name) != null,
-    onOpenWithViewer: openWithViewer,
+    // The Explorer is unambiguously browsing `currentVault()` (same fact
+    // `onOpenFile`'s remote branch above already relies on) — thread it
+    // explicitly rather than have `openWithViewer` consult `currentVault()`
+    // itself (Task 11 fix round 1: that pattern is exactly what let a CLI/
+    // prompt-launched LOCAL path get misjudged against an unrelated
+    // sidebar-selected remote vault).
+    onOpenWithViewer: (absPath) => openWithViewer(absPath, currentVault() ?? workspaceStore.getGlobalVault()),
     // ⌘/Ctrl+click or ⌘+Enter on a markdown row: open it in a brand-new window.
     // Reuses open_path — the same command wikilink clicks already invoke to
     // spawn a new document window — so no new backend command is needed.

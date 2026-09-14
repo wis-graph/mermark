@@ -1328,5 +1328,57 @@ describe("main workspace wiring", () => {
       await vi.waitFor(() => expect(document.querySelector(".save-status")?.textContent).toContain("원격 볼트에서는 아직 지원하지 않습니다"));
       expect(document.querySelector(".viewer-panel")).toBeNull();
     });
+
+    // Task 11 fix round 1 (Important finding): `openWithViewer` used to
+    // consult `currentVault()` directly. A CLI launch or the open-path
+    // prompt hands in a raw LOCAL absolute path that has nothing to do with
+    // whichever vault the SIDEBAR happens to have selected — so with a
+    // remote vault selected, a perfectly valid LOCAL EPUB was wrongly
+    // refused with the remote "아직 지원하지 않습니다" message. The fix threads
+    // an explicit target vault into `openWithViewer` instead, resolved via
+    // `routeCliFile` (path-based: does this path live under a registered
+    // permanent vault's root?) for these two raw-local-path entry points.
+    // Both regression cases below seed a permanent vault AND a remote vault,
+    // with the REMOTE vault as `currentVaultId` — the exact repro.
+    const permanentPlusRemoteState = JSON.stringify({
+      workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FA", "vault-remote-z"], currentVaultId: "vault-remote-z", lastSelectedPermanentVaultId: "vault-%2FA" }],
+      vaults: [
+        { vaultId: "vault-%2FA", workspaceId: "workspace-default", displayName: "A", rootPath: "/A", persistenceKind: "permanent", explorerRoot: "/A" },
+        { vaultId: "vault-remote-z", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: "/", host: "wis-macmini", remoteVaultId: "rv-1" },
+      ],
+      currentWorkspaceId: "workspace-default",
+    });
+
+    it("a CLI-routed LOCAL viewer file (EPUB) opens normally, not refused, even while a remote vault is selected", async () => {
+      localStorage.setItem("mermark.workspaceState", permanentPlusRemoteState);
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+      await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+      invokeMock.mockClear();
+
+      emitEvent("cli-open-request", { id: 21, path: "/A/책.epub" });
+
+      await vi.waitFor(() => expect(document.querySelector(".viewer-panel")).not.toBeNull());
+      await vi.waitFor(() => expect(cliAcks).toEqual([{ id: 21, outcome: "opened" }]));
+      expect(document.querySelector(".save-status")?.textContent ?? "").not.toContain("원격 볼트에서는 아직 지원하지 않습니다");
+    });
+
+    it("the open-path prompt opens a LOCAL viewer file (EPUB) normally, not refused, even while a remote vault is selected", async () => {
+      localStorage.setItem("mermark.workspaceState", permanentPlusRemoteState);
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      await import("../src/main");
+
+      const openPathBtn = document.querySelector<HTMLButtonElement>(".open-path");
+      openPathBtn?.click();
+      const input = document.querySelector<HTMLInputElement>(".open-path-input");
+      expect(input).not.toBeNull();
+      input!.value = "/A/책.epub";
+      input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+
+      await vi.waitFor(() => expect(document.querySelector(".viewer-panel")).not.toBeNull());
+      expect(document.querySelector(".save-status")?.textContent ?? "").not.toContain("원격 볼트에서는 아직 지원하지 않습니다");
+    });
   });
 });
