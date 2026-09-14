@@ -11,9 +11,14 @@ mod epubview;
 mod htmlview;
 mod hwp;
 mod qa_trace;
-// Unused until Task 4 (pairing) and Task 5 (HTTP server) call into it.
-#[allow(dead_code)]
+// `constant_time_eq`/pairing consumed by remote_token.rs; the rest awaits
+// Task 5's (unused until then, so still allow(dead_code) on the module as
+// a whole would hide real dead code — left ungated now that remote_token
+// depends on it).
 mod remote_host;
+// Unused until Task 6/9 register `#[tauri::command]`s that call into it.
+#[allow(dead_code)]
+mod remote_token;
 mod single_instance;
 mod sqlite;
 mod watcher;

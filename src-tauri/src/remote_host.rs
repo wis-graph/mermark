@@ -6,6 +6,12 @@
 //! `#[tauri::command]`. Task 5 (HTTP server) and Task 4 (pairing) are the
 //! only consumers so far.
 //!
+//! Also owns pairing: a short-lived, human-typeable code
+//! (`issue_pairing_code`/`PairingState`/`redeem`) that exchanges once for a
+//! long-lived device token (`remote_token.rs` stores that token; this module
+//! only mints it via `htmlview::mint_view_token`, reusing that CSPRNG-backed
+//! minter rather than writing a second one).
+//!
 //! Follows `htmlview.rs`'s containment idiom rather than inventing a new
 //! one: a **two-gate** check, same as `is_within_armed_root` there.
 //! `resolve_within` is the lexical gate — it rejects `..`, an absolute path,
@@ -83,6 +89,119 @@ pub fn canonicalize_within(armed: &ArmedVault, resolved: &Path) -> Option<PathBu
     let root = armed.root.canonicalize().ok()?;
     let target = resolved.canonicalize().ok()?;
     target.starts_with(&root).then_some(target)
+}
+
+/// How long an issued pairing code stays redeemable. Five minutes is enough
+/// for a human to read it off one screen and type it into another, but short
+/// enough that a code left visible in a screenshot or over-the-shoulder
+/// glance is worthless soon after.
+pub const PAIRING_TTL_MS: u64 = 5 * 60_000;
+
+/// How many wrong codes `redeem` tolerates before locking the pairing
+/// session out entirely (regardless of whether a later attempt is correct).
+/// Bounds brute-force guessing of the 6-digit space to a handful of tries
+/// per issued code rather than an unlimited one.
+pub const PAIRING_MAX_ATTEMPTS: u8 = 5;
+
+/// A freshly minted pairing code: the 6 ASCII digits shown to the user, and
+/// the timestamp it was issued at (caller-supplied `now_ms`, not a wall
+/// clock read here, so tests can drive expiry deterministically).
+#[derive(Clone, Debug)]
+pub struct PairingCode {
+    pub code: String,
+    pub issued_at_ms: u64,
+}
+
+/// Why `redeem` refused a code. `LockedOut` and `Mismatch` are deliberately
+/// distinct: `redeem`'s ordering (see its doc comment) guarantees a caller
+/// only ever sees `Mismatch` while attempts remain, and `LockedOut`
+/// afterward — never a `Mismatch` on the (N+1)th wrong guess.
+#[derive(Debug, PartialEq)]
+pub enum PairError {
+    Expired,
+    AlreadyUsed,
+    Mismatch,
+    LockedOut,
+    NotArmed,
+}
+
+/// One pairing session's mutable state: the code it was armed with (`None`
+/// once never armed — `redeem` reports `NotArmed` rather than panicking),
+/// whether it has already been redeemed, and how many wrong guesses it has
+/// absorbed so far.
+pub struct PairingState {
+    code: Option<PairingCode>,
+    used: bool,
+    failed_attempts: u8,
+}
+
+impl PairingState {
+    pub fn armed(code: PairingCode) -> Self {
+        Self { code: Some(code), used: false, failed_attempts: 0 }
+    }
+
+    /// The code this session was armed with, or `""` if never armed. Exists
+    /// so callers (and tests) can read back what to type without reaching
+    /// into the private `code` field.
+    pub fn code(&self) -> &str {
+        self.code.as_ref().map(|c| c.code.as_str()).unwrap_or("")
+    }
+}
+
+/// Draws a fresh 6-digit pairing code from the OS CSPRNG (`getrandom`, same
+/// source `htmlview::mint_view_token` uses for its token bytes) rather than
+/// a PRNG seeded from the clock — a guessable code would defeat the whole
+/// point of a pairing step. `now_ms` is caller-supplied (not read here) so
+/// `redeem`'s expiry check is deterministic under test.
+pub fn issue_pairing_code(now_ms: u64) -> PairingCode {
+    let mut bytes = [0u8; 4];
+    getrandom::fill(&mut bytes).expect("OS CSPRNG must be available");
+    let n = u32::from_be_bytes(bytes) % 1_000_000;
+    PairingCode { code: format!("{n:06}"), issued_at_ms: now_ms }
+}
+
+/// Exchanges a pairing code for a device token. Checks expiry, prior use,
+/// and lockout **before** ever comparing `offered` against the issued
+/// code — a session that has already locked out must refuse even the
+/// genuinely correct code, so a caller can never tell (by trying after
+/// lockout) whether the code they eventually typed was right. Only once all
+/// three gates pass does it compare (in constant time) and, on mismatch,
+/// count the attempt.
+pub fn redeem(state: &mut PairingState, offered: &str, now_ms: u64) -> Result<String, PairError> {
+    let Some(issued) = state.code.clone() else { return Err(PairError::NotArmed) };
+    if state.used {
+        return Err(PairError::AlreadyUsed);
+    }
+    if state.failed_attempts >= PAIRING_MAX_ATTEMPTS {
+        return Err(PairError::LockedOut);
+    }
+    if now_ms.saturating_sub(issued.issued_at_ms) > PAIRING_TTL_MS {
+        return Err(PairError::Expired);
+    }
+    if !constant_time_eq(offered, &issued.code) {
+        state.failed_attempts += 1;
+        return Err(PairError::Mismatch);
+    }
+    state.used = true;
+    Ok(crate::htmlview::mint_view_token())
+}
+
+/// Byte-for-byte comparison that never short-circuits on a *content*
+/// mismatch, so a timing side channel can't leak how many leading bytes of
+/// a guess were right. A length mismatch returns early — the length of a
+/// pairing code isn't a secret, only its digits are — matching
+/// `constant_time_eq`'s job everywhere else in this codebase (compare
+/// exactly the confidential part, nothing more).
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[cfg(test)]
@@ -175,5 +294,58 @@ mod tests {
 
         assert_eq!(resolved, Some(root.join("link.md")), "component check should pass");
         assert_eq!(canonical, None, "symlink escape must be rejected");
+    }
+
+    // --- pairing ---
+
+    #[test]
+    fn pairing_code_is_six_digits() {
+        let c = issue_pairing_code(0);
+        assert_eq!(c.code.len(), 6);
+        assert!(c.code.chars().all(|ch| ch.is_ascii_digit()));
+    }
+
+    #[test]
+    fn pairing_code_expires_after_five_minutes() {
+        let mut st = PairingState::armed(issue_pairing_code(0));
+        let code = st.code().to_string();
+        assert!(matches!(redeem(&mut st, &code, 5 * 60_000 + 1), Err(PairError::Expired)));
+    }
+
+    #[test]
+    fn pairing_code_is_single_use() {
+        let mut st = PairingState::armed(issue_pairing_code(0));
+        let code = st.code().to_string();
+        assert!(redeem(&mut st, &code, 1_000).is_ok());
+        assert!(matches!(redeem(&mut st, &code, 2_000), Err(PairError::AlreadyUsed)));
+    }
+
+    #[test]
+    fn pairing_code_locks_out_after_five_wrong_attempts() {
+        let mut st = PairingState::armed(issue_pairing_code(0));
+        let code = st.code().to_string();
+        for _ in 0..5 {
+            assert!(matches!(redeem(&mut st, "000000", 1_000), Err(PairError::Mismatch)));
+        }
+        assert!(
+            matches!(redeem(&mut st, &code, 1_000), Err(PairError::LockedOut)),
+            "정답이어도 시도 초과 후에는 거부한다"
+        );
+    }
+
+    #[test]
+    fn redeeming_yields_a_128_bit_device_token() {
+        let mut st = PairingState::armed(issue_pairing_code(0));
+        let code = st.code().to_string();
+        let token = redeem(&mut st, &code, 1_000).unwrap();
+        assert_eq!(token.len(), 32, "16바이트 hex");
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn constant_time_eq_matches_normal_equality() {
+        assert!(constant_time_eq("abc", "abc"));
+        assert!(!constant_time_eq("abc", "abd"));
+        assert!(!constant_time_eq("abc", "ab"));
     }
 }
