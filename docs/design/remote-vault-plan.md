@@ -1057,26 +1057,41 @@ git commit -m "feat(remote-client): 타임아웃 고정 reqwest 클라이언트�
 **Files:**
 - Modify: `src/mocks/tauri-core.ts`
 
+**실제 커맨드 인자 이름** (Rust에서 확인한 값 — mock이 이 이름으로 받아야 한다):
+- `remote_vaults(host)`
+- `remote_list_dir(host, vault, path)` · `remote_list_files_recursive(host, vault, path)`
+- `remote_read_file(host, vault, path)` · `remote_read_image(host, vault, path)`
+- `remote_resolve_image(host, vault, path, name, maxDepth)` — Rust는 `max_depth`
+- `remote_list_link_targets(host, vault, path)`
+- `remote_pair(host, code)` → `Result<(), String>`
+**어느 커맨드도 `token`을 받지 않는다.**
+
 - [ ] **Step 1: mock case를 추가한다**
 
 ```ts
 // src/mocks/tauri-core.ts — 기존 switch에 추가
 case "remote_vaults":
-  return [{ id: "rv-demo", displayName: "원격 데모 볼트" }] as T;
+  // 와이어 셰이프는 Rust 구조체 그대로다 — `RemoteVault`에 rename_all이 없어
+  // `display_name`이 snake_case로 나간다. camelCase로 쓰면 mock만 실앱과 어긋난다.
+  return [{ id: "rv-demo", display_name: "원격 데모 볼트" }] as T;
 case "remote_read_file":
   return { text: "# 원격 데모\n\n브라우저 mock이 만든 원격 문서입니다.", mtime: 1 } as T;
 case "remote_list_dir":
-  // `is_dir`는 snake_case를 유지한다 — Rust DirEntry에 rename_all이 없어
-  // serde가 필드명을 그대로 직렬화한다(commands.rs:833 주석, 기존 list_dir mock).
+  // `is_dir`도 같은 이유로 snake_case (commands.rs:833 주석, 기존 list_dir mock).
+  // 경로는 **볼트 상대 경로**다 — 호스트가 절대 경로를 돌려주지 않는다.
   return [{ name: "원격노트.md", path: "원격노트.md", is_dir: false }] as T;
 case "remote_list_files_recursive":
   return { files: [{ name: "원격노트.md", path: "원격노트.md" }], truncated: false } as T;
+case "remote_read_image":
+  // remote_read_image는 data: URL 문자열을 돌려준다(경로가 아니다).
+  return "data:image/png;base64,iVBORw0KGgo=" as T;
 case "remote_resolve_image":
   return null as T;
 case "remote_list_link_targets":
   return [] as T;
 case "remote_pair":
-  return { token: "0".repeat(32), vaults: [{ id: "rv-demo", displayName: "원격 데모 볼트" }] } as T;
+  // 토큰은 프론트엔드로 넘어오지 않는다(Ruling 4) — 성공하면 아무것도 안 준다.
+  return undefined as T;
 ```
 
 - [ ] **Step 2: 타입·테스트 회귀를 확인한다**
