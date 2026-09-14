@@ -1596,7 +1596,12 @@ async function boot() {
       }
     }
 
-    if (!opts.watcherReady) void watcherHandoff.handoff(file);
+    // A remote document's path is vault-relative ("노트.md", no host-local
+    // filesystem counterpart) — watch_file would arm a LOCAL filesystem
+    // watcher on whatever that relative name resolves to under the process's
+    // CWD, not the host's file (v1 has no remote file-watch command at all).
+    // Skipped outright rather than let it silently watch the wrong thing.
+    if (!opts.watcherReady && selectedVault.persistenceKind !== "remote") void watcherHandoff.handoff(file);
 
     // Re-opening swaps the document without firing docChanged on the new editor,
     // so an open outline panel would show the previous file's headings. Refresh

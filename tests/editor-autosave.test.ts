@@ -281,3 +281,101 @@ describe("safe recovery suspension", () => {
     }
   });
 });
+
+// Task 10 fix round 1 (Critical): a remote document reaching write_file at
+// all — under its vault-relative name ("노트.md"), with no host counterpart —
+// used to silently create/overwrite a same-named LOCAL file. This locks the
+// UI-layer half of the fix: mountEditor forces read-only for a remote vault
+// regardless of the requested mode, and every write-capable entry point
+// reports REMOTE_READONLY_MESSAGE instead of ever calling invoke("write_file").
+describe("remote vault read-only guard (Task 10 fix round 1, Critical)", () => {
+  const REMOTE_READONLY_MESSAGE = "원격 볼트는 읽기 전용입니다";
+  const remoteVault = {
+    vaultId: "vault-remote-x",
+    workspaceId: "workspace-default",
+    displayName: "맥미니 노트",
+    persistenceKind: "remote" as const,
+    rootPath: null,
+    explorerRoot: "/",
+    host: "wis-macmini",
+    remoteVaultId: "rv-1",
+  };
+  let host: HTMLElement;
+  beforeEach(() => {
+    invokeMock.mockClear();
+    readHandler = () => Promise.resolve({ text: "", mtime: 1 });
+    writeHandler = () => Promise.resolve(2); // would succeed IF ever called — the test proves it's never called
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+
+  it("mounts read-only even when initialMode asks for edit, and refuses to switch back to edit", () => {
+    const ed = mountEditor(host, "노트", "/", "노트.md", { initialMode: "edit", vault: remoteVault });
+    expect(ed.mode()).toBe("read");
+    expect(host.querySelector(".cm-content")?.getAttribute("contenteditable")).toBe("false");
+
+    const statuses: Array<[string, string | undefined]> = [];
+    const ed2 = mountEditor(host, "노트", "/", "노트.md", {
+      initialMode: "read",
+      vault: remoteVault,
+      onStatus: (s, detail) => statuses.push([s, detail]),
+    });
+    ed2.setMode("edit");
+    expect(ed2.mode()).toBe("read"); // refused, not silently ignored
+    expect(statuses).toContainEqual(["error", REMOTE_READONLY_MESSAGE]);
+    ed.view.destroy();
+    ed2.view.destroy();
+  });
+
+  it("forceSave/saveOnClose/saveAs/saveRecoveredCopy/retryOriginal all report and never call write_file", async () => {
+    const statuses: Array<[string, string | undefined]> = [];
+    const ed = mountEditor(host, "노트", "/", "노트.md", {
+      initialMode: "read",
+      vault: remoteVault,
+      onStatus: (s, detail) => statuses.push([s, detail]),
+    });
+
+    ed.forceSave();
+    await ed.saveOnClose();
+    await ed.saveAs("/tmp/elsewhere.md");
+    await ed.saveRecoveredCopy();
+    await ed.retryOriginal();
+
+    expect(writes().length).toBe(0);
+    const errorMessages = statuses.filter(([s]) => s === "error").map(([, d]) => d);
+    expect(errorMessages.length).toBeGreaterThanOrEqual(5);
+    expect(errorMessages.every((d) => d === REMOTE_READONLY_MESSAGE)).toBe(true);
+    ed.view.destroy();
+  });
+
+  it("a document-changing transaction (e.g. a programmatic reload) never schedules a write for a remote vault", async () => {
+    vi.useFakeTimers();
+    try {
+      const ed = mountEditor(host, "노트", "/", "노트.md", { initialMode: "read", vault: remoteVault, autosaveDelay: 10 });
+      ed.view.dispatch({ changes: { from: 0, insert: "x" } }); // bypasses the (also-false) editable facet
+      await vi.advanceTimersByTimeAsync(50);
+      expect(writes().length).toBe(0);
+      ed.view.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a local (non-remote) vault is unaffected: still mounts editable and saves normally", async () => {
+    vi.useFakeTimers();
+    try {
+      const ed = mountEditor(host, "노트", "/tmp", "/tmp/노트.md", {
+        initialMode: "edit",
+        autosaveDelay: 10,
+        vault: { vaultId: "vault-p", workspaceId: "workspace-default", displayName: "P", persistenceKind: "permanent", rootPath: "/tmp", explorerRoot: "/tmp" },
+      });
+      expect(ed.mode()).toBe("edit");
+      ed.view.dispatch({ changes: { from: 2, insert: "!" } });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(writes().length).toBe(1);
+      ed.view.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

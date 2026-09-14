@@ -200,6 +200,25 @@ pub fn write_file(
     write_file_with_state(&path, &text, baseline, &watch)
 }
 
+/// Domain rule (Task 10 fix round 1, Critical): `write_file` may only ever
+/// target an absolute path. Every legitimate caller already has one —
+/// `read_file`'s own path, the `.mermark-recovered` sibling and `saveAs`
+/// targets are built client-side by appending to / replacing an absolute
+/// path, and CLI/reload routing resolves through `canonicalize_path` first.
+/// A relative path reaching this command is not a legitimate use with a
+/// harmlessly-different meaning — it is exactly the shape a *remote* vault's
+/// document name has (`"노트.md"`, vault-relative, no host-local counterpart
+/// at all — v1's remote client has no write command by design). Without this
+/// guard, a frontend mistake that lets a remote document reach `write_file`
+/// silently creates or **overwrites** a same-named file under whatever the
+/// process's working directory happens to be, instead of failing loudly.
+/// Named and unit-tested on its own (not just inline in
+/// `write_file_with_state`) so the rule stays visible and a future edit
+/// can't quietly drop the check while touching the function around it.
+fn requires_absolute_write_path(path: &Path) -> bool {
+    path.is_absolute()
+}
+
 /// Pure core of `write_file`, threading the `WatchState` explicitly so tests can
 /// inject a fresh one and assert the self-write was recorded. The atomic
 /// temp-rename and `CONFLICT:` conflict-guard live here unchanged; the only added
@@ -210,6 +229,9 @@ fn write_file_with_state(
     baseline: u64,
     watch: &crate::watcher::WatchState,
 ) -> Result<u64, String> {
+    if !requires_absolute_write_path(Path::new(path)) {
+        return Err(format!("INVALID_PATH: write_file requires an absolute path, got \"{path}\""));
+    }
     let normalized = normalize_path(Path::new(path)).to_string_lossy().into_owned();
     if baseline != 0 {
         // `>` (strictly newer) flags an external change without false-positiving
@@ -1189,6 +1211,32 @@ mod tests {
             "a strictly-newer mtime is still external"
         );
         fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn write_rejects_a_relative_path_and_touches_no_file() {
+        // The Critical fix: a relative path (e.g. a remote vault's
+        // vault-relative document name) must never reach fs::write/rename —
+        // it would land under the process's CWD instead of failing.
+        let cwd_before: Vec<_> = fs::read_dir(std::env::current_dir().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .collect();
+        let err = write_file_with_state("mermark_relative_write_probe.md", "x", 0, &fresh_watch_state())
+            .unwrap_err();
+        assert!(err.starts_with("INVALID_PATH:"), "got: {err}");
+        let cwd_after: Vec<_> = fs::read_dir(std::env::current_dir().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .collect();
+        assert_eq!(cwd_before, cwd_after, "a rejected relative write must create nothing");
+    }
+
+    #[test]
+    fn requires_absolute_write_path_accepts_absolute_rejects_relative() {
+        assert!(requires_absolute_write_path(Path::new(&temp_path("abs"))));
+        assert!(!requires_absolute_write_path(Path::new("relative/노트.md")));
+        assert!(!requires_absolute_write_path(Path::new("노트.md")));
     }
 
     #[test]

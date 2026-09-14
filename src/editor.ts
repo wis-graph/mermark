@@ -17,7 +17,7 @@ import { wikilinkCompletionSource } from "./markdown/wikilink-complete";
 import { markupWrap } from "./markdown/markup-wrap";
 import { pasteLinkWrap } from "./markdown/paste-link";
 import type { ConflictPolicy, VimMode } from "./settings/app";
-import { documentVault } from "./document/document-vault";
+import { documentVault, isRemoteVault } from "./document/document-vault";
 import type { Vault } from "./workspace/workspace-state";
 
 export type SaveStatus = "saved" | "saving" | "error" | "conflict" | "recovery";
@@ -30,6 +30,17 @@ function vimExtensions(vimEnabled: boolean) {
 /** Default autosave debounce used when the caller threads no delay (e.g. tests
  *  that mount without opts). The live value flows from autosaveDelaySetting. */
 const DEFAULT_AUTOSAVE_DELAY_MS = 800;
+
+/** The one message every blocked remote-vault write reports (Task 10 fix
+ *  round 1, Critical). v1 remote vaults are read-only end to end — the
+ *  backend never got a `remote_write_file` command (Task 1's doc comment),
+ *  so ANY code path that still reaches `invoke("write_file", ...)` for a
+ *  remote document is writing to whatever the LOCAL working directory
+ *  happens to be, under the document's vault-relative name (e.g. "노트.md"),
+ *  not to the host. That's not a no-op — it can silently create, and even
+ *  overwrite, an unrelated local file. Every write entry point below checks
+ *  `readOnly` and reports this instead of ever reaching `invoke`. */
+const REMOTE_READONLY_MESSAGE = "원격 볼트는 읽기 전용입니다";
 
 /** The conflict-resolution rule in one named place: should a refused write
  *  (the file changed on disk) clobber the external change with the user's
@@ -104,6 +115,7 @@ function makeAutosave(
   baseMtime: number,
   onStatus: (s: SaveStatus, detail?: string) => void,
   getDelay: () => number,
+  readOnly = false,
 ) {
   const recoveryPath = `${path}.mermark-recovered`;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -122,6 +134,7 @@ function makeAutosave(
    *  re-arming autosave. Shared by the conflict `overwrite` policy and the
    *  manual force-save button so the clobber-and-rebaseline rule lives once. */
   const overwriteOnDisk = (text: string): Promise<void> => {
+    if (readOnly) { onStatus("error", REMOTE_READONLY_MESSAGE); return Promise.resolve(); }
     if (suspended) return Promise.resolve();
     const p = invoke<number>("write_file", { path, text, baseline: 0 })
       .then((mtime) => {
@@ -141,6 +154,7 @@ function makeAutosave(
    *  write the conflict policy decides: `overwrite` clobbers the external
    *  change immediately; `pause` (default) halts autosave and waits. */
   const save = (text: string): Promise<void> => {
+    if (readOnly) { onStatus("error", REMOTE_READONLY_MESSAGE); return Promise.resolve(); }
     if (suspended) {
       pending = text;
       return Promise.resolve();
@@ -173,7 +187,7 @@ function makeAutosave(
 
   return {
     extension: EditorView.updateListener.of((u) => {
-      if (!u.docChanged || closing) return;
+      if (!u.docChanged || closing || readOnly) return;
       pending = u.state.doc.toString(); // always track the latest buffer
       if (conflicted || suspended) return; // don't keep hitting an unavailable path
       onStatus("saving");
@@ -196,6 +210,7 @@ function makeAutosave(
     },
     hasWork: () => pending !== null || inFlight !== null || conflicted || suspended,
     forceSave(text: string) {
+      if (readOnly) { onStatus("error", REMOTE_READONLY_MESSAGE); return; }
       if (suspended) {
         pending = text;
         onStatus("recovery", "원본 경로가 안전하게 일시 중지되었습니다");
@@ -213,6 +228,7 @@ function makeAutosave(
     async saveOnClose(text: string): Promise<boolean> {
       clearTimeout(timer);
       pending = null;
+      if (readOnly) { onStatus("error", REMOTE_READONLY_MESSAGE); return false; }
       if (suspended) {
         pending = text;
         onStatus("recovery", "원본 경로에 저장하지 않았습니다");
@@ -258,7 +274,9 @@ function makeAutosave(
       // fileHostFor(vault) — this re-reads the baseline to RETRY A WRITE
       // after a save conflict, and v1 remote vaults have no write path at
       // all (no autosave, no conflict to retry). Unreachable for remote by
-      // construction, not an oversight.
+      // construction (readOnly guard below is defense in depth, not the
+      // only thing standing between here and a wrongly-placed write).
+      if (readOnly) { onStatus("error", REMOTE_READONLY_MESSAGE); return false; }
       try {
         const fresh = await localFileHost.readFile(path);
         baseline = fresh.mtime;
@@ -277,6 +295,7 @@ function makeAutosave(
       }
     },
     async saveRecoveredCopy(text: string): Promise<boolean> {
+      if (readOnly) { onStatus("error", REMOTE_READONLY_MESSAGE); return false; }
       try {
         await invoke("write_file", { path: recoveryPath, text, baseline: 0 });
         onStatus("recovery", `복구 사본을 저장했습니다: ${recoveryPath}`);
@@ -287,6 +306,7 @@ function makeAutosave(
       }
     },
     async saveAs(text: string, target: string): Promise<boolean> {
+      if (readOnly) { onStatus("error", REMOTE_READONLY_MESSAGE); return false; }
       if (!target || target === path) return false;
       try {
         await invoke("write_file", { path: target, text, baseline: 0 });
@@ -372,6 +392,14 @@ export function mountEditor(
     vault,
   } = opts;
   void conflictPolicy;
+  // v1 remote vaults are read-only end to end (Task 10 fix round 1,
+  // Critical) — computed ONCE from the vault this mount was given (a
+  // document's vault doesn't change out from under an open editor, same
+  // invariant as documentVault.of(vault) below), and threaded into every
+  // write-capable path from here rather than re-checked ad hoc at each call
+  // site.
+  const remoteReadOnly = isRemoteVault(vault);
+  const effectiveInitialMode: PreviewMode = remoteReadOnly ? "read" : initialMode;
   // The SSOT settings are the writers; these mutable cells are the editor's sink
   // for them. makeAutosave reads them live via getters so a settings change
   // reaches in-flight behavior without re-creating the autosave controller.
@@ -381,11 +409,12 @@ export function mountEditor(
     baseMtime,
     onStatus,
     () => delay,
+    remoteReadOnly,
   );
   const modeCompartment = new Compartment();
   const vimCompartment = new Compartment();
   const featureCompartment = new Compartment();
-  let mode: PreviewMode = initialMode;
+  let mode: PreviewMode = effectiveInitialMode;
 
   /** The current feature-driven extensions, rebuilt from the live registry.
    *  Named so both the initial compartment seed (below) and reloadFeatures
@@ -397,6 +426,7 @@ export function mountEditor(
     view: null as unknown as EditorView,
     mode: () => mode,
     setMode(m: PreviewMode) {
+      if (remoteReadOnly && m !== "read") { onStatus("error", REMOTE_READONLY_MESSAGE); return; }
       if (m === mode) return;
       if (mode === "edit") autosave.flush(); // leaving edit = save point
       mode = m;
@@ -489,7 +519,7 @@ export function mountEditor(
       pasteLinkWrap(),
       closeBrackets(),
       autocompletion({ override: [wikilinkCompletionSource(baseDir)], activateOnTyping: true }),
-      modeCompartment.of(modeExtensions(initialMode)),
+      modeCompartment.of(modeExtensions(effectiveInitialMode)),
       vimCompartment.of(vimExtensions(opts.vimMode === "on")),
       history(),
       // closeBrackets/completion keymaps sit before defaultKeymap so an active

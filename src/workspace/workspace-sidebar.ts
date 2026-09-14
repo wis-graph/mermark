@@ -36,6 +36,34 @@ export interface WorkspaceSidebarHandlers {
  *  like `remoteFileHost`'s listing cache (file-host.ts) this mirrors. */
 const BADGE_TTL_MS = 8000;
 const badgeCache = new Map<string, { expires: number; state: RemoteConnectionState }>();
+/** One shared in-flight probe per vaultId (Task 10 fix round 1, Minor) —
+ *  `render()` fires on every store notification (a tab open/close, a badge
+ *  itself resolving and re-painting, …), so without this a stale cache entry
+ *  would fire a fresh `remote_list_dir` on EVERY one of those renders that
+ *  lands before the first probe settles, not just the one that started it.
+ *  Mirrors `remoteFileHost`'s own `listingCache` (file-host.ts) — same
+ *  shape, same reason. */
+const badgeProbes = new Map<string, Promise<RemoteConnectionState>>();
+
+/** The single probe for `vault`'s connection state — reuses an in-flight
+ *  request for the same vaultId instead of starting a second one, and
+ *  populates `badgeCache` on settle. Command in effect (mutates the two
+ *  shared maps above) but returns the resolved state so callers can paint
+ *  without a second cache read. */
+function probeRemoteConnection(vault: RemoteVault, call: typeof invoke): Promise<RemoteConnectionState> {
+  const pending = badgeProbes.get(vault.vaultId);
+  if (pending) return pending;
+  const probe = remoteConnectionStateFor(vault, call)
+    .then((state) => {
+      badgeCache.set(vault.vaultId, { expires: Date.now() + BADGE_TTL_MS, state });
+      return state;
+    })
+    .finally(() => {
+      if (badgeProbes.get(vault.vaultId) === probe) badgeProbes.delete(vault.vaultId);
+    });
+  badgeProbes.set(vault.vaultId, probe);
+  return probe;
+}
 
 /** Renders `el` as a connection badge for `vault`, serving a cached state
  *  immediately if fresh and always kicking off a background re-probe when
@@ -51,10 +79,7 @@ function renderRemoteBadge(el: HTMLElement, vault: RemoteVault, call: typeof inv
   const hit = badgeCache.get(vault.vaultId);
   if (hit && hit.expires > Date.now()) { paint(hit.state); return; }
   el.textContent = "확인 중"; el.className = "workspace-vault-badge workspace-vault-badge--checking";
-  void remoteConnectionStateFor(vault, call).then((state) => {
-    badgeCache.set(vault.vaultId, { expires: Date.now() + BADGE_TTL_MS, state });
-    paint(state);
-  });
+  void probeRemoteConnection(vault, call).then(paint);
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] => {

@@ -633,4 +633,32 @@ describe("workspace sidebar", () => {
       expect(globalRow?.style.getPropertyValue("--level")).toBe("1");
     });
   });
+
+  // Task 10 fix round 1 (Minor): render() fires on every store notification,
+  // so a naive per-render probe would fire one remote_list_dir per render
+  // while the first probe is still in flight. probeRemoteConnection's
+  // in-flight dedup (workspace-sidebar.ts) must collapse those into one.
+  describe("remote vault connection badge", () => {
+    it("dedupes concurrent probes for the same vault across multiple renders", async () => {
+      const store = new WorkspaceStore();
+      const remote = store.registerRemoteVault("wis-macmini", "rv-1", "맥미니 노트");
+      let resolveProbe!: (v: unknown) => void;
+      const call = vi.fn(() => new Promise((resolve) => { resolveProbe = resolve; })) as unknown as typeof import("@tauri-apps/api/core").invoke;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+
+      // A second render while the first probe is still pending (e.g. a tab
+      // open elsewhere triggers store.subscribe) must NOT start a second
+      // remote_list_dir call for the same vault.
+      sidebar.refresh();
+      sidebar.refresh();
+      expect(call).toHaveBeenCalledTimes(1);
+
+      const badge = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${remote.vaultId}"] .workspace-vault-badge`);
+      expect(badge?.textContent).toBe("확인 중");
+
+      resolveProbe([]);
+      await vi.waitFor(() => expect(badge?.textContent).toBe("연결됨"));
+    });
+  });
 });
