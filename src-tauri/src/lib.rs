@@ -572,8 +572,35 @@ pub fn run() {
             builder.build()?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Task 12 fix round 1, Critical 2: the previous shape here —
+            // `.run(tauri::generate_context!()).expect(...)`, with no
+            // callback — never gives this process a chance to act before
+            // exit: `App::run` calls `std::process::exit` internally once
+            // the event loop ends, which skips every managed state's `Drop`
+            // impl (including `SshTunnels`'s — the thing that actually kills
+            // a still-running `ssh -L` child; see remote_ssh.rs's module
+            // doc). Building the `App` explicitly and calling `.run` with a
+            // callback is what makes `RunEvent::Exit` observable at all: it
+            // fires once, synchronously, *before* that internal exit.
+            //
+            // Coverage note (asked for in fix round 1's review): the six
+            // early `std::process::exit` calls elsewhere in this file
+            // (`--version`, `bundle`, a rejected CLI target via
+            // `CliError::IsDirectory`/`NotFound`, and the piped-stdin usage
+            // error inside `.setup`) all run *before* this event loop even
+            // starts — none of them can leave an SSH tunnel behind, because
+            // no window (and therefore no `remote_ssh_connect` call) has
+            // existed yet at any of those points. This hook does not cover
+            // them because there is nothing on those paths for it to cover.
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                let state = app_handle.state::<remote_ssh::SshTunnels>();
+                remote_ssh::shutdown_all(&state);
+            }
+        });
 }
 
 #[cfg(test)]

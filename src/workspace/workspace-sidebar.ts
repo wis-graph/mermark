@@ -413,7 +413,18 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
           const badge = create("span", "workspace-vault-badge workspace-vault-badge--checking");
           renderRemoteBadge(badge, vault, call);
           row.append(badge);
-          const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = "원격 볼트 해제"; remove.setAttribute("aria-label", `${vault.displayName} 원격 볼트 해제`); remove.append(icon("x")); remove.addEventListener("click", () => { try { store.unregisterVault(vault.vaultId); } catch (error) { showError(error); } });
+          const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = "원격 볼트 해제"; remove.setAttribute("aria-label", `${vault.displayName} 원격 볼트 해제`); remove.append(icon("x")); remove.addEventListener("click", () => {
+            try {
+              store.unregisterVault(vault.vaultId);
+              // Best-effort: free the local tunnel port as soon as this
+              // vault (the only reason this device was tunneling to that
+              // host) is removed, rather than waiting for app exit's own
+              // cleanup (remote_ssh.rs's RunEvent::Exit hook) to get to it.
+              // Fire-and-forget — a failure here has nothing left to act on,
+              // the vault registration is already gone either way.
+              if (vault.host.startsWith("ssh://")) void call("remote_ssh_disconnect", { host: vault.host }).catch(() => {});
+            } catch (error) { showError(error); }
+          });
           row.append(remove);
         }
         group.append(row);

@@ -7,18 +7,33 @@
 //! `http://127.0.0.1:<port>` (the local end of the forward), so every
 //! existing `remote_*` command works unchanged against it.
 //!
-//! Only one tunnel is ever held at a time (`SshTunnels`'s single `Option`
-//! slot): the local end binds a *fixed* port
-//! (`remote_client::DEFAULT_PORT`), so a second concurrent tunnel to a
-//! different host would either fail to bind or — worse — silently win the
-//! bind and have every `remote_*` call for the *other* host read the wrong
-//! machine's files under the right host's name. `connect_with`'s
-//! `decide_connect` refuses that outright rather than leaving it to chance
-//! which `ssh -L` wins.
+//! Only one tunnel is ever held at a time (`SshTunnels`'s single `TunnelSlot`):
+//! the local end binds a *fixed* port (`remote_client::DEFAULT_PORT`), so a
+//! second concurrent tunnel to a different host would either fail to bind or
+//! — worse — silently win the bind and have every `remote_*` call for the
+//! *other* host read the wrong machine's files under the right host's name.
+//! `connect_with`'s `decide_connect` refuses that outright rather than
+//! leaving it to chance which `ssh -L` wins, and the same slot also carries a
+//! `Connecting` marker so two overlapping `remote_ssh_connect` calls can't
+//! both spawn (fix round 1, Important 4).
+//!
+//! **A pre-existing listener on the local port is a distinct danger from a
+//! second *mermark* tunnel** (fix round 1, Critical 1): an orphaned `ssh -N`
+//! left over from a killed prior run, a tunnel the user started by hand, or
+//! (worst case) this same Mac's own `remote_share` running in
+//! `LocalhostOnly` mode would all make the readiness probe below succeed
+//! against *their* listener, not ours — silently reading a stranger's (or
+//! the user's own) vault under this vault's name. Two defenses, not one:
+//! `port_is_free` refuses to even spawn when something is already listening,
+//! and `-o ExitOnForwardFailure=yes` (in `tunnel_args`) makes `ssh` itself
+//! exit immediately if a race loses it the bind, so `wait_until_ready`'s
+//! child-exited check (not the TCP probe, which runs second and *after* a
+//! full poll interval — seeChild-exited-first the wait loop below) catches
+//! it.
 
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// How long to wait for the local end of the tunnel to accept a connection
@@ -32,14 +47,28 @@ use std::time::Duration;
 pub const READY_TIMEOUT: Duration = Duration::from_secs(8);
 pub const READY_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
-/// `ssh://user@host` → the argv for `ssh -N -L <port>:localhost:<port>
-/// user@host`. This is exec'd directly as an argument array (see
-/// `spawn_tunnel`) and never passed through a shell, so classic shell
-/// injection (`;`, `` ` ``, `$(...)`) is already structurally impossible —
-/// but the target string is still validated conservatively here, because
-/// `ssh` itself parses its trailing argument and a value starting with `-`
-/// could be read as an option (e.g. smuggling `-oProxyCommand=...`) rather
-/// than a hostname.
+/// How many bytes of `ssh`'s stderr to keep (most-recent-wins) for a
+/// connect-failure message. Just enough for the one or two lines that
+/// actually matter (`Permission denied`, `Host key verification failed`,
+/// `Connection refused`, `bind: Address already in use`) without letting a
+/// chatty host balloon an error string.
+const STDERR_LOG_CAP: usize = 2000;
+
+/// `ssh://user@host` → the argv for `ssh -o ExitOnForwardFailure=yes -N -L
+/// <port>:localhost:<port> user@host`. This is exec'd directly as an
+/// argument array (see `spawn_tunnel`) and never passed through a shell, so
+/// classic shell injection (`;`, `` ` ``, `$(...)`) is already structurally
+/// impossible — but the target string is still validated conservatively
+/// here, because `ssh` itself parses its trailing argument and a value
+/// starting with `-` could be read as an option (e.g. smuggling
+/// `-oProxyCommand=...`) rather than a hostname.
+///
+/// `ExitOnForwardFailure=yes` (fix round 1, Critical 1) is not optional:
+/// without it, `ssh -N -L` that loses a bind race (something else already
+/// listening on the local port) just logs a warning and keeps running
+/// forever, doing nothing — `wait_until_ready`'s "did the child exit" check
+/// would never fire, and its TCP probe would happily report success by
+/// connecting to whatever *that other* listener is.
 pub fn tunnel_args(host: &str, port: u16) -> Result<Vec<String>, String> {
     let target = host.strip_prefix("ssh://").ok_or("ssh:// 호스트가 아닙니다")?;
     if target.is_empty() || target.starts_with('-') {
@@ -49,7 +78,14 @@ pub fn tunnel_args(host: &str, port: u16) -> Result<Vec<String>, String> {
     if !ok {
         return Err(format!("SSH 대상에 허용되지 않는 문자가 있습니다: {target}"));
     }
-    Ok(vec!["-N".into(), "-L".into(), format!("{port}:localhost:{port}"), target.to_string()])
+    Ok(vec![
+        "-o".into(),
+        "ExitOnForwardFailure=yes".into(),
+        "-N".into(),
+        "-L".into(),
+        format!("{port}:localhost:{port}"),
+        target.to_string(),
+    ])
 }
 
 /// One live `ssh -L` child, tagged with the host it tunnels to.
@@ -63,66 +99,106 @@ impl Drop for ActiveTunnel {
     /// leaked `ssh -N` holds the local port forever, and the next connect
     /// attempt (a reconnect this session, or the next app launch racing a
     /// lingering process from a killed-but-not-cleaned-up prior one) then
-    /// either fails to bind or silently rides someone else's stale forward.
-    /// Firing here (rather than only in an explicit disconnect command) is
-    /// what makes *both* cleanup paths free: `disconnect` drops the
-    /// `ActiveTunnel` by replacing the slot with `None`, and app exit drops
-    /// it by dropping `SshTunnels` itself (managed Tauri state, torn down
-    /// with the rest of the app). `wait()` after `kill()` reaps the process
-    /// so it doesn't linger as a zombie.
+    /// either fails to bind or silently rides someone else's stale forward
+    /// (exactly the Critical 1 scenario this module's doc comment
+    /// describes — an orphan from *this* process is how that orphan gets
+    /// created in the first place). `wait()` after `kill()` reaps the
+    /// process so it doesn't linger as a zombie.
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 
-/// Managed Tauri state: at most one SSH tunnel at a time. See this module's
-/// doc comment for why a second concurrent tunnel is refused rather than
-/// silently allowed to race the first for the port.
-#[derive(Default)]
-pub struct SshTunnels {
-    active: Mutex<Option<ActiveTunnel>>,
+/// The one thing `SshTunnels` can be holding at any moment. A plain
+/// `Option<ActiveTunnel>` (the original shape) had a gap: `connect_with`
+/// read the slot, decided to spawn, and only wrote the slot back *after*
+/// `ssh` had spawned and become ready — during that whole window the slot
+/// still read `Empty`/`None`, so a second overlapping `remote_ssh_connect`
+/// call for a different host would see the same "nothing active" answer and
+/// spawn its own tunnel too (fix round 1, Important 4: two `ssh` processes
+/// racing for the same local port, with whichever `ActiveTunnel` gets
+/// written last silently killing the other in `Drop`). `Connecting` closes
+/// that gap: the slot is claimed *before* the spawn happens, under the same
+/// lock acquisition that made the decision, so nothing else can observe
+/// "empty" while a connect is in flight.
+enum TunnelSlot {
+    Empty,
+    Connecting(String),
+    Active(ActiveTunnel),
 }
 
-/// What a connect request should do, given the host (if any) currently
-/// tunneled. Pulled out as its own named rule — rather than left as an
-/// inline `if`/`match` inside `connect_with` — because this *is* the
-/// port-collision guard the module doc promises, and a rule with
+impl Default for TunnelSlot {
+    fn default() -> Self {
+        TunnelSlot::Empty
+    }
+}
+
+/// Managed Tauri state: at most one SSH tunnel (or in-flight connect
+/// attempt) at a time. See this module's doc comment for why.
+#[derive(Default)]
+pub struct SshTunnels {
+    active: Mutex<TunnelSlot>,
+}
+
+/// What a connect request should do, given the slot's current contents.
+/// Pulled out as its own named rule — rather than left as an inline
+/// `if`/`match` inside `connect_with` — because this *is* the port-collision
+/// (and connect-race) guard the module doc promises, and a rule with
 /// consequences like these deserves a name and a test of its own, not just
 /// a branch buried in the spawn logic.
 #[derive(Debug, PartialEq)]
 enum ConnectDecision {
     /// Already tunneled to this exact host — reuse it, don't spawn a second.
     AlreadyConnected,
-    /// Tunneled to a *different* host right now — refuse rather than risk
-    /// two processes racing for the same local port.
+    /// Already *connecting* to this exact host (another `remote_ssh_connect`
+    /// call is in flight) — refuse rather than race it with a second spawn.
+    AlreadyConnecting,
+    /// Tunneled (or connecting) to a *different* host right now — refuse
+    /// rather than risk two processes racing for the same local port.
     Busy(String),
-    /// Nothing active — safe to spawn.
+    /// Nothing active — safe to claim the slot and spawn.
     ShouldSpawn,
 }
 
-fn decide_connect(active_host: Option<&str>, requested_host: &str) -> ConnectDecision {
-    match active_host {
-        Some(h) if h == requested_host => ConnectDecision::AlreadyConnected,
-        Some(h) => ConnectDecision::Busy(h.to_string()),
-        None => ConnectDecision::ShouldSpawn,
+fn decide_connect(slot: &TunnelSlot, requested_host: &str) -> ConnectDecision {
+    match slot {
+        TunnelSlot::Active(t) if t.host == requested_host => ConnectDecision::AlreadyConnected,
+        TunnelSlot::Active(t) => ConnectDecision::Busy(t.host.clone()),
+        TunnelSlot::Connecting(h) if h == requested_host => ConnectDecision::AlreadyConnecting,
+        TunnelSlot::Connecting(h) => ConnectDecision::Busy(h.clone()),
+        TunnelSlot::Empty => ConnectDecision::ShouldSpawn,
     }
 }
 
 /// Non-blocking "has this child already exited on its own" check — a wrong
-/// host or a rejected key kills `ssh` moments after spawn, well before
-/// `READY_TIMEOUT` would otherwise fire, and a tunnel that died *silently*
-/// later (host went to sleep, network dropped) leaves a stale entry in
-/// `SshTunnels` that must not block a fresh connect attempt.
+/// host, a rejected key, or (with `ExitOnForwardFailure=yes`) a lost bind
+/// race kills `ssh` moments after spawn, well before `READY_TIMEOUT` would
+/// otherwise fire, and a tunnel that died *silently* later (host went to
+/// sleep, network dropped) leaves a stale entry in `SshTunnels` that must
+/// not block a fresh connect attempt.
 fn has_exited(child: &mut Child) -> bool {
     matches!(child.try_wait(), Ok(Some(_)))
 }
 
+/// Whether the local end of the forward is currently unclaimed. Checked
+/// *before* spawning `ssh` at all (fix round 1, Critical 1) — a bind
+/// attempt is the only way to tell "nothing is listening here" from
+/// "something already is" without parsing `ssh`'s own stderr, and doing it
+/// up front turns a long-lived orphan/rival listener into an immediate,
+/// specific refusal instead of an 8-second wait that then (without this
+/// check) could have silently "succeeded" against the rival.
+fn port_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+type StderrLog = Arc<Mutex<String>>;
+
 /// Spawns `program` with `args`, piping stdin (closed — mermark never
 /// answers an interactive prompt) and stderr (drained on a background
-/// thread, see `drain`'s doc comment). stdout is discarded: `ssh -N` prints
-/// nothing to stdout by design.
-fn spawn_tunnel(program: &str, args: &[String]) -> Result<Child, String> {
+/// thread into the returned log — see `drain_into`'s doc comment). stdout is
+/// discarded: `ssh -N` prints nothing to stdout by design.
+fn spawn_tunnel(program: &str, args: &[String]) -> Result<(Child, StderrLog), String> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -130,27 +206,56 @@ fn spawn_tunnel(program: &str, args: &[String]) -> Result<Child, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("{program} 실행 실패: {e}"))?;
+    let log: StderrLog = Arc::new(Mutex::new(String::new()));
     if let Some(stderr) = child.stderr.take() {
-        std::thread::spawn(move || drain(stderr));
+        let log_for_thread = log.clone();
+        std::thread::spawn(move || drain_into(stderr, log_for_thread));
     }
-    Ok(child)
+    Ok((child, log))
 }
 
-/// Reads `r` to EOF and discards it. `ssh` can write to stderr (host-key
-/// prompts, "Warning: Permanently added ...", banner text, ...); with
-/// stdin closed there is nothing mermark can answer an interactive prompt
-/// with, but the pipe still has a finite OS buffer — if nobody reads it, a
-/// chatty `ssh` blocks on the write and the tunnel never comes up. This
-/// thread only exists to keep that pipe from filling; it doesn't parse or
-/// surface what `ssh` said (there is no channel back to the user for it in
-/// v1 — a plain reachability failure is what surfaces instead).
-fn drain(mut r: impl Read) {
+/// Reads `r` to EOF, appending everything into `log` (capped at
+/// `STDERR_LOG_CAP` bytes, keeping the most recent output). `ssh` can write
+/// to stderr (host-key prompts, "Permission denied", "bind: Address already
+/// in use", banner text, ...); with stdin closed there is nothing mermark
+/// can answer an interactive prompt with, but the pipe still has a finite OS
+/// buffer — if nobody reads it, a chatty `ssh` blocks on the write and the
+/// tunnel never comes up. This thread keeps that pipe from filling *and*
+/// (fix round 1, Important 3) retains what `ssh` actually said, so a connect
+/// failure can quote the real reason instead of forcing the user to guess
+/// whether "host down" or "wrong password" is why `REMOTE:Unreachable` came
+/// back.
+fn drain_into(mut r: impl Read, log: StderrLog) {
     let mut buf = [0u8; 256];
     loop {
         match r.read(&mut buf) {
             Ok(0) | Err(_) => break,
-            Ok(_) => {}
+            Ok(n) => {
+                if let Ok(mut s) = log.lock() {
+                    s.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if s.len() > STDERR_LOG_CAP {
+                        let excess = s.len() - STDERR_LOG_CAP;
+                        s.replace_range(0..excess, "");
+                    }
+                }
+            }
         }
+    }
+}
+
+/// The trailing `" — <ssh's stderr, sanitized>"` suffix for a connect-failure
+/// message, or `""` if `ssh` said nothing useful. Sanitizes control
+/// characters (ANSI escapes, carriage returns from a progress banner) out of
+/// what is otherwise untrusted-ish process output before it lands in an
+/// error string the frontend displays verbatim.
+fn stderr_suffix(log: &StderrLog) -> String {
+    let raw = log.lock().map(|s| s.clone()).unwrap_or_default();
+    let cleaned: String = raw.chars().filter(|c| !c.is_control() || *c == '\n').collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!(" — {trimmed}")
     }
 }
 
@@ -160,14 +265,32 @@ fn drain(mut r: impl Read) {
 /// `REMOTE:Unreachable` — from the client's point of view, "the tunnel
 /// never came up" and "the host is unreachable" are the same actionable
 /// state (reuses the four states `remote_client::RemoteStatus` already
-/// defines rather than inventing a fifth one this module would own alone).
-async fn wait_until_ready(child: &mut Child, port: u16, timeout: Duration, poll: Duration) -> Result<(), String> {
+/// defines rather than inventing a fifth one this module would own alone) —
+/// but the message now (fix round 1, Important 3) carries `ssh`'s own
+/// stderr tail so "wrong password" and "host is down" no longer look
+/// identical to the person reading the error.
+///
+/// Sleeps *before* the first check rather than checking immediately (fix
+/// round 1, Critical 1's other half): a lost bind race is only caught by
+/// `has_exited` once `ssh` has actually had a moment to attempt the bind and
+/// die from `ExitOnForwardFailure=yes` — checking at t=0 would let the very
+/// first TCP probe connect to whatever *was already there* before that
+/// death registers, misreporting success.
+async fn wait_until_ready(
+    child: &mut Child,
+    port: u16,
+    timeout: Duration,
+    poll: Duration,
+    log: &StderrLog,
+) -> Result<(), String> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
+        tokio::time::sleep(poll).await;
         if has_exited(child) {
             return Err(format!(
-                "REMOTE:{:?}: SSH 터널이 시작 직후 종료되었습니다 (호스트 또는 SSH 인증을 확인하세요)",
-                crate::remote_client::RemoteStatus::Unreachable
+                "REMOTE:{:?}: SSH 터널이 시작 직후 종료되었습니다 (호스트 또는 SSH 인증을 확인하세요){}",
+                crate::remote_client::RemoteStatus::Unreachable,
+                stderr_suffix(log)
             ));
         }
         if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
@@ -175,12 +298,12 @@ async fn wait_until_ready(child: &mut Child, port: u16, timeout: Duration, poll:
         }
         if tokio::time::Instant::now() >= deadline {
             return Err(format!(
-                "REMOTE:{:?}: SSH 터널이 {}초 내에 준비되지 않았습니다",
+                "REMOTE:{:?}: SSH 터널이 {}초 내에 준비되지 않았습니다{}",
                 crate::remote_client::RemoteStatus::Unreachable,
-                timeout.as_secs()
+                timeout.as_secs(),
+                stderr_suffix(log)
             ));
         }
-        tokio::time::sleep(poll).await;
     }
 }
 
@@ -195,24 +318,30 @@ async fn connect_with(
     poll: Duration,
     state: &SshTunnels,
 ) -> Result<(), String> {
-    // Reap a slot whose process already exited on its own — a tunnel that
-    // died silently must not block reconnecting, to the same host or a
-    // different one.
-    {
+    // Reap + decide + claim all happen under ONE lock acquisition (fix round
+    // 1, Important 4) — splitting "decide" and "claim" into separate
+    // lock()s left a gap where two overlapping calls could both observe
+    // `ShouldSpawn` and both spawn. Reaping first (a slot whose process
+    // already exited on its own) means a tunnel that died silently never
+    // blocks reconnecting, to the same host or a different one.
+    let decision = {
         let mut guard = state.active.lock().unwrap();
-        if let Some(t) = guard.as_mut() {
+        if let TunnelSlot::Active(t) = &mut *guard {
             if has_exited(&mut t.child) {
-                *guard = None;
+                *guard = TunnelSlot::Empty;
             }
         }
-    }
-
-    let decision = {
-        let guard = state.active.lock().unwrap();
-        decide_connect(guard.as_ref().map(|t| t.host.as_str()), host)
+        let decision = decide_connect(&guard, host);
+        if decision == ConnectDecision::ShouldSpawn {
+            *guard = TunnelSlot::Connecting(host.to_string());
+        }
+        decision
     };
     match decision {
         ConnectDecision::AlreadyConnected => return Ok(()),
+        ConnectDecision::AlreadyConnecting => {
+            return Err(format!("SSH_TUNNEL_CONNECTING: {host}에 이미 연결을 시도하는 중입니다."));
+        }
         ConnectDecision::Busy(other) => {
             return Err(format!(
                 "SSH_TUNNEL_BUSY: 이미 다른 호스트({other})로 SSH 터널이 연결되어 있습니다. 먼저 연결을 해제하세요."
@@ -221,33 +350,72 @@ async fn connect_with(
         ConnectDecision::ShouldSpawn => {}
     }
 
-    let args = tunnel_args(host, port)?;
-    let mut child = spawn_tunnel(program, &args)?;
-    if let Err(e) = wait_until_ready(&mut child, port, timeout, poll).await {
+    // From here on this call owns the `Connecting(host)` claim; any error
+    // path below must release it (reset to `Empty`) before returning.
+    let release_claim = |state: &SshTunnels| {
+        *state.active.lock().unwrap() = TunnelSlot::Empty;
+    };
+
+    if !port_is_free(port) {
+        release_claim(state);
+        return Err(format!(
+            "SSH_PORT_BUSY: 로컬 포트 {port}가 이미 사용 중입니다. 다른 SSH 터널이나 mermark 원격 공유가 그 포트를 쓰고 있는지 확인하세요."
+        ));
+    }
+
+    let args = match tunnel_args(host, port) {
+        Ok(args) => args,
+        Err(e) => {
+            release_claim(state);
+            return Err(e);
+        }
+    };
+    let (mut child, log) = match spawn_tunnel(program, &args) {
+        Ok(v) => v,
+        Err(e) => {
+            release_claim(state);
+            return Err(e);
+        }
+    };
+    if let Err(e) = wait_until_ready(&mut child, port, timeout, poll, &log).await {
         let _ = child.kill();
         let _ = child.wait();
+        release_claim(state);
         return Err(e);
     }
 
-    *state.active.lock().unwrap() = Some(ActiveTunnel { host: host.to_string(), child });
+    *state.active.lock().unwrap() = TunnelSlot::Active(ActiveTunnel { host: host.to_string(), child });
     Ok(())
 }
 
 /// Kills and drops the active tunnel if (and only if) it's the one for
-/// `host` — a disconnect for a host that isn't the active one is a no-op,
-/// same "the off toggle never fails just because it's already off" idiom
-/// `remote_share_stop` uses.
+/// `host` — a disconnect for a host that isn't the active one (including a
+/// `Connecting` claim, or `Empty`) is a no-op, same "the off toggle never
+/// fails just because it's already off" idiom `remote_share_stop` uses. A
+/// concurrent `Connecting(host)` is deliberately left alone rather than
+/// interrupted — a rare enough race in v1 that it isn't worth the extra
+/// state to cancel cleanly.
 async fn disconnect(host: &str, state: &SshTunnels) {
     let mut guard = state.active.lock().unwrap();
-    if guard.as_ref().is_some_and(|t| t.host == host) {
-        *guard = None; // ActiveTunnel::drop kills + reaps the child
+    if let TunnelSlot::Active(t) = &*guard {
+        if t.host == host {
+            *guard = TunnelSlot::Empty; // ActiveTunnel::drop kills + reaps the child
+        }
     }
+}
+
+/// Kills whatever tunnel is currently active (if any) unconditionally — the
+/// app-exit cleanup path (fix round 1, Critical 2), as opposed to
+/// `disconnect`'s host-scoped, user-initiated teardown. A `Connecting` claim
+/// with no child yet has nothing to kill and is simply cleared.
+pub fn shutdown_all(state: &SshTunnels) {
+    *state.active.lock().unwrap() = TunnelSlot::Empty;
 }
 
 /// Establishes (or reuses) an SSH tunnel to `host` so `remote_client`'s
 /// `ssh://`-mapped commands have a live `127.0.0.1:DEFAULT_PORT` to talk to.
-/// Idempotent for the same host; refuses a different host while one is
-/// active (see `decide_connect`).
+/// Idempotent for the same host; refuses a different host (or a second
+/// in-flight connect) while one is active — see `decide_connect`.
 #[tauri::command]
 pub async fn remote_ssh_connect(host: String, state: tauri::State<'_, SshTunnels>) -> Result<(), String> {
     connect_with("ssh", &host, crate::remote_client::DEFAULT_PORT, READY_TIMEOUT, READY_POLL_INTERVAL, &state).await
@@ -265,12 +433,16 @@ pub async fn remote_ssh_disconnect(host: String, state: tauri::State<'_, SshTunn
 mod tests {
     use super::*;
 
-    // --- tunnel_args (task-12 brief's own contract) -------------------------
+    // --- tunnel_args (task-12 brief's own contract, now with the fix round
+    // 1 ExitOnForwardFailure option prepended) --------------------------------
 
     #[test]
     fn builds_a_local_forward_command_without_touching_keys() {
         let args = tunnel_args("ssh://wis@macmini", 8787).unwrap();
-        assert_eq!(args, vec!["-N", "-L", "8787:localhost:8787", "wis@macmini"]);
+        assert_eq!(
+            args,
+            vec!["-o", "ExitOnForwardFailure=yes", "-N", "-L", "8787:localhost:8787", "wis@macmini"]
+        );
     }
 
     #[test]
@@ -292,16 +464,22 @@ mod tests {
         assert!(tunnel_args("ssh://-oProxyCommand=evil", 8787).is_err());
     }
 
-    // --- decide_connect: the port-collision guard, in isolation -------------
+    // --- decide_connect: the port-collision / connect-race guard, in
+    // isolation ----------------------------------------------------------------
 
     #[test]
     fn decide_connect_reuses_an_existing_tunnel_to_the_same_host() {
-        assert_eq!(decide_connect(Some("ssh://a@h"), "ssh://a@h"), ConnectDecision::AlreadyConnected);
+        let child = spawn_sleep(5);
+        let active = TunnelSlot::Active(ActiveTunnel { host: "ssh://a@h".into(), child });
+        assert_eq!(decide_connect(&active, "ssh://a@h"), ConnectDecision::AlreadyConnected);
+        // active's ActiveTunnel drops here, killing + reaping the child.
     }
 
     #[test]
     fn decide_connect_refuses_a_second_host_while_one_is_active() {
-        match decide_connect(Some("ssh://a@h1"), "ssh://a@h2") {
+        let child = spawn_sleep(5);
+        let active = TunnelSlot::Active(ActiveTunnel { host: "ssh://a@h1".into(), child });
+        match decide_connect(&active, "ssh://a@h2") {
             ConnectDecision::Busy(other) => assert_eq!(other, "ssh://a@h1"),
             other => panic!("expected Busy, got {other:?}"),
         }
@@ -309,10 +487,26 @@ mod tests {
 
     #[test]
     fn decide_connect_spawns_when_nothing_is_active() {
-        assert_eq!(decide_connect(None, "ssh://a@h"), ConnectDecision::ShouldSpawn);
+        assert_eq!(decide_connect(&TunnelSlot::Empty, "ssh://a@h"), ConnectDecision::ShouldSpawn);
     }
 
-    // --- wait_until_ready: readiness / failure detection ---------------------
+    #[test]
+    fn decide_connect_refuses_a_second_concurrent_connect_to_a_different_host() {
+        let connecting = TunnelSlot::Connecting("ssh://a@h1".into());
+        match decide_connect(&connecting, "ssh://a@h2") {
+            ConnectDecision::Busy(other) => assert_eq!(other, "ssh://a@h1"),
+            other => panic!("expected Busy, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decide_connect_treats_a_duplicate_connect_to_the_same_host_as_already_connecting() {
+        let connecting = TunnelSlot::Connecting("ssh://a@h".into());
+        assert_eq!(decide_connect(&connecting, "ssh://a@h"), ConnectDecision::AlreadyConnecting);
+    }
+
+    // --- wait_until_ready: readiness / failure detection, including the
+    // stderr capture ------------------------------------------------------------
 
     fn spawn_sleep(secs: u64) -> Child {
         Command::new("sleep")
@@ -322,6 +516,10 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap()
+    }
+
+    fn empty_log() -> StderrLog {
+        Arc::new(Mutex::new(String::new()))
     }
 
     #[tokio::test]
@@ -340,7 +538,7 @@ mod tests {
         });
 
         let mut child = spawn_sleep(5);
-        let res = wait_until_ready(&mut child, port, Duration::from_secs(2), Duration::from_millis(30)).await;
+        let res = wait_until_ready(&mut child, port, Duration::from_secs(2), Duration::from_millis(30), &empty_log()).await;
         assert!(res.is_ok(), "{res:?}");
         let _ = child.kill();
         let _ = child.wait();
@@ -349,26 +547,32 @@ mod tests {
     #[tokio::test]
     async fn wait_until_ready_fails_fast_when_the_child_exits_immediately() {
         let mut child = Command::new("sh")
-            .args(["-c", "exit 1"])
+            .args(["-c", "echo 'Permission denied (publickey)' 1>&2; exit 1"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        // Give the shell a moment to actually exit before polling — this
-        // pins "exited before the port ever came up", not a race against the
-        // process table.
+        let log: StderrLog = Arc::new(Mutex::new(String::new()));
+        if let Some(stderr) = child.stderr.take() {
+            let log2 = log.clone();
+            std::thread::spawn(move || drain_into(stderr, log2));
+        }
+        // Give the shell (and the drain thread) a moment to actually finish
+        // before polling — this pins "exited before the port ever came up",
+        // not a race against the process table or the pipe.
         tokio::time::sleep(Duration::from_millis(150)).await;
-        let err = wait_until_ready(&mut child, 1, Duration::from_secs(2), Duration::from_millis(30))
+        let err = wait_until_ready(&mut child, 1, Duration::from_secs(2), Duration::from_millis(30), &log)
             .await
             .unwrap_err();
         assert!(err.contains("REMOTE:Unreachable"), "got: {err}");
+        assert!(err.contains("Permission denied"), "stderr must be surfaced, got: {err}");
     }
 
     #[tokio::test]
     async fn wait_until_ready_times_out_when_nothing_ever_listens() {
         let mut child = spawn_sleep(5);
-        let err = wait_until_ready(&mut child, 1, Duration::from_millis(150), Duration::from_millis(30))
+        let err = wait_until_ready(&mut child, 1, Duration::from_millis(150), Duration::from_millis(30), &empty_log())
             .await
             .unwrap_err();
         assert!(err.contains("REMOTE:Unreachable"), "got: {err}");
@@ -376,17 +580,56 @@ mod tests {
         let _ = child.wait();
     }
 
-    // --- connect_with / disconnect: the full lifecycle, with a harmless
-    // local stand-in for `ssh` (never the real binary, never a real host) ----
+    // --- port_is_free / the Critical-1 pre-existing-listener defense --------
+
+    #[test]
+    fn port_is_free_is_false_when_something_is_already_listening() {
+        // Does not also assert the port becomes free again after `drop` —
+        // cargo runs tests in this file concurrently on several threads,
+        // each picking its own ephemeral port via `bind("127.0.0.1:0")`, and
+        // the OS is free to immediately hand a just-released port to one of
+        // those *other* tests, making a "recheck after drop" assertion here
+        // flaky by construction rather than by any bug in `port_is_free`.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(!port_is_free(port));
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn connect_refuses_to_spawn_when_a_stranger_already_holds_the_port() {
+        // Simulates exactly the Critical-1 scenario: something that is NOT
+        // our tunnel (an orphaned prior `ssh -N`, a hand-started tunnel, this
+        // Mac's own localhost-only remote_share) is already bound to the
+        // local port *before* connect_with is ever called. Without the
+        // port_is_free pre-check this would have spawned `ssh` anyway and
+        // then "succeeded" by reading the stranger's listener.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let state = SshTunnels::default();
+        let err = connect_with("ssh", "ssh://wis@macmini", port, Duration::from_secs(1), Duration::from_millis(20), &state)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("SSH_PORT_BUSY"), "got: {err}");
+        // The slot must not be left claimed after a refused connect.
+        assert!(matches!(*state.active.lock().unwrap(), TunnelSlot::Empty));
+        drop(listener);
+    }
+
+    // --- connect_with / disconnect / shutdown_all: the full lifecycle, with
+    // a harmless local stand-in for `ssh` (never the real binary, never a
+    // real host) -----------------------------------------------------------------
 
     #[cfg(unix)]
     fn fake_ssh_script(dir: &std::path::Path) -> String {
         use std::os::unix::fs::PermissionsExt;
         let script = dir.join("fake_ssh.sh");
-        // Ignores whatever argv it's given (the real ssh's `-N -L ... user@host`
-        // included) and just sits there — the test's own TcpListener (bound
-        // *before* this spawns) is what makes the readiness probe succeed, not
-        // anything this script does.
+        // Ignores whatever argv it's given (the real ssh's `-o
+        // ExitOnForwardFailure=yes -N -L ... user@host` included) and just
+        // sits there — the test's own TcpListener (bound *before* this
+        // spawns) is what makes the readiness probe succeed, not anything
+        // this script does.
         std::fs::write(&script, "#!/bin/sh\nsleep 5\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         script.to_string_lossy().into_owned()
@@ -403,30 +646,68 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let program = fake_ssh_script(&dir);
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-            loop {
-                if listener.accept().await.is_err() {
-                    break;
-                }
-            }
-        });
-
         let state = SshTunnels::default();
         let timeout = Duration::from_secs(2);
-        let poll = Duration::from_millis(30);
+        let poll = Duration::from_millis(20);
 
-        connect_with(&program, "ssh://wis@macmini", port, timeout, poll, &state).await.unwrap();
-        assert_eq!(state.active.lock().unwrap().as_ref().unwrap().host, "ssh://wis@macmini");
+        // Picks a free ephemeral port, releases it immediately, then spawns
+        // a background task that reclaims that same port shortly after —
+        // standing in for ssh's own successful bind (the fake "ssh" script
+        // above is a no-op `sleep`; nothing it does ever opens the port),
+        // deliberately delayed so it lands *after* `connect_with`'s
+        // synchronous, pre-await `port_is_free` check (fix round 1,
+        // Critical 1) but well before `wait_until_ready`'s timeout.
+        //
+        // The probe-then-release-then-reclaim gap is occasionally lost to
+        // an unrelated concurrent test in this same binary also cycling
+        // through `bind("127.0.0.1:0")` (observed under a full `cargo test`
+        // run, not `cargo test remote_ssh` alone) — that shows up as this
+        // test's own `connect_with` seeing `SSH_PORT_BUSY` for a port that
+        // some other test's socket, not ours, ended up holding for a
+        // moment. That's test-infra noise, not a regression in the guard
+        // this test exists to exercise, so a few retries with a fresh port
+        // absorb it rather than the test flaking outright.
+        async fn try_connect_once(
+            program: &str,
+            timeout: Duration,
+            poll: Duration,
+            state: &SshTunnels,
+        ) -> Result<u16, String> {
+            let port = {
+                let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                probe.local_addr().unwrap().port()
+            };
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                if let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+                    loop {
+                        if listener.accept().await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
+            connect_with(program, "ssh://wis@macmini", port, timeout, poll, state).await.map(|()| port)
+        }
 
-        // Reconnecting to the same host reuses the tunnel (no second spawn —
-        // if it *did* spawn again, this would still pass, but the busy-guard
-        // test right after would then fail because a second process is bound
-        // to nothing new anyway; the real assurance here is functional:
-        // reconnecting never errors).
+        let mut port = None;
+        for _ in 0..5 {
+            match try_connect_once(&program, timeout, poll, &state).await {
+                Ok(p) => {
+                    port = Some(p);
+                    break;
+                }
+                Err(e) if e.starts_with("SSH_PORT_BUSY") => continue,
+                Err(e) => panic!("unexpected connect_with failure: {e}"),
+            }
+        }
+        let port = port.expect("connect_with kept losing the port race after 5 retries");
+        match &*state.active.lock().unwrap() {
+            TunnelSlot::Active(t) => assert_eq!(t.host, "ssh://wis@macmini"),
+            _ => panic!("expected TunnelSlot::Active after a successful connect"),
+        }
+
+        // Reconnecting to the same host reuses the tunnel — never errors.
         connect_with(&program, "ssh://wis@macmini", port, timeout, poll, &state).await.unwrap();
 
         // A different host is refused while this one is active — the
@@ -437,7 +718,7 @@ mod tests {
         assert!(err.starts_with("SSH_TUNNEL_BUSY"), "got: {err}");
 
         disconnect("ssh://wis@macmini", &state).await;
-        assert!(state.active.lock().unwrap().is_none());
+        assert!(matches!(*state.active.lock().unwrap(), TunnelSlot::Empty));
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -446,7 +727,7 @@ mod tests {
     async fn disconnect_is_a_noop_when_nothing_is_connected() {
         let state = SshTunnels::default();
         disconnect("ssh://nobody@nowhere", &state).await; // must not panic
-        assert!(state.active.lock().unwrap().is_none());
+        assert!(matches!(*state.active.lock().unwrap(), TunnelSlot::Empty));
     }
 
     #[tokio::test]
@@ -454,13 +735,16 @@ mod tests {
         let mut child = spawn_sleep(5);
         assert!(!has_exited(&mut child));
         let state = SshTunnels::default();
-        *state.active.lock().unwrap() = Some(ActiveTunnel { host: "ssh://a@h".into(), child });
+        *state.active.lock().unwrap() = TunnelSlot::Active(ActiveTunnel { host: "ssh://a@h".into(), child });
 
         disconnect("ssh://different@host", &state).await;
-        assert!(state.active.lock().unwrap().is_some(), "disconnect for the wrong host must be a no-op");
+        assert!(
+            matches!(*state.active.lock().unwrap(), TunnelSlot::Active(_)),
+            "disconnect for the wrong host must be a no-op"
+        );
 
         disconnect("ssh://a@h", &state).await;
-        assert!(state.active.lock().unwrap().is_none());
+        assert!(matches!(*state.active.lock().unwrap(), TunnelSlot::Empty));
     }
 
     #[test]
@@ -475,5 +759,31 @@ mod tests {
         // actually done, which is exactly what this case needs to assert.
         let _ = finished.wait();
         assert!(has_exited(&mut finished));
+    }
+
+    // --- shutdown_all: the app-exit cleanup hook (fix round 1, Critical 2) --
+
+    #[test]
+    fn shutdown_all_kills_the_active_child() {
+        let child = spawn_sleep(30);
+        let pid = child.id();
+        let state = SshTunnels::default();
+        *state.active.lock().unwrap() = TunnelSlot::Active(ActiveTunnel { host: "ssh://a@h".into(), child });
+
+        shutdown_all(&state);
+
+        assert!(matches!(*state.active.lock().unwrap(), TunnelSlot::Empty));
+        // The process must actually be gone, not just forgotten by our slot:
+        // `kill -0` fails once the pid is no longer running (or has become a
+        // reaped zombie, which `wait()` inside Drop already cleaned up).
+        let still_alive = std::process::Command::new("kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false);
+        assert!(!still_alive, "shutdown_all must actually kill the child, pid {pid} is still alive");
+    }
+
+    #[test]
+    fn shutdown_all_is_a_noop_when_nothing_is_connecting_or_active() {
+        let state = SshTunnels::default();
+        shutdown_all(&state); // must not panic
+        assert!(matches!(*state.active.lock().unwrap(), TunnelSlot::Empty));
     }
 }

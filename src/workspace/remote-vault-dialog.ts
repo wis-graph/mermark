@@ -119,6 +119,18 @@ export function createRemoteVaultDialog({ store, call, onRegistered }: RemoteVau
     const { host, code } = form.values();
     void (async (): Promise<void> => {
       try {
+        // An `ssh://`-typed host has no listener at all until mermark's own
+        // `ssh -L` tunnel is up (remote_ssh.rs, Task 12) — `remote_pair`
+        // would otherwise dial `http://127.0.0.1:8787` straight into
+        // "connection refused" for every Tailscale-less user. Idempotent for
+        // a host already tunneled (reconnecting to this dialog after a
+        // failed pair reuses it, doesn't spawn a second `ssh`), and any
+        // failure here (bad target, rejected key, no `ssh` binary, tunnel
+        // never came up) surfaces through the same error path as a pairing
+        // failure — there is nothing pairing-specific to say about it.
+        if (host.startsWith("ssh://")) {
+          await call("remote_ssh_connect", { host });
+        }
         await call("remote_pair", { host, code, label: deviceLabel() });
         const vaults = await call<RemoteVaultListing[]>("remote_vaults", { host });
         showPickStep();
