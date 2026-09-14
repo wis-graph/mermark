@@ -17,12 +17,18 @@ export function basename(path: string): string {
 /** Is `path` equal to `ancestor`, or nested somewhere underneath it? Handles
  *  both posix (`/`) and windows (`\`) separators (a bare `startsWith(ancestor)`
  *  would wrongly match a *sibling* whose name extends `ancestor`'s — e.g.
- *  `/a/bc` must NOT be "within" `/a/b`). Promoted from
- *  `workspace/cli-routing.ts`'s private `isWithinRoot` (same boundary check,
- *  now shared with the explorer panel's `showsFolderOf`) — the two callers
- *  must never drift on what "within" means. Pure query (CQS). */
+ *  `/a/bc` must NOT be "within" `/a/b`). `ancestor === ""` is the empty-root
+ *  case (`REMOTE_VAULT_WIRE_ROOT`, `workspace/workspace-state.ts`) — a
+ *  remote vault's wire-relative paths carry no leading separator to append
+ *  a trailing `/`/`\` to, so `path.startsWith("/")` would always be false
+ *  and wrongly report every remote sub-folder note as NOT within the vault
+ *  root; every path is within the vault root by definition, so this
+ *  short-circuits to `true` there. Promoted from `workspace/cli-routing.ts`'s
+ *  private `isWithinRoot` (same boundary check, now shared with the
+ *  explorer panel's `showsFolderOf`) — the two callers must never drift on
+ *  what "within" means. Pure query (CQS). */
 export function isPathWithin(path: string, ancestor: string): boolean {
-  if (path === ancestor) return true;
+  if (path === ancestor || ancestor === "") return true;
   return path.startsWith(`${ancestor}/`) || path.startsWith(`${ancestor}\\`);
 }
 

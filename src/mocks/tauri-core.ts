@@ -308,19 +308,52 @@ function remoteMockError(host: string): string | null {
   return CODES[m[1]] ?? null;
 }
 
-/** C1 regression guard, mirrored in this mock (final review's mock-tightening
- *  requirement): the real host's `safe_path` (remote_host.rs) treats ONLY the
- *  empty string as "the vault root" — any non-empty path starting with "/"
- *  goes through `resolve_within`, which rejects a leading `RootDir`
- *  component and 404s (mapped to `REMOTE:SharingOff` by `remote_client.rs`'s
- *  `classify`). Every `remote_*` handler below that takes a vault-relative
- *  `path`/`baseDir`/`dir` argument checks this FIRST, the same order the
- *  real host's `safe_path` runs in (before anything else) — so this mock
- *  can no longer silently accept the exact wire-contract violation (a
- *  literal `"/"`) that made the real feature 404 against a real host while
- *  every test against this mock kept passing. */
-function rejectsUnparsableRemotePath(path: unknown): void {
-  if (typeof path === "string" && path.startsWith("/")) throw "REMOTE:SharingOff";
+/** C1/N4 regression guard, mirrored in this mock (final review's
+ *  mock-tightening requirement, tightened further by the N4 re-review
+ *  finding that this only ever caught a leading `/`): the real host's
+ *  `safe_path` (remote_host.rs) treats ONLY the empty string as "the vault
+ *  root" (`resolve_within`'s own carve-out) and otherwise runs two gates on
+ *  every non-empty path — `resolve_within`'s lexical gate, which rejects
+ *  any path component that is not `Component::Normal` (an absolute leading
+ *  `/`, a `..`, or a leading `./`), and `safe_path`'s hidden/artifact gate
+ *  (`has_a_hidden_or_artifact_component`, reusing `is_hidden_entry`/
+ *  `is_mermark_artifact` — same policy the local `list_dir` mock above
+ *  already applies via `e.name.startsWith(".")`). Both fold into
+ *  `REMOTE:SharingOff` on the wire (a rejected path 404s, which
+ *  `remote_client.rs`'s `classify` maps to `SharingOff`). One named function
+ *  every `remote_*` handler below calls FIRST on its vault-relative
+ *  `path`/`baseDir`/`dir` argument, the same order `safe_path` runs in — so
+ *  a future case added here reuses this rule instead of re-deriving (and
+ *  drifting from) it. */
+function refusesEscapingRemotePath(path: unknown): void {
+  if (typeof path !== "string" || path === "") return; // "" = vault root, safe_path's carve-out
+  if (path.startsWith("/")) throw "REMOTE:SharingOff"; // RootDir component
+  const segments = path.split("/").filter((s) => s.length > 0);
+  segments.forEach((segment, i) => {
+    if (segment === "..") throw "REMOTE:SharingOff"; // ParentDir component
+    if (i === 0 && segment === ".") throw "REMOTE:SharingOff"; // leading CurDir component
+    if (segment !== "." && (segment.startsWith(".") || segment.includes(".mermark-tmp.") || segment.includes(".mermark-recovered"))) {
+      throw "REMOTE:SharingOff"; // hidden/artifact gate
+    }
+  });
+}
+
+/** N5 regression guard: mirrors `ensure_tunnel_serves` (remote_client.rs) —
+ *  the cross-host token-leak guard checked before any `remote_*` request is
+ *  even sent. For an `ssh://` host, every wire command shares the one local
+ *  tunnel port (`remote_ssh.rs`), so a client that skipped
+ *  `ensureSshTunnel()` (or whose tunnel has since been replaced by a
+ *  different host, or reaped) must be refused here with the same
+ *  `SSH_TUNNEL_MISMATCH:` prefix `file-host.ts`'s `isTunnelMismatch` matches
+ *  on — otherwise this mock would silently let a bypass reach `dev:browser`
+ *  that the real backend refuses. A non-`ssh://` host is untunneled
+ *  (Tailscale-style direct reachability) and never gated here, same as the
+ *  real `ensure_tunnel_serves`'s early return. */
+function refusesStaleSshTunnel(host: string): void {
+  if (!host.startsWith("ssh://")) return;
+  if (sshTunnelHost !== host) {
+    throw `SSH_TUNNEL_MISMATCH: ${host}에 대한 SSH 터널이 더 이상 유효하지 않습니다. 다시 연결하세요.`;
+  }
 }
 
 // ── remote_ssh_* mock state (client-side SSH tunnel fallback — task 12) ────
@@ -996,7 +1029,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
-      rejectsUnparsableRemotePath(a.path);
+      refusesStaleSshTunnel(host);
+      refusesEscapingRemotePath(a.path);
       console.info("[mock] remote_list_dir", host, a.vault, a.path, "showHidden", a.showHidden);
       return [{ name: "원격노트.md", path: "원격노트.md", is_dir: false }] as T;
     }
@@ -1010,7 +1044,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
-      rejectsUnparsableRemotePath(a.path);
+      refusesStaleSshTunnel(host);
+      refusesEscapingRemotePath(a.path);
       console.info("[mock] remote_list_files_recursive", host, a.vault, a.path, "showHidden", a.showHidden);
       return {
         files: [{ name: "원격노트.md", path: "원격노트.md", rel_path: "원격노트.md" }],
@@ -1024,7 +1059,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
-      rejectsUnparsableRemotePath(a.path);
+      refusesStaleSshTunnel(host);
+      refusesEscapingRemotePath(a.path);
       console.info("[mock] remote_read_file", host, a.vault, a.path);
       return { text: "# 원격 데모\n\n브라우저 mock이 만든 원격 문서입니다.", mtime: 1 } as T;
     }
@@ -1036,7 +1072,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
-      rejectsUnparsableRemotePath(a.path);
+      refusesStaleSshTunnel(host);
+      refusesEscapingRemotePath(a.path);
       console.info("[mock] remote_read_image", host, a.vault, a.path);
       return "data:image/png;base64,iVBORw0KGgo=" as T;
     }
@@ -1051,7 +1088,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
-      rejectsUnparsableRemotePath(a.path);
+      refusesStaleSshTunnel(host);
+      refusesEscapingRemotePath(a.path);
       console.info("[mock] remote_resolve_image", host, a.vault, a.path, a.name, a.maxDepth);
       return null as T;
     }
@@ -1064,7 +1102,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
-      rejectsUnparsableRemotePath(a.path);
+      refusesStaleSshTunnel(host);
+      refusesEscapingRemotePath(a.path);
       console.info("[mock] remote_list_link_targets", host, a.vault, a.path);
       return [] as T;
     }

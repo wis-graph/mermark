@@ -217,7 +217,19 @@ async fn resolve_bind_ip(mode: BindMode) -> Result<IpAddr, String> {
 /// could act on differently, so they all collapse to "no Tailscale address
 /// available" for `resolve_bind_ip` to report.
 fn tailscale_ipv4() -> Option<IpAddr> {
-    let output = std::process::Command::new("tailscale").args(["ip", "-4"]).output().ok()?;
+    tailscale_ipv4_via("tailscale")
+}
+
+/// `tailscale_ipv4`'s body, with the program name pulled out as a parameter
+/// so a test can point it at a harmless local stand-in instead of the real
+/// `tailscale` binary — whether this machine actually has Tailscale
+/// installed, running, or logged in must never change what a unit test
+/// asserts (fix round: the prior test shelled out to the real binary and
+/// asserted only that two callers of the *same* function agree, which is
+/// true by construction and never exercises this parsing/spawn logic
+/// against a controlled input).
+fn tailscale_ipv4_via(program: &str) -> Option<IpAddr> {
+    let output = std::process::Command::new(program).args(["ip", "-4"]).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -404,14 +416,34 @@ mod tests {
         assert_eq!(parse_tailscale_ip_output("100.64.1.2\n100.64.1.3\n"), Some("100.64.1.2".parse().unwrap()));
     }
 
-    #[tokio::test]
-    async fn tailscale_available_matches_tailscale_ipv4_directly() {
-        // Environment-independent: whatever this test runner's Tailscale
-        // state actually is, `remote_tailscale_available` must agree with
-        // the exact same detection `resolve_bind_ip` uses — that parity is
-        // the whole point of the command (module doc comment above it).
-        let expected = tailscale_ipv4().is_some();
-        assert_eq!(remote_tailscale_available().await, expected);
+    /// A harmless local stand-in for `tailscale ip -4`: prints a fixed
+    /// address and exits 0, so `tailscale_ipv4_via` can be exercised without
+    /// the real binary — its own installed/logged-in/running state on this
+    /// machine must never decide whether this test passes.
+    #[cfg(unix)]
+    fn fake_tailscale_script(dir: &std::path::Path, stdout: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("fake_tailscale.sh");
+        std::fs::write(&script, format!("#!/bin/sh\nprintf '%s' \"{stdout}\"\nexit 0\n")).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script.to_string_lossy().into_owned()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tailscale_ipv4_via_parses_a_controlled_binarys_output() {
+        let dir = tmp_config_dir("tailscale-ipv4-via");
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = fake_tailscale_script(&dir, "100.64.1.2\n");
+        assert_eq!(tailscale_ipv4_via(&program), Some("100.64.1.2".parse().unwrap()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tailscale_ipv4_via_is_none_when_the_program_does_not_exist() {
+        // Stands in for "tailscale not on PATH" — this exact name should
+        // never collide with a real binary on a test runner's machine.
+        assert_eq!(tailscale_ipv4_via("mermark-nonexistent-tailscale-stand-in"), None);
     }
 
     #[test]
