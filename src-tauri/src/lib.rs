@@ -11,14 +11,17 @@ mod epubview;
 mod htmlview;
 mod hwp;
 mod qa_trace;
-// `remote_host` and `remote_token` are both library code with no
-// `#[tauri::command]` caller yet: Task 5 (HTTP server) and Task 6/9
-// (command registration) are what will call into them. Both are suppressed
-// at the module level, consistently, until that wiring lands and the
-// suppression is removed naturally by real call sites appearing.
+// `remote_host` is library code with no `#[tauri::command]` caller yet: Task
+// 9 (host-side sharing UI/wiring) is what will call into it. Suppressed at
+// the module level until that wiring lands and the suppression is removed
+// naturally by a real call site appearing.
 #[allow(dead_code)]
 mod remote_host;
-#[allow(dead_code)]
+// `remote_client.rs` owns every `remote_*` Tauri command (the client half of
+// the remote vault feature) and is this module's only caller of
+// `ClientTokens` — see that module's doc comment for why the device token
+// lives here and never crosses into TypeScript.
+mod remote_client;
 mod remote_token;
 mod single_instance;
 mod sqlite;
@@ -416,12 +419,34 @@ pub fn run() {
             sqlite::sqlite_table_info,
             sqlite::sqlite_rows,
             single_instance::register_window_ready,
-            single_instance::acknowledge_open_request
+            single_instance::acknowledge_open_request,
+            remote_client::remote_pair,
+            remote_client::remote_vaults,
+            remote_client::remote_list_dir,
+            remote_client::remote_list_files_recursive,
+            remote_client::remote_read_file,
+            remote_client::remote_read_image,
+            remote_client::remote_resolve_image,
+            remote_client::remote_list_link_targets
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
             if let Err(e) = setup_cli_path() {
                 eprintln!("mermark: failed to setup CLI path: {e}");
+            }
+
+            // Client-side remote vault token store (`remote_client.rs`'s
+            // `remote_*` commands). Constructed here, not via a bare
+            // `.manage(ClientTokens::default())` alongside the other managed
+            // state above, because loading what was already paired requires
+            // the app's config dir — only available once `app` (an
+            // `AppHandle`) exists, i.e. inside `.setup`.
+            {
+                use tauri::Manager;
+                let config_dir = app.path().app_config_dir().map_err(|e| {
+                    format!("failed to resolve app config dir for remote vault tokens: {e}")
+                })?;
+                app.manage(remote_token::ClientTokens::load(&config_dir));
             }
 
             // `class` was fully decided pre-builder (above); `Headless`

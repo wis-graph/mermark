@@ -114,6 +114,17 @@ zip = "8"
 # text. This crate is the one correct way to fold both sides to a canonical
 # form before comparing; hand-rolling NFC decomposition tables is out of scope.
 unicode-normalization = "0.1"
+# Remote vault client's HTTP calls (`remote_client.rs`). Not a new dependency
+# in spirit: reqwest 0.13.x is already compiled in this build graph
+# transitively (tauri's own updater plumbing depends on it), so naming it
+# directly here adds no new crate — just an explicit edge, with the "json"
+# feature this module's `.json()` response decoding needs.
+reqwest = { version = "0.13", features = ["json", "query"] }
+# Client-side data: URL construction for `remote_read_image` (`remote_client.rs`).
+# Already compiled transitively as reqwest's own dependency (see above); naming
+# it directly avoids hand-rolling base64 encoding without adding a new crate to
+# the graph.
+base64 = "0.22"
 
 [dev-dependencies]
 # `tower::ServiceExt::oneshot` drives `remote_host::router`'s axum `Router`
