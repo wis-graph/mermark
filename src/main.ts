@@ -2145,6 +2145,16 @@ async function boot() {
   // transient feedback rides in the `pos` cell.
   registerHandler("bundle.copy", () => {
     if (!currentFile) return;
+    // Minor (final review, same class as I3): `bundle_doc` is a LOCAL
+    // command — a remote document's `currentFile` is a vault-relative name
+    // ("노트.md"), which either fails invisibly on the host's own machine
+    // (never reached — the invoke never leaves this process) or, if a
+    // same-named local file exists, silently bundles the WRONG document.
+    // Refuse visibly instead of invoking it at all.
+    if (isRemoteVault(currentVault())) {
+      flashStatus(REMOTE_VAULT_LOCAL_LINK_MESSAGE);
+      return;
+    }
     void copyBundleToClipboard(currentFile).then((copied) => {
       flashStatus(copied ? "✓ 번들 복사됨" : "⚠ 번들 복사 실패");
     });

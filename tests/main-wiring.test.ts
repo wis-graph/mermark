@@ -1438,6 +1438,38 @@ describe("main workspace wiring", () => {
       expect(invokeMock).not.toHaveBeenCalledWith("remote_list_dir", expect.anything());
     });
 
+    // Minor (final review, same class as I3): ⌘⇧C (bundle.copy) called
+    // bundle_doc(<vault-relative name>) — a LOCAL command — for a remote
+    // document. Must refuse visibly via the same status-flash mechanism
+    // path.copy/bundle.copy already use for failure, not silently invoke a
+    // local command with a path that can't mean anything on this machine.
+    it("⌘⇧C (bundle.copy) on an open remote document refuses visibly instead of calling bundle_doc against the local filesystem", async () => {
+      documentContents.set("노트.md", "# 원격 문서");
+      localStorage.setItem("mermark.workspaceState", JSON.stringify({
+        workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-bundle"], currentVaultId: "vault-remote-bundle", lastSelectedPermanentVaultId: null }],
+        vaults: [{ vaultId: "vault-remote-bundle", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" }],
+        currentWorkspaceId: "workspace-default",
+      }));
+      vi.stubGlobal("location", { search: "", href: "" });
+
+      // dispatchChord must come from the SAME module instance main.ts's
+      // handler registered into — this suite's afterEach calls
+      // vi.resetModules(), so a static top-of-file import would resolve to
+      // a stale registry from a PRIOR test's module graph.
+      const { dispatchChord } = await import("../src/shortcuts/registry");
+      await import("../src/main");
+
+      document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-file[data-path="노트.md"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('.explorer-file[data-path="노트.md"]')?.click();
+      await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("원격 문서"));
+      invokeMock.mockClear();
+
+      dispatchChord("Mod+Shift+C");
+      await vi.waitFor(() => expect(document.querySelector(".status-pos")?.textContent).toContain("원격 볼트에서는 지원하지 않습니다"));
+      expect(invokeMock).not.toHaveBeenCalledWith("bundle_doc", expect.anything());
+    });
+
     // Task 11: the persistent read-only indicator and the explicit
     // unsupported-file refusal, driven through the real boot + Explorer
     // click path (not the pure remote-capability.ts functions in isolation —
