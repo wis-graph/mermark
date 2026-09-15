@@ -1612,6 +1612,17 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .workspace-vault-badge--warn { color: #e0b25c; background: color-mix(in srgb, #e0b25c 16%, transparent); }
 .workspace-vault-badge--error { color: #e28080; background: color-mix(in srgb, #e28080 16%, transparent); }
 
+/* Reconnect action (paintRecoveryButton, workspace-sidebar.ts) — text label
+   ("다시 시도" / "다시 페어링"), not an icon square, so it does NOT reuse
+   .workspace-vault-action's fixed 2em icon-button shape. Unlike that class,
+   it's never hidden behind row-hover opacity: a broken row's one recovery
+   step should stay visible without the user first discovering they need to
+   hover, and it's already `hidden` outright (via JS) whenever there's
+   nothing to recover from. */
+.workspace-vault-recover { display: inline-flex; align-items: center; align-self: center; padding: .1em .5em; margin: 0 .15em; border: 0; border-radius: var(--radius-sm, 6px); background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); color: var(--sidebar-fg); font: inherit; font-size: .8em; white-space: nowrap; cursor: pointer; transition: background-color .12s ease; }
+.workspace-vault-recover:hover, .workspace-vault-recover:focus-visible { background: color-mix(in srgb, var(--sidebar-fg) 16%, transparent); }
+.workspace-vault-recover[hidden] { display: none; }
+
 /* Pairing dialog (remote-vault-dialog.ts) — a small anchored panel, same
    surface language as .workspace-error (muted text, --sidebar-well card)
    rather than a full-screen modal; the workspace aside is already a narrow

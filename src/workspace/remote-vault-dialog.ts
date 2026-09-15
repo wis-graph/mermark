@@ -50,7 +50,11 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: strin
 
 export interface RemoteVaultDialog {
   readonly root: HTMLElement;
-  open(): void;
+  /** `prefillHost` is the reconnect entry point (workspace-sidebar.ts's
+   *  "다시 페어링" action on an `auth-expired` badge): the host is already
+   *  known — the dead thing is the token — so this skips straight past
+   *  retyping it and focuses the code field instead. */
+  open(prefillHost?: string): void;
   close(): void;
 }
 
@@ -162,7 +166,18 @@ export function createRemoteVaultDialog({ store, call, onRegistered }: RemoteVau
   };
 
   const close = (): void => { root.hidden = true; };
-  const open = (): void => { reset(); root.hidden = false; hostInput.focus(); };
+  const open = (prefillHost?: string): void => {
+    reset();
+    root.hidden = false;
+    if (prefillHost) {
+      hostInput.value = prefillHost;
+      form.setHost(prefillHost);
+      syncSubmit();
+      codeInput.focus();
+      return;
+    }
+    hostInput.focus();
+  };
   closeBtn.addEventListener("click", () => close());
 
   return { root, open, close };

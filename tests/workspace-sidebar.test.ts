@@ -739,4 +739,148 @@ describe("workspace sidebar", () => {
       await vi.waitFor(() => expect(badge?.textContent).toBe("연결됨"));
     });
   });
+
+  // Reconnect UI for a remote vault whose badge is not "connected" — the "×"
+  // used to be the ONLY button on a broken row, which meant the sole
+  // recovery path from "연결 안 됨" was to unregister the vault and re-pair
+  // from scratch. Each test below uses a unique host/vaultId per the file's
+  // established convention (module-level badgeCache/badgeProbes pollute
+  // across tests that share an id).
+  describe("remote vault reconnect", () => {
+    const rejecting = (message: string) => vi.fn().mockRejectedValue(new Error(message));
+
+    it("unreachable: shows a 다시 시도 action that reprobes immediately, bypassing the TTL cache", async () => {
+      const store = new WorkspaceStore();
+      const remote = store.registerRemoteVault("host-reconnect-1", "rv-a1", "재연결 A1");
+      const call = rejecting("boom") as unknown as typeof import("@tauri-apps/api/core").invoke;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+
+      const row = () => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${remote.vaultId}"]`)!;
+      const badge = () => row().querySelector<HTMLElement>(".workspace-vault-badge")!;
+      await vi.waitFor(() => expect(badge().textContent).toBe("연결 안 됨"));
+
+      const recover = row().querySelector<HTMLButtonElement>(".workspace-vault-recover")!;
+      expect(recover.hidden).toBe(false);
+      expect(recover.textContent).toBe("다시 시도");
+
+      expect(call).toHaveBeenCalledTimes(1);
+      recover.click();
+      // Reprobes right away even though BADGE_TTL_MS hasn't elapsed — a
+      // cached "연결 안 됨" must never be replayed on retry.
+      expect(badge().textContent).toBe("확인 중");
+      expect(call).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(badge().textContent).toBe("연결 안 됨"));
+
+      // Retry failing again must never remove the vault registration.
+      expect(store.get().vaults.some((v) => v.vaultId === remote.vaultId)).toBe(true);
+      sidebar.destroy();
+    });
+
+    it("sharing-off: shows a 다시 시도 action too", async () => {
+      const store = new WorkspaceStore();
+      const remote = store.registerRemoteVault("host-reconnect-2", "rv-a2", "재연결 A2");
+      const call = rejecting("REMOTE:SharingOff") as unknown as typeof import("@tauri-apps/api/core").invoke;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+
+      const row = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${remote.vaultId}"]`)!;
+      const badge = row.querySelector<HTMLElement>(".workspace-vault-badge")!;
+      await vi.waitFor(() => expect(badge.textContent).toBe("호스트가 공유를 껐음"));
+      const recover = row.querySelector<HTMLButtonElement>(".workspace-vault-recover")!;
+      expect(recover.hidden).toBe(false);
+      expect(recover.textContent).toBe("다시 시도");
+      sidebar.destroy();
+    });
+
+    it("auth-expired: shows a 다시 페어링 action that opens the pairing dialog prefilled with the vault's host, never reprobes", async () => {
+      const store = new WorkspaceStore();
+      const remote = store.registerRemoteVault("host-reconnect-3", "rv-a3", "재연결 A3");
+      const call = rejecting("REMOTE:AuthExpired") as unknown as typeof import("@tauri-apps/api/core").invoke;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+
+      const row = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${remote.vaultId}"]`)!;
+      const badge = row.querySelector<HTMLElement>(".workspace-vault-badge")!;
+      await vi.waitFor(() => expect(badge.textContent).toBe("인증 만료"));
+      const recover = row.querySelector<HTMLButtonElement>(".workspace-vault-recover")!;
+      expect(recover.hidden).toBe(false);
+      expect(recover.textContent).toBe("다시 페어링");
+
+      const callsBefore = (call as ReturnType<typeof vi.fn>).mock.calls.length;
+      recover.click();
+      // auth-expired can't be fixed by re-probing (the token itself is
+      // dead) — clicking it must open pairing, not fire another probe.
+      expect((call as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBefore);
+
+      const dialogHostInput = sidebar.aside.querySelector<HTMLInputElement>(".remote-vault-dialog-input");
+      expect(dialogHostInput?.value).toBe("host-reconnect-3");
+      const dialogRoot = sidebar.aside.querySelector<HTMLElement>(".remote-vault-dialog");
+      expect(dialogRoot?.hidden).toBe(false);
+      sidebar.destroy();
+    });
+
+    it("connected: shows no recovery action", async () => {
+      const store = new WorkspaceStore();
+      const remote = store.registerRemoteVault("host-reconnect-4", "rv-a4", "재연결 A4");
+      const call = vi.fn().mockResolvedValue([]) as unknown as typeof import("@tauri-apps/api/core").invoke;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+
+      const row = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${remote.vaultId}"]`)!;
+      const badge = row.querySelector<HTMLElement>(".workspace-vault-badge")!;
+      await vi.waitFor(() => expect(badge.textContent).toBe("연결됨"));
+      const recover = row.querySelector<HTMLButtonElement>(".workspace-vault-recover")!;
+      expect(recover.hidden).toBe(true);
+      sidebar.destroy();
+    });
+
+    it("the disconnect (×) button's title tells the user re-pairing will be needed afterwards", () => {
+      const store = new WorkspaceStore();
+      const remote = store.registerRemoteVault("host-reconnect-5", "rv-a5", "재연결 A5");
+      const call = vi.fn().mockResolvedValue([]) as unknown as typeof import("@tauri-apps/api/core").invoke;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+
+      const row = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${remote.vaultId}"]`)!;
+      const disconnect = [...row.querySelectorAll<HTMLButtonElement>(".workspace-vault-action")].find((b) => b.title.includes("해제"))!;
+      expect(disconnect.title).toContain("페어링");
+      sidebar.destroy();
+    });
+
+    it("recovers automatically when the window comes back online — invalidates the cache and reprobes without polling", async () => {
+      const store = new WorkspaceStore();
+      const remote = store.registerRemoteVault("host-reconnect-6", "rv-a6", "재연결 A6");
+      const call = rejecting("boom") as unknown as typeof import("@tauri-apps/api/core").invoke;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+
+      const badge = () => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${remote.vaultId}"] .workspace-vault-badge`)!;
+      await vi.waitFor(() => expect(badge().textContent).toBe("연결 안 됨"));
+      expect(call).toHaveBeenCalledTimes(1);
+
+      window.dispatchEvent(new Event("online"));
+      // Still within BADGE_TTL_MS — must reprobe anyway, not serve the cache.
+      expect(call).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(badge().textContent).toBe("연결 안 됨"));
+      sidebar.destroy();
+    });
+
+    it("destroy() removes the online/focus/visibilitychange listeners it installed", async () => {
+      const store = new WorkspaceStore();
+      const remote = store.registerRemoteVault("host-reconnect-7", "rv-a7", "재연결 A7");
+      const call = rejecting("boom") as unknown as typeof import("@tauri-apps/api/core").invoke;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+
+      const badge = () => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${remote.vaultId}"] .workspace-vault-badge`)!;
+      await vi.waitFor(() => expect(badge().textContent).toBe("연결 안 됨"));
+      const callsAfterFirstProbe = (call as ReturnType<typeof vi.fn>).mock.calls.length;
+
+      sidebar.destroy();
+      sidebar.aside.remove();
+      window.dispatchEvent(new Event("online"));
+      expect((call as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFirstProbe);
+    });
+  });
 });

@@ -16,6 +16,12 @@ export interface WorkspaceSidebar {
   readonly aside: HTMLElement;
   close(): void;
   refresh(): void;
+  /** Removes the window/document-level "connectivity recovered" listeners
+   *  installed below (item 3). The app's own singleton (main.ts) lives for
+   *  the app's lifetime and never calls this; it exists so a test file that
+   *  creates many sidebars doesn't leave every earlier one's listener firing
+   *  on a later test's `dispatchEvent`. */
+  destroy(): void;
 }
 
 export interface WorkspaceSidebarHandlers {
@@ -75,21 +81,83 @@ function probeRemoteConnection(vault: RemoteVault, call: typeof invoke): Promise
   return probe;
 }
 
-/** Renders `el` as a connection badge for `vault`, serving a cached state
- *  immediately if fresh and always kicking off a background re-probe when
- *  stale — never blocks the row's render on the network (item 4: skeleton,
- *  not a synchronous freeze). Command (void); the cache above is the shared
- *  state, this function only paints from + refreshes it. */
-function renderRemoteBadge(el: HTMLElement, vault: RemoteVault, call: typeof invoke): void {
+/** The one recovery step that makes sense for a given connection state, or
+ *  null once nothing is broken ("connected"). `unreachable`/`sharing-off`
+ *  are both plain reachability problems a fresh probe can resolve on its
+ *  own the moment the host comes back — same action, "다시 시도".
+ *  `auth-expired` is different in kind: the device TOKEN is dead, and no
+ *  amount of re-probing revives a dead token, so its only honest action is
+ *  re-pairing ("다시 페어링") rather than a retry that's guaranteed to fail
+ *  again. Keeping this as one named function is what stops "which state
+ *  gets which button" from being re-decided ad hoc at each call site. */
+interface RemoteRecoveryAction { readonly label: string; readonly run: () => void }
+function remoteRecoveryAction(state: RemoteConnectionState, retry: () => void, rePair: () => void): RemoteRecoveryAction | null {
+  switch (state) {
+    case "connected": return null;
+    case "unreachable":
+    case "sharing-off":
+      return { label: "다시 시도", run: retry };
+    case "auth-expired":
+      return { label: "다시 페어링", run: rePair };
+  }
+}
+
+/** Paints `btn` for `state` — hidden once nothing is actionable
+ *  ("connected", and the "확인 중" in-flight moment renderRemoteBadge itself
+ *  handles below), otherwise labeled and wired to `remoteRecoveryAction`'s
+ *  chosen step. Command (void), kept separate from `renderRemoteBadge` so
+ *  the badge-text painting and the recovery-button painting each stay a
+ *  single, nameable responsibility. */
+function paintRecoveryButton(btn: HTMLButtonElement, vault: RemoteVault, state: RemoteConnectionState, retry: () => void, rePair: () => void): void {
+  const action = remoteRecoveryAction(state, retry, rePair);
+  if (!action) { btn.hidden = true; btn.onclick = null; return; }
+  btn.hidden = false;
+  btn.textContent = action.label;
+  btn.title = action.label;
+  btn.setAttribute("aria-label", `${vault.displayName} ${action.label}`);
+  btn.onclick = () => action.run();
+}
+
+/** Renders `el`+`recoverBtn` as the connection badge + recovery action for
+ *  `vault`, serving a cached state immediately if fresh and always kicking
+ *  off a background re-probe when stale — never blocks the row's render on
+ *  the network (item 4: skeleton, not a synchronous freeze). Command
+ *  (void); the cache above is the shared state, this function only paints
+ *  from + refreshes it.
+ *
+ *  `retry` (below) re-invokes this same function after evicting the cache
+ *  entry, which is what makes "다시 시도" actually bypass the TTL instead of
+ *  repainting a stale cached failure — a manual retry that silently no-ops
+ *  because the cache was still "fresh" would just be a second trap next to
+ *  the one this whole feature exists to remove. */
+function renderRemoteBadge(el: HTMLElement, recoverBtn: HTMLButtonElement, vault: RemoteVault, call: typeof invoke, openRepair: (host: string) => void): void {
+  const retry = (): void => {
+    badgeCache.delete(vault.vaultId);
+    renderRemoteBadge(el, recoverBtn, vault, call, openRepair);
+  };
   const paint = (state: RemoteConnectionState): void => {
     const badge = badgeFor(state);
     el.textContent = badge.label;
     el.className = `workspace-vault-badge workspace-vault-badge--${badge.tone}`;
+    paintRecoveryButton(recoverBtn, vault, state, retry, () => openRepair(vault.host));
   };
   const hit = badgeCache.get(vault.vaultId);
   if (hit && hit.expires > Date.now()) { paint(hit.state); return; }
   el.textContent = "확인 중"; el.className = "workspace-vault-badge workspace-vault-badge--checking";
+  recoverBtn.hidden = true; // no action while a probe is already in flight
   void probeRemoteConnection(vault, call).then(paint);
+}
+
+/** The recovery signal for item 3: nothing re-probes a remote vault's badge
+ *  on its own once it's cached (BADGE_TTL_MS's own doc comment — deliberate,
+ *  this app has no polling loop), so a host that comes back while this
+ *  window wasn't looking would otherwise stay stuck showing "연결 안 됨"
+ *  forever. Invalidates every remote vault's cached badge and re-renders,
+ *  reusing the exact cache-miss → reprobe path a manual "다시 시도" click
+ *  uses — just for every remote vault at once instead of one. Command
+ *  (void); `render` (closure below) owns the actual DOM/probe work. */
+function invalidateAllRemoteBadges(vaults: readonly Vault[]): void {
+  for (const vault of vaults) if (vault.persistenceKind === "remote") badgeCache.delete(vault.vaultId);
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] => {
@@ -421,9 +489,26 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
           // stalled host never blocks this render (item 4's "동기 블로킹
           // 금지" applies here too, not just the explorer tree).
           const badge = create("span", "workspace-vault-badge workspace-vault-badge--checking");
-          renderRemoteBadge(badge, vault, call);
-          row.append(badge);
-          const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = "원격 볼트 해제"; remove.setAttribute("aria-label", `${vault.displayName} 원격 볼트 해제`); remove.append(icon("x")); remove.addEventListener("click", () => {
+          // Recovery action (items 1/2): a separate button rather than
+          // making the badge itself clickable — it needs to say a different
+          // thing per state ("다시 시도" vs "다시 페어링", paintRecoveryButton
+          // above) and sits BEFORE the destructive "×" below so retrying
+          // isn't buried after the one button that unregisters the vault.
+          // Deliberately NOT `.workspace-vault-action` (that class is the
+          // existing selector pre-existing tests/CSS use to mean "the row's
+          // one destructive action" — reusing it here would make a bare
+          // `.workspace-vault-action` query ambiguous between this and the
+          // "×" button below).
+          const recover = create("button", "workspace-vault-recover") as HTMLButtonElement;
+          recover.type = "button"; recover.hidden = true;
+          renderRemoteBadge(badge, recover, vault, call, (host) => remoteDialog.open(host));
+          row.append(badge, recover);
+          // Reversible in the same sense the permanent vault's remove button
+          // above is — but here "re-register" means going through pairing
+          // again (there's no local root to just point back at), so the
+          // title says so up front instead of letting the only visible
+          // button next to a broken badge look consequence-free (item 2).
+          const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = "원격 볼트 해제 — 다시 연결하려면 페어링부터 다시 해야 합니다"; remove.setAttribute("aria-label", `${vault.displayName} 원격 볼트 해제 — 다시 연결하려면 페어링부터 다시 해야 합니다`); remove.append(icon("x")); remove.addEventListener("click", () => {
             try {
               store.unregisterVault(vault.vaultId);
               // Best-effort: free the local tunnel port as soon as the LAST
@@ -468,5 +553,25 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
     if (remoteVaults.length > 0) renderGroup("workspace-vault-group--remote", remoteVaults.map((vault) => ({ vault, level: 1 })), "원격 볼트");
   };
   store.subscribe(render); render(store.get());
-  return { button, aside, close, refresh: () => render(store.get()) };
+
+  // Item 3: recover automatically on the cheap signals — the network coming
+  // back (`online`) and the user returning to this window (`focus` /
+  // the tab becoming visible again) — instead of polling on a timer, which
+  // would burn a `remote_list_dir` round trip (and its timeout, while
+  // offline) on every tick regardless of whether anything changed.
+  const handleConnectivityRecovery = (): void => {
+    invalidateAllRemoteBadges(store.get().vaults);
+    render(store.get());
+  };
+  const handleVisibilityChange = (): void => { if (document.visibilityState === "visible") handleConnectivityRecovery(); };
+  window.addEventListener("online", handleConnectivityRecovery);
+  window.addEventListener("focus", handleConnectivityRecovery);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  const destroy = (): void => {
+    window.removeEventListener("online", handleConnectivityRecovery);
+    window.removeEventListener("focus", handleConnectivityRecovery);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+  };
+
+  return { button, aside, close, refresh: () => render(store.get()), destroy };
 }
