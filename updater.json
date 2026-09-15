@@ -1,11 +1,11 @@
 {
-  "version": "0.18.0",
-  "notes": "### Added\n\n- **원격 볼트에서 PDF·엑셀·워드·HTML을 연다**: 지금까지 원격 볼트는 마크다운과 이미지만 열 수 있었다. 이제 PDF, 엑셀(xlsx·xls·csv), 워드(docx), HTML 문서도 다른 맥의 볼트에서 바로 열린다.\n- **원격 HTML도 스크립트가 동작한다**: 설정 › 뷰어 › \"HTML 문서 스크립트 실행\"을 켜 두면 원격 볼트의 HTML도 로컬과 똑같이 자바스크립트가 돈다.\n\n### Changed\n\n- **열 수 없는 파일은 이유를 구분해서 알려준다**: 데이터베이스 파일(.sqlite·.db)은 원격으로는 다룰 수 없는 방식이라 \"지원하지 않습니다\"로, EPUB·한글 문서는 \"아직 지원하지 않습니다\"로 구분해 표시한다.\n\n### Fixed\n\n- **원격 파일이 너무 클 때 \"연결 안 됨\"으로 보이던 문제**: 20MB가 넘어 열 수 없는 경우 네트워크 문제로 오해하게 표시됐다. 이제 크기 때문이라고 분명히 말해 준다.",
-  "pub_date": "2026-09-14T20:42:22Z",
+  "version": "0.18.1",
+  "notes": "### Fixed\n\n- **끊긴 원격 볼트를 다시 연결할 수 있다**: 연결이 끊기면 볼트 행에 \"×\"(해제)밖에 없어서, 다시 보려면 페어링 코드부터 새로 받아야 했다. 이제 볼트 행에서 바로 다시 시도할 수 있다. 인증이 만료된 경우에는 다시 페어링하도록 안내하고, 호스트 이름은 채워진 채로 열린다.\n- **호스트가 돌아오면 배지가 스스로 갱신된다**: 네트워크가 복구되거나 창을 다시 보면 원격 볼트 상태를 다시 확인한다. 예전에는 맥미니가 다시 켜져도 화면은 계속 \"연결 안 됨\"으로 남아 있었다.",
+  "pub_date": "2026-09-15T00:47:20Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzZ2a29QcklXOExRV2ppdVFCc3dYcmwxU3NRd1REelEwUCtXR1g0L3dSRTFlSDF6YkZNakZxMkR1bXZzV2Z5eTNWK3prMWFaaTZoSndiS09ZOTRCb3d3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NDE4NTI0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmJWSDJPS3hWejJncHhZQnN2NEpwYm1aMVJQS1ZFSTdXY3gzaWVGaUZtQ1lHQWMxbW5xZ0xmS296RFZqVVdwT3NmM2Q2SHdyVUo0SEFWYXdzUmZpQ0JnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.18.0/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzhwQUpRYlJ5ckkxZFd0SFdTWUlhejlZZGZvNmhPOG9iaWdrQ1J5cDJ4MU83c05KVit0WEp6UTlmZUY5YU1pdTBoMmg0SDdpQmJ3WVlrTGVCejRNcGdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NDMzMjE1CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CjF2dm0rMUtTU0RpcXRpSTJWY1Bka3U1SEppWXlsUTNhSThKc2lSWTNBMXlrRkFFSUtZZDJIZXpvMU00a1BnbmFUcytUL3ZXQ3VUeEQ2cWFvUTZqWEJBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.18.1/mermark.app.tar.gz"
     }
   }
 }
