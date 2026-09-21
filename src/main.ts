@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { dirOf, resolveOpenPath, normalizePath, basename, isResolvedAbsolutePath } from "./document/path";
+import type { DriveEntry } from "./document/types";
 import { createOpenPathPrompt } from "./document/open-file/path-prompt";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -1119,6 +1120,19 @@ async function boot() {
     onRootChange: (root) => {
       if (currentVault()?.persistenceKind === "global") currentExplorerFolder = root;
       breadcrumb.render(root);
+    },
+    // "내 컴퓨터" (My Computer) drive listing (v0.18.2 windows 탐색기 루트
+    // fix, design §(b)/(c)): read-only, no args, local filesystem only — a
+    // remote vault's `..` from its (vault-relative, never a real fs root)
+    // listing never reaches `isFilesystemRoot`, so this never fires there.
+    listDrives: () => invoke<DriveEntry[]>("list_drives"),
+    // A virtual root (currently only "내 컴퓨터") carries no real path to
+    // hand to breadcrumb.render — `renderLabel` shows it as a single
+    // non-clickable segment instead. `null` means "just left one": the very
+    // next call is always onRootChange with the real path it landed on, so
+    // this deliberately does nothing rather than racing that render.
+    onVirtualRootChange: (label) => {
+      if (label !== null) breadcrumb.renderLabel(label);
     },
     onToggleVault: (root) => toggleExplorerVault(root),
     isVaultRegistered: (root) => isVaultRegistered(root),

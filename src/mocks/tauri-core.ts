@@ -751,6 +751,15 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       console.info("[mock] list_files_recursive", a.root, "showHidden", showHidden, "->", norm, files.length, "files");
       return { files, truncated: false } as T;
     }
+    case "list_drives":
+      // Mirrors the real `list_drives() -> Vec<DriveEntry>` (no args, no
+      // failure) that backs the explorer's "내 컴퓨터" virtual root shown
+      // above a filesystem root. The browser has no real volumes to
+      // enumerate, so this is a fixed one-entry stub — enough for the
+      // mock-parity test (field names `path`/`display_name`, snake_case to
+      // match the Rust serde shape) without needing a fake multi-drive tree.
+      console.info("[mock] list_drives");
+      return [{ path: "/", display_name: "/" }] as T;
     case "watch_file":
       // Single-slot fs watcher. No real watcher in the browser — record the
       // path so __mockExternalChange (in the event mock) can target it, and

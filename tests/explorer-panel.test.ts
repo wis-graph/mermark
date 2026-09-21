@@ -45,6 +45,19 @@ function fakeTreeWithTxt(): (path: string) => Promise<DirEntry[]> {
   return (path: string) => Promise.resolve(TREE[path] ?? []);
 }
 
+/** A tree rooted at "/" (a real posix filesystem root), isolated from
+ *  fakeTree() above (same isolation rationale as fakeTreeWithTxt) so the "내
+ *  컴퓨터" describe below can navigate all the way up to "/" without
+ *  touching fakeTree()'s existing baselines/call-count assertions. */
+function fakeTreeWithFsRoot(): (path: string) => Promise<DirEntry[]> {
+  const TREE: Record<string, DirEntry[]> = {
+    "/": [dir("root", "/root")],
+    "/root": [dir("sub", "/root/sub"), file("a.md", "/root/a.md")],
+    "/root/sub": [file("b.md", "/root/sub/b.md")],
+  };
+  return (path: string) => Promise.resolve(TREE[path] ?? []);
+}
+
 let host: HTMLElement;
 
 beforeEach(() => {
@@ -583,6 +596,176 @@ describe("explorer: root path stays canonical", () => {
     clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
     await flush();
     expect(names(panel.aside)).toEqual(["..", "sub", "a.md", "pic.png"]);
+  });
+});
+
+// 내 컴퓨터 (drive hierarchy) — windows 탐색기 루트 결함 fix, v0.18.2:
+// `..` from a FILESYSTEM ROOT (isFilesystemRoot) goes to a virtual "내
+// 컴퓨터" drive listing instead of `${root}/..` — but ONLY when `listDrives`
+// is injected at all, so every existing caller (above) that never wires it
+// keeps behaving exactly as before (the `//..` test just above this block is
+// the regression guard for that gate — it must stay green, unmodified).
+describe("explorer: 내 컴퓨터 (drive hierarchy)", () => {
+  const drives = [
+    { path: "/", display_name: "/" },
+    { path: "/Volumes/USB", display_name: "USB" },
+  ];
+
+  it("`..` from a filesystem root goes to 내 컴퓨터, not `${root}/..`", async () => {
+    const listDir = vi.fn(fakeTreeWithFsRoot());
+    const listDrives = vi.fn(async () => drives);
+    const onRootChange = vi.fn();
+    const onVirtualRootChange = vi.fn();
+    const panel = await openPanel({
+      listDir,
+      getBaseDir: () => "/",
+      onOpenFile: vi.fn(),
+      listDrives,
+      onRootChange,
+      onVirtualRootChange,
+    });
+    onRootChange.mockClear();
+
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+
+    expect(listDrives).toHaveBeenCalledTimes(1);
+    expect(panel.aside.querySelector(".explorer-up")).toBeNull();
+    expect(names(panel.aside)).toEqual(["/", "USB"]);
+    expect(onRootChange).not.toHaveBeenCalled(); // last call stays "/" — no new call at all
+    expect(onVirtualRootChange).toHaveBeenLastCalledWith("내 컴퓨터");
+    expect(panel.currentRootPath()).toBe("/");
+  });
+
+  it("`..` when the root is NOT a filesystem root uses the ordinary parent, even with listDrives injected", async () => {
+    const listDir = vi.fn(fakeTreeWithFsRoot());
+    const listDrives = vi.fn(async () => drives);
+    const panel = await openPanel({ listDir, getBaseDir: () => "/root/sub", onOpenFile: vi.fn(), listDrives });
+
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+
+    expect(listDrives).not.toHaveBeenCalled();
+    expect(names(panel.aside)).toEqual(["..", "sub", "a.md"]);
+  });
+
+  it("without listDrives injected, `..` from a filesystem root keeps today's behavior", async () => {
+    const listDir = vi.fn(fakeTreeWithFsRoot());
+    const panel = await openPanel({ listDir, getBaseDir: () => "/", onOpenFile: vi.fn() });
+
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+
+    const up = panel.aside.querySelector(".explorer-up") as HTMLElement;
+    expect(up).not.toBeNull();
+    expect(up.dataset.path).toBe("//..");
+  });
+
+  it("clicking/Entering a drive row changes root to that drive", async () => {
+    const listDir = vi.fn(fakeTreeWithFsRoot());
+    const listDrives = vi.fn(async () => drives);
+    const onRootChange = vi.fn();
+    const onVirtualRootChange = vi.fn();
+    const panel = await openPanel({
+      listDir,
+      getBaseDir: () => "/",
+      onOpenFile: vi.fn(),
+      listDrives,
+      onRootChange,
+      onVirtualRootChange,
+    });
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+
+    const usb = [...panel.aside.querySelectorAll(".explorer-drive")].find(
+      (el) => el.querySelector(".explorer-name")?.textContent === "USB",
+    ) as HTMLElement;
+    clickItem(usb);
+    await flush();
+
+    expect(listDir).toHaveBeenLastCalledWith("/Volumes/USB");
+    expect(onRootChange).toHaveBeenLastCalledWith("/Volumes/USB");
+    expect(onVirtualRootChange).toHaveBeenLastCalledWith(null);
+    expect(panel.aside.querySelector(".explorer-up")).not.toBeNull();
+  });
+
+  it("keyboard: ↓ to the second drive row, Enter changes root to it; drive rows are treeitems with exactly one tabindex=0", async () => {
+    const listDir = vi.fn(fakeTreeWithFsRoot());
+    const listDrives = vi.fn(async () => drives);
+    const panel = await openPanel({ listDir, getBaseDir: () => "/", onOpenFile: vi.fn(), listDrives });
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+
+    const rows = [...panel.aside.querySelectorAll(".explorer-drive")] as HTMLElement[];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.getAttribute("role")).toBe("treeitem");
+    expect(rows.filter((r) => r.tabIndex === 0)).toHaveLength(1);
+
+    press(panel.aside, "ArrowDown");
+    press(panel.aside, "Enter");
+    await flush();
+
+    expect(listDir).toHaveBeenLastCalledWith("/Volumes/USB");
+  });
+
+  it("refreshListing re-reads the drive list while showing 내 컴퓨터", async () => {
+    const listDir = vi.fn(fakeTreeWithFsRoot());
+    const listDrives = vi.fn(async () => drives);
+    const panel = await openPanel({ listDir, getBaseDir: () => "/", onOpenFile: vi.fn(), listDrives });
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+    expect(listDrives).toHaveBeenCalledTimes(1);
+
+    panel.refreshListing();
+    await flush();
+
+    expect(listDrives).toHaveBeenCalledTimes(2);
+    expect(panel.aside.querySelectorAll(".explorer-drive").length).toBe(2);
+  });
+
+  it("root-locked: `..` never renders, listDrives never called, even when injected", async () => {
+    const listDir = vi.fn(fakeTreeWithFsRoot());
+    const listDrives = vi.fn(async () => drives);
+    const panel = await openPanel({
+      listDir,
+      getBaseDir: () => "/",
+      onOpenFile: vi.fn(),
+      listDrives,
+      isRootLocked: () => true,
+    });
+
+    expect(panel.aside.querySelector(".explorer-up")).toBeNull();
+    expect(listDrives).not.toHaveBeenCalled();
+  });
+
+  it("an empty drive list renders the ordinary empty state", async () => {
+    const listDir = vi.fn(fakeTreeWithFsRoot());
+    const listDrives = vi.fn(async () => []);
+    const panel = await openPanel({ listDir, getBaseDir: () => "/", onOpenFile: vi.fn(), listDrives });
+
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+
+    expect(panel.aside.querySelector(".explorer-empty")).not.toBeNull();
+  });
+
+  it("a rejected listDrives shows the root-error state, whose reselect button returns to getBaseDir()", async () => {
+    const listDir = vi.fn(fakeTreeWithFsRoot());
+    const listDrives = vi.fn(async () => {
+      throw new Error("드라이브를 읽을 수 없습니다");
+    });
+    const panel = await openPanel({ listDir, getBaseDir: () => "/", onOpenFile: vi.fn(), listDrives });
+
+    clickItem(panel.aside.querySelector(".explorer-up") as HTMLElement);
+    await flush();
+
+    const errorState = panel.aside.querySelector(".explorer-root-error");
+    expect(errorState).not.toBeNull();
+    const reselect = errorState?.querySelector(".explorer-root-reselect") as HTMLButtonElement;
+    clickItem(reselect);
+    await flush();
+
+    expect(names(panel.aside)).toEqual(["..", "root"]); // back at getBaseDir() = "/"
   });
 });
 

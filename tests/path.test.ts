@@ -9,6 +9,8 @@ import {
   breadcrumbSegments,
   isPathWithin,
   isResolvedAbsolutePath,
+  windowsPathPrefix,
+  isFilesystemRoot,
 } from "../src/document/path";
 
 describe("isResolvedAbsolutePath", () => {
@@ -81,6 +83,74 @@ describe("normalizePath", () => {
   it("preserves a Windows drive prefix and never pops below it", () => {
     expect(normalizePath("C:\\Users\\u\\..\\v")).toBe("C:\\Users\\v");
     expect(normalizePath("C:\\..")).toBe("C:\\");
+  });
+
+  // Windows verbatim (`\\?\`) / UNC prefix preservation — the explorer's
+  // "내 컴퓨터" defect fix. Without this, `\\?\C:\Users\x\..` was parsed as a
+  // posix-rooted path (`?`, `C:` becoming ordinary segments) and corrupted.
+  it("preserves a verbatim drive prefix (`\\\\?\\C:`) and never pops below it", () => {
+    expect(normalizePath("\\\\?\\C:\\Users\\x\\..")).toBe("\\\\?\\C:\\Users");
+    expect(normalizePath("\\\\?\\C:\\..")).toBe("\\\\?\\C:\\");
+  });
+  it("preserves a verbatim UNC prefix (`\\\\?\\UNC\\srv\\share`) and never pops below it", () => {
+    expect(normalizePath("\\\\?\\UNC\\srv\\share\\d\\..\\..")).toBe("\\\\?\\UNC\\srv\\share");
+  });
+  it("preserves a plain UNC prefix (`\\\\srv\\share`) and never pops below it", () => {
+    expect(normalizePath("\\\\srv\\share\\d\\..")).toBe("\\\\srv\\share");
+    expect(normalizePath("\\\\srv\\share\\..")).toBe("\\\\srv\\share");
+  });
+  it("normalizes mixed separators against a Windows prefix as `\\` (prefix wins the separator)", () => {
+    expect(normalizePath("C:\\Users\\x/..")).toBe("C:\\Users");
+    expect(normalizePath("\\\\srv\\share/..")).toBe("\\\\srv\\share");
+  });
+});
+
+describe("windowsPathPrefix", () => {
+  it("recognizes a verbatim drive prefix", () => {
+    expect(windowsPathPrefix("\\\\?\\C:\\Users")).toBe("\\\\?\\C:");
+  });
+  it("recognizes a verbatim UNC prefix", () => {
+    expect(windowsPathPrefix("\\\\?\\UNC\\srv\\share\\d")).toBe("\\\\?\\UNC\\srv\\share");
+  });
+  it("recognizes a plain UNC prefix", () => {
+    expect(windowsPathPrefix("\\\\srv\\share\\d")).toBe("\\\\srv\\share");
+  });
+  it("recognizes a plain drive prefix", () => {
+    expect(windowsPathPrefix("C:\\x")).toBe("C:");
+  });
+  it("returns \"\" for a posix path", () => {
+    expect(windowsPathPrefix("/x")).toBe("");
+  });
+  it("returns \"\" for an incomplete verbatim prefix (not a recognized shape)", () => {
+    expect(windowsPathPrefix("\\\\?\\")).toBe("");
+  });
+});
+
+describe("isFilesystemRoot", () => {
+  it("accepts a posix root", () => {
+    expect(isFilesystemRoot("/")).toBe(true);
+  });
+  it("accepts a Windows drive root, any separator spelling", () => {
+    expect(isFilesystemRoot("C:")).toBe(true);
+    expect(isFilesystemRoot("C:\\")).toBe(true);
+    expect(isFilesystemRoot("C:/")).toBe(true);
+  });
+  it("accepts a Windows UNC share root, with or without a trailing separator", () => {
+    expect(isFilesystemRoot("\\\\srv\\share")).toBe(true);
+    expect(isFilesystemRoot("\\\\srv\\share\\")).toBe(true);
+  });
+  it("accepts a verbatim drive root", () => {
+    expect(isFilesystemRoot("\\\\?\\C:\\")).toBe(true);
+  });
+  it("rejects a non-root path", () => {
+    expect(isFilesystemRoot("/Users")).toBe(false);
+    expect(isFilesystemRoot("C:\\Users")).toBe(false);
+    expect(isFilesystemRoot("\\\\srv\\share\\docs")).toBe(false);
+  });
+  it("rejects empty, home-literal, and relative input", () => {
+    expect(isFilesystemRoot("")).toBe(false);
+    expect(isFilesystemRoot("~")).toBe(false);
+    expect(isFilesystemRoot("relative")).toBe(false);
   });
 });
 

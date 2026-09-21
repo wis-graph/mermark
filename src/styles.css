@@ -2040,7 +2040,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    so all three themes track their own --sidebar-accent. */
 .explorer-dir > .explorer-label > .explorer-glyph { color: var(--sidebar-accent); }
 .explorer-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.explorer-up > .explorer-label { font-weight: 600; }
+/* `.explorer-drive` (v0.18.2 "내 컴퓨터" drive rows) reuses `.explorer-up`'s
+   bold-label treatment — both are navigation-flavored rows, not ordinary
+   tree nodes. */
+.explorer-up > .explorer-label,
+.explorer-drive > .explorer-label { font-weight: 600; }
 .explorer-vault-toggle {
   flex: none; margin-inline-start: auto; width: calc(20em / 13); height: calc(20em / 13);
   padding: 0; border: 0; border-radius: var(--radius-sm, 6px); background: transparent;

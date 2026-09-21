@@ -32,11 +32,60 @@ export function isPathWithin(path: string, ancestor: string): boolean {
   return path.startsWith(`${ancestor}/`) || path.startsWith(`${ancestor}\\`);
 }
 
-/** Which separator a path "speaks": `\` only when the path has a backslash and
- *  no forward slash, `/` otherwise (posix default). Shared by `normalizePath`
- *  (to rejoin segments) and `formatRootLabel` (to split them) so the two never
- *  disagree on which character is the separator for a given path. */
+// Windows path-prefix regexes, longest/most-specific first — a `\\?\` verbatim
+// form must be recognized before the plain UNC/drive forms it would otherwise
+// be misparsed as (see `windowsPathPrefix`'s doc comment).
+const VERBATIM_DRIVE_PREFIX = /^\\\\\?\\[A-Za-z]:/;
+const VERBATIM_UNC_PREFIX = /^\\\\\?\\UNC\\[^\\/]+\\[^\\/]+/;
+const UNC_PREFIX = /^\\\\[^\\/?.]+[\\/][^\\/]+/;
+const DRIVE_PREFIX = /^[A-Za-z]:/;
+
+/** The Windows path prefix `path` starts with — a verbatim drive (`\\?\C:`), a
+ *  verbatim UNC (`\\?\UNC\srv\share`), a plain UNC (`\\srv\share`), or a plain
+ *  drive (`C:`) — or `""` when `path` carries none of these (a posix path, a
+ *  relative path, or an incomplete/unrecognized verbatim form like `\\?\` or
+ *  `\\?\Volume{…}`, which this deliberately leaves unmatched rather than
+ *  guessing at a shape it doesn't understand). The plain-UNC regex excludes
+ *  `?` from its server segment, so it can never match a verbatim path; the
+ *  most-specific-first ordering here is about readability, not about avoiding
+ *  a false positive. Shared by
+ *  `normalizePath` (to preserve the prefix across `..`/`.` traversal — see
+ *  `windowsPathPrefixIsDrive` for why a drive prefix and a UNC prefix rejoin
+ *  differently) and `isFilesystemRoot` (to recognize a bare drive/UNC root).
+ *  Pure query (CQS). */
+export function windowsPathPrefix(path: string): string {
+  return (
+    VERBATIM_DRIVE_PREFIX.exec(path)?.[0] ??
+    VERBATIM_UNC_PREFIX.exec(path)?.[0] ??
+    UNC_PREFIX.exec(path)?.[0] ??
+    DRIVE_PREFIX.exec(path)?.[0] ??
+    ""
+  );
+}
+
+/** Is `prefix` a DRIVE-shaped Windows prefix (`C:`, `\\?\C:` — ends in the
+ *  drive letter's colon, no directory of its own) rather than a UNC-shaped one
+ *  (`\\srv\share`, `\\?\UNC\srv\share` — the server+share IS already a
+ *  complete root, nothing to append a bare separator to)? `normalizePath`
+ *  uses this to decide whether an EMPTY body still needs a trailing separator
+ *  appended to name the root (`C:` + `..` → `C:\`) or not (`\\srv\share` +
+ *  `..` → `\\srv\share`, never `\\srv\share\` — appending one there would be
+ *  a value this function would have to un-normalize on the next pass). Named
+ *  so this asymmetry reads as an intentional rule, not an inline branch. */
+function windowsPathPrefixIsDrive(prefix: string): boolean {
+  return prefix.endsWith(":");
+}
+
+/** Which separator a path "speaks": `\` for any path carrying a recognized
+ *  Windows prefix (verbatim paths reject `/` outright, so once a prefix is
+ *  present the whole path must stay backslash-only — see
+ *  `01_architect_design.md` §(a)); otherwise `\` only when the path has a
+ *  backslash and no forward slash, `/` otherwise (posix default). Shared by
+ *  `normalizePath` (to rejoin segments) and `formatRootLabel` (to split them)
+ *  so the two never disagree on which character is the separator for a given
+ *  path. */
 function detectSeparator(path: string): "\\" | "/" {
+  if (windowsPathPrefix(path)) return "\\";
   return path.includes("\\") && !path.includes("/") ? "\\" : "/";
 }
 
@@ -59,8 +108,7 @@ export function normalizePath(path: string): string {
   if (path === "") return path;
   const sep = detectSeparator(path);
 
-  const driveMatch = /^[A-Za-z]:/.exec(path);
-  const prefix = driveMatch ? driveMatch[0] : "";
+  const prefix = windowsPathPrefix(path);
   const rest = path.slice(prefix.length);
   const isRooted = rest.length > 0 && (rest[0] === "/" || rest[0] === "\\");
 
@@ -75,7 +123,13 @@ export function normalizePath(path: string): string {
   }
   const body = segments.join(sep);
 
-  if (prefix) return isRooted || body ? `${prefix}${sep}${body}` : prefix;
+  if (prefix) {
+    if (body) return `${prefix}${sep}${body}`;
+    // Empty body: a drive prefix still needs `sep` appended to name its root
+    // (`C:` + `..` → `C:\`); a UNC prefix already IS the root as-is (see
+    // `windowsPathPrefixIsDrive`'s doc comment — never `\\srv\share\`).
+    return windowsPathPrefixIsDrive(prefix) && isRooted ? `${prefix}${sep}` : prefix;
+  }
   if (isRooted) return body ? `${sep}${body}` : sep;
   return body;
 }
@@ -221,6 +275,29 @@ export function isResolvedAbsolutePath(path: string): boolean {
     path.startsWith("\\\\") ||
     /^[A-Za-z]:[\\/]/.test(path)
   );
+}
+
+/** Is `path` the ROOT of its filesystem — posix `/`, a Windows drive root
+ *  (`C:`, `C:\`, `C:/`), or a Windows UNC share root (`\\srv\share`,
+ *  `\\srv\share\`) — the point above which `..` has nowhere further to climb
+ *  except into a DIFFERENT drive/volume? That's exactly the case the
+ *  explorer's "내 컴퓨터" (My Computer) drive listing exists for
+ *  (`explorer-panel.ts`'s `upTarget`): normal `..` navigation stays within
+ *  one drive/share, but this is the one point where "go up" has to mean
+ *  "switch drives" instead. `normalizePath`s first (so `C:/`/`\\srv\share\`
+ *  match the same way their canonical forms do), then checks the REMAINDER
+ *  after `windowsPathPrefix` is empty or a single trailing separator — `""`
+ *  covers the UNC/no-prefix-posix-`/` case, `sep` covers a drive prefix's
+ *  root (`C:\`). A non-root path (`/Users`, `C:\Users`, `\\srv\share\docs`)
+ *  or a path with no filesystem root at all (`""`, `~`, a relative path) is
+ *  `false`. Pure query (CQS). */
+export function isFilesystemRoot(path: string): boolean {
+  const normalized = normalizePath(path);
+  if (normalized === "/") return true;
+  const prefix = windowsPathPrefix(normalized);
+  if (!prefix) return false;
+  const rest = normalized.slice(prefix.length);
+  return rest === "" || rest === "\\" || rest === "/";
 }
 
 /** Resolve a user-typed open-path against the current document's directory.

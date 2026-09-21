@@ -31,6 +31,15 @@ export interface ScanResult {
   truncated: boolean;
 }
 
+/** One filesystem drive/volume root, as returned by the backend `list_drives`
+ *  command — the explorer's "내 컴퓨터" (My Computer) virtual root listing.
+ *  Same convention as `DirEntry`: no `rename_all`, so `display_name` wires
+ *  snake_case verbatim (Rust `DriveEntry`, `src-tauri/src/commands.rs`). */
+export interface DriveEntry {
+  path: string;
+  display_name: string;
+}
+
 /** One linkable file in a base folder, as returned by `list_link_targets`.
  *  `kind` drives the wikilink completion's insert rule (markdown → basename,
  *  image → filename with extension). */

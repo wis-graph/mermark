@@ -85,4 +85,30 @@ describe("createBreadcrumb", () => {
     bc.render("/etc/nginx");
     expect(segs(bc.el).map((b) => b.textContent)).toEqual(["/", "etc", "nginx"]);
   });
+
+  // renderLabel — the explorer's "내 컴퓨터" (My Computer) virtual root: a
+  // single non-clickable label, not a real jumpable path.
+  it("renderLabel shows a single non-clickable segment carrying the label", () => {
+    const onJump = vi.fn();
+    const bc = createBreadcrumb({ onJump });
+    host.append(bc.el);
+    bc.renderLabel("내 컴퓨터");
+
+    const buttons = segs(bc.el);
+    expect(buttons.map((b) => b.textContent)).toEqual(["내 컴퓨터"]);
+    expect(bc.el.querySelectorAll("button").length).toBe(0); // not clickable
+    buttons[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onJump).not.toHaveBeenCalled();
+  });
+
+  it("renderLabel replaces a prior render (and vice versa) — no accumulation", () => {
+    const bc = createBreadcrumb({ onJump: vi.fn() });
+    host.append(bc.el);
+    bc.render("/Users/wis/docs");
+    bc.renderLabel("내 컴퓨터");
+    expect(segs(bc.el).map((b) => b.textContent)).toEqual(["내 컴퓨터"]);
+
+    bc.render("/etc");
+    expect(segs(bc.el).map((b) => b.textContent)).toEqual(["/", "etc"]);
+  });
 });

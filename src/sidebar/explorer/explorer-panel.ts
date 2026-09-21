@@ -1,7 +1,7 @@
 import { icon } from "../../icons";
 import { renderEntryGlyph, isEditableTextFile } from "./file-icons";
-import { basename, dirOf, isPathWithin, normalizePath } from "../../document/path";
-import type { DirEntry } from "../../document/types";
+import { basename, dirOf, isFilesystemRoot, isPathWithin, normalizePath } from "../../document/path";
+import type { DirEntry, DriveEntry } from "../../document/types";
 import { renderSidebarButton } from "../toggle";
 import { isImeComposing } from "../../shortcuts/keys";
 import { openContextMenu, type ContextMenuItem } from "../../chrome/context-menu";
@@ -134,6 +134,25 @@ export interface ExplorerHandlers {
    *  panel stays domain-blind (the showHiddenFiles setting lives in the closure,
    *  not here), so this signature carries no toggle knowledge. */
   listDir(path: string): Promise<DirEntry[]>;
+  /** List every mounted drive/volume — the backend `list_drives` command
+   *  (read-only, no args). Optional and gates the WHOLE "내 컴퓨터" (My
+   *  Computer) feature: when omitted, `..` from a filesystem root keeps
+   *  today's behavior (`${root}/..`, folded away by `normalizePath`'s
+   *  no-op-below-root rule) exactly as before — existing tests/callers that
+   *  never wire this keep working unchanged (design §(c)). Injected so the
+   *  panel stays testable with a fake tree and, in main, is
+   *  `() => invoke<DriveEntry[]>("list_drives")`. */
+  listDrives?(): Promise<DriveEntry[]>;
+  /** Fired when the tree renders a VIRTUAL root with no real filesystem path
+   *  behind it (currently only "내 컴퓨터") — `label` to show it,
+   *  `null` when leaving one (a real root's renderTree fires this right
+   *  before `onRootChange` fires with the real path, so a caller doesn't
+   *  have to guess which handler "wins"). Deliberately separate from
+   *  `onRootChange` (design §(c)): `onRootChange`'s contract is "a real,
+   *  storable/reloadable filesystem path", and a virtual root has none — so
+   *  it is NEVER passed through `onRootChange`, only through this. Optional
+   *  — omitted in unit tests / standalone use. */
+  onVirtualRootChange?(label: string | null): void;
   /** The current document's directory — the initial tree root. A closure (not a
    *  captured value) so a fresh open reseeds the root, like outline's getView. */
   getBaseDir(): string;
@@ -264,6 +283,8 @@ export function createExplorerPanel({
   onOpenInNewWindow,
   onRevealInFinder,
   onCopyPath,
+  listDrives,
+  onVirtualRootChange,
 }: ExplorerHandlers): ExplorerPanel {
   /** "Does clicking/Entering this row open something?" — isEditableTextFile's
    *  reach extended by the gated viewer case: a non-editable row is only
@@ -322,6 +343,16 @@ export function createExplorerPanel({
    *  rebuild in place instead of falling back to getBaseDir(). */
   let currentRoot: string | null = null;
   let renderGeneration = 0;
+
+  /** Is the tree CURRENTLY showing the virtual "내 컴퓨터" (My Computer) drive
+   *  listing instead of a real filesystem folder? `currentRoot` is
+   *  deliberately NOT repurposed as a sentinel for this (design §(c)) —
+   *  it keeps holding the last REAL root the whole time, so every reader of
+   *  `currentRoot`/`currentRootPath()`/`showsFolderOf` stays correct without
+   *  new branches. This flag is the ONE place "am I on a virtual root right
+   *  now" lives. Reset to `false` at the top of every `renderTree` (a real
+   *  root render), so it can never go stale once the user navigates away. */
+  let showingComputer = false;
 
   /** The currently ACTIVE (open) document's path, or null — the sink half of
    *  `setActiveFile`. Normalized so it compares equal to `dataset.path`
@@ -579,6 +610,84 @@ export function createExplorerPanel({
     return item;
   };
 
+  /** Build one "내 컴퓨터" (My Computer) drive row — a leaf, like a file row
+   *  (no children group, no chevron), except its click/Enter target is
+   *  `changeRoot`, handled by `activateItem`'s `.explorer-drive` branch. */
+  const makeDriveEntry = (drive: DriveEntry): HTMLElement => {
+    const item = create("div", "explorer-item explorer-drive");
+    item.setAttribute("role", "treeitem");
+    item.setAttribute("aria-level", "1");
+    item.tabIndex = -1;
+    item.dataset.path = drive.path;
+    item.dataset.level = "1";
+    item.style.setProperty("--level", "1");
+    const chevron = create("span", "explorer-chevron explorer-chevron-empty");
+    const glyph = create("span", "explorer-glyph");
+    glyph.append(icon("hard-drive"));
+    const name = create("span", "explorer-name");
+    name.textContent = drive.display_name;
+    name.title = drive.display_name;
+    const label = create("div", "explorer-label");
+    label.append(chevron, glyph, name);
+    item.append(label);
+    item.title = "이 드라이브를 루트로 (클릭 / Enter)";
+    return item;
+  };
+
+  /** Where the `..` row should take the user: up to the filesystem parent
+   *  (the everyday case), or over to the virtual "내 컴퓨터" (My Computer)
+   *  drive listing — reached ONLY when `rootPath` is already a filesystem
+   *  root (`isFilesystemRoot`) AND `listDrives` was injected at all. That
+   *  second condition is what keeps every existing caller (tests, a remote
+   *  vault, any future caller that never wires `listDrives`) on today's exact
+   *  `${root}/..` behavior — `normalizePath`'s own no-op-below-root rule is
+   *  what makes that a harmless no-op there, not this function. Pure query
+   *  (CQS) — named so `renderTree`'s `..` row doesn't hide this branch
+   *  behind an inline `if`. */
+  const upTarget = (root: string): { kind: "parent"; path: string } | { kind: "computer" } =>
+    listDrives && isFilesystemRoot(root) ? { kind: "computer" } : { kind: "parent", path: `${root}/..` };
+
+  /** Render the virtual "내 컴퓨터" (My Computer) root: every mounted
+   *  drive/volume from `listDrives()`, flat (no `..` row — there is nowhere
+   *  further up, this IS the top). Command (void). `currentRoot` is
+   *  deliberately left untouched and `onRootChange` never fires here (design
+   *  §(c) — this is not a real, storable filesystem path); `showingComputer`
+   *  is this render's SSOT instead, checked after the `await` so a real
+   *  `renderTree` that lands while this is in flight (which resets the flag)
+   *  wins instead of this stale result clobbering it. */
+  const renderComputer = async (): Promise<void> => {
+    showingComputer = true;
+    onVirtualRootChange?.("내 컴퓨터");
+    tree.replaceChildren();
+    focused = null;
+    const list = listDrives;
+    if (!list) return; // defensive only — upTarget never chooses "computer" without this
+    const skeleton = makeSkeleton();
+    tree.append(skeleton);
+    try {
+      const drives = await list();
+      if (!showingComputer) return; // superseded by a real renderTree meanwhile
+      skeleton.remove();
+      if (drives.length === 0) {
+        tree.append(makeEmptyState());
+        return;
+      }
+      for (const drive of drives) tree.append(makeDriveEntry(drive));
+      const first = visibleItems()[0];
+      if (first) focusItem(first, false);
+    } catch (error) {
+      if (!showingComputer) return;
+      skeleton.remove();
+      tree.append(
+        makeState("explorer-root-error", `드라이브 목록을 읽을 수 없습니다: ${errorMessage(error)}`, {
+          className: "explorer-root-reselect",
+          label: "루트 다시 선택",
+          run: () => changeRoot(getBaseDir()),
+        }),
+      );
+    }
+  };
+
   /** Fill a folder node's children group from list_dir (once) and reveal it.
    *  Command (void). Idempotent via data-loaded — the first click loads, later
    *  ones just re-show the already-built DOM. Children get level+1. */
@@ -694,6 +803,15 @@ export function createExplorerPanel({
    *  pays it. */
   const renderTree = async (rootPath: string, focusOnRender = false): Promise<void> => {
     rootPath = normalizePath(rootPath);
+    // Every real-root render leaves the virtual "내 컴퓨터" state, if it was
+    // in one — the ONE reset point (design §(c)'s "모든 실제 루트 렌더가
+    // 플래그를 리셋"), so the flag can never go stale. Only fires
+    // onVirtualRootChange(null) when actually LEAVING a virtual root — a
+    // real-root-to-real-root render (the everyday case) stays silent.
+    if (showingComputer) {
+      showingComputer = false;
+      onVirtualRootChange?.(null);
+    }
     const renderId = ++renderGeneration;
     if (focusOnRender) focusOwed = true;
     currentRoot = rootPath;
@@ -707,11 +825,20 @@ export function createExplorerPanel({
       up.tabIndex = -1;
       up.dataset.level = "1";
       up.style.setProperty("--level", "1");
-      // lexical `..` instruction — renderTree canonicalizes before store/display/
-      // listDir, so this literal `/..` is a one-shot command ("go up from THIS
-      // canonical root"), never a stored value: the very next renderTree call
-      // (via changeRoot) resolves it back to canonical, so it can't accumulate.
-      up.dataset.path = `${rootPath}/..`;
+      const target = upTarget(rootPath);
+      if (target.kind === "computer") {
+        // No `dataset.path` here — a lexical `${root}/..` would be a LIE for
+        // this row (there is no filesystem parent to name); activateItem
+        // reads `dataset.target` instead to route to renderComputer().
+        up.dataset.target = "computer";
+      } else {
+        // lexical `..` instruction — renderTree canonicalizes before store/
+        // display/listDir, so this literal `/..` is a one-shot command ("go
+        // up from THIS canonical root"), never a stored value: the very next
+        // renderTree call (via changeRoot) resolves it back to canonical, so
+        // it can't accumulate.
+        up.dataset.path = target.path;
+      }
       // No chevron spacer here (unlike file rows, explorer-panel:299): `..` is a
       // NAVIGATION row, not a tree node — its glyph sits flush left in the
       // chevron column, aligned with the folder chevrons above/below it. A
@@ -724,7 +851,7 @@ export function createExplorerPanel({
       const upLabel = create("div", "explorer-label");
       upLabel.append(upGlyph, upName);
       up.append(upLabel);
-      up.title = "상위 폴더로 (클릭 / Enter)";
+      up.title = target.kind === "computer" ? "내 컴퓨터 (드라이브 목록)" : "상위 폴더로 (클릭 / Enter)";
       tree.append(up);
     }
 
@@ -807,6 +934,14 @@ export function createExplorerPanel({
   const activateItem = (item: HTMLElement, newWindow = false): void => {
     if (item.classList.contains("explorer-up")) {
       if (isRootLocked?.()) return;
+      if (item.dataset.target === "computer") {
+        void renderComputer();
+        return;
+      }
+      if (item.dataset.path) changeRoot(item.dataset.path);
+      return;
+    }
+    if (item.classList.contains("explorer-drive")) {
       if (item.dataset.path) changeRoot(item.dataset.path);
       return;
     }
@@ -944,6 +1079,10 @@ export function createExplorerPanel({
    *  (void). */
   const refreshListing = (): void => {
     if (aside.hidden) return;
+    if (showingComputer) {
+      void renderComputer();
+      return;
+    }
     childrenCache.clear();
     void renderTree(currentRoot ?? getBaseDir());
   };

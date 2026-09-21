@@ -422,6 +422,7 @@ pub fn run() {
             commands::list_link_targets,
             commands::list_dir,
             commands::list_files_recursive,
+            commands::list_drives,
             commands::resolve_image,
             commands::watch_file,
             commands::unwatch_file,

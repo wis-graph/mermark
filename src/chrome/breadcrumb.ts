@@ -23,6 +23,14 @@ export interface Breadcrumb {
    *  children (no accumulation across calls). `""` clears the breadcrumb.
    *  Command (void). */
   render(root: string): void;
+  /** Render a single non-clickable label segment — the explorer's "내 컴퓨터"
+   *  (My Computer) virtual root, which carries no real absolute path to jump
+   *  to (see `explorer-panel.ts`'s `showingComputer`/`onVirtualRootChange`).
+   *  Same container-replacement shape as `render` (always replaces children),
+   *  but emits a plain `<span>`, never a `.breadcrumb-seg` button — clicking
+   *  it must do nothing, since there is no `abs` path behind the label.
+   *  Command (void). */
+  renderLabel(label: string): void;
 }
 
 export interface BreadcrumbHandlers {
@@ -75,13 +83,26 @@ export function createBreadcrumb({ onJump }: BreadcrumbHandlers): Breadcrumb {
     el.scrollLeft = el.scrollWidth;
   };
 
+  const renderLabel = (label: string): void => {
+    el.replaceChildren();
+    el.title = label;
+    el.setAttribute("aria-label", `현재 폴더 경로: ${label}`);
+    const seg = create("span", "breadcrumb-seg breadcrumb-label");
+    seg.textContent = label;
+    seg.setAttribute("aria-current", "true");
+    el.append(seg);
+    el.scrollLeft = 0;
+  };
+
   // Single delegated listener (recent/outline/explorer single-path shape):
-  // click any segment button → jump to its real absolute path.
+  // click any segment button → jump to its real absolute path. A
+  // `renderLabel` <span> carries no `dataset.abs`, so it's silently
+  // unaffected by this same listener (no separate wiring needed).
   el.addEventListener("click", (e) => {
     const btn = (e.target as HTMLElement).closest(".breadcrumb-seg") as HTMLElement | null;
     if (!btn?.dataset.abs) return;
     onJump(btn.dataset.abs);
   });
 
-  return { el, render };
+  return { el, render, renderLabel };
 }
