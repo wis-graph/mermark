@@ -21,6 +21,8 @@ import { registerPdfViewer } from "../src/extensions/pdf-viewer";
 import { registerDocxViewer } from "../src/extensions/docx-viewer";
 import { registerExcelViewer } from "../src/extensions/excel-viewer";
 import { registerHtmlViewer } from "../src/extensions/html-viewer";
+import { registerCodeViewer } from "../src/extensions/code-viewer";
+import { CODE_VIEWER_EXTENSIONS } from "../src/extensions/code-viewer/language-map";
 import { registerSqliteViewer } from "../src/chrome/viewer/sqlite-viewer";
 import { registerHwpViewer } from "../src/chrome/viewer/hwp-viewer";
 import { registerEpubViewer } from "../src/chrome/viewer/epub-viewer";
@@ -32,6 +34,7 @@ registerPdfViewer();
 registerDocxViewer();
 registerExcelViewer();
 registerHtmlViewer();
+registerCodeViewer();
 registerSqliteViewer();
 registerHwpViewer();
 registerEpubViewer({ setTocOverride: () => {} });
@@ -68,7 +71,9 @@ describe("remote support is declared by the viewer, not a hand-kept extension li
       .filter(viewerSupportsRemote)
       .flatMap((v) => v.extensions)
       .sort();
-    expect(remoteCapable).toEqual(["csv", "docx", "htm", "html", "pdf", "xls", "xlsx"].sort());
+    expect(remoteCapable).toEqual(
+      ["csv", "docx", "htm", "html", "pdf", "xls", "xlsx", ...CODE_VIEWER_EXTENSIONS].sort(),
+    );
   });
 
   it("로컬 디스크를 직접 읽는 뷰어는 openRemote를 선언하지 않는다", () => {
@@ -150,6 +155,26 @@ describe("bytes-only viewers open remotely with no local-path invoke", () => {
     expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain("arm_html_view_root");
     const iframe = document.querySelector(".html-viewer-frame") as HTMLIFrameElement | null;
     expect(iframe?.getAttribute("src")).toBe("htmlview://mock-remote-view-token/page.html");
+    handle.close();
+  });
+
+  it("code: openRemote는 remote_read_asset만 부르고 로컬 경로 커맨드를 부르지 않는다", async () => {
+    const v = viewerFor("ts")!;
+    expect(v.openRemote).toBeTypeOf("function");
+    const handle = v.openRemote!({ ...REMOTE_SOURCE, path: "sub/문서.ts" });
+    // openCodeViewerFromBytes has one more await hop than the bytes-only
+    // viewers above (hljsLoader's real dynamic import) — poll instead of a
+    // single flushAsync tick.
+    const start = Date.now();
+    while (document.querySelectorAll(".code-viewer-line").length === 0) {
+      if (Date.now() - start > 2000) throw new Error("timed out waiting for .code-viewer-line");
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const called = invokeMock.mock.calls.map((c) => c[0]);
+    expect(called).toContain("remote_read_asset");
+    expect(called).not.toContain("canonicalize_path");
+    expect(called).not.toContain("watch_file");
+    expect(called).not.toContain("open_path");
     handle.close();
   });
 });

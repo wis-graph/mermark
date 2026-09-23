@@ -394,7 +394,7 @@ function refusesRemoteAssetOverCap(path: string): void {
  *  asset being opaque placeholder bytes. Any other path falls back to
  *  deterministic placeholder bytes — real content is a nice-to-have here,
  *  never a requirement (no test asserts byte VALUES for those). */
-const REMOTE_ASSET_LOCAL_FIXTURES = new Set(["report.xlsx", "guide.pdf", "sample.pdf", "sample.docx", "sample.html", "sample-asset.png"]);
+const REMOTE_ASSET_LOCAL_FIXTURES = new Set(["report.xlsx", "guide.pdf", "sample.pdf", "sample.docx", "sample.html", "sample-asset.png", "sample.ts"]);
 
 async function mockRemoteAssetBytes(path: string): Promise<Uint8Array> {
   const base = path.split("/").pop() ?? path;
@@ -540,6 +540,14 @@ const TREE: Record<string, DirEntry[]> = {
     // (scripts/lib/make-docx-fixture.mjs); this TREE entry only makes
     // the row visible/openable in the explorer.
     { name: "sample.docx", path: "/mock/vault/sample.docx", is_dir: false },
+    // Source code viewer golden (gcode-1..5, 01_architect_plan.md §골든마스터
+    // 시나리오): the positive fixture, hand-written to EXACTLY 20 lines (the
+    // golden's own line-count assertion) with a 3-line block comment (span
+    // re-opening evidence) — see mock-assets/mock/vault/sample.ts's own
+    // header comment. Same shape as sample.docx/report.xlsx above — bytes
+    // served by Vite's browser-mode publicDir; this TREE entry only makes
+    // the row visible/openable in the explorer.
+    { name: "sample.ts", path: "/mock/vault/sample.ts", is_dir: false },
   ],
   "/mock/vault/notes": [
     { name: "a.md", path: "/mock/vault/notes/a.md", is_dir: false },

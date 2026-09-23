@@ -12,6 +12,7 @@ import { registerDocxViewer } from "./docx-viewer";
 import { registerExcelViewer } from "./excel-viewer";
 import { registerHtmlViewer } from "./html-viewer";
 import { registerPdfViewer } from "./pdf-viewer";
+import { registerCodeViewer } from "./code-viewer";
 
 export function activateExtensions(): void {
   // registerExcelViewer() only registers the {id, extensions, open} catalog
@@ -34,4 +35,10 @@ export function activateExtensions(): void {
   // catalog entry lands at boot; `docx-preview` is dynamic-imported inside
   // the viewer's own open() call, never here.
   registerDocxViewer();
+  // registerCodeViewer() (src/extensions/code-viewer): same shape as the
+  // other four boot-time registrations — only the {id, extensions, label,
+  // open, openRemote} catalog entry lands at boot; `highlight.js` (~130KB
+  // gz'd for lib/common + two extra grammars) is dynamic-imported inside the
+  // viewer's own open() call, never here.
+  registerCodeViewer();
 }
