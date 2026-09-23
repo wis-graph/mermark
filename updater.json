@@ -1,15 +1,15 @@
 {
-  "version": "0.18.2",
-  "notes": "### Added\n\n- **탐색기에 \"내 컴퓨터\" 계층이 생겼다**: 드라이브 루트(윈도우 `C:\\`, 맥 `/`)에서 `..`를 누르면 드라이브·볼륨 목록이 뜨고, 하나를 고르면 그 드라이브로 들어간다. 윈도우에서 C·D·E 드라이브를, 맥에서 외장 디스크(`/Volumes`)를 경로를 직접 치지 않고 오갈 수 있다.\n\n### Fixed\n\n- **윈도우에서 C:\\ 위로 올라가지 못하던 문제**: 기본 폴더(`C:\\Users\\<이름>`)에서 `..`를 누르면 \"현재 루트를 읽을 수 없습니다\"가 떴다. 윈도우가 경로 앞에 붙이는 `\\\\?\\` 접두어를 그대로 쓰다가 상위 이동에서 경로가 깨진 것으로, 이제 접두어를 벗겨 넘긴다.",
-  "pub_date": "2026-09-21T13:41:21Z",
+  "version": "0.19.0",
+  "notes": "### Added\n\n- **소스 코드 뷰어**: `.ts`, `.py`, `.rs`, `.go`, `.java`, `.json`, `.yaml` 등 45종 남짓한 개발 파일을 문법 강조와 줄 번호가 붙은 읽기 전용 화면으로 연다. 탐색기에서 클릭하거나 터미널에서 `mermark main.rs` 로 바로 열리고, 원격 볼트의 코드도 똑같이 열린다. 줄 번호는 복사할 때 따라오지 않는다. 아주 큰 파일(512KB 또는 1만 줄 초과)은 문법 강조를 끄고 평문으로 보여주며 그 사실을 알린다.",
+  "pub_date": "2026-09-23T00:54:31Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzhwd29lYllXMndLb0EzdksycmllU3NWRU03ejh0Rm5VLzI3T2t3UFdVcXB3RGhCRkw4akRRWVJWL2thYkxFa0FNTDVwaFFnME0rcWZiOG1mSFNTeEFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5OTk3MDUwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnZ5TXJXTFJ3d3UycnZ5U2h1RWZsOWs1V1Y5MUFMeDQvM2NGclFFNytvZ3VkRVo4L0ZpdnhsblRmUlZZYUpwcllYT29ObDlSWXcxV3FDUE83T2ZZeUNnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.18.2/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3hUL0pWZU05anZOVHlpMG1aVjl0OENWNVZPSUF4bFQrU1U3RkpHcTBWdTBkYVNuRHpvcldtQlh0MU9SUUhCUUtZRnpqeVAxVlRFcVZQVjUxdkdrbUFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTIzODEwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ck9rL0hNTHVZY3ZKMWx4TlJMTUNwejF4U1o2azQ5Mncxb3JKTVhRa0gyYkpJWEhRYU5oNmVZRHdWR3c2OG93ZVZ1R05HT09QUWtDaWJGZmpnc3IwNEJnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.0/mermark.app.tar.gz"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzRTZWFVblI4SEN0bVY4bncrWFVZcTgvZFJJQmc5Rjd0TGdrNzFSWTR0R1NUUTd2a3lZTVQwWFJjVW54NkFrOURJMkJ1b203cmlSOGZHSXpGa0NORFFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5OTk3OTk3CWZpbGU6bWVybWFya18wLjE4LjJfeDY0LXNldHVwLmV4ZQp4ODA5enZJUzVoenhFOWEvZEpCY1NiOFJSbm41bGpVR1RJajlkMmF4YXlMZWc3VTRxY05DYUwwQVVMUVQ5cUpSamppOENQTHFsWFBhZmhpSEQwdDJBZz09Cg==",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.18.2/mermark_0.18.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzhPOUVWbGYyRUZuTXhJZ2IxQy8rUmNNcnd4Umt4Z0dTUHo0OHBSK0w2ZG1hV3ZUVjZMeHVvK3lLbmtUR29zZXZSV2k4dlBpS1JiM1lTc1oyK2RCU1FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTI0Nzg1CWZpbGU6bWVybWFya18wLjE5LjBfeDY0LXNldHVwLmV4ZQo1ZXBsNVpic2NBdWxRMVZud2ZvdHRxblBWeVNWQ3hlKzI2NXlGdUZLRWJGcnpDaS9lQloyT1VlUUEvcE9wNHk3RlYranFwN0dwSGRLbTBVcStVQUZDdz09Cg==",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.0/mermark_0.19.0_x64-setup.exe"
     }
   }
 }
