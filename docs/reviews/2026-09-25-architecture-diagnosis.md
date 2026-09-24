@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | `src/main.ts` | 2,325 | 0 (테스트는 `tests/main-wiring.test.ts` 68건이 `import("../src/main")`로 통째 부팅) | **여러 일을 한다 — 분할** | `boot()` 하나가 L379–2323 = 1,945줄. 문서 세션·뷰어 디스패치·패널 배선·단축키·외부변경 처리가 한 클로저의 ~20개 mutable 셀을 공유 |
 | `src-tauri/src/commands.rs` | 2,675 | ~1,200 (95 `#[test]`, 6개 모듈) | **여러 일을 한다 — 분할** | 경로 규칙·파일 IO·링크 피커·이미지 스캔·디렉터리 리스팅·드라이브 열거·창 스폰·클립보드가 한 파일. `remote_host.rs`가 이 함수들을 라이브러리로 직접 호출 |
-| `src-tauri/src/remote_host.rs` | 1,977 | 1,023 (L954–) | **응집 — 그대로** | prod 954줄이 "봉쇄 → `commands::` 위임 → vault-relative 재작성" 한 패턴. 단 async 핸들러 4개가 블로킹 fs 워크를 직접 호출(§2.6) |
+| `src-tauri/src/remote_host.rs` | 1,977 | 1,023 (L954–) | **응집 — 그대로** | prod 954줄이 "봉쇄 → `commands::` 위임 → vault-relative 재작성" 한 패턴. 단 async 핸들러 5개(`read_asset_handler` 포함)가 블로킹 fs IO를 직접 호출하고 형제 `read_file_handler`만 `spawn_blocking`(§1.3, §2.6) |
 | `src/extensions/pdf-viewer/index.ts` | 1,521 | 0 | **응집 — 소분할 2건만** | 페이지 스케줄러(evict/draft/sharpen/text-layer)가 `onSettled`→`reconcile` 콜백으로 맞물려 있어 쪼개면 결합만 이동. `webview-compat.ts`·`pdfjs-types.ts`만 떼면 됨 |
 | `src/mocks/tauri-core.ts` | 1,342 | — | **도메인별 분할 + 생성 불가** | 52개 `case`, 그중 `remote_*` 17개. 진짜 위험은 이 파일이 아니라 **35개 테스트 파일이 각자 `vi.mock("@tauri-apps/api/core")`로 4번째 mock을 손으로 쓴다**는 것(§2.3) |
 | `src/sidebar/explorer/explorer-panel.ts` | 1,236 | 0 | **응집 쪽 — a11y 한 조각만** | 로빙 탭인덱스(L375–499)는 도메인 무관 → 분리. 나머지는 `renderTree`의 generation-guard/`focusOwed` 불변식이 클로저를 관통해 분할 비용 > 이득 |
@@ -77,7 +77,7 @@
 
 ### 1.3 `src-tauri/src/remote_host.rs` — 응집
 
-prod L1–953. 책임: `ArmedVault`+2단 봉쇄 `resolve_within` L62/`canonicalize_within` L91 → 페어링 상태기계 L113–211(`PairingState`, `issue_pairing_code`, `redeem`, `constant_time_eq`) → axum 라우터/서버 L372–447 → 요청 게이트 `authorize` L460/`armed_vault` L474/`safe_path` L518/`vault_relative` L558 → 핸들러 7개 L581–952. `#[tauri::command]` 없음(제어면은 `remote_share.rs`). 모든 핸들러가 같은 4행(authorize → armed_vault → safe_path → `commands::` 위임 → vault-relative 재작성)이라 **한 패턴의 반복이지 여러 일이 아니다.** 17 `#[test]`가 L954–1977. 분할 불필요. 단 §2.6의 블로킹 IO 불일치는 고칠 것.
+prod L1–953. 책임: `ArmedVault`+2단 봉쇄 `resolve_within` L62/`canonicalize_within` L91 → 페어링 상태기계 L113–211(`PairingState`, `issue_pairing_code`, `redeem`, `constant_time_eq`) → axum 라우터/서버 L372–447 → 요청 게이트 `authorize` L460/`armed_vault` L474/`safe_path` L518/`vault_relative` L558 → 핸들러 7개 L581–952. `#[tauri::command]` 없음(제어면은 `remote_share.rs`). 모든 핸들러가 같은 4행(authorize → armed_vault → safe_path → `commands::` 위임 → vault-relative 재작성)이라 **한 패턴의 반복이지 여러 일이 아니다.** 17 `#[test]`가 L954–1977. 분할 불필요. 단 §2.6의 블로킹 IO 불일치는 고칠 것 — 특히 `read_file_handler` L732–755는 `tokio::task::spawn_blocking`(L750)으로 감싸면서 바로 아래 형제 `read_asset_handler` L835–878은 최대 `MAX_ASSET_BYTES` 20 MiB를 `std::fs::File::open`/`read_to_end`(L853, L865)로 async 핸들러 본문에서 동기 읽기한다. 같은 파일의 주석(L744–747)이 이를 "pre-existing instance of this same shape"라고 스스로 인정한 상태. 그 밖에 `serve` L430–440은 `#[allow(dead_code)]`(테스트 전용, 프로덕션은 `remote_share.rs`가 `bind`+`run` 직접 호출) — 자기 문서화된 의도적 잔존. 형제 `remote_ssh.rs`·`remote_client.rs`·`single_instance.rs`도 같은 판정(응집, 테스트 34–48%); `remote_client.rs`의 asset 계열(`fetch_vault_asset`/`remote_read_image`/`remote_read_asset`, L366–504)은 응답 shape가 다르므로(raw bytes/data-URL vs JSON) 자라면 `remote_client_assets.rs`로 — 지금은 불필요.
 
 ### 1.4 `src/extensions/pdf-viewer/index.ts` — 응집, 소분할 2건
 
@@ -144,6 +144,7 @@ prod L1–953. 책임: `ArmedVault`+2단 봉쇄 `resolve_within` L62/`canonicali
 - Rust `#[tauri::command]` 47개 ⇄ TS `invoke<>` 호출 18파일 ⇄ `src/mocks/tauri-core.ts` 52 case — 여기까지가 문서화된 3경계.
 - **그런데 vitest 테스트 35개 파일이 각자 `vi.mock("@tauri-apps/api/core", …)`로 자기만의 invoke mock을 쓴다**(`tests/main-wiring.test.ts:12–70` 등). `src/mocks/tauri-core.ts`를 쓰는 테스트는 4개뿐. 즉 브라우저 mock의 parity 노력(`beginMockWatch` 상대경로 거절 L179 등)은 골든 스크립트만 보호하고, 단위 테스트 35개는 각자의 손 mock이 백엔드와 얼마나 다른지 아무도 모른다. `tests/mock-parity.test.ts`는 `remote_pair`·`list_drives` 2건만 검증.
 - TS 쪽 와이어 타입도 분산: `document/types.ts`(5개 shape) · `file-host.ts:47`(`RemoteConnectionState`) · `remote-vault-dialog.ts:32`(`RemoteVaultListing`) · `workspace-state.ts:35` · 각 뷰어 파일. `invoke`는 18파일에서 `@tauri-apps/api/core`를 직접 import — **타입 있는 IPC 클라이언트 모듈이 없다.**
+- 이미 있는 좋은 선례 하나: `tests/fixtures/remote-host-truth-table.json`을 Rust(`remote_client.rs:604–617 base_url_matches_the_shared_remote_host_truth_table`)·TS(`tests/remote-host-truth-table.test.ts`)·브라우저 mock이 **같은 파일로** 읽어 `base_url`/`hostFieldProblem`/mock 거절 규칙을 한 원천에 묶는다. 이 저장소에서 3경계를 실제로 한 픽스처로 잠근 유일한 사례이고, §3.3의 생성 표는 이 패턴을 47개 커맨드 전체로 일반화하는 것이다.
 - 처방(§3.3): `src/ipc/` 한 곳에 커맨드별 타입 함수(`ipc.readFile(path): Promise<FileContent>`)를 두고, 35개 테스트 mock은 그 모듈을 mock하게 옮긴다. 그러면 mock 대상이 "문자열 커맨드명 + any 인자"에서 "타입 있는 함수"로 바뀌어 tsc가 drift를 잡는다. `src/mocks/tauri-core.ts`는 그대로 골든용으로 남되 도메인별 파일로 쪼갠다.
 
 ### 2.4 의도적 중복 — 건드리지 말 것
@@ -156,7 +157,7 @@ prod L1–953. 책임: `ArmedVault`+2단 봉쇄 `resolve_within` L62/`canonicali
 
 ### 2.6 원격 호스트의 블로킹 IO 불일치
 
-`read_file_handler`는 `spawn_blocking`(remote_host.rs:750)을 쓰지만 `list_dir_handler`(880)·`list_files_recursive_handler`(905, 최대 10k 엔트리 워크)·`resolve_image_handler`(927, BFS 10k 예산)·`list_link_targets_handler`(941)는 async 핸들러 안에서 동기 fs 워크를 직접 호출. LAN 1:1 서버라 실용상 문제는 작지만, 같은 파일 안에서 규칙이 둘이다. `commands.rs` 분할로 도메인 함수가 `&Path`를 받게 되면 `spawn_blocking(move || fs::listing::walk(...))`로 통일하기 쉬워진다.
+`read_file_handler`는 `spawn_blocking`(remote_host.rs:750)을 쓰지만 `read_asset_handler`(835–878, 20 MiB 동기 읽기 — §1.3)·`list_dir_handler`(880)·`list_files_recursive_handler`(905, 최대 10k 엔트리 워크)·`resolve_image_handler`(927, BFS 10k 예산)·`list_link_targets_handler`(941)는 async 핸들러 안에서 동기 fs IO를 직접 호출. L740–749의 주석대로 이 풀은 호스트 자신의 에디터가 로컬 Tauri 커맨드를 돌리는 런타임과 같으므로, 피어의 큰 asset 요청 하나가 호스트의 자기 편집을 멈출 수 있다. LAN 1:1 서버라 실용상 문제는 작지만, 같은 파일 안에서 규칙이 둘이다. `commands.rs` 분할로 도메인 함수가 `&Path`를 받게 되면 `spawn_blocking(move || fs::listing::walk(...))`로 통일하기 쉬워진다.
 
 ---
 
