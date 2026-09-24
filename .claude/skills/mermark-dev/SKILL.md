@@ -25,9 +25,9 @@ mermark은 콜드 로드 속도·플러그인 확장성·경계면 정합성(Rus
 오케스트레이션 시작 시 사용자에게 한 줄로 명시한다: "에이전트 팀 모드로 실행합니다(플래그 미설정 시 서브 에이전트 폴백)."
 
 **모델 라우팅(CLAUDE.md 정책):** Agent/팀원 스폰 시 스테이지별로 `model`을 나눠 명시한다 — 추론 밀도에 맞춘 배분.
-- **계획·설계·진단 = `model: fable`**(Fable 5): `feature-architect`(분기 결정·TDD 플랜 — 계획/설계), `code-auditor`(intent-review·SSOT·보안 감사 — 진단). 분기와 결함 진단은 추론 품질이 결과를 좌우.
+- **계획·설계·진단 = `model: opus`**(Opus 5.5): `feature-architect`(분기 결정·TDD 플랜 — 계획/설계), `code-auditor`(intent-review·SSOT·보안 감사 — 진단). 분기와 결함 진단은 추론 품질이 결과를 좌우.
 - **실행·검증 = `model: sonnet`**(하위): `frontend-engineer`·`backend-engineer`(설계대로 구현), `qa-verifier`(테스트 RUN·경계면 대조). 설계 확정 후 구현·테스트는 결정적 작업이라 하위 모델로 충분(비용·속도).
-- **승격 예외:** qa가 반복 실패하거나 경계면 충돌이 되풀이되면 해당 스테이지를 일시 상위 모델(opus/fable)로 올릴 수 있다. 단순 조회 보조 작업은 `haiku`도 가능.
+- **승격 예외:** qa가 반복 실패하거나 경계면 충돌이 되풀이되면 해당 스테이지를 일시 상위 모델(opus)로 올릴 수 있다. 단순 조회 보조 작업은 `haiku`도 가능.
 
 ## 에이전트 구성
 
@@ -94,7 +94,7 @@ frontend-engineer  backend-engineer
 
 ### Phase 2: 설계 (feature-architect 단독)
 
-feature-architect를 호출(team: `TaskCreate` assignee, 폴백: `Agent` `subagent_type: feature-architect`, `model: fable` — 계획·설계). 입력은 `_workspace/00_request.md`. 산출:
+feature-architect를 호출(team: `TaskCreate` assignee, 폴백: `Agent` `subagent_type: feature-architect`, `model: opus` — 계획·설계). 입력은 `_workspace/00_request.md`. 산출:
 
 - `_workspace/01_architect_design.md` — inline/block feature·parser 노드·Tauri command·SSOT 설정 영향의 분기 결정.
 - `_workspace/01_architect_plan.md` — TDD 플랜 + Golden Master 시나리오(어떤 `scripts/*.mjs`로 무엇을 잠그는지).
