@@ -27,3 +27,4 @@ Tauri 2 + CodeMirror 6 + TypeScript Markdown·Mermaid 에디터 (Obsidian식 라
 | 2026-07-01 | 기능 계층 문서 + 갱신 규약 | `docs/FEATURES.md`, mermark-dev Phase 6 | 기능 추가 시 계층 문서 자동 갱신 |
 | 2026-07-02 | 모델 라우팅 정책(계획·설계·진단=Fable 5, 실행·검증=Sonnet) | CLAUDE.md, mermark-dev 실행 모드 | 추론 밀도에 맞춘 모델 배분(품질↔비용) |
 | 2026-09-25 | 계획·설계·진단 모델 Fable 5 → Opus 5.5 (실행·검증=Sonnet 유지) | CLAUDE.md, mermark-dev 실행 모드 | 사용자 지시 — Opus 5.5로 충분 |
+| 2026-09-26 | 테스트 타입 검사 게이트 | `tsconfig.test.json`, `npm run typecheck`(package.json `build`에 편입), mermark-verify Gate 1 | 감사 H1 — 테스트가 tsc 밖에 있으면 13단계 mock 타입화의 drift 방지 효과가 0 |

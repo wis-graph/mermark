@@ -1,7 +1,7 @@
 ---
 name: mermark-verify
 description: >-
-  mermark 변경분 검증 플레이북. unit(npm test / cargo test) + 타입(tsc --noEmit) +
+  mermark 변경분 검증 플레이북. unit(npm test / cargo test) + 타입(npm run typecheck) +
   CDP 골든마스터(mermaid/settings/nav/cdp-debug) 게이트를 실제로 실행하고,
   Rust serde ⇄ TS invoke<> ⇄ 브라우저 mock 3-경계 parity를 대조해 03_qa_report.md를
   쓴다. qa-verifier 에이전트가 mermark-dev 파이프라인 안에서 호출한다. 사용자가 직접
@@ -33,11 +33,13 @@ TS는 여전히 `void`를 기대하고, 브라우저 mock은 옛 시그니처를
 ### Gate 1 — TypeScript 타입 (가장 빠름, 경계면 1차 방어)
 
 ```bash
-cd /Users/wis/Documents/programming/mermark && npx tsc --noEmit
+cd /Users/wis/Documents/programming/mermark && npm run typecheck
 ```
 
-깨끗하면 0건 출력. 단, `invoke<T>`의 `T`는 **런타임 응답을 검증하지 않는다** — 캐스팅으로
-거짓 통과할 수 있으니 Gate 1 통과는 parity 검증을 면제해 주지 않는다(아래 parity 섹션 필수).
+앱(`tsconfig.json`, `types: []`)과 테스트(`tsconfig.test.json`, `types: ["node"]`) 두 설정을
+순서대로 돈다. 깨끗하면 0건 출력. 단, `invoke<T>`의 `T`는 **런타임 응답을 검증하지 않는다** —
+캐스팅으로 거짓 통과할 수 있으니 Gate 1 통과는 parity 검증을 면제해 주지 않는다(아래 parity
+섹션 필수).
 
 ### Gate 2 — 프론트 unit (vitest / jsdom)
 
@@ -180,7 +182,7 @@ Rust 커맨드 시그니처가 바뀌었다면 **세 곳을 동시에 열어** �
 ## 게이트 결과
 | 게이트 | 명령 | 결과 | 근거 |
 |--------|------|------|------|
-| Gate 1 tsc | `npx tsc --noEmit` | PASS | 0 errors |
+| Gate 1 tsc | `npm run typecheck` | PASS | 0 errors |
 | Gate 2 unit | `npm test` | PASS | N passed (render-smoke 포함) |
 | Gate 3 cargo | `cargo test` | PASS | N passed |
 | Gate 4 CDP | `cdp-debug.mjs` | PASS | events 0건, mermaidSvgs=1, katex>0 |

@@ -24,7 +24,7 @@ model: opus
 
 1. **`npm test`** (vitest, jsdom) — `tests/*.test.ts`. 특히 `render-smoke.test.ts`는 에디터 전체를 마운트해 CM decoration 회귀를 막는다. BLOCK 위젯은 StateField에서, inline decoration은 ViewPlugin에서 나와야 하며 이 분리가 깨지면 render-smoke가 잡는다. 이 테스트가 깨지면 절대 통과로 보고하지 마라.
 2. **`cargo test`** (`src-tauri`에서) — `commands.rs`(read_file/write_file atomic+conflict, path_exists, open_path), `cli.rs`(resolve_target)의 `#[cfg(test)]`.
-3. **`tsc --noEmit`** — 타입 경계 회귀. 단, 제네릭 캐스팅(`invoke<T>`)은 컴파일을 통과시켜도 런타임 shape 불일치를 못 잡는다는 점을 기억하라(아래 4번이 그래서 필요하다).
+3. **`npm run typecheck`** — 앱(`tsconfig.json`)과 테스트(`tsconfig.test.json`) 두 설정을 모두 돈다. 타입 경계 회귀. 단, 제네릭 캐스팅(`invoke<T>`)은 컴파일을 통과시켜도 런타임 shape 불일치를 못 잡는다는 점을 기억하라(아래 4번이 그래서 필요하다).
 4. **CDP 골든 마스터** — `npm run dev:browser`(Vite browser 모드: `@tauri-apps/api/core` → `src/mocks/tauri-core.ts` in-memory 백엔드 mock) + Chrome `--remote-debugging-port=9222` 위에서 `scripts/{mermaid-golden,settings-golden,nav-trace,cdp-debug}.mjs`를 refactor 전/후로 돌려 diff한다.
 
 ## 작업 원칙
@@ -68,7 +68,7 @@ model: opus
 - **출력 (쓰기):**
   - `/Users/wis/Documents/programming/mermark/_workspace/03_qa_report.md` (단일 파일에 라운드별로 누적 갱신)
 - **리포트 필수 구조:**
-  1. **실행 결과 매트릭스** — `npm test` / `cargo test` / `tsc --noEmit` / CDP 골든 4종 각각 PASS·FAIL·NOT-VERIFIED + 실제 명령어 + 핵심 출력 발췌
+  1. **실행 결과 매트릭스** — `npm test` / `cargo test` / `npm run typecheck` / CDP 골든 4종 각각 PASS·FAIL·NOT-VERIFIED + 실제 명령어 + 핵심 출력 발췌
   2. **경계면 정합성 표** — 위 원칙 1의 표를 변경분에 맞춰 채우고 일치/불일치 판정
   3. **결함 목록** — 각 항목: 심각도 / `파일:라인` / 증상 / 재현 명령 / 담당 에이전트 / 권장 수정
   4. **회귀 판정** — 골든 마스터 before/after diff 요약 (의도된 변화 vs 회귀)

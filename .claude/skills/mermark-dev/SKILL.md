@@ -114,7 +114,7 @@ feature-architect를 호출(team: `TaskCreate` assignee, 폴백: `Agent` `subage
 
 각 엔지니어가 모듈을 끝낼 때마다 qa-verifier를 호출한다(끝에 몰아서 X). `general-purpose` 타입으로 실제 명령 실행:
 
-- `npm test`(vitest, render-smoke 포함), `cargo test`(src-tauri), `npx tsc --noEmit`.
+- `npm test`(vitest, render-smoke 포함), `cargo test`(src-tauri), `npm run typecheck`.
 - 변경이 관측 가능 동작에 닿으면 CDP 골든마스터(`scripts/{mermaid-golden,settings-golden,nav-trace}.mjs`, 전제: `npm run dev:browser` + Chrome `:9222`) before/after 동일성.
 - 핵심 교차 검증: Rust command shape ↔ TS invoke 타입 ↔ browser mock 3자 정합.
 
@@ -149,7 +149,7 @@ code-auditor를 호출(입력: 변경 파일 + `02_*` + `03_qa_report.md`). inte
 1. 사용자: "각주 위에 마우스 올리면 내용 보이는 footnote-tooltip 추가해줘". Phase 0: `_workspace/` 미존재 → 초기 실행.
 2. Phase 2: feature-architect가 **inline feature**(InlineFeature 레지스트리, ViewPlugin 경로)로 분기, parser 노드 불필요·Tauri command 불필요·SSOT 무관으로 판정. `01_architect_design.md` + `01_architect_plan.md`(render-smoke + 새 unit 테스트 시나리오) 산출.
 3. Phase 3: 백엔드 불필요 → frontend-engineer만 띄움. `02_frontend_changes.md`(새 feature 모듈 + 위젯 hover 처리).
-4. Phase 4: qa-verifier가 `npm test`(render-smoke 포함) + `tsc --noEmit` RUN → `03_qa_report.md` 합격.
+4. Phase 4: qa-verifier가 `npm test`(render-smoke 포함) + `npm run typecheck` RUN → `03_qa_report.md` 합격.
 5. Phase 5: code-auditor가 intent-review/SSOT 점검 → blocker 없음, 권고만 → `04_audit_report.md`.
 6. 결과: 코드 리포지토리 랜딩, `_workspace/` 보존, 요약 보고.
 
