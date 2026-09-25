@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 // Within THIS file, tests share the module singleton, so each `it` registers
 // distinct ids/extensions to avoid cross-test collisions.
 
-const handle = () => ({ close: () => {} });
+const handle = () => ({ close: () => {}, onClose: () => {} });
 
 describe("viewer registry (R11)", () => {
   it("duplicate id registration throws", async () => {

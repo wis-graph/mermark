@@ -40,7 +40,7 @@ function uniqueViewer(overrides: Partial<Viewer> = {}): Viewer {
   counter += 1;
   const id = overrides.id ?? `test.vtc.${counter}`;
   const ext = `vtc${counter}`;
-  const v: Viewer = { id, extensions: [ext], open: () => ({ close() {} }), ...overrides };
+  const v: Viewer = { id, extensions: [ext], open: () => ({ close() {}, onClose() {} }), ...overrides };
   registerViewer(v);
   return v;
 }

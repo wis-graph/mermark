@@ -100,14 +100,14 @@ describe("disabledViewersSetting parse (JSON-array-corrupt-→-default guard, mi
 
 describe("listViewers (registry enumeration)", () => {
   it("includes a freshly registered viewer", () => {
-    const v: Viewer = { id: "test.toggle.a", extensions: ["vtga"], open: () => ({ close() {} }) };
+    const v: Viewer = { id: "test.toggle.a", extensions: ["vtga"], open: () => ({ close() {}, onClose() {} }) };
     registerViewer(v);
     expect(listViewers()).toContain(v);
   });
 
   it("includes multiple freshly registered viewers, in registration order", () => {
-    const a: Viewer = { id: "test.toggle.b", extensions: ["vtgb"], open: () => ({ close() {} }) };
-    const b: Viewer = { id: "test.toggle.c", extensions: ["vtgc"], open: () => ({ close() {} }) };
+    const a: Viewer = { id: "test.toggle.b", extensions: ["vtgb"], open: () => ({ close() {}, onClose() {} }) };
+    const b: Viewer = { id: "test.toggle.c", extensions: ["vtgc"], open: () => ({ close() {}, onClose() {} }) };
     registerViewer(a);
     registerViewer(b);
     const ids = listViewers().map((v) => v.id);
@@ -115,7 +115,7 @@ describe("listViewers (registry enumeration)", () => {
   });
 
   it("accepts an optional label without a type error and stores it on the catalog entry", () => {
-    const v: Viewer = { id: "test.toggle.d", extensions: ["vtgd"], label: "Test Viewer D", open: () => ({ close() {} }) };
+    const v: Viewer = { id: "test.toggle.d", extensions: ["vtgd"], label: "Test Viewer D", open: () => ({ close() {}, onClose() {} }) };
     registerViewer(v);
     expect(listViewers().find((x) => x.id === "test.toggle.d")?.label).toBe("Test Viewer D");
   });
@@ -123,7 +123,7 @@ describe("listViewers (registry enumeration)", () => {
 
 describe("viewer-open filter rule (reproduces main.ts's viewerForEntry composition)", () => {
   it("a disabled viewer's claimed extension is treated as unclaimed (null), same as no registration", () => {
-    const v: Viewer = { id: "test.toggle.e", extensions: ["vtge"], open: () => ({ close() {} }) };
+    const v: Viewer = { id: "test.toggle.e", extensions: ["vtge"], open: () => ({ close() {}, onClose() {} }) };
     registerViewer(v);
     const claimed = viewerFor("vtge");
     expect(claimed).not.toBeNull();
@@ -133,7 +133,7 @@ describe("viewer-open filter rule (reproduces main.ts's viewerForEntry compositi
   });
 
   it("an enabled viewer's claimed extension passes through unchanged", () => {
-    const v: Viewer = { id: "test.toggle.f", extensions: ["vtgf"], open: () => ({ close() {} }) };
+    const v: Viewer = { id: "test.toggle.f", extensions: ["vtgf"], open: () => ({ close() {}, onClose() {} }) };
     registerViewer(v);
     const claimed = viewerFor("vtgf");
     const gated = claimed !== null && isViewerEnabled([], claimed.id) ? claimed : null;
