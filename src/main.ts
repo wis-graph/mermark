@@ -10,7 +10,7 @@ import { createOutlinePanel } from "./sidebar/outline/outline-panel";
 import { createExplorerPanel } from "./sidebar/explorer/explorer-panel";
 import { localFileHost, fileHostFor, classifyRemoteError } from "./document/file-host";
 import { badgeFor } from "./workspace/add-remote-vault";
-import { mountEditor, type EditorController, type PreviewMode, type SaveStatus } from "./editor";
+import { mountEditor, type EditorController } from "./editor";
 import { onFeaturesChanged } from "./markdown/live-preview";
 import { activateExtensions } from "./extensions";
 import { makeThemeToggle } from "./theme";
@@ -123,17 +123,13 @@ import { registerEpubViewer } from "./chrome/viewer/epub-viewer";
 import { registerViewer, viewerFor, viewerSupportsRemote, type Viewer } from "./chrome/viewer/registry";
 import { createDontStackSlot } from "./chrome/viewer/dont-stack-slot";
 import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
-import { icon, type IconName } from "./icons";
+import { el } from "./chrome/dom";
+import { makeSaveStatus } from "./chrome/status-bar/save-status";
+import { makeModeToggle } from "./chrome/mode-toggle";
 import { refreshMermaidTheme } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
 import "./fonts/fonts.css";
 import "./styles.css";
-
-const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string) => {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  return e;
-};
 
 const SAFE_EXPLORER_BASE_PATH = "/";
 
@@ -154,84 +150,6 @@ const SAFE_EXPLORER_BASE_PATH = "/";
  *  each of `currentBaseDir`'s two assignment sites. */
 function baseDirForOpenedDocument(file: string, vault: Vault | undefined): string {
   return dirOf(file) || (isRemoteVault(vault) ? REMOTE_VAULT_WIRE_ROOT : SAFE_EXPLORER_BASE_PATH);
-}
-
-/** Set a chrome button (title-bar or footer) to a Lucide icon + (optional) label,
- *  replacing whatever it held. The shadcn/Raycast button shape: a 16px monochrome
- *  icon followed by a 13px-medium label, both inheriting the button's `color`.
- *  Replaces the old emoji `textContent =` calls — same render-on-state pattern,
- *  DOM shape only. The label rides in its own <span> so the icon stays a clean
- *  flex item (gap from CSS). */
-function setButtonContent(btn: HTMLElement, name: IconName, label?: string): void {
-  btn.replaceChildren(icon(name));
-  if (label) {
-    const text = el("span", "chrome-btn-label");
-    text.textContent = label;
-    btn.append(text);
-    // Icon-only chrome (design decision: 아이콘 온리 + 심리스 크롬) visually
-    // hides .chrome-btn-label (styles.css) — the accessible name still needs
-    // an explicit source, so this doubles as the aria-label. `title` (set by
-    // each call site) supplies the hover tooltip on top of it.
-    btn.setAttribute("aria-label", label);
-  }
-}
-
-/** A save-status indicator that lives inline in the status bar. Autosave runs
- *  invisibly (200ms typing-pause debounce) so there are no manual save/reload
- *  buttons — this is just a trust signal ("저장됨"/"저장 중"). On `conflict` the
- *  external-change modal owns the actual choice; here the label only reports the
- *  state ("외부 변경 감지 — 선택 필요"). */
-function makeSaveStatus(): {
-  el: HTMLElement;
-  set: (s: SaveStatus, detail?: string) => void;
-} {
-  const node = el("span", "save-status");
-  const label = el("span", "save-label");
-  node.append(label);
-  let hideTimer: ReturnType<typeof setTimeout> | undefined;
-  return {
-    el: node,
-    set(s, detail) {
-      clearTimeout(hideTimer);
-      node.dataset.state = s;
-      if (s === "error") {
-        setButtonContent(label, "triangle-alert", `저장 실패: ${detail ?? "unknown error"}`);
-      } else if (s === "conflict") {
-        setButtonContent(label, "triangle-alert", "외부 변경 감지 — 선택 필요");
-      } else if (s === "recovery") {
-        setButtonContent(label, "triangle-alert", `복구 필요${detail ? `: ${detail}` : ""}`);
-      } else if (s === "saving") {
-        setButtonContent(label, "loader-circle", "저장 중");
-      } else {
-        setButtonContent(label, "check", "저장됨");
-        hideTimer = setTimeout(() => label.replaceChildren(), 1500);
-      }
-    },
-  };
-}
-
-/** Edit/read toggle that lives in the title-bar (icon + label). Also carries
- *  the PERSISTENT remote-read-only indicator (Task 11): a remote document is
- *  forced to read mode end to end (editor.ts's `remoteReadOnly`), but before
- *  this the toggle only ever reflected the global `modeSetting` — so it could
- *  still show "편집" while the open document was, in fact, uneditable, and the
- *  user only learned the truth from a transient error toast on the next
- *  keystroke/save attempt. `remote: true` replaces the edit/read label
- *  outright with a fixed "읽기 전용 (원격)" state, for as long as this document
- *  stays open — not a toast, so it can't scroll away or get missed. */
-function makeModeToggle(): { btn: HTMLButtonElement; render: (m: PreviewMode, remote: boolean) => void } {
-  const btn = el("button", "chrome-btn mode-toggle icon-only");
-  const render = (m: PreviewMode, remote: boolean) => {
-    btn.dataset.remote = String(remote);
-    if (remote) {
-      setButtonContent(btn, "lock", "읽기 전용 (원격)");
-      btn.title = "읽기 전용 (원격) — 원격 볼트는 편집할 수 없습니다";
-      return;
-    }
-    setButtonContent(btn, m === "edit" ? "square-pen" : "eye", m === "edit" ? "편집" : "리더");
-    btn.title = m === "edit" ? "편집 모드 (⌘E: 리더 모드로)" : "리더 모드 (⌘E: 편집 모드로)";
-  };
-  return { btn, render };
 }
 
 async function boot() {
