@@ -195,6 +195,11 @@ mod tests {
     use std::fs;
     use crate::fs::test_support::temp_dir;
 
+    // --- resolve_image (recursive image fallback search) ---
+    //
+    // Each test builds an isolated fixture tree under temp_dir() and tears it
+    // down. The `.test/` directory is never touched — these own their fixtures.
+
     #[test]
     fn resolve_finds_basename_in_subdir() {
         // baseDir/sub/deep/pic.png is found by basename, returning its abs path.

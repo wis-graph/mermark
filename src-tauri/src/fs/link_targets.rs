@@ -137,6 +137,8 @@ mod tests {
     use std::fs;
     use crate::fs::test_support::temp_dir;
 
+    // --- list_link_targets (`[[` file picker enumeration) ---
+
     #[test]
     fn lists_md_and_image_targets() {
         let dir = temp_dir("md_and_img");
