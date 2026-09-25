@@ -701,10 +701,12 @@ function renderInfo(): HTMLElement {
 
 /** The dispatch table. The panel calls RENDER[entry.ui.control.kind](setting,
  *  control). Typed loosely at the table boundary because each renderer narrows
- *  its own control kind; callers pass the matching pair. */
+ *  its own control kind; callers pass the matching pair.
+ *  `Setting<unknown>` accepts every concrete setting (methods are bivariant);
+ *  each renderer narrows. */
 export const RENDER: {
   [K in Control<unknown>["kind"]]: (
-    setting: Setting<never>,
+    setting: Setting<unknown>,
     control: Extract<Control<unknown>, { kind: K }>,
   ) => HTMLElement;
 } = {
