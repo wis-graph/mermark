@@ -49,7 +49,7 @@ use crate::attachments::{
     AttachmentReceipts, FileIdentity, ReceiptRecord,
 };
 use crate::attachments::validate_attachment_basename;
-use crate::commands::is_image_ext;
+use crate::fs::link_targets::is_image_ext;
 use crate::qa_trace::qa_trace;
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -73,7 +73,7 @@ const MAX_CANDIDATES: u64 = 10_000;
 const IMAGE_DIALOG_FILTERS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp"];
 
 /// Process-unique counter for `.attachments`-sibling temp file names. Mirrors
-/// `commands::TMP_SEQ`'s naming pattern but is deliberately a separate
+/// `fs::file_io::TMP_SEQ`'s naming pattern but is deliberately a separate
 /// counter/module — see that constant's sibling note in `lib.rs` for why the
 /// pattern is copied, not the state.
 static TMP_SEQ: AtomicU64 = AtomicU64::new(1);

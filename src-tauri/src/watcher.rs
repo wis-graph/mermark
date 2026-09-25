@@ -177,7 +177,7 @@ fn handle_fs_event(app: &AppHandle, session: &WatchSession) {
     let Ok(metadata) = std::fs::metadata(path) else {
         return;
     };
-    let mtime = crate::commands::mtime_ms(path);
+    let mtime = crate::fs::file_io::mtime_ms(path);
     let state = tauri_watch_state(app);
     // Self-write (our own autosave) → stay silent, no reload loop.
     if state.is_self_write(path, mtime, metadata.len()) {
@@ -203,7 +203,7 @@ pub(super) fn read_external_change(
 ) -> Option<FileChanged> {
     let path_string = path.to_string_lossy();
     let metadata = std::fs::metadata(path).ok()?;
-    let mtime = crate::commands::mtime_ms(&path_string);
+    let mtime = crate::fs::file_io::mtime_ms(&path_string);
     if state.is_self_write(&path_string, mtime, metadata.len()) {
         return None;
     }

@@ -8,6 +8,7 @@ mod bundle;
 pub mod cli;
 mod commands;
 mod epubview;
+mod fs;
 mod htmlview;
 mod hwp;
 mod qa_trace;
@@ -40,6 +41,7 @@ mod remote_token;
 mod single_instance;
 mod sqlite;
 mod watcher;
+mod window;
 
 use qa_trace::qa_trace;
 
@@ -75,7 +77,7 @@ fn setup_cli_path_in(home: PathBuf) -> std::io::Result<()> {
 }
 
 /// Process-unique counter for scratch-file names. Kept separate from
-/// `commands::TMP_SEQ` (which names autosave temp files) so the two concerns
+/// `fs::file_io::TMP_SEQ` (which names autosave temp files) so the two concerns
 /// don't share state across module boundaries; the naming *pattern* is copied,
 /// the counter is not. Starts at 1 — `mermark -` reads stdin at most once per
 /// process, so in practice this stays 1, but the counter keeps scratch names
@@ -122,7 +124,7 @@ pub const DEFAULT_WINDOW: (f64, f64) = (1200.0, 860.0);
 pub const MIN_WINDOW: (f64, f64) = (640.0, 480.0);
 
 /// mermark document window's chrome rule, shared by the startup `main` window
-/// (below) and the wikilink-spawned window in `commands::open_path` — the same
+/// (below) and the wikilink-spawned window in `window::open_path` — the same
 /// two-path sharing pattern as `DEFAULT_WINDOW`/`MIN_WINDOW` above, so this lives
 /// here rather than being duplicated per call site.
 ///

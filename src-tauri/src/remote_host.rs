@@ -223,10 +223,10 @@ pub fn constant_time_eq(a: &str, b: &str) -> bool {
 // --- HTTP server (Task 5) ---
 //
 // A read-only axum front for the two gates above plus the existing
-// `commands::` file logic — no file logic is reimplemented here. Every
+// `fs::` file logic — no file logic is reimplemented here. Every
 // non-`/pair` handler follows the same four-step skeleton: `authorize` (bearer
 // token) → `armed_vault` (is this vault id actually shared) → `safe_path`
-// (lexical + canonical containment) → delegate to `commands::`. v1 is
+// (lexical + canonical containment) → delegate to `fs::`. v1 is
 // GET-only for every file route: the route table below has no PUT/POST/DELETE
 // entry for any of them, so a non-GET method falls through to axum's built-in
 // 405 rather than reaching a handler that would have to remember to refuse
@@ -259,7 +259,7 @@ use std::sync::{Arc, Mutex};
 /// covers any legitimate vault-relative path.
 const MAX_REQUEST_PATH_BYTES: usize = 4096;
 
-/// What `/list_dir` and `/list_files_recursive` pass to `commands::` in
+/// What `/list_dir` and `/list_files_recursive` pass to `fs::` in
 /// place of the peer's own `show_hidden` query value — always `false`,
 /// unconditionally. Decided deliberately, not left as an oversight:
 /// `safe_path`'s hidden/artifact gate (see its doc comment) means the host
@@ -299,7 +299,7 @@ pub struct HostState {
 /// Query shape shared by every file route that takes just a vault id plus a
 /// vault-relative path: `read_file`, `read_asset`, `list_dir`,
 /// `list_files_recursive`, `list_link_targets` all name their relative
-/// argument `path` (matching each `commands::` function's own arg name),
+/// argument `path` (matching each `fs::` function's own arg name),
 /// even though `list_dir`'s `path` means "directory to list" and
 /// `read_file`'s means "file to read" — one field name for "the
 /// vault-relative thing this route resolves", not five different ones.
@@ -332,7 +332,7 @@ pub struct DirQuery {
 }
 
 /// `resolve_image`'s query: `path` is the vault-relative *directory* the
-/// image search starts from (mirrors `commands::resolve_image`'s
+/// image search starts from (mirrors `fs::image_resolve::resolve_image`'s
 /// `base_dir`), `name` is the image reference to hunt for, `max_depth`
 /// bounds the search exactly as it does locally.
 #[derive(serde::Deserialize)]
@@ -756,19 +756,19 @@ async fn read_file_handler(
 
 /// The actual read behind `read_file_handler`, split out so it can run
 /// inside `spawn_blocking` as a plain synchronous function. Deliberately
-/// does not call `commands::read_file` (which has no size bound at all —
+/// does not call `fs::file_io::read_file` (which has no size bound at all —
 /// see this task's finding): opens the file once, checks its metadata length
 /// against `MAX_READ_FILE_BYTES` *before* reading any of it (same ordering
 /// `read_asset_handler` uses for `MAX_ASSET_BYTES`), then reads through that
 /// same handle so the size check and the bytes read can never refer to two
-/// different underlying files. Reuses `commands::mtime_ms` for the mtime
+/// different underlying files. Reuses `fs::file_io::mtime_ms` for the mtime
 /// field rather than re-deriving it, so this and the local `read_file`
 /// command agree on exactly what "the file's mtime" means. A single opaque
 /// `()` error is enough here — `read_file_handler` maps every failure to the
 /// same `NOT_FOUND` `safe_path` already uses for "this request does not
 /// resolve to servable content", so the specific reason (missing, too big,
 /// not UTF-8, a directory) is not something the caller needs distinguished.
-fn read_file_bounded(path: &std::path::Path) -> Result<crate::commands::FileContent, ()> {
+fn read_file_bounded(path: &std::path::Path) -> Result<crate::fs::file_io::FileContent, ()> {
     let mut file = std::fs::File::open(path).map_err(|_| ())?;
     let meta = file.metadata().map_err(|_| ())?;
     if meta.is_dir() || meta.len() > MAX_READ_FILE_BYTES {
@@ -777,8 +777,8 @@ fn read_file_bounded(path: &std::path::Path) -> Result<crate::commands::FileCont
     let mut bytes = Vec::with_capacity(meta.len() as usize);
     file.by_ref().take(MAX_READ_FILE_BYTES).read_to_end(&mut bytes).map_err(|_| ())?;
     let text = String::from_utf8(bytes).map_err(|_| ())?;
-    let mtime = crate::commands::mtime_ms(&path.to_string_lossy());
-    Ok(crate::commands::FileContent { text, mtime })
+    let mtime = crate::fs::file_io::mtime_ms(&path.to_string_lossy());
+    Ok(crate::fs::file_io::FileContent { text, mtime })
 }
 
 /// Best-effort content-type for `read_asset`'s raw bytes, keyed off the
@@ -816,7 +816,7 @@ const MAX_ASSET_BYTES: u64 = 20 * 1024 * 1024;
 /// `"config"` (not hidden), but the file is inside a hidden `.git`
 /// directory and must be excluded just the same — `.git/config` routinely
 /// carries credential-bearing remote URLs, which must never leave the host.
-/// Reuses `commands::is_hidden_entry`/`is_mermark_artifact` (the SSOT
+/// Reuses `fs::listing::is_hidden_entry`/`is_mermark_artifact` (the SSOT
 /// `list_dir` itself applies) rather than re-deriving the rule, just applied
 /// to every path segment instead of one. This is `safe_path`'s hidden/
 /// artifact gate — see its doc comment for why every file route goes
@@ -824,7 +824,7 @@ const MAX_ASSET_BYTES: u64 = 20 * 1024 * 1024;
 fn has_a_hidden_or_artifact_component(vault_relative_path: &str) -> bool {
     Path::new(vault_relative_path).components().any(|c| {
         let name = c.as_os_str().to_string_lossy();
-        crate::commands::is_hidden_entry(&name) || crate::commands::is_mermark_artifact(&name)
+        crate::fs::listing::is_hidden_entry(&name) || crate::fs::listing::is_mermark_artifact(&name)
     })
 }
 
@@ -886,12 +886,12 @@ async fn list_dir_handler(
     let armed = armed_vault(&state, &q.vault)?;
     let path = safe_path(&armed, &q.path)?;
     let root = armed_root_canonical(&armed)?;
-    // `q.show_hidden` is deliberately never forwarded to `commands::list_dir`
+    // `q.show_hidden` is deliberately never forwarded to `fs::listing::list_dir`
     // — see `IGNORE_PEER_SHOW_HIDDEN`'s doc comment for why a peer's request
     // to see hidden entries is refused rather than honored.
-    let mut entries = crate::commands::list_dir(path.to_string_lossy().into_owned(), IGNORE_PEER_SHOW_HIDDEN)
+    let mut entries = crate::fs::listing::list_dir(path.to_string_lossy().into_owned(), IGNORE_PEER_SHOW_HIDDEN)
         .map_err(|_| StatusCode::NOT_FOUND)?;
-    // `commands::list_dir` returns the host's absolute filesystem paths —
+    // `fs::listing::list_dir` returns the host's absolute filesystem paths —
     // correct for the local explorer, but here they'd both leak the armed
     // root and be unusable by the client (an absolute path fed back into a
     // query 404s at `resolve_within`'s `RootDir` rejection). Rewrite every
@@ -914,10 +914,10 @@ async fn list_files_recursive_handler(
     // Same reasoning as `list_dir_handler`: `q.show_hidden` is never honored
     // here either — see `IGNORE_PEER_SHOW_HIDDEN`.
     let mut result =
-        crate::commands::list_files_recursive(path.to_string_lossy().into_owned(), IGNORE_PEER_SHOW_HIDDEN)
+        crate::fs::listing::list_files_recursive(path.to_string_lossy().into_owned(), IGNORE_PEER_SHOW_HIDDEN)
             .map_err(|_| StatusCode::NOT_FOUND)?;
     // Same rewrite as `list_dir_handler`, same reason: `FileHit.path` comes
-    // back absolute from `commands::list_files_recursive`.
+    // back absolute from `fs::listing::list_files_recursive`.
     for hit in &mut result.files {
         hit.path = vault_relative(&root, &hit.path);
     }
@@ -933,7 +933,7 @@ async fn resolve_image_handler(
     let armed = armed_vault(&state, &q.vault)?;
     let base = safe_path(&armed, &q.path)?;
     let root = armed_root_canonical(&armed)?;
-    let resolved = crate::commands::resolve_image(base.to_string_lossy().into_owned(), q.name, q.max_depth)
+    let resolved = crate::fs::image_resolve::resolve_image(base.to_string_lossy().into_owned(), q.name, q.max_depth)
         .map(|abs| vault_relative(&root, &abs));
     Ok(Json(resolved))
 }
@@ -946,7 +946,7 @@ async fn list_link_targets_handler(
     authorize(&state, &headers)?;
     let armed = armed_vault(&state, &q.vault)?;
     let path = safe_path(&armed, &q.path)?;
-    let targets = crate::commands::list_link_targets(path.to_string_lossy().into_owned())
+    let targets = crate::fs::link_targets::list_link_targets(path.to_string_lossy().into_owned())
         .map_err(|_| StatusCode::NOT_FOUND)?;
     Ok(Json(targets))
 }
@@ -1271,7 +1271,7 @@ mod tests {
         let app = router(state);
         let res = call_get(&app, "/read_file?vault=rv1&path=note.md").await;
         assert_eq!(res.status(), http::StatusCode::OK);
-        let body: crate::commands::FileContent = json_body(res).await;
+        let body: crate::fs::file_io::FileContent = json_body(res).await;
         assert_eq!(body.text, "# 안녕");
         std::fs::remove_dir_all(dir).ok();
     }
@@ -1697,7 +1697,7 @@ mod tests {
         let app = router(state);
         let res = call_get(&app, "/list_dir?vault=rv1&path=&show_hidden=false").await;
         assert_eq!(res.status(), http::StatusCode::OK);
-        let entries: Vec<crate::commands::DirEntry> = json_body(res).await;
+        let entries: Vec<crate::fs::listing::DirEntry> = json_body(res).await;
         assert!(entries.iter().any(|e| e.name == "note.md"), "{:?}", entries.iter().map(|e| &e.name).collect::<Vec<_>>());
         std::fs::remove_dir_all(dir).ok();
     }
@@ -1782,7 +1782,7 @@ mod tests {
         let (state, dir) = state_with_file("note.md", "# 안녕");
         let app = router(state);
         let res = call_get(&app, "/list_dir?vault=rv1&path=&show_hidden=false").await;
-        let entries: Vec<crate::commands::DirEntry> = json_body(res).await;
+        let entries: Vec<crate::fs::listing::DirEntry> = json_body(res).await;
         let note = entries.iter().find(|e| e.name == "note.md").unwrap();
         assert_eq!(note.path, "note.md");
 
@@ -1895,7 +1895,7 @@ mod tests {
         let app = router(state);
         let res = call_get(&app, "/list_dir?vault=rv1&path=&show_hidden=true").await;
         assert_eq!(res.status(), http::StatusCode::OK);
-        let entries: Vec<crate::commands::DirEntry> = json_body(res).await;
+        let entries: Vec<crate::fs::listing::DirEntry> = json_body(res).await;
         assert!(
             !entries.iter().any(|e| e.name == ".git"),
             "숨김 표시를 요청해도 .git이 노출되면 안 된다: {:?}",

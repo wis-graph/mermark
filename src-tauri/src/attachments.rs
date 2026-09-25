@@ -168,7 +168,7 @@ pub struct AttachmentReceipt {
 #[cfg(test)]
 mod attachment_contract_tests {
     use super::*;
-    use crate::commands::is_image_ext;
+    use crate::fs::link_targets::is_image_ext;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 

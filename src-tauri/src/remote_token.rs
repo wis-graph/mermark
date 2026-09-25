@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Process-unique counter for this module's atomic-write temp file names,
-/// mirroring `commands.rs`'s `TMP_SEQ` — kept as a separate counter (not
+/// mirroring `fs/file_io.rs`'s `TMP_SEQ` — kept as a separate counter (not
 /// shared) so the two concerns don't share state across module boundaries,
 /// same rationale as `lib.rs`'s `STDIN_SEQ`.
 static TOKEN_TMP_SEQ: AtomicU64 = AtomicU64::new(1);

@@ -91,7 +91,7 @@ fn self_save_is_muted_while_preserving_saved_bytes() {
     record_identity(
         &state,
         path,
-        crate::commands::mtime_ms(&path.to_string_lossy()),
+        crate::fs::file_io::mtime_ms(&path.to_string_lossy()),
     );
 
     // When: the production callback's disk-decision seam inspects the event.
@@ -106,7 +106,7 @@ fn self_save_is_muted_while_preserving_saved_bytes() {
 #[test]
 fn clean_external_edit_emits_reload_with_new_bytes() {
     let fixture = Fixture::create("clean_external", "before");
-    let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
+    let baseline = crate::fs::file_io::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
     record_identity(&state, fixture.path(), baseline.saturating_sub(1));
     fs::write(fixture.path(), "after clean edit").unwrap();
@@ -129,7 +129,7 @@ fn clean_external_edit_emits_reload_with_new_bytes() {
 #[test]
 fn dirty_external_edit_emits_conflict_with_new_bytes() {
     let fixture = Fixture::create("dirty_external", "before");
-    let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
+    let baseline = crate::fs::file_io::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
     record_identity(&state, fixture.path(), baseline.saturating_sub(1));
     fs::write(fixture.path(), "after dirty edit").unwrap();
@@ -153,7 +153,7 @@ fn dirty_external_edit_emits_conflict_with_new_bytes() {
 fn same_mtime_changed_size_rewrite_is_emitted() {
     let fixture = Fixture::create("same_mtime", "before");
     let original_mtime = fs::metadata(fixture.path()).unwrap().modified().unwrap();
-    let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
+    let baseline = crate::fs::file_io::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
     record_identity(&state, fixture.path(), baseline);
     fs::write(fixture.path(), "after same-mtime rewrite").unwrap();
@@ -165,7 +165,7 @@ fn same_mtime_changed_size_rewrite_is_emitted() {
     let change = read_external_change(&state, fixture.path());
 
     assert_eq!(
-        crate::commands::mtime_ms(&fixture.path().to_string_lossy()),
+        crate::fs::file_io::mtime_ms(&fixture.path().to_string_lossy()),
         baseline
     );
     assert_eq!(bytes(fixture.path()), "after same-mtime rewrite");
@@ -183,7 +183,7 @@ fn same_mtime_changed_size_rewrite_is_emitted() {
 #[test]
 fn atomic_replacement_emits_new_bytes() {
     let fixture = Fixture::create("atomic-replacement", "before");
-    let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
+    let baseline = crate::fs::file_io::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
     record_identity(&state, fixture.path(), baseline);
     let (event_tx, event_rx) = mpsc::channel();
@@ -225,7 +225,7 @@ fn tab_activation_does_not_reuse_another_path_self_write_identity() {
     record_identity(
         &state,
         tab_a.path(),
-        crate::commands::mtime_ms(&tab_a.path().to_string_lossy()),
+        crate::fs::file_io::mtime_ms(&tab_a.path().to_string_lossy()),
     );
 
     fs::write(tab_b.path(), "tab B after external edit").unwrap();
@@ -247,7 +247,7 @@ fn tab_activation_does_not_reuse_another_path_self_write_identity() {
 #[test]
 fn deletion_is_not_emitted_and_original_bytes_are_gone() {
     let fixture = Fixture::create("deletion", "before deletion");
-    let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
+    let baseline = crate::fs::file_io::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
     record_identity(&state, fixture.path(), baseline);
     fs::remove_file(fixture.path()).unwrap();
@@ -262,7 +262,7 @@ fn deletion_is_not_emitted_and_original_bytes_are_gone() {
 #[test]
 fn unreadable_path_is_not_emitted() {
     let fixture = Fixture::create("unreadable", "before unreadable");
-    let baseline = crate::commands::mtime_ms(&fixture.path().to_string_lossy());
+    let baseline = crate::fs::file_io::mtime_ms(&fixture.path().to_string_lossy());
     let state = WatchState::default();
     record_identity(&state, fixture.path(), baseline.saturating_sub(1));
     fs::remove_file(fixture.path()).unwrap();

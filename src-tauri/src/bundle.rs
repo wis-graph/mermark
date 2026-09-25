@@ -17,7 +17,7 @@
 //!
 //! Read-only: it never creates or modifies a file.
 
-use crate::commands::normalize_path;
+use crate::fs::paths::normalize_path;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

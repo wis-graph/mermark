@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use tauri::State;
 
-use crate::commands::expand_home;
+use crate::fs::paths::expand_home;
 
 /// Upper bound on an HWP/HWPX file we'll attempt to parse. The crate's own
 /// internal caps (256-512MB, aimed at "the library doesn't panic") are about

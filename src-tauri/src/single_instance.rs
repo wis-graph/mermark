@@ -96,7 +96,7 @@ enum Recipient {
 /// True for a label this broker treats as a document window — eligible for
 /// focus-recency tracking and as a routing recipient. `"main"` is the
 /// startup window; any `w{n}` label is a wikilink-spawned window
-/// (`commands::document_window_spec`). Named so a future non-document window
+/// (`window::document_window_spec`). Named so a future non-document window
 /// (e.g. a settings panel) can be excluded from routing by simply not
 /// matching this predicate, rather than by auditing every call site that
 /// walks `focus_order`.
