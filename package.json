@@ -37,6 +37,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/node": "^24.19.0",
     "jsdom": "^29.1.1",
     "material-icon-theme": "^5.37.0",
     "playwright": "^1.60.0",
