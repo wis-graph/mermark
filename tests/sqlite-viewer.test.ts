@@ -16,7 +16,12 @@ function usersRow(i: number): (string | null)[] {
   return [String(i), i === 3 ? null : `User ${i}`, (i * 1.5).toFixed(2), i === 5 ? "BLOB (1234 bytes)" : ""];
 }
 
-const invokeMock = vi.fn((cmd: string, args?: Record<string, unknown>) => {
+// Typed as `Promise<unknown>` rather than letting the return type be
+// inferred from this base implementation — mockImplementation() below swaps
+// in narrower per-test bodies, and a fully-inferred union would reject those.
+// Temporary until 13단계 replaces these hand-written invoke mocks with a
+// typed `vi.mock("../src/ipc")`.
+const invokeMock = vi.fn<(cmd: string, args?: Record<string, unknown>) => Promise<unknown>>((cmd, args) => {
   const path = String(args?.path ?? "");
   const table = String(args?.table ?? "");
 

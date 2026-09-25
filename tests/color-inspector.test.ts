@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest";
 import { buildColorInspector, presetDefaultFor, pickCardPlacement, clampCardWidthToPane } from "../src/settings/panel/color-inspector";
 import { themeJsonSetting } from "../src/settings/app";
 import { builtInTheme, serializeTheme } from "../src/settings/theme-schema";
@@ -8,14 +8,14 @@ import { hexToHsl } from "../src/settings/panel/color-math";
 describe("Color inspector", () => {
   let host: HTMLElement;
   let inspector: ReturnType<typeof buildColorInspector>;
-  let onClose: ReturnType<typeof vi.fn>;
+  let onClose: Mock<() => void>;
 
   beforeEach(() => {
     localStorage.clear();
     themeJsonSetting.set(builtInTheme("light"));
     host = document.createElement("div");
     document.body.appendChild(host);
-    onClose = vi.fn();
+    onClose = vi.fn<() => void>();
     inspector = buildColorInspector(themeJsonSetting, onClose);
     host.appendChild(inspector.el);
   });

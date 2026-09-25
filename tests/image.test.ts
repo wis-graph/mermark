@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 
 // Stub the Tauri core: convertFileSrc echoes its input (so an asset URL equals
 // its path, making the src swap observable), invoke is a spy we assert against.
@@ -399,10 +399,10 @@ describe("ImageWidget vault-scope search root", () => {
 
 describe("ImageWidget click → open viewer (_workspace/01_architect_design_imgclick.md)", () => {
   const baseDir = "/home/u/notes";
-  let openSpy: ReturnType<typeof vi.fn>;
+  let openSpy: Mock<(source: string) => void>;
 
   beforeEach(() => {
-    openSpy = vi.fn();
+    openSpy = vi.fn<(source: string) => void>();
     setImageOpenHandler(openSpy);
   });
 

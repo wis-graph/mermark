@@ -26,7 +26,10 @@ function defaultInvokeImpl(cmd: string, _args?: unknown) {
   return Promise.resolve(false);
 }
 
-const invokeMock = vi.fn(defaultInvokeImpl);
+// Typed as `Promise<unknown>` rather than inferred from defaultInvokeImpl's
+// narrow union — mockImplementation() below swaps in a different per-test
+// body. Temporary until 13단계 replaces this with a typed `vi.mock("../src/ipc")`.
+const invokeMock = vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>(defaultInvokeImpl);
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
