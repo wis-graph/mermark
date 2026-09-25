@@ -237,7 +237,7 @@ describe("full-editor render smoke", () => {
     expect(openSpy).toHaveBeenCalledWith({
       kind: "standard-link",
       href: "./rel.md",
-      feedbackEl: link,
+      feedbackEl: link!,
     } satisfies DocumentOpenRequest);
     view.destroy();
   });

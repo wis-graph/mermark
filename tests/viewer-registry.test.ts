@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 // R11 (_workspace/01_r11.md §9 RED-1): the non-markdown-file viewer registry.
 // vitest gives each test file a fresh module graph, so `viewers` (registry.ts's

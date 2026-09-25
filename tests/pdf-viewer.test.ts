@@ -10,7 +10,6 @@ import {
   renderPdfPage,
   sharpenPdfPage,
   pagePlaceholder,
-  pageIndexOf,
   aspectRatioOf,
   documentPageAspect,
   FALLBACK_PAGE_ASPECT,
@@ -117,7 +116,9 @@ describe("ensureReadableStreamAsyncIterator (WKWebView ReadableStream async-iter
       expect(Symbol.asyncIterator in proto).toBe(true);
 
       const collected: number[] = [];
-      for await (const value of streamOf([1, 2, 3])) collected.push(value);
+      // Cast needed: iterable only because the polyfill above installed it —
+      // the DOM lib (correctly) doesn't promise ReadableStream is async-iterable.
+      for await (const value of streamOf([1, 2, 3]) as unknown as AsyncIterable<number>) collected.push(value);
       expect(collected).toEqual([1, 2, 3]);
     } finally {
       proto[Symbol.asyncIterator] = original; // restore native

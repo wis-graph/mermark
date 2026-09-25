@@ -68,6 +68,7 @@ describe("VaultTabStore", () => {
     const tabs = new VaultTabStore();
     const first = tabs.open("vault-a", "/notes/a.md", "permanent");
     const second = tabs.open("vault-a", "/notes/b.md", "permanent");
+    expect(tabs.get("vault-a").activeTabId).toBe(second.tabId);
 
     expect(tabs.select("vault-a", first.tabId, "permanent").activeTabId).toBe(first.tabId);
     expect(JSON.parse(localStorage.getItem("mermark.vaultTabs.vault-a") ?? "null").activeTabId).toBe(first.tabId);

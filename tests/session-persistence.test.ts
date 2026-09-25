@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 let fileText = "hello world\nline 2\nline 3\nline 4\nline 5";
 let fileMtime = 12345;
 
-const invokeMock = vi.fn((cmd: string, args?: any) => {
+const invokeMock = vi.fn((cmd: string, _args?: any) => {
   if (cmd === "read_file") {
     return Promise.resolve({ text: fileText, mtime: fileMtime });
   }

@@ -18,7 +18,7 @@ describe("parseBridgeEnv", () => {
     });
   });
 
-  it.each([
+  it.each<[string | null | undefined, string]>([
     [undefined, "missing env"],
     [null, "null env"],
     ["", "empty string"],
