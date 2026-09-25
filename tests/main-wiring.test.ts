@@ -412,7 +412,7 @@ describe("main workspace wiring", () => {
   });
 
   it("preserves the Explorer root only for the selected global vault", async () => {
-    const { shouldPreserveGlobalExplorerRoot } = await import("../src/main");
+    const { shouldPreserveGlobalExplorerRoot } = await import("../src/workspace/vault-routing");
 
     expect(shouldPreserveGlobalExplorerRoot({ persistenceKind: "global" })).toBe(true);
     expect(shouldPreserveGlobalExplorerRoot({ persistenceKind: "permanent" })).toBe(false);
@@ -427,7 +427,7 @@ describe("main workspace wiring", () => {
   // (`default: assertNever(vault)`) and pin every vault kind's expected value
   // so the NEXT new vault kind fails `tsc` at all of these sites, not just one.
   it("locks the Explorer root for permanent and remote vaults, not global or no vault", async () => {
-    const { isVaultRootLocked } = await import("../src/main");
+    const { isVaultRootLocked } = await import("../src/workspace/vault-routing");
 
     expect(isVaultRootLocked({ persistenceKind: "permanent" })).toBe(true);
     expect(isVaultRootLocked({ persistenceKind: "remote" })).toBe(true);
@@ -436,7 +436,7 @@ describe("main workspace wiring", () => {
   });
 
   it("scopes remote vault tabs to the session, same as global, never persisted like permanent", async () => {
-    const { tabScopeForVault } = await import("../src/main");
+    const { tabScopeForVault } = await import("../src/workspace/vault-routing");
 
     expect(tabScopeForVault({ persistenceKind: "permanent" })).toBe("permanent");
     expect(tabScopeForVault({ persistenceKind: "global" })).toBe("session");
@@ -451,7 +451,7 @@ describe("main workspace wiring", () => {
   // must demote ANY non-absolute result to `fallback`, not just a thrown
   // error — this is what actually closes the reported bug.
   it("falls back to the safe root when canonicalize_path resolves home to a non-absolute value", async () => {
-    const { resolveHomeRoot } = await import("../src/main");
+    const { resolveHomeRoot } = await import("../src/workspace/vault-routing");
 
     await expect(resolveHomeRoot(async () => "~", "/")).resolves.toBe("/");
     await expect(resolveHomeRoot(async () => "notes", "/")).resolves.toBe("/");
@@ -459,14 +459,14 @@ describe("main workspace wiring", () => {
   });
 
   it("uses the resolved home when canonicalize_path returns a real absolute path", async () => {
-    const { resolveHomeRoot } = await import("../src/main");
+    const { resolveHomeRoot } = await import("../src/workspace/vault-routing");
 
     await expect(resolveHomeRoot(async () => "/home/tester", "/")).resolves.toBe("/home/tester");
     await expect(resolveHomeRoot(async () => "C:\\Users\\tester", "/")).resolves.toBe("C:\\Users\\tester");
   });
 
   it("falls back to the safe root when canonicalize_path rejects", async () => {
-    const { resolveHomeRoot } = await import("../src/main");
+    const { resolveHomeRoot } = await import("../src/workspace/vault-routing");
 
     await expect(
       resolveHomeRoot(async () => {
@@ -1226,7 +1226,7 @@ describe("main workspace wiring", () => {
     const remoteVault = { vaultId: "vault-remote-1", workspaceId: "workspace-default", displayName: "원격 볼트", rootPath: null, persistenceKind: "remote" as const, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" };
 
     it("routingTrustsCurrentVault: true for global/remote (never re-derive by path), false for permanent (path re-derivation is meaningful) and undefined", async () => {
-      const { routingTrustsCurrentVault } = await import("../src/main");
+      const { routingTrustsCurrentVault } = await import("../src/workspace/vault-routing");
       expect(routingTrustsCurrentVault("global")).toBe(true);
       expect(routingTrustsCurrentVault("remote")).toBe(true);
       expect(routingTrustsCurrentVault("permanent")).toBe(false);
@@ -1234,7 +1234,7 @@ describe("main workspace wiring", () => {
     });
 
     it("resolveTargetVault: an explicit target wins over the fallback (the exact bug — reading through the switch's SOURCE vault)", async () => {
-      const { resolveTargetVault } = await import("../src/main");
+      const { resolveTargetVault } = await import("../src/workspace/vault-routing");
       // The core of the Ruling 9 fix: switching FROM permanentVault TO
       // remoteVault must read through remoteVault, not permanentVault.
       expect(resolveTargetVault(remoteVault, permanentVault, globalVault)).toBe(remoteVault);
@@ -1247,7 +1247,7 @@ describe("main workspace wiring", () => {
     });
 
     it("standardLinkRejectionFor: a remote vault always rejects with the exact Korean message; permanent/global/undefined defer to the pipeline (null)", async () => {
-      const { standardLinkRejectionFor } = await import("../src/main");
+      const { standardLinkRejectionFor } = await import("../src/workspace/vault-routing");
       expect(standardLinkRejectionFor(remoteVault)).toBe("원격 볼트에서는 지원하지 않습니다");
       expect(standardLinkRejectionFor(permanentVault)).toBeNull();
       expect(standardLinkRejectionFor(globalVault)).toBeNull();
