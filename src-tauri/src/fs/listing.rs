@@ -165,7 +165,7 @@ const EXCLUDED_SCAN_DIRS: &[&str] =
 /// roots. Pulled into a named function (mirroring `is_hidden_entry`/
 /// `is_mermark_artifact`) so the exclusion rule is one fact, not re-derived
 /// inline inside the walk loop.
-pub(crate) fn is_excluded_scan_dir(name: &str) -> bool {
+pub(super) fn is_excluded_scan_dir(name: &str) -> bool {
     EXCLUDED_SCAN_DIRS.contains(&name)
 }
 

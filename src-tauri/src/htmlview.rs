@@ -30,7 +30,7 @@
 //!
 //! Security rests on three gates, all enforced *here*, never trusted from the
 //! caller: (1) `arm_html_view_root` mints an unguessable token
-//! (`mint_view_token`, OS CSPRNG) and binds it to a canonicalized root — the
+//! (`mint_token`, OS CSPRNG) and binds it to a canonicalized root — the
 //! token is the only key that resolves to a root at all; (2) every request's
 //! `rel_path` is joined onto *that* root and the join result is re-verified
 //! with `is_within_armed_root` (post-canonicalize, so `..`/symlinks/an
@@ -47,7 +47,7 @@ use std::sync::Mutex;
 use tauri::http::{header, HeaderValue, Method, Request, Response, StatusCode};
 use tauri::Manager;
 
-use crate::crypto_token::mint_view_token;
+use crate::crypto_token::mint_token;
 
 /// The single value both the preflight response and the real GET response
 /// advertise for `Access-Control-Allow-Methods`. Named so the two call sites
@@ -174,7 +174,7 @@ impl HtmlViewRoots {
     }
 
     fn bind(&self, root: HtmlViewRoot) -> String {
-        let token = mint_view_token();
+        let token = mint_token();
         self.0
             .lock()
             .unwrap_or_else(|e| e.into_inner())

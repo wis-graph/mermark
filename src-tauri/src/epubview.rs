@@ -8,7 +8,7 @@
 //!
 //! **Sibling module, not a variant of `htmlview.rs`** (design §1 "형제 모듈 +
 //! 별도 스킴, enum 주입 기각"). The two modules share only
-//! `crypto_token::mint_view_token` (originally `htmlview`'s, promoted
+//! `crypto_token::mint_token` (originally `htmlview`'s, promoted
 //! `pub(crate)` for this; now in `crypto_token.rs`) — every other
 //! helper here (token/path parsing, CORS, 403, CSP) is its own copy, on
 //! purpose: capping the reuse at "duplicate twice, no shared abstraction yet"
@@ -31,7 +31,7 @@
 //! zip-slip does not apply either.)
 //!
 //! Security still rests on the same three-gate shape as `htmlview.rs`: (1) a
-//! per-open unguessable token (`mint_view_token`) is the only key that
+//! per-open unguessable token (`mint_token`) is the only key that
 //! resolves to an armed `.epub` path at all; (2) every chapter (`text/html`)
 //! response carries `epub_frame_csp`, whose `script-src` names *only* our own
 //! `__mermark__/measure.js` — no book script, inline or `<script src>`, can
@@ -48,7 +48,7 @@ use std::sync::Mutex;
 use tauri::http::{header, HeaderValue, Method, Request, Response, StatusCode};
 use tauri::Manager;
 
-use crate::crypto_token::mint_view_token;
+use crate::crypto_token::mint_token;
 
 /// Mirrors `htmlview::CORS_ALLOWED_METHODS` — the one value both the
 /// preflight and the real response advertise, named once so they can't drift
@@ -104,7 +104,7 @@ impl EpubViewRoots {
     /// Mint a token and bind `epub_path` (already canonicalized by the
     /// caller) to it.
     fn arm(&self, epub_path: PathBuf) -> String {
-        let token = mint_view_token();
+        let token = mint_token();
         self.0
             .lock()
             .unwrap_or_else(|e| e.into_inner())

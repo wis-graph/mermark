@@ -336,7 +336,7 @@ mod workspace_directory_exists_tests {
 /// "anti-vault / no parent escape" invariant — the BFS only ever descends into
 /// children, but this prefix check is the structural second line of defence (and
 /// the one that catches a symlink target pointing outside the base).
-pub(crate) fn is_within_base(base: &Path, candidate: &Path) -> bool {
+fn is_within_base(base: &Path, candidate: &Path) -> bool {
     let base = normalize_path(base);
     let candidate = normalize_path(candidate);
     candidate.starts_with(&base)
@@ -352,7 +352,7 @@ pub(crate) fn is_within_base(base: &Path, candidate: &Path) -> bool {
 /// A broken/unreadable symlink (canonicalize fails) is treated as outside — fail
 /// closed. A plain file skips the extra syscall (lexical containment suffices).
 /// `meta` is the candidate's `symlink_metadata`, already fetched by the caller.
-pub(crate) fn file_target_is_within_base(base: &Path, candidate: &Path, meta: &std::fs::Metadata) -> bool {
+pub(super) fn file_target_is_within_base(base: &Path, candidate: &Path, meta: &std::fs::Metadata) -> bool {
     if meta.file_type().is_symlink() {
         // Resolve the link's real target and pen *that* inside base; a link whose
         // target escapes (or can't be resolved) is rejected. The base is

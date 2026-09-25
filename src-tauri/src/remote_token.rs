@@ -76,7 +76,7 @@ fn atomic_write_0600(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// by (e.g. a "연결 해제" button — see this module's doc comment on why the
 /// `token` itself must never make that round trip), its long-lived
 /// `token`, a human-readable `label`, and when pairing happened. `id` is
-/// minted the same way as the token (`crypto_token::mint_view_token`, OS
+/// minted the same way as the token (`crypto_token::mint_token`, OS
 /// CSPRNG) so it's unguessable too — an attacker who can enumerate ids
 /// shouldn't gain anything toward guessing the corresponding token.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
