@@ -2,16 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   MermaidWidget,
   effectiveMermaidTheme,
-  clampZoom,
-  zoomAtCursor,
-  attachPanZoom,
-  clampPanDelta,
-  renderedTranslate,
   mermaidPaletteSource,
   mermaidThemeVariables,
   isPureWhite,
   mermaidNodeFill,
 } from "../src/markdown/mermaid-widget";
+import { clampZoom, zoomAtCursor, attachPanZoom, clampPanDelta, renderedTranslate } from "../src/pan-zoom";
 import { panZoomSetting, themeForceSetting, themeJsonSetting } from "../src/settings/app";
 import { builtInTheme } from "../src/settings/theme-schema";
 

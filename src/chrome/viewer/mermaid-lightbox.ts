@@ -1,6 +1,6 @@
 // The mermaid diagram fullscreen lightbox — same architecture as the image
 // viewer (image-viewer.ts): an in-content pane built on the shared
-// `openViewerShell`, reusing `attachPanZoom` (markdown/mermaid-widget.ts) for
+// `openViewerShell`, reusing `attachPanZoom` (pan-zoom.ts) for
 // drag/wheel/dblclick pan-zoom. Unlike the file viewers, there is no absPath
 // (a diagram isn't a file) — it supplies an explicit `caption` instead
 // (shell.ts's generalized contract). Opened INLINE, not via the viewer
@@ -8,7 +8,7 @@
 // CustomEvent the widget dispatches (mermaid-widget.ts), the same
 // "widget emits an event, chrome listens" pattern `mermaid-rendered` already
 // uses to stay markdown-layer-agnostic of chrome.
-import { attachPanZoom } from "../../markdown/mermaid-widget";
+import { attachPanZoom } from "../../pan-zoom";
 import { openViewerShell } from "./shell";
 
 /** Scale the diagram's rendered width to `factor` × `fitWidth` — the same

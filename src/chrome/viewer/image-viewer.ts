@@ -9,10 +9,10 @@
 // completely on close() — no persistent DOM/listeners between opens.
 //
 // This viewer has no native scroll container — position is expressed purely
-// as `attachPanZoom`'s CSS transform (see mermaid-widget.ts), so keyboard
+// as `attachPanZoom`'s CSS transform (see pan-zoom.ts), so keyboard
 // and wheel panning both go through its `panBy` primitive instead of
 // scrollTop/scrollLeft.
-import { attachPanZoom } from "../../markdown/mermaid-widget";
+import { attachPanZoom } from "../../pan-zoom";
 import { resolveImageUrl, isRemoteSrc } from "../../markdown/image";
 import { basename, dirOf } from "../../document/path";
 import { openViewerShell } from "./shell";
