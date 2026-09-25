@@ -6,7 +6,6 @@ import { fitWidthScale } from "../src/extensions/pdf-viewer/fit-width-scale";
 import { viewerFor } from "../src/chrome/viewer/registry";
 import {
   registerPdfViewer,
-  ensureReadableStreamAsyncIterator,
   reconcile,
   renderPdfPage,
   sharpenPdfPage,
@@ -20,11 +19,9 @@ import {
   DRAFT_OUTPUT_SCALE,
   draftIsFullQuality,
   type PageRenderState,
-  type PdfDocumentProxy,
-  type PdfjsModule,
-  type PdfPageProxy,
-  type PdfViewport,
 } from "../src/extensions/pdf-viewer";
+import { ensureReadableStreamAsyncIterator } from "../src/extensions/pdf-viewer/webview-compat";
+import type { PdfDocumentProxy, PdfjsModule, PdfPageProxy, PdfViewport } from "../src/extensions/pdf-viewer/pdfjs-types";
 
 describe("fitWidthScale (pure — PDF fit-to-width render scale)", () => {
   // Table test (mermark-frontend §8): a table of (pageWidthPt, containerWidthPx,

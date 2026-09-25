@@ -28,6 +28,8 @@ import {
   type RemoteViewerSource,
 } from "../../api";
 import { fitWidthScale } from "./fit-width-scale";
+import type { PdfDocumentProxy, PdfjsModule, PdfLoadingTask, PdfPageProxy, PdfViewport } from "./pdfjs-types";
+import { ensureReadableStreamAsyncIterator, makeBlobWorker } from "./webview-compat";
 
 const STYLE_ID = "ext-pdf-viewer-style";
 
@@ -111,54 +113,6 @@ function ensureStyleInjected(): void {
 .pdf-viewer-status { padding: 12px; color: var(--muted); font-size: 1em; }
 `;
   document.head.appendChild(style);
-}
-
-/** A minimal shape of the pdfjs-dist module surface this file actually calls
- *  — kept local rather than depending on `pdfjs-dist`'s own types at the call
- *  sites below, so the dynamic `import("pdfjs-dist")` return value has a name
- *  worth reading in this file's signatures. Exported (along with
- *  `PdfViewport`/`PdfPageProxy`/`PdfDocumentProxy` below) ONLY so
- *  tests/pdf-viewer.test.ts's scheduler tests can type a hand-built,
- *  fully-controllable fake pdfDoc/pdfjs pair (render-task resolution timing
- *  under direct test control) without depending on `pdfjs-dist`'s own types
- *  — nothing else in the app imports these. */
-export interface PdfjsModule {
-  getDocument(params: Record<string, unknown>): PdfLoadingTask;
-  PDFWorker: new (params: { port: Worker }) => { destroy(): void };
-  TextLayer: new (params: {
-    textContentSource: unknown;
-    container: HTMLElement;
-    viewport: PdfViewport;
-  }) => { render(): Promise<unknown>; cancel(): void };
-}
-export interface PdfViewport {
-  width: number;
-  height: number;
-}
-export interface PdfPageProxy {
-  getViewport(params: { scale: number }): PdfViewport;
-  getTextContent(): Promise<unknown>;
-  render(params: {
-    canvas: HTMLCanvasElement;
-    viewport: PdfViewport;
-    transform?: number[];
-  }): { promise: Promise<void>; cancel(): void };
-}
-export interface PdfDocumentProxy {
-  numPages: number;
-  getPage(n: number): Promise<PdfPageProxy>;
-}
-/** `getDocument()`'s return value — `.destroy()` lives HERE, not on the
- *  resolved `PdfDocumentProxy` (a real bug this file shipped with initially:
- *  `pdfDoc.destroy()` threw "not a function" at close-time, which — because
- *  it ran inside a `shell.onTeardown` callback with nothing catching it —
- *  broke `shell.close()`'s own cleanup mid-flight and left the Esc-pressed
- *  backdrop on screen; caught by viewer-golden's G13 `backdropCountAfterEsc`
- *  assertion actually turning red on the FIRST real run against this code,
- *  not assumed from reading the types). */
-interface PdfLoadingTask {
-  promise: Promise<PdfDocumentProxy>;
-  destroy(): Promise<void>;
 }
 
 /** The fraction of the pages column ONE page occupies. Kept in lockstep with
@@ -1227,83 +1181,6 @@ function rerenderVisiblePages(state: PageRenderState, pageEls: ReadonlyMap<numbe
  *  background and swap in the page column (or an error status) when ready.
  *  Mirrors hwp-viewer.ts's `openHwpViewer` shape (design: "hwp-viewer가 페이지
  *  렌더 뷰어의 표준 선례"). Command. */
-/** Construct the pdf.js worker from a same-origin `blob:` URL instead of the
- *  raw `/pdfjs/build/pdf.worker.mjs` path. In the production Tauri build the
- *  page origin is the custom `tauri://localhost` scheme, and WKWebView
- *  silently fails a module `Worker` loaded DIRECTLY from a custom-scheme URL —
- *  the `Worker` object constructs without throwing but never runs its script,
- *  so `getDocument` never gets a reply and hangs forever ("모달은 뜨는데
- *  렌더링이 안 됨", 사용자 리포트 2026-07-18). This is why neither the golden
- *  (`localhost:1430`) nor `tauri dev` (`localhost:1420`) ever caught it: both
- *  are real http origins where a custom-scheme Worker isn't involved.
- *
- *  Fetching the script (same-origin, allowed by CSP `connect-src 'self'`) and
- *  handing `new Worker` a `blob:` URL sidesteps it — WKWebView runs blob-URL
- *  workers normally (needs CSP `worker-src blob:`, tauri.conf.json). The
- *  worker bundle is self-contained (zero top-level imports) so the opaque blob
- *  base breaks no import resolution, and every asset URL it fetches at runtime
- *  (cMapUrl/standardFontDataUrl/wasmUrl/…) is an absolute `/pdfjs/…` string
- *  getDocument is handed, resolved against the document origin, not the blob
- *  base. Returns the worker plus a `revoke` the caller fires on teardown (the
- *  ~2MB script blob stays referenced by the object URL until then). */
-async function makeBlobWorker(scriptUrl: string): Promise<{ worker: Worker; revoke: () => void }> {
-  const res = await fetch(scriptUrl);
-  if (!res.ok) throw new Error(`pdf worker fetch: ${res.status} ${res.statusText} for ${scriptUrl}`);
-  const blobUrl = URL.createObjectURL(await res.blob());
-  return { worker: new Worker(blobUrl, { type: "module" }), revoke: () => URL.revokeObjectURL(blobUrl) };
-}
-
-/** Install `ReadableStream.prototype[Symbol.asyncIterator]` when the runtime
- *  lacks it. The production WKWebView (Tauri's webview) does NOT implement
- *  async iteration of a ReadableStream, but pdf.js's `getTextContent` does
- *  `for await (const value of readableStream)` (pdf.mjs `streamTextContent`).
- *  Under the real app every text-layer build therefore threw
- *  `TypeError: undefined is not a function (near '...value of readableStream...')`,
- *  and because `renderPdfPage`'s catch clears the page element it also blanked
- *  the canvas that had ALREADY rendered a line earlier — the "모달은 뜨는데
- *  페이지가 비어있고 에러만" report (2026-07-18). Canvas render itself survives
- *  because its sibling path uses `readableStream.getReader()` (supported), not
- *  `for await`.
- *
- *  Neither the CDP golden (Chromium) nor Playwright WebKit reproduces this:
- *  both ship the async iterator, so only a real `tauri build` WKWebView bundle
- *  exposes it (see [[wkwebview-custom-scheme-test-gap]] — same "green
- *  everywhere but the real webview" class).
- *
- *  Feature-detected (`in` guard) → a no-op on engines that already have it, so
- *  the polyfill can only ever ADD the missing method, never shadow a native
- *  one. The body is the Streams-spec definition: a reader's `read()` already
- *  yields `{ value, done }`, exactly an async-iterator result; `return()`
- *  cancels the stream unless `preventCancel`. Idempotent. Command (void).
- *  Exported for the regression test that guards this polyfill (tests/pdf-viewer). */
-export function ensureReadableStreamAsyncIterator(): void {
-  if (typeof ReadableStream === "undefined") return;
-  const proto = ReadableStream.prototype as unknown as Record<symbol, unknown>;
-  if (Symbol.asyncIterator in proto) return;
-  proto[Symbol.asyncIterator] = function (
-    this: ReadableStream,
-    { preventCancel = false }: { preventCancel?: boolean } = {},
-  ) {
-    const reader = this.getReader();
-    return {
-      next: () => reader.read(),
-      return: (value?: unknown) => {
-        if (preventCancel) {
-          reader.releaseLock();
-          return Promise.resolve({ done: true, value });
-        }
-        return reader.cancel(value).then(() => {
-          reader.releaseLock();
-          return { done: true, value };
-        });
-      },
-      [Symbol.asyncIterator]() {
-        return this;
-      },
-    };
-  };
-}
-
 /** Open the PDF viewer against a bytes source — `pathForCaption` is used only
  *  for the shell's basename caption, never for IO (`getBytes` supplies the
  *  actual fetch, local or remote — see `openPdfViewer`/`openPdfViewerRemote`
