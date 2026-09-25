@@ -27,7 +27,7 @@ describe("isResolvedAbsolutePath", () => {
   it("rejects a literal unresolved tilde — the Windows-home failure symptom", () => {
     // This is exactly what a resolved `canonicalize_path("~")` looks like
     // when the backend's home lookup fails (expand_home's documented
-    // literal-fallback contract, src-tauri/src/commands.rs): callers must
+    // literal-fallback contract, src-tauri/src/fs/paths.rs): callers must
     // NOT treat it as a usable absolute root.
     expect(isResolvedAbsolutePath("~")).toBe(false);
   });
@@ -37,7 +37,7 @@ describe("isResolvedAbsolutePath", () => {
 });
 
 describe("normalizePath", () => {
-  // Parity with backend `commands.rs:849 test_normalize_path_resolves_dot_dot_and_dot`
+  // Parity with backend `fs/paths.rs:378 test_normalize_path_resolves_dot_dot_and_dot`
   // — the frontend/backend twins MUST agree, or the tree and the header drift.
   it("pops `..` against the preceding segment (backend parity)", () => {
     expect(normalizePath("/a/b/../c")).toBe("/a/c");

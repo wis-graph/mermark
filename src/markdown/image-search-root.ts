@@ -7,7 +7,7 @@ import { normalizePath } from "../document/path";
 import { isPathInsideRoot } from "./local-doc-link";
 
 /** Depth to which the backend's `resolve_image` walks a vault root looking
- *  for a basename match (`scan_match`, src-tauri/src/commands.rs). Mirrors
+ *  for a basename match (`scan_match`, src-tauri/src/fs/image_resolve.rs). Mirrors
  *  the backend's `MAX_IMAGE_SCAN_DEPTH` constant — the two MUST agree, or a
  *  file the frontend expects to be reachable silently isn't. Kept here (not
  *  inlined at the call site) so there is exactly one place to bump both

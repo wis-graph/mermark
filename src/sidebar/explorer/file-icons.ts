@@ -49,7 +49,7 @@ export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
  *  here (2026-08) to join md; `.markdown`/`.mdx` deliberately stay OUT (scoped
  *  out of the txt-as-md decision, see _workspace/01_architect_design_txt.md
  *  §0). Keyed by the lowercased extension `extensionOf` returns.
- *  Mirrored in Rust by `commands.rs`'s `is_editor_text_ext` (the
+ *  Mirrored in Rust by `fs/link_targets.rs`'s `is_editor_text_ext` (the
  *  `list_link_targets`/`classify_link_target` picker gate) — the language
  *  boundary means this can't be a shared reference, so the two sets are
  *  synced BY HAND. Adding an extension here without also updating

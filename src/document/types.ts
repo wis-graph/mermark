@@ -34,7 +34,7 @@ export interface ScanResult {
 /** One filesystem drive/volume root, as returned by the backend `list_drives`
  *  command — the explorer's "내 컴퓨터" (My Computer) virtual root listing.
  *  Same convention as `DirEntry`: no `rename_all`, so `display_name` wires
- *  snake_case verbatim (Rust `DriveEntry`, `src-tauri/src/commands.rs`). */
+ *  snake_case verbatim (Rust `DriveEntry`, `src-tauri/src/fs/drives.rs`). */
 export interface DriveEntry {
   path: string;
   display_name: string;
@@ -49,6 +49,6 @@ export interface LinkTarget {
   /** Path relative to the base dir — kept for future dedup/recursive expansion. */
   rel: string;
   /** "markdown" | "image" — selects the insert rule. The Rust `LinkTarget.kind`
-   *  is the SSOT for these exact strings (see commands.rs classify_link_target). */
+   *  is the SSOT for these exact strings (see fs/link_targets.rs classify_link_target). */
   kind: "markdown" | "image";
 }

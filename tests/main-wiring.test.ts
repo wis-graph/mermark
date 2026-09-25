@@ -453,7 +453,7 @@ describe("main workspace wiring", () => {
 
   // Windows-home fix regression lock: when the backend can't resolve a home
   // directory (real-world case: expand_home's HOME-only home_dir() on a
-  // Windows session — see src-tauri/src/commands.rs), canonicalize_path("~")
+  // Windows session — see src-tauri/src/fs/paths.rs), canonicalize_path("~")
   // used to come back as the literal, non-absolute "~" instead of erroring,
   // and that got promoted straight to the explorer's root. resolveHomeRoot
   // must demote ANY non-absolute result to `fallback`, not just a thrown

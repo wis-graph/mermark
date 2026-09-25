@@ -471,7 +471,7 @@ const TREE: Record<string, DirEntry[]> = {
     // below unless showHidden. Never add a `*.mermark-tmp.*`/
     // `*.mermark-recovered` row here: the artifact-exclusion invariant is
     // expressed by ABSENCE in this mock (filter can't un-invariant it),
-    // mirroring commands.rs's unconditional `is_mermark_artifact` check.
+    // mirroring fs/listing.rs's unconditional `is_mermark_artifact` check.
     { name: ".config", path: "/mock/vault/.config", is_dir: true },
     { name: "notes", path: "/mock/vault/notes", is_dir: true },
     // .hidden-note.md sorts first within the file group, same reason.
@@ -693,7 +693,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // up with the SAMPLE body's `[[some-note]]` and `[[diagram.png]]`. The
       // browser mock can't read a real FS, so `dir` is accepted but ignored.
       // plain.txt mirrors the real classify_link_target's txt branch
-      // (commands.rs): kind stays "markdown" (txt opens the same as md), but
+      // (fs/link_targets.rs): kind stays "markdown" (txt opens the same as md), but
       // `name` is the FULL filename (not a stem) — inserting "plain" would
       // resolve back to "plain.md" (wikilinkPath's default-extension rule),
       // an entirely different file. See _workspace/01_architect_design_txt.md
@@ -973,7 +973,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
     case "canonicalize_path": {
       const raw = String(a.path ?? "");
       // Mirrors the real backend's `expand_home` special-casing a bare `~`
-      // as `$HOME` (commands.rs) before canonicalizing — the browser has no
+      // as `$HOME` (fs/paths.rs) before canonicalizing — the browser has no
       // real home directory, so it stands in with the mock's one real root,
       // matching what a fresh reader would already expect to land on
       // (00_request.md #2: clicking the Global Vault jumps to "home").
@@ -1110,7 +1110,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
     case "remote_list_dir": {
       // Mirrors `remote_list_dir(host, vault, path, show_hidden) ->
       // Result<Vec<DirEntry>, String>`. Checked against `DirEntry` in
-      // commands.rs (`is_dir` snake_case, same as the local `list_dir` mock
+      // fs/listing.rs (`is_dir` snake_case, same as the local `list_dir` mock
       // above) and against remote_host.rs's `list_dir_handler`, which rewrites
       // every entry's `path` to be **vault-relative** before it reaches the
       // client (the host never leaks its own absolute filesystem paths) — so
@@ -1125,7 +1125,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
     }
     case "remote_list_files_recursive": {
       // Mirrors `remote_list_files_recursive(host, vault, path, show_hidden) ->
-      // Result<ScanResult, String>`. Checked against `FileHit` (commands.rs):
+      // Result<ScanResult, String>`. Checked against `FileHit` (fs/listing.rs):
       // three fields — `name`, `path`, `rel_path` — not two; `path` is
       // rewritten vault-relative by `list_files_recursive_handler`
       // (remote_host.rs) the same way `list_dir`'s is, so it equals `rel_path`
@@ -1143,7 +1143,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
     }
     case "remote_read_file": {
       // Mirrors `remote_read_file(host, vault, path) -> Result<FileContent, String>`.
-      // Checked against `FileContent` (commands.rs): `{ text, mtime }`, same
+      // Checked against `FileContent` (fs/file_io.rs): `{ text, mtime }`, same
       // shape as the local `read_file` mock.
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
@@ -1206,7 +1206,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
     case "remote_list_link_targets": {
       // Mirrors `remote_list_link_targets(host, vault, path) ->
       // Result<Vec<LinkTarget>, String>`. Checked against `LinkTarget`
-      // (commands.rs): `{ name, rel, kind }`, same shape as the local
+      // (fs/link_targets.rs): `{ name, rel, kind }`, same shape as the local
       // `list_link_targets` mock. Empty here — the remote `[[` picker isn't
       // exercised by the SAMPLE doc, and an empty list is a valid response.
       const host = String(a.host ?? "");

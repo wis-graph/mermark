@@ -11,14 +11,15 @@ export function shouldPreserveGlobalExplorerRoot(vault: Pick<Vault, "persistence
   return vault?.persistenceKind === "global";
 }
 
-/** Unreachable-branch guard for `Vault.persistenceKind` switches below. Widening
- *  `Vault` (RemoteVault's addition) only made `tsc` flag ONE hand-rolled
- *  ternary in this file (`explorerRootForVault`) — every other kind check was
- *  `=== "permanent"` / `=== "global"`, so a vault kind neither of those
+/** Unreachable-branch guard for `Vault.persistenceKind` switches — two below
+ *  in this file, three more in `main.ts` (`explorerRootForVault` and its
+ *  siblings). Widening `Vault` (RemoteVault's addition) only made `tsc` flag
+ *  ONE hand-rolled ternary, `explorerRootForVault` — every other kind check
+ *  was `=== "permanent"` / `=== "global"`, so a vault kind neither of those
  *  silently fell into an `else` written for local vaults. Routing every kind
- *  check below through a `switch (...) { default: return assertNever(x) }`
- *  makes the NEXT new vault kind fail `tsc` at every one of these sites, not
- *  just one (task-2b brief). */
+ *  check through a `switch (...) { default: return assertNever(x) }` makes
+ *  the NEXT new vault kind fail `tsc` at every one of these sites, not just
+ *  one (task-2b brief). */
 export function assertNever(x: never): never {
   throw new Error(`처리되지 않은 볼트 종류: ${JSON.stringify(x)}`);
 }
@@ -109,12 +110,13 @@ export function standardLinkRejectionFor(vault: Vault | undefined): string | nul
 }
 
 /** The user's home directory, resolved through the EXISTING `canonicalize_path`
- *  IPC command (already used by CLI routing above) fed the literal `~` — the
- *  backend's `expand_home` (src-tauri/src/commands.rs) already special-cases
- *  a bare `~` as `$HOME`/`%USERPROFILE%`, so this needs no new backend surface.
- *  Falls back to `fallback` (the historic default root) when canonicalization
- *  fails outright (e.g. a headless test/CI environment) — the same defensive
- *  posture `routeCliFileResolved`'s own canonicalize wrapper uses just above —
+ *  IPC command (already used by CLI routing in `./cli-routing.ts`) fed the
+ *  literal `~` — the backend's `expand_home` (src-tauri/src/fs/paths.rs)
+ *  already special-cases a bare `~` as `$HOME`/`%USERPROFILE%`, so this needs
+ *  no new backend surface. Falls back to `fallback` (the historic default
+ *  root) when canonicalization fails outright (e.g. a headless test/CI
+ *  environment) — the same defensive posture `routeCliFileResolved`'s
+ *  (`./cli-routing.ts`) own canonicalize wrapper uses —
  *  AND when it "succeeds" with a value that isn't actually a usable root
  *  (`isResolvedAbsolutePath`). That second guard matters because the backend's
  *  home lookup can itself fail (an environment with no resolvable home

@@ -90,7 +90,7 @@ function detectSeparator(path: string): "\\" | "/" {
 }
 
 /** Collapse `.`/`..`/duplicate separators purely textually — the FRONTEND twin
- *  of the backend's `normalize_path` (src-tauri/src/commands.rs). MUST produce
+ *  of the backend's `normalize_path` (src-tauri/src/fs/paths.rs). MUST produce
  *  identical results: the backend normalizes what `list_dir` LISTS, this
  *  normalizes what the explorer DISPLAYS/STORES, and the two must never drift
  *  (tree ↔ header consistency).
@@ -267,7 +267,7 @@ function isAbsoluteLike(input: string): boolean {
  *  expand). A value that has already come back from the backend and still
  *  starts with `~` means home-directory resolution failed there (see
  *  `expand_home`'s documented literal-fallback contract in
- *  `src-tauri/src/commands.rs`) — it is a relative path, not a usable root,
+ *  `src-tauri/src/fs/paths.rs`) — it is a relative path, not a usable root,
  *  and callers like `resolveHomeRoot` must not treat it as one. */
 export function isResolvedAbsolutePath(path: string): boolean {
   return (

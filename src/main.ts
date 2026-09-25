@@ -383,8 +383,9 @@ async function boot() {
   // which was ALWAYS vault-kind-generic (file-host.ts's makeFileHost switch)
   // — the only thing stopping remote browsing was this function itself
   // refusing to hand the explorer a root to jump to. `isRootLocked` already
-  // returns true for remote (main.ts's own switch, above), so "up" past the
-  // vault root is still refused exactly like a permanent vault.
+  // returns true for remote (`isVaultRootLocked`'s switch, in
+  // workspace/vault-routing.ts), so "up" past the vault root is still
+  // refused exactly like a permanent vault.
   const explorerRootForVault = (vault: Vault): string | null => {
     const kind = vault.persistenceKind;
     switch (kind) {

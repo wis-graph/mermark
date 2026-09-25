@@ -22,7 +22,7 @@ import { themeVarsSink, cssVarSink, headingScaleSink, webFontSink, headingFontSi
 export function bindBootSettingSinks(): void {
   // Theme is the SSOT; bind the DOM sink first so the dataset is set before the
   // editor mounts (mermaid reads it on its lazy initial load) — and so it also
-  // applies on the no-file / error screens below.
+  // applies on the no-file / error screens main.ts renders.
   themeSetting.bind(applyTheme);
   // The theme JSON is the effective source: fan its token map onto documentElement
   // (inline vars beat :root[data-theme]). Bind here, before the editor mounts, so
@@ -38,7 +38,7 @@ export function bindBootSettingSinks(): void {
   themeSetting.subscribe(syncJsonToPreset);
   // Body text scale is the SSOT too: bind the CSS-var sink here (same place,
   // same reason as theme) so the saved scale is on the DOM before the editor
-  // mounts, and so it applies on the no-file / error screens below.
+  // mounts, and so it applies on the no-file / error screens main.ts renders.
   fontScaleSetting.bind(applyFontScale);
   // Typography sinks — one setting.bind(sink) line each, no hand fan-out. These
   // drive CSS vars composed in styles.css (--editor-font-size composes with
@@ -58,7 +58,7 @@ export function bindBootSettingSinks(): void {
   readingWidthSetting.bind(cssVarSink("--measure", (pct: number) => `${pct}%`));
   lineHeightSetting.bind(cssVarSink("--line-height"));
   // Left sidebar width (drag sash): same setting.bind(cssVarSink) shape as the
-  // typography vars above. The sash (below, once `workspace` exists) previews
+  // typography vars above. The sash (created in main.ts, once `workspace` exists) previews
   // the width as a transient var during drag and commits here on release; this
   // sink re-applies that same value, so SSOT and the var converge (idempotent).
   sidebarWidthSetting.bind(cssVarSink("--sidebar-width", (px: number) => `${px}px`));
