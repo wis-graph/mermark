@@ -127,7 +127,7 @@ import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
 import { el } from "./chrome/dom";
 import { makeSaveStatus } from "./chrome/status-bar/save-status";
 import { makeModeToggle } from "./chrome/mode-toggle";
-import { refreshMermaidTheme } from "./markdown/mermaid-widget";
+import { refreshMermaidTheme, subscribeThemeForceRebake } from "./markdown/mermaid-widget";
 import "katex/dist/katex.min.css";
 import "./fonts/fonts.css";
 import "./styles.css";
@@ -1820,8 +1820,10 @@ async function boot() {
   // fan-out to wherever registration might happen. Mirrors the
   // themeSetting.subscribe(() => current?.refresh()) shape above.
   onFeaturesChanged(() => current?.reloadFeatures());
-  // themeForce re-bake is owned by mermaid-widget (self-subscription); main
-  // only triggers the redraw it alone can dispatch.
+  // themeForce: mermaid-widget owns the re-bake (subscribeThemeForceRebake);
+  // main only triggers the redraw it alone can dispatch. Order matters —
+  // re-bake first (see that function's doc).
+  subscribeThemeForceRebake();
   themeForceSetting.subscribe(() => current?.refresh());
   // panZoom toggle: re-render blocks so MermaidWidget (which snapshots panZoom
   // in eq) re-creates and attachPanZoom re-runs with the new value.

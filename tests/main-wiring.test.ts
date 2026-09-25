@@ -242,6 +242,14 @@ describe("main workspace wiring", () => {
     expect(mainSource).not.toContain("createTemporaryVault");
   });
 
+  it("subscribes mermaid-widget's themeForce re-bake BEFORE main's own redraw subscription (order contract: re-bake must land before the redraw re-creates widgets)", () => {
+    const rebakeIndex = mainSource.indexOf("subscribeThemeForceRebake();");
+    const redrawIndex = mainSource.indexOf("themeForceSetting.subscribe(() => current?.refresh());");
+    expect(rebakeIndex).toBeGreaterThan(-1);
+    expect(redrawIndex).toBeGreaterThan(-1);
+    expect(rebakeIndex).toBeLessThan(redrawIndex);
+  });
+
   it.each([
     ["Explorer", "/A/start.md"],
     ["Recent", "/P/b.md"],

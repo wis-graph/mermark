@@ -6,6 +6,7 @@ import {
   mermaidThemeVariables,
   isPureWhite,
   mermaidNodeFill,
+  subscribeThemeForceRebake,
 } from "../src/markdown/mermaid-widget";
 import { clampZoom, zoomAtCursor, attachPanZoom, clampPanDelta, renderedTranslate } from "../src/pan-zoom";
 import { panZoomSetting, themeForceSetting, themeJsonSetting } from "../src/settings/app";
@@ -408,6 +409,21 @@ describe("effectiveMermaidTheme (themeForce override rule)", () => {
     themeForceSetting.set("light");
     expect(effectiveMermaidTheme("dark")).toBe("default");
     expect(effectiveMermaidTheme("light")).toBe("default");
+  });
+});
+
+describe("subscribeThemeForceRebake (2026-09-25: re-bake is installed explicitly by main.ts's boot(), not as an import-time side effect)", () => {
+  afterEach(() => themeForceSetting.set("follow"));
+
+  it("no import-time subscription; once subscribed, a themeForce change bumps the widget version", () => {
+    const v0 = new MermaidWidget("graph TD;A").version;
+    themeForceSetting.set("dark");
+    expect(new MermaidWidget("graph TD;A").version).toBe(v0);
+    const off = subscribeThemeForceRebake();
+    themeForceSetting.set("light");
+    expect(new MermaidWidget("graph TD;A").version).toBe(v0 + 1);
+    off();
+    themeForceSetting.set("follow");
   });
 });
 

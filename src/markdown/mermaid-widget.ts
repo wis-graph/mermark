@@ -173,11 +173,18 @@ export function refreshMermaidTheme(theme: Theme) {
   }
 }
 
-// themeForce is a mermaid-domain rule, so the widget layer owns its re-bake:
-// when the user pins/unpins the diagram theme, re-bake against the last app
-// theme. The redraw dispatch (refreshBlocks) is main.ts's job since only it
-// holds the editor handle — main stays free of mermaid theme knowledge.
-themeForceSetting.subscribe(() => refreshMermaidTheme(lastAppTheme));
+/** themeForce is a mermaid-domain rule, so the widget layer owns its re-bake:
+ *  when the user pins/unpins the diagram theme, re-bake against the last app
+ *  theme. The redraw dispatch (refreshBlocks) is main.ts's job since only it
+ *  holds the editor handle — main stays free of mermaid theme knowledge.
+ *  Installed explicitly by main.ts's boot() — no longer an import-time side
+ *  effect (2026-09-25). ORDER CONTRACT: must be subscribed BEFORE main's own
+ *  `themeForceSetting.subscribe(() => current?.refresh())`, so the re-bake
+ *  (version bump + svgCache clear) has happened by the time the redraw
+ *  re-creates widgets. Returns the unsubscribe. */
+export function subscribeThemeForceRebake(): () => void {
+  return themeForceSetting.subscribe(() => refreshMermaidTheme(lastAppTheme));
+}
 
 // Height of the most recently rendered diagram. When a re-render misses the
 // cache (the source was edited), we reserve this height on the new host while
