@@ -12,7 +12,7 @@
 //! Also owns pairing: a short-lived, human-typeable code
 //! (`issue_pairing_code`/`PairingState`/`redeem`) that exchanges once for a
 //! long-lived device token (`remote_token.rs` stores that token; this module
-//! only mints it via `htmlview::mint_view_token`, reusing that CSPRNG-backed
+//! only mints it via `crypto_token::mint_view_token`, reusing that CSPRNG-backed
 //! minter rather than writing a second one).
 //!
 //! Follows `htmlview.rs`'s containment idiom rather than inventing a new
@@ -165,7 +165,7 @@ impl PairingState {
 }
 
 /// Draws a fresh 6-digit pairing code from the OS CSPRNG (`getrandom`, same
-/// source `htmlview::mint_view_token` uses for its token bytes) rather than
+/// source `crypto_token::mint_view_token` uses for its token bytes) rather than
 /// a PRNG seeded from the clock — a guessable code would defeat the whole
 /// point of a pairing step. `now_ms` is caller-supplied (not read here) so
 /// `redeem`'s expiry check is deterministic under test.
@@ -199,7 +199,7 @@ pub fn redeem(state: &mut PairingState, offered: &str, now_ms: u64) -> Result<St
         return Err(PairError::Mismatch);
     }
     state.used = true;
-    Ok(crate::htmlview::mint_view_token())
+    Ok(crate::crypto_token::mint_view_token())
 }
 
 /// Byte-for-byte comparison that never short-circuits on a *content*
@@ -596,7 +596,7 @@ async fn pair_handler(
         // redeem the same code.
         remote_host_redeem_or(&mut pairing, &req.code, now)?
     };
-    let id = crate::htmlview::mint_view_token();
+    let id = crate::crypto_token::mint_view_token();
     let device = crate::remote_token::PairedDevice {
         id: id.clone(),
         token: token.clone(),

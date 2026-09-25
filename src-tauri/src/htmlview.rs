@@ -47,6 +47,8 @@ use std::sync::Mutex;
 use tauri::http::{header, HeaderValue, Method, Request, Response, StatusCode};
 use tauri::Manager;
 
+use crate::crypto_token::mint_view_token;
+
 /// The single value both the preflight response and the real GET response
 /// advertise for `Access-Control-Allow-Methods`. Named so the two call sites
 /// can't silently drift (a preflight promising a method the real response
@@ -108,24 +110,6 @@ fn html_view_scheme_source(request: &Request<Vec<u8>>) -> &'static str {
         Some(host) if host == "htmlview.localhost" || host == "localhost" => "http://htmlview.localhost",
         _ => "htmlview:",
     }
-}
-
-/// Number of random bytes in a minted view token — 128 bits, hex-encoded to
-/// 32 characters. This is the entire access-control secret for a scripted
-/// open: possessing the token *is* the authorization (design §10.3), so it
-/// must be infeasible to guess or enumerate, not just "different each time".
-const VIEW_TOKEN_BYTES: usize = 16;
-
-/// Mint one fresh, unguessable view token: `VIEW_TOKEN_BYTES` bytes from the
-/// OS CSPRNG (`getrandom`, never a seeded/deterministic PRNG — a predictable
-/// token would let one open's document forge another's URL and reach a root
-/// it was never armed for), hex-encoded. Two calls always differ in practice
-/// (locked by `mint_view_token_is_not_repeated_across_calls`) precisely
-/// because they're independent CSPRNG draws, not a counter.
-pub(crate) fn mint_view_token() -> String {
-    let mut bytes = [0u8; VIEW_TOKEN_BYTES];
-    getrandom::fill(&mut bytes).expect("OS CSPRNG must be available to mint a view token");
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// What a minted token resolves to: a canonicalized local directory (the
@@ -603,22 +587,6 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    // --- mint_view_token ---
-
-    #[test]
-    fn mint_view_token_is_32_hex_chars() {
-        let token = mint_view_token();
-        assert_eq!(token.len(), VIEW_TOKEN_BYTES * 2);
-        assert!(token.chars().all(|c| c.is_ascii_hexdigit()), "got: {token}");
-    }
-
-    #[test]
-    fn mint_view_token_is_not_repeated_across_calls() {
-        let a = mint_view_token();
-        let b = mint_view_token();
-        assert_ne!(a, b, "two independent CSPRNG draws must not collide");
     }
 
     // --- is_within_armed_root ---

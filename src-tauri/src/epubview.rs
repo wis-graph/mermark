@@ -8,7 +8,8 @@
 //!
 //! **Sibling module, not a variant of `htmlview.rs`** (design §1 "형제 모듈 +
 //! 별도 스킴, enum 주입 기각"). The two modules share only
-//! `htmlview::mint_view_token` (promoted `pub(crate)` for this) — every other
+//! `crypto_token::mint_view_token` (originally `htmlview`'s, promoted
+//! `pub(crate)` for this; now in `crypto_token.rs`) — every other
 //! helper here (token/path parsing, CORS, 403, CSP) is its own copy, on
 //! purpose: capping the reuse at "duplicate twice, no shared abstraction yet"
 //! keeps `htmlview.rs`'s already-shipped (v0.9.15) cargo-test surface
@@ -47,7 +48,7 @@ use std::sync::Mutex;
 use tauri::http::{header, HeaderValue, Method, Request, Response, StatusCode};
 use tauri::Manager;
 
-use crate::htmlview::mint_view_token;
+use crate::crypto_token::mint_view_token;
 
 /// Mirrors `htmlview::CORS_ALLOWED_METHODS` — the one value both the
 /// preflight and the real response advertise, named once so they can't drift

@@ -7,6 +7,7 @@ pub mod attachments;
 mod bundle;
 pub mod cli;
 mod commands;
+mod crypto_token;
 mod epubview;
 mod fs;
 mod htmlview;
