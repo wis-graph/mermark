@@ -671,6 +671,13 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       store.set(String(a.path ?? ""), String(a.text ?? ""));
       console.info("[mock] write_file", a.path, `${String(a.text ?? "").length} chars`);
       // mirror the real command: return the new mtime (no conflict in-memory)
+      // R1/D4 (_workspace/01_architect_design.md §4.3): the real backend can
+      // reject a baseline!=0 write with "MISSING: file no longer exists on
+      // disk" once the original has vanished since the read. This mock's
+      // in-memory `store` has no delete/vanish concept — every path it has
+      // ever seen (or SAMPLE, for one it hasn't) "exists" forever — so
+      // MISSING cannot arise here; that path is proven by cargo tests
+      // (file_io.rs) and the smoke bridge (workspace-smoke-bridge.mjs) only.
       return Date.now() as T;
     }
     case "bundle_doc": {

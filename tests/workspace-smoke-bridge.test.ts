@@ -17,7 +17,11 @@ async function post(url: string, token: string, command: string, args: Record<st
     body: JSON.stringify({ command, args }),
   });
   const text = await response.text();
-  return { ok: response.ok, body: text ? JSON.parse(text) : null };
+  // An error response (see startWorkspaceSmokeBridge's catch branch) writes
+  // the raw Error#message as PLAIN TEXT, not JSON — parsing it here would
+  // throw a SyntaxError that masks the actual assertion failure below.
+  if (!response.ok) return { ok: false, body: text };
+  return { ok: true, body: text ? JSON.parse(text) : null };
 }
 
 describe("workspace smoke bridge watch_file contract", () => {
@@ -48,5 +52,48 @@ describe("workspace smoke bridge watch_file contract", () => {
 
     await post(bridge.url, token, "unwatch_file", { path: fixturePath });
     expect(bridge.snapshot().session).toBeNull();
+  });
+});
+
+// D4/R1 (_workspace/01_architect_design.md §4.3): the real backend
+// (src-tauri/src/fs/file_io.rs's write_file_with_state) rejects a
+// baseline!=0 write whose target has vanished since the read with
+// `Err("MISSING: file no longer exists on disk (baseline={baseline})")`
+// instead of silently recreating the file. The bridge must produce the SAME
+// error text (message-prefix parity a golden script can match on) rather
+// than the raw ENOENT `stat()` throws today.
+describe("workspace smoke bridge write_file MISSING contract", () => {
+  let bridge: Awaited<ReturnType<typeof startWorkspaceSmokeBridge>> | undefined;
+  let fixtureRoot = "";
+
+  afterEach(async () => {
+    await bridge?.close();
+    bridge = undefined;
+    if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true });
+    fixtureRoot = "";
+  });
+
+  it("rejects a baseline!=0 write to a vanished original with MISSING:, matching the Rust write_file contract", async () => {
+    fixtureRoot = await mkdtemp(join(tmpdir(), "mermark-bridge-test-"));
+    const token = "test-token";
+    bridge = await startWorkspaceSmokeBridge({ roots: [resolve("."), fixtureRoot], token, events: [] });
+    const fixturePath = join(fixtureRoot, "a.md"); // never created — stands in for "deleted after read"
+
+    const result = await post(bridge.url, token, "write_file", { path: fixturePath, text: "x", baseline: 1 });
+
+    expect(result.ok).toBe(false);
+    expect(result.body).toBe("MISSING: file no longer exists on disk (baseline=1)");
+  });
+
+  it("still creates a new file when baseline is 0 (new file / save-as / recovered-copy — unaffected by the MISSING guard)", async () => {
+    fixtureRoot = await mkdtemp(join(tmpdir(), "mermark-bridge-test-"));
+    const token = "test-token";
+    bridge = await startWorkspaceSmokeBridge({ roots: [resolve("."), fixtureRoot], token, events: [] });
+    const fixturePath = join(fixtureRoot, "new.md");
+
+    const result = await post(bridge.url, token, "write_file", { path: fixturePath, text: "x", baseline: 0 });
+
+    expect(result.ok).toBe(true);
+    expect(typeof result.body).toBe("number");
   });
 });

@@ -40,7 +40,17 @@ async function invoke(command, args, roots, state, faults) {
     case "write_file": {
       const baseline = Number(args.baseline ?? 0);
       if (baseline !== 0) {
-        const current = await stat(path);
+        // R1/D4 parity (_workspace/01_architect_design.md §4.3): the real
+        // backend (file_io.rs's write_file_with_state, guarded by
+        // original_vanished_since_read) refuses to recreate a baseline
+        // write's target once it has vanished since the read — same
+        // "MISSING:" error-prefix contract, so a golden script can match on
+        // it identically regardless of which side (Rust or this bridge) it
+        // is driving.
+        const current = await stat(path).catch((error) => {
+          if (error.code === "ENOENT") throw new Error(`MISSING: file no longer exists on disk (baseline=${baseline})`);
+          throw error;
+        });
         if (Math.trunc(current.mtimeMs) > baseline) throw new Error("CONFLICT: smoke fixture changed on disk");
       }
       await mkdir(dirname(path), { recursive: true });
