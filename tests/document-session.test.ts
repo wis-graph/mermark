@@ -244,3 +244,67 @@ describe("DocumentSession — runTransition contract (via openDocument/openDocum
     expect(editorA.resumeWrites).toHaveBeenCalledTimes(1); // current === sourceEditor at abort time
   });
 });
+
+describe("DocumentSession.readonlyView (design §3.6 — read-only, future-plugin-API-shaped)", () => {
+  beforeEach(() => {
+    documentContents.clear();
+    deferredReads.clear();
+    rejectedReads.clear();
+    rejectWatch = false;
+    invokeMock.mockClear();
+    mountEditorMock.mockClear();
+    nextEditor = undefined;
+  });
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("exposes exactly get/subscribe/bind — no setter, frozen at every level", () => {
+    const session = createDocumentSession(makeDeps());
+    const view = session.readonlyView;
+
+    expect("set" in view).toBe(false);
+    expect(Object.keys(view).sort()).toEqual(["bind", "get", "subscribe"]);
+    expect(Object.isFrozen(view)).toBe(true);
+    expect(Object.isFrozen(view.get())).toBe(true);
+  });
+
+  it("get() reflects an open document, then a welcome transition, with no editor handle on the snapshot", async () => {
+    documentContents.set("/a.md", "# A");
+    const session = createDocumentSession(makeDeps());
+    await session.openDocumentSafely("/a.md");
+
+    const opened = session.readonlyView.get();
+    expect(opened).toMatchObject({ file: "/a.md", isRemote: false });
+    expect(opened).not.toHaveProperty("current");
+    expect(opened).not.toHaveProperty("view");
+
+    await session.enterVaultWelcome({ onCommit: () => {} });
+    expect(session.readonlyView.get().file).toBe("");
+  });
+
+  it("subscribe fires only on change; bind fires immediately AND on change; unsubscribe stops both", async () => {
+    documentContents.set("/a.md", "# A");
+    documentContents.set("/b.md", "# B");
+    const session = createDocumentSession(makeDeps());
+    const subscribeFn = vi.fn();
+    const bindFn = vi.fn();
+    const unsubscribe = session.readonlyView.subscribe(subscribeFn);
+    const unbind = session.readonlyView.bind(bindFn);
+
+    expect(subscribeFn).not.toHaveBeenCalled(); // no immediate call
+    expect(bindFn).toHaveBeenCalledTimes(1); // immediate call with the current snapshot
+    expect(bindFn).toHaveBeenCalledWith(expect.objectContaining({ file: "" }));
+
+    await session.openDocumentSafely("/a.md");
+    expect(subscribeFn).toHaveBeenCalledTimes(1);
+    expect(bindFn).toHaveBeenCalledTimes(2);
+    expect(subscribeFn).toHaveBeenCalledWith(expect.objectContaining({ file: "/a.md" }));
+
+    unsubscribe();
+    unbind();
+    await session.openDocumentSafely("/b.md");
+    expect(subscribeFn).toHaveBeenCalledTimes(1); // no further calls
+    expect(bindFn).toHaveBeenCalledTimes(2);
+  });
+});

@@ -114,6 +114,30 @@ export interface DocumentSession {
   renderWelcomeForVault(): void;
   saveSessionState(immediate?: boolean): void;
   acceptsWatchEvent(change: Pick<WatchSession, "path" | "generation">): boolean;
+
+  /** Read-only, future-plugin-API-shaped view (design §3.6 — structurally
+   *  the same shape `src/api`'s `ReadonlySetting<T>` uses, so a later
+   *  plugin-API exposure is a straight re-export, not a redesign). No
+   *  editor handle, no transaction, no setter — a frozen snapshot plus
+   *  subscribe/bind. Not exposed through `src/api` yet; that's the
+   *  plugin-API work itself (design §3.4/§5), out of scope for this
+   *  bundle. session.ts deliberately never imports `src/api` (api →
+   *  registries is the one-way dependency direction that module owns; this
+   *  file only defines the SHAPE api/ will one day re-export). */
+  readonly readonlyView: ReadonlyDocumentView;
+}
+
+export interface DocumentSnapshot {
+  readonly file: string;
+  readonly baseDir: string;
+  readonly isRemote: boolean;
+  readonly vaultId: string | null;
+}
+
+export interface ReadonlyDocumentView {
+  get(): DocumentSnapshot;
+  subscribe(fn: (s: DocumentSnapshot) => void): () => void;
+  bind(fn: (s: DocumentSnapshot) => void): () => void;
 }
 
 export function createDocumentSession(deps: DocumentSessionDeps): DocumentSession {
@@ -147,6 +171,31 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
   const isCurrentRequest = (id: number): boolean => id === lifecycleRequest;
   const acceptsWatchEvent = (change: Pick<WatchSession, "path" | "generation">): boolean =>
     watcherHandoff.accepts(change, currentFile);
+
+  // ── Read-only view (design §3.6) — a frozen snapshot + subscribe/bind, no
+  //    editor handle, no transaction, no setter. Notified from exactly two
+  //    points: the end of openInWindow (a document mounted) and the end of
+  //    renderWelcomeForVault (no document open). No subscriber exists inside
+  //    the app today, so this changes zero observable behavior on its own.
+  const snapshotListeners = new Set<(snapshot: DocumentSnapshot) => void>();
+  const snapshot = (): DocumentSnapshot =>
+    Object.freeze({ file: currentFile, baseDir: currentBaseDir, isRemote: currentIsRemote, vaultId: currentOpenVaultId });
+  const notifySnapshot = (): void => {
+    const s = snapshot();
+    for (const fn of snapshotListeners) fn(s);
+  };
+  const readonlyView: ReadonlyDocumentView = Object.freeze({
+    get: snapshot,
+    subscribe: (fn: (s: DocumentSnapshot) => void) => {
+      snapshotListeners.add(fn);
+      return () => snapshotListeners.delete(fn);
+    },
+    bind: (fn: (s: DocumentSnapshot) => void) => {
+      fn(snapshot());
+      snapshotListeners.add(fn);
+      return () => snapshotListeners.delete(fn);
+    },
+  });
 
   /** A single stale-request check, captured once per transaction (design
    *  §3.3) — replaces the old `requestId !== lifecycleRequest` hand-copy at
@@ -313,6 +362,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     currentBaseDir = deps.welcomeBaseDir(vault);
     host.classList.add("welcome-host");
     host.append(deps.welcomeElement());
+    notifySnapshot();
   };
 
   function openInWindow(
@@ -436,9 +486,10 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     // Record the navigation in the back/forward history — the SAME single locus
     // as the recent write. A back/forward move (viaHistory) must NOT re-push (the
     // handler already moved the pointer), else ⌘[ would loop. Named so the "don't
-    // re-record a history move" rule isn't an inline if. Still main-resident
-    // until T4 folds (C6) — session calls through the injected dep.
+    // re-record a history move" rule isn't an inline if.
     recordNavigation(file, selectedVault.vaultId, opts.viaHistory ?? false);
+
+    notifySnapshot();
 
     // dev-only: expose the live controller so the debug harness can read real
     // editor state (selection offsets, block specs) instead of guessing.
@@ -678,5 +729,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     renderWelcomeForVault,
     saveSessionState,
     acceptsWatchEvent,
+
+    readonlyView,
   };
 }
