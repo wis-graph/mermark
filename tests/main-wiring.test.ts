@@ -846,6 +846,78 @@ describe("main workspace wiring", () => {
     expect(document.querySelector(".recovery-modal")).toBeNull();
   });
 
+  // D3 (_workspace/01_architect_design.md §4/§2, plan D3): characterization
+  // of the app's REAL deletion path — no production code change here, this
+  // pins down that the normal path already works (the two golden failures
+  // fixed by D1/D2 were a stale smoke harness, not an app bug). A
+  // `file-unavailable` event carrying the CURRENT watch session's
+  // path/generation passes `createWatcherHandoff.accepts()` (file-watch.ts)
+  // and reaches `onFileUnavailable` (main.ts) synchronously:
+  // `suspendWrites(detail)` cancels the autosave timer and reports
+  // `onStatus("recovery", detail)` FIRST (which — since no recovery modal is
+  // open yet — briefly opens a "save"-kind modal, main.ts:322), then
+  // `showDocumentRecovery("deleted", detail)` calls `closeRecovery()` and
+  // immediately reopens a "deleted"-kind modal in the SAME synchronous call
+  // — so only the final "deleted" modal is ever observable from outside
+  // (§2-3 of the design doc; the "save" modal's flash is a same-tick
+  // open/close, not a rendered frame).
+  it("shows the deleted-file recovery modal (never a stale 'save' one) when the live session's watcher reports a deletion, and never re-autosaves the suspended buffer", async () => {
+    documentContents.set("/P/a.md", "# A");
+    vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
+    await vi.waitFor(() => expect(watcherEvents).toContain("watch /P/a.md"));
+    const liveEditor = (window as Window & { readonly __mermark?: { readonly view: EditorView } }).__mermark;
+    liveEditor?.view.dispatch({ changes: { from: liveEditor.view.state.doc.length, to: liveEditor.view.state.doc.length, insert: "\nD3_DIRTY_BUFFER" } });
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toContain("D3_DIRTY_BUFFER"));
+    invokeMock.mockClear(); // isolate the write_file calls made AFTER the deletion event below
+
+    emitEvent("file-unavailable", { path: "/P/a.md", generation: "1", kind: "deleted", detail: "A 파일이 삭제되었습니다" });
+    await vi.waitFor(() => expect(document.querySelector(".recovery-modal")).not.toBeNull());
+
+    expect(document.querySelectorAll(".recovery-modal")).toHaveLength(1);
+    expect(document.querySelector(".recovery-title")?.textContent).toBe("파일이 삭제되었습니다");
+    expect(document.querySelector(".save-status")?.getAttribute("data-state")).toBe("recovery");
+
+    // Past the default 800ms autosave debounce: suspendWrites() already
+    // cleared the pending timer synchronously above, so no extra write_file
+    // is ever scheduled for the now-deleted path.
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(invokeMock.mock.calls.filter(([command]) => command === "write_file")).toHaveLength(0);
+    expect(document.querySelector(".cm-content")?.textContent).toContain("D3_DIRTY_BUFFER");
+
+    document.querySelector<HTMLButtonElement>(".recovery-cancel")?.click();
+    expect(document.querySelector(".recovery-modal")).toBeNull();
+    expect(document.querySelector(".cm-content")?.textContent).toContain("D3_DIRTY_BUFFER");
+  });
+
+  it("settles on the deleted-file modal (one modal, final title 'deleted') when a rejected autosave write races ahead of the watcher's deletion event", async () => {
+    documentContents.set("/P/a.md", "# A");
+    vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
+    await vi.waitFor(() => expect(watcherEvents).toContain("watch /P/a.md"));
+    const liveEditor = (window as Window & { readonly __mermark?: { readonly view: EditorView } }).__mermark;
+    rejectWrites = true; // the autosave write_file triggered by the edit below fails non-CONFLICT
+    liveEditor?.view.dispatch({ changes: { from: liveEditor.view.state.doc.length, to: liveEditor.view.state.doc.length, insert: "\nD3_RACE_DIRTY" } });
+
+    // Autosave's rejected write fires first (default 800ms debounce) and
+    // opens a "save"-kind recovery modal (main.ts:322's `!openRecovery`
+    // gate — nothing else has opened one yet).
+    await vi.waitFor(() => expect(document.querySelector(".recovery-title")?.textContent).toBe("저장하지 못했습니다"), { timeout: 5000 });
+
+    // The watcher's deletion event for the SAME live session arrives after —
+    // showDocumentRecovery("deleted", ...) closes the stale "save" modal and
+    // opens the "deleted" one in the same synchronous call (§2-3).
+    emitEvent("file-unavailable", { path: "/P/a.md", generation: "1", kind: "deleted", detail: "A 파일이 삭제되었습니다" });
+    await vi.waitFor(() => expect(document.querySelector(".recovery-title")?.textContent).toBe("파일이 삭제되었습니다"));
+
+    expect(document.querySelectorAll(".recovery-modal")).toHaveLength(1);
+    expect(document.querySelector(".cm-content")?.textContent).toContain("D3_RACE_DIRTY");
+  });
+
   it.each(["Recent", "File Finder"])("keeps A mounted and watched when detaching it is rejected through %s", async (surface) => {
     documentContents.set("/P/a.md", "# A");
     documentContents.set("/P/b.md", "# B");
