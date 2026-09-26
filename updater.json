@@ -1,15 +1,15 @@
 {
-  "version": "0.19.0",
-  "notes": "### Added\n\n- **소스 코드 뷰어**: `.ts`, `.py`, `.rs`, `.go`, `.java`, `.json`, `.yaml` 등 45종 남짓한 개발 파일을 문법 강조와 줄 번호가 붙은 읽기 전용 화면으로 연다. 탐색기에서 클릭하거나 터미널에서 `mermark main.rs` 로 바로 열리고, 원격 볼트의 코드도 똑같이 열린다. 줄 번호는 복사할 때 따라오지 않는다. 아주 큰 파일(512KB 또는 1만 줄 초과)은 문법 강조를 끄고 평문으로 보여주며 그 사실을 알린다.",
-  "pub_date": "2026-09-23T00:54:31Z",
+  "version": "0.19.1",
+  "notes": "### Fixed\n\n- **탭을 빠르게 연달아 닫으면 다른 파일에 내용이 써질 수 있던 문제**: 탭 `[a, b, c]`에서 c를 닫는 도중 곧바로 b를 닫으면, a 파일 자리에 b의 내용이 열리고 다음 자동 저장이 그 내용을 a에 쓸 수 있었다. 이제 닫은 뒤 열 문서의 경로와 내용이 맞는지 확인하고, 어긋나면 열지 않는다.\n- **편집 중인 파일이 밖에서 삭제되면 자동 저장이 되살리던 문제**: 삭제를 감지하기 직전에 자동 저장이 끼면 지운 파일이 아무 안내 없이 다시 생겼다. 이제 자동 저장은 사라진 원본을 다시 만들지 않고, 편집 내용은 그대로 둔 채 \"파일이 삭제되었습니다\" 창에서 어떻게 할지 고르게 한다. 심볼릭 링크로 연 문서도 마찬가지다.\n- **뒤로/앞으로 가기가 늦게 도착한 열기에 덮이던 문제**: 느리게 열리던 문서가 방금 뒤로 가기로 연 문서를 덮어쓸 수 있었다. 이제 마지막으로 누른 동작이 이긴다.\n- **뒤로 가기가 실패하면 자동 저장이 멈춘 채 남던 문제**: 전환이 중간에 실패하면 보던 문서의 자동 저장이 다시 켜진다.",
+  "pub_date": "2026-09-26T05:37:15Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3hUL0pWZU05anZOVHlpMG1aVjl0OENWNVZPSUF4bFQrU1U3RkpHcTBWdTBkYVNuRHpvcldtQlh0MU9SUUhCUUtZRnpqeVAxVlRFcVZQVjUxdkdrbUFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTIzODEwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ck9rL0hNTHVZY3ZKMWx4TlJMTUNwejF4U1o2azQ5Mncxb3JKTVhRa0gyYkpJWEhRYU5oNmVZRHdWR3c2OG93ZVZ1R05HT09QUWtDaWJGZmpnc3IwNEJnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.0/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzVlcVdKQ0FtSXNmRlhYcFBBY1R6NmVyR1hZR3dyeEQxSTNLNEx0emFkVnArOHhiZkRKaTk0SmdteHBCenhHYjdtQVlldmkrMWFHWkxHbTdISVE5T2c4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDAwMDg2CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Cm9xM1VmK0tmVmpHRTRvVStuUkNZZXM3WEl6R3NhU0E5Q2I2Snp1UXQ5TVRzOUY5eGZNMlE0NVJQL0lmSEJLalpEUVRBeVpYSXJhY3o2WlZDSU96Q0NBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.1/mermark.app.tar.gz"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzhPOUVWbGYyRUZuTXhJZ2IxQy8rUmNNcnd4Umt4Z0dTUHo0OHBSK0w2ZG1hV3ZUVjZMeHVvK3lLbmtUR29zZXZSV2k4dlBpS1JiM1lTc1oyK2RCU1FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTI0Nzg1CWZpbGU6bWVybWFya18wLjE5LjBfeDY0LXNldHVwLmV4ZQo1ZXBsNVpic2NBdWxRMVZud2ZvdHRxblBWeVNWQ3hlKzI2NXlGdUZLRWJGcnpDaS9lQloyT1VlUUEvcE9wNHk3RlYranFwN0dwSGRLbTBVcStVQUZDdz09Cg==",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.0/mermark_0.19.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3l6OExaang5c1N0Vk9tdmdmMWV1K0VrMmpEQmVtVmxwZ1p1cDEvZ1E0RXZ0aEZWTkdSUXR3NkpuUG5kcXVvV3hpRkZNUlh0NFc4MS9UOTl2RXBMZlE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDAwOTQwCWZpbGU6bWVybWFya18wLjE5LjFfeDY0LXNldHVwLmV4ZQppL0FpRU9HUUl6U0RXcUhsdVc1UEkxcnNmQmU5NlZwUEp4WlZrYkI2SHBhWEx5OXJUdWRLQWhGWWk3Q1MxSXp5VFRoOGdhZlQzZjA0NHBYWlZ1di9CZz09Cg==",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.1/mermark_0.19.1_x64-setup.exe"
     }
   }
 }
