@@ -153,6 +153,25 @@ try {
     // returns (fixed alongside this script — see workspace-smoke-bridge.mjs).
     const session = bridge.snapshot().session;
     if (!session) throw new Error("deleted: no active bridge watch session to target");
+
+    // D4③ (plan §커밋 표, race check): autosave's OWN write_file attempt —
+    // scheduled by the dirty edit just above, on the default 200ms debounce
+    // (autosaveDelaySetting) — fires here, WHILE the original is gone, and
+    // the bridge now rejects it with the same "MISSING:" contract the real
+    // backend uses (R1/D4 parity, workspace-smoke-bridge.mjs). That opens a
+    // "save"-kind modal via main.ts:322's `onStatus("recovery")` gate —
+    // BEFORE the watcher's own deletion event (emitted below) ever fires.
+    // This is the exact race window R1's diagnosis found (design §2-4): a
+    // rejected autosave write racing ahead of the watcher telling the app
+    // the file is gone.
+    await page.waitForTimeout(500); // > default 200ms autosave debounce + write/reject/render
+    await recovery.waitFor();
+    await page.locator(".recovery-modal details summary").click(); // <details> starts collapsed
+    const raceTitle = await page.locator(".recovery-title").innerText();
+    const raceDetail = await page.locator(".recovery-modal details code").innerText();
+    const raceOriginalAbsent = await readFile(fixtureA, "utf8").catch(() => null) === null;
+    check("deleted.autosave-race-does-not-recreate", raceTitle === "저장하지 못했습니다" && raceDetail.includes("MISSING:") && raceOriginalAbsent, { raceTitle, raceDetail, raceOriginalAbsent });
+
     await page.evaluate(async ({ path, generation, detail }) => {
       const eventModule = await import("/src/mocks/tauri-event.ts");
       await eventModule.emit("file-unavailable", { path, generation, kind: "deleted", detail });

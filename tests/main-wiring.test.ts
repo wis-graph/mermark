@@ -35,7 +35,7 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
     if (deferred) return deferred.promise;
     return Promise.resolve({ text: documentContents.get(path) ?? "# document", mtime: 1 });
   }
-  if (command === "write_file" && rejectWrites) return Promise.reject(new Error("write failed"));
+  if (command === "write_file" && rejectWrites) return Promise.reject(new Error(writeRejectMessage));
   if (command === "list_dir") {
     if (path === "/") return Promise.resolve([{ name: "A", path: "/A", is_dir: true }]);
     if (path === "/A") return Promise.resolve([{ name: "B", path: "/A/B", is_dir: true }, { name: "start.md", path: "/A/start.md", is_dir: false }]);
@@ -134,6 +134,14 @@ let scanResult: unknown = { files: [], truncated: false };
 const pathExistsPaths = new Set<string>();
 let deferredUnwatch: Promise<void> | undefined;
 let rejectWrites = false;
+// The message a rejected write_file throws when `rejectWrites` is set.
+// Defaults to a generic non-CONFLICT rejection; the R1/D4 race test below
+// overrides it with the real backend's exact "MISSING: …" contract string
+// (audit 🟡-2) so this suite proves the frontend's suspended+recovery+
+// buffer-preserved path against the LITERAL error the backend now produces,
+// not a stand-in that would stay green even if a future change classified
+// MISSING differently from a generic write failure.
+let writeRejectMessage = "write failed";
 let rejectUnwatch = false;
 let rejectWatchPath: string | undefined;
 let watcherGeneration = 0;
@@ -208,6 +216,7 @@ describe("main workspace wiring", () => {
     pathExistsPaths.clear();
     deferredUnwatch = undefined;
     rejectWrites = false;
+    writeRejectMessage = "write failed";
     rejectUnwatch = false;
     rejectWatchPath = undefined;
     watcherGeneration = 0;
@@ -901,12 +910,34 @@ describe("main workspace wiring", () => {
     await vi.waitFor(() => expect(watcherEvents).toContain("watch /P/a.md"));
     const liveEditor = (window as Window & { readonly __mermark?: { readonly view: EditorView } }).__mermark;
     rejectWrites = true; // the autosave write_file triggered by the edit below fails non-CONFLICT
+    // Audit 🟡-2: pin the REAL backend contract string (file_io.rs's
+    // original_vanished_since_read / the smoke bridge's matching
+    // "MISSING:" — R1/D4), not a generic stand-in message. The frontend's
+    // own classification is currently just `startsWith("CONFLICT")`
+    // (editor.ts:170,245), so a generic rejection happens to take the same
+    // path today — but only this exact string proves it, and would catch a
+    // future change that classifies "MISSING:" differently.
+    writeRejectMessage = "MISSING: file no longer exists on disk (baseline=1)";
     liveEditor?.view.dispatch({ changes: { from: liveEditor.view.state.doc.length, to: liveEditor.view.state.doc.length, insert: "\nD3_RACE_DIRTY" } });
 
     // Autosave's rejected write fires first (default 800ms debounce) and
     // opens a "save"-kind recovery modal (main.ts:322's `!openRecovery`
     // gate — nothing else has opened one yet).
     await vi.waitFor(() => expect(document.querySelector(".recovery-title")?.textContent).toBe("저장하지 못했습니다"), { timeout: 5000 });
+
+    // Suspended + recovery + buffer-preserved path (editor.ts:173-178's
+    // non-CONFLICT branch), proven against the literal MISSING text: the
+    // diagnostic panel shows it verbatim, the recovery modal (not a "save
+    // succeeded" state) is what's open, and the dirty buffer that triggered
+    // the write is still there — the original is never touched again while
+    // suspended. save-status itself settles on "error" here (editor.ts's
+    // catch fires onStatus("recovery", …) THEN onStatus("error", …) — the
+    // recovery MODAL already opened off the first call; the indicator's
+    // final text is the "저장 실패: …" one, distinct from D3(a)'s watcher
+    // path above where suspend() only ever calls onStatus("recovery", …)).
+    expect(document.querySelector(".recovery-modal details code")?.textContent).toContain(writeRejectMessage);
+    expect(document.querySelector(".save-status")?.getAttribute("data-state")).toBe("error");
+    expect(document.querySelector(".cm-content")?.textContent).toContain("D3_RACE_DIRTY");
 
     // The watcher's deletion event for the SAME live session arrives after —
     // showDocumentRecovery("deleted", ...) closes the stale "save" modal and
