@@ -249,6 +249,14 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     readonly resumeOnAbort: boolean;
     readonly handoff: () => Promise<boolean>;
     readonly guard?: () => boolean;
+    /** Called ONLY when `guard` fails AFTER `handoff` already succeeded (the
+     *  narrow window where the interference that breaks `guard` arrives
+     *  mid-handoff, audit 🟡-1) — re-points whatever `handoff` just attached
+     *  back to the document that's actually STILL mounted (this transaction
+     *  never reaches `commit`, so nothing else will fix this up). Awaited
+     *  before the abort's resumeWrites so watcherHandoff's own internal
+     *  queue serializes cleanly (no watch left targeting a closed tab). */
+    readonly restoreAfterHandoff?: () => Promise<boolean>;
     readonly commit: (fresh: F | undefined) => void;
   }): Promise<boolean> {
     const abort = (): boolean => {
@@ -265,8 +273,16 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
       }
     }
     if (!spec.token.isCurrent() || !(await commitBeforeSwitch()) || !spec.token.isCurrent()) return abort();
-    if (!(await spec.handoff()) || !spec.token.isCurrent()) return abort();
+    // `guard` is checked BEFORE handoff too (not just after, below) — the
+    // dominant BC-3 race (an interference that lands during the read/
+    // commitBeforeSwitch wait) is caught here, before ever touching the
+    // watcher at all (audit 🟡-1's "지배적 경로").
     if (spec.guard && !spec.guard()) return abort();
+    if (!(await spec.handoff()) || !spec.token.isCurrent()) return abort();
+    if (spec.guard && !spec.guard()) {
+      await spec.restoreAfterHandoff?.();
+      return abort();
+    }
     spec.commit(fresh);
     return true;
   }
@@ -645,6 +661,12 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
       resumeOnAbort: true,
       handoff: () => watcherHandoff.handoff(nextTab?.path, vault),
       guard: () => closeTargetStillMatchesRead(vault, tab, nextTab),
+      // The interference that breaks the guard never changes what's
+      // MOUNTED (this transaction hasn't committed) — `currentFile` is
+      // still `tab.path`, still owned by `vault`, so re-watching exactly
+      // that is always the correct restoration (audit 🟡-1's narrow
+      // post-handoff window).
+      restoreAfterHandoff: () => watcherHandoff.handoff(currentFile, vault),
       commit: (freshValue) => {
         const fresh = freshValue as { text: string; mtime: number } | undefined;
         const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, scope);

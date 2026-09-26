@@ -73,7 +73,10 @@ vi.mock("../src/editor", () => ({
 const documentContents = new Map<string, string>();
 const deferredReads = new Map<string, { promise: Promise<unknown> }>();
 const rejectedReads = new Set<string>();
+const deferredWatches = new Map<string, { promise: Promise<void> }>();
 let rejectWatch = false;
+let watchGeneration = 0;
+const watcherEvents: string[] = [];
 const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => {
   const path = (args as { path?: string } | undefined)?.path ?? "";
   if (command === "read_file") {
@@ -83,10 +86,19 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
     return Promise.resolve({ text: documentContents.get(path) ?? "# doc", mtime: 1 });
   }
   if (command === "watch_file") {
-    if (rejectWatch) return Promise.reject(new Error("watch failed"));
-    return Promise.resolve({ path, generation: "1" });
+    const session = { path, generation: String(++watchGeneration) };
+    const deferred = deferredWatches.get(path);
+    const settle = (): Promise<unknown> => {
+      watcherEvents.push(`watch ${path}`);
+      if (rejectWatch) return Promise.reject(new Error("watch failed"));
+      return Promise.resolve(session);
+    };
+    return deferred ? deferred.promise.then(settle) : settle();
   }
-  if (command === "unwatch_file") return Promise.resolve();
+  if (command === "unwatch_file") {
+    watcherEvents.push("unwatch");
+    return Promise.resolve();
+  }
   return Promise.resolve(false);
 });
 vi.mock("@tauri-apps/api/core", () => ({
@@ -135,6 +147,9 @@ describe("DocumentSession — runTransition contract (via openDocument/openDocum
     deferredReads.clear();
     rejectedReads.clear();
     rejectWatch = false;
+    deferredWatches.clear();
+    watchGeneration = 0;
+    watcherEvents.length = 0;
     invokeMock.mockClear();
     mountEditorMock.mockClear();
     nextEditor = undefined;
@@ -253,6 +268,9 @@ describe("closeActiveTab's BC-3 guard (closeTargetStillMatchesRead, design §2.4
     deferredReads.clear();
     rejectedReads.clear();
     rejectWatch = false;
+    deferredWatches.clear();
+    watchGeneration = 0;
+    watcherEvents.length = 0;
     invokeMock.mockClear();
     mountEditorMock.mockClear();
     nextEditor = undefined;
@@ -304,6 +322,43 @@ describe("closeActiveTab's BC-3 guard (closeTargetStillMatchesRead, design §2.4
     expect(session.currentFile).toBe("/P/c.md"); // never swapped — aborted before commit
     expect(vaultTabs.get(vault.vaultId).tabs.some((t) => t.path === "/P/c.md")).toBe(true); // c NOT closed either
   });
+
+  it("audit 🟡-1 — a mismatch discovered AFTER handoff already re-pointed the watcher restores it to the CURRENT document before aborting", async () => {
+    // Narrower race than the two above: the read (b) resolves immediately
+    // (not deferred) so the PRE-handoff guard check passes — the tab list
+    // hasn't changed yet at that point. The interference lands exactly
+    // while watch_file("/P/b.md") is in flight (deferred here), so by the
+    // time handoff settles, b is already gone — the POST-handoff guard
+    // check must catch this and restore the watcher to c (the document
+    // that's actually still mounted) instead of leaving it pointed at the
+    // now-closed b.
+    documentContents.set("/P/a.md", "# A");
+    documentContents.set("/P/b.md", "# B");
+    documentContents.set("/P/c.md", "# C");
+    const vaultTabs = new VaultTabStore();
+    vaultTabs.open(vault.vaultId, "/P/a.md", "permanent");
+    vaultTabs.open(vault.vaultId, "/P/b.md", "permanent");
+    vaultTabs.open(vault.vaultId, "/P/c.md", "permanent"); // active = c
+    const session = createDocumentSession(makeDeps({ vaultTabs, currentVault: () => vault, routeDocumentPath: () => vault }));
+    await session.openDocumentSafely("/P/c.md", { vault });
+    watcherEvents.length = 0;
+
+    const tabs = vaultTabs.get(vault.vaultId).tabs;
+    const b = tabs.find((t) => t.path === "/P/b.md")!;
+    const c = tabs.find((t) => t.path === "/P/c.md")!;
+    let resolveWatchB: (() => void) | undefined;
+    deferredWatches.set("/P/b.md", { promise: new Promise((resolve) => { resolveWatchB = resolve; }) });
+    const closing = session.closeActiveTab(vault, c, "permanent");
+    await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledWith("watch_file", expect.objectContaining({ path: "/P/b.md" })));
+    vaultTabs.close(vault.vaultId, b.tabId, "permanent"); // interference while handoff is in flight
+    resolveWatchB?.();
+    await closing;
+
+    expect(session.currentFile).toBe("/P/c.md"); // aborted, never swapped
+    expect(vaultTabs.get(vault.vaultId).tabs.some((t) => t.path === "/P/c.md")).toBe(true); // c NOT closed
+    // The watcher must end up back on c, not left pointed at the closed b.
+    expect(watcherEvents[watcherEvents.length - 1]).toBe("watch /P/c.md");
+  });
 });
 
 describe("DocumentSession.readonlyView (design §3.6 — read-only, future-plugin-API-shaped)", () => {
@@ -312,6 +367,9 @@ describe("DocumentSession.readonlyView (design §3.6 — read-only, future-plugi
     deferredReads.clear();
     rejectedReads.clear();
     rejectWatch = false;
+    deferredWatches.clear();
+    watchGeneration = 0;
+    watcherEvents.length = 0;
     invokeMock.mockClear();
     mountEditorMock.mockClear();
     nextEditor = undefined;

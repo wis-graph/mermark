@@ -563,6 +563,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("C"));
+      watcherEvents.length = 0;
       document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
       closeTabButton("c")?.click(); // begins reading nextTab=b (active close, lifecycle txn)
       closeTabButton("b")?.click(); // inactive close, no lifecycle — vaultTabs.close(b) immediately
@@ -573,6 +574,13 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       expect(document.querySelector('[data-tab-id="c"]')?.getAttribute("data-active")).toBe("true");
       expect(document.querySelector('[data-tab-id="a"]')).not.toBeNull();
       expect(cmText()).toBe("C"); // BC-3: aborted — never mounted B's content anywhere
+      // The watcher must still follow the CURRENTLY mounted document (c) —
+      // an abort must never leave the watcher pointed at a tab that's
+      // already gone (audit 🟡-1). The guard is now checked BEFORE handoff
+      // too, so this (dominant) race is caught before handoff(b) ever runs
+      // at all — zero watcher events from this transaction, not even an
+      // unwatch/rewatch round-trip.
+      expect(watcherEvents).toEqual([]);
     });
   });
 
