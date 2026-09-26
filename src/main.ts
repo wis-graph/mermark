@@ -1176,34 +1176,7 @@ async function boot() {
         vaultTabs.close(vault.vaultId, tab.tabId, scope);
         return;
       }
-      const requestId = session.beginLifecycleRequest();
-      const sourceEditor = session.current;
-      void (async (): Promise<void> => {
-        const remainingTabs = currentTabs.tabs.filter((candidate) => candidate.tabId !== tab.tabId);
-        const nextTab = remainingTabs[remainingTabs.length - 1];
-        let fresh: { text: string; mtime: number } | undefined;
-        if (nextTab) {
-          try {
-            fresh = await fileHostFor(vault).readFile(nextTab.path);
-          } catch (error: unknown) {
-            if (session.isCurrentRequest(requestId)) showOpenRecovery(nextTab.path, String(error), vault);
-            return;
-          }
-        }
-        if (!session.isCurrentRequest(requestId) || !(await session.commitBeforeSwitch()) || !session.isCurrentRequest(requestId)) {
-          if (sourceEditor && session.current === sourceEditor) sourceEditor.resumeWrites();
-          return;
-        }
-        if (!(await session.watcherHandoff.handoff(nextTab?.path, vault)) || !session.isCurrentRequest(requestId)) {
-          if (sourceEditor && session.current === sourceEditor) sourceEditor.resumeWrites();
-          return;
-        }
-        const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, scope);
-        setRoutedVault(vault);
-        const selection = selectVaultView(nextTabs);
-        if (selection.kind === "document" && fresh) session.openInWindow(selection.tab.path, fresh, {});
-        else session.renderWelcomeForVault();
-      })();
+      void session.closeActiveTab(vault, tab, scope);
     },
     getTabs: (vaultId) => vaultTabs.get(vaultId),
   });

@@ -38,7 +38,7 @@ import {
   vimModeSetting,
 } from "../settings/app";
 import type { Vault, WorkspaceStore } from "../workspace/workspace-state";
-import type { VaultTabStore } from "../workspace/vault-tabs";
+import { selectVaultView, type TabPersistenceScope, type VaultTab, type VaultTabStore } from "../workspace/vault-tabs";
 
 export interface OpenOptions {
   /** An explicit target vault. Omitted = read falls back to `currentVault()
@@ -108,6 +108,7 @@ export interface DocumentSession {
   openDocument(absPath: string, opts?: OpenOptions): Promise<boolean>;
   openDocumentSafely(absPath: string, opts?: OpenOptions): Promise<boolean>;
   enterVaultWelcome(opts: { onCommit: () => void; onRendered?: () => void }): Promise<void>;
+  closeActiveTab(vault: Vault, tab: VaultTab, scope: TabPersistenceScope): Promise<void>;
 
   commitBeforeSwitch(): Promise<boolean>;
   renderWelcomeForVault(): void;
@@ -536,6 +537,45 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     });
   }
 
+  /** T3 (onCloseTab's active-tab branch). The pre-transaction guard (an
+   *  inactive tab, or a different vault than the one currently routed —
+   *  closeable with no lifecycle participation at all) stays in main.ts's
+   *  handler (design §3.2/plan C5 — `mainSource`'s own text asserts this).
+   *  `currentTabs`/`remainingTabs`/`nextTab` are computed in the SAME
+   *  synchronous span the token is minted in, matching HEAD's own timing
+   *  (the `nextTab` a stale reader raced against is frozen at commit time,
+   *  never re-read). `read` is omitted entirely when there's no `nextTab`
+   *  (closing the last tab — HEAD never called `fileHostFor` in that case
+   *  either). No BC-3 content/path-match guard here — that's BC-3 (C11,
+   *  owner approval gated); tests/document-transactions.test.ts's C3.5
+   *  CHARACTERIZATION test pins today's actual (unguarded) outcome. */
+  async function closeActiveTab(vault: Vault, tab: VaultTab, scope: TabPersistenceScope): Promise<void> {
+    const currentTabs = vaultTabs.get(vault.vaultId);
+    const remainingTabs = currentTabs.tabs.filter((candidate) => candidate.tabId !== tab.tabId);
+    const nextTab = remainingTabs[remainingTabs.length - 1];
+    const token = beginToken();
+    const sourceEditor = current;
+    await runTransition<{ text: string; mtime: number }>({
+      token,
+      sourceEditor,
+      read: nextTab ? async () => { return fileHostFor(vault).readFile(nextTab.path); } : undefined,
+      onReadError: (error) => {
+        deps.showOpenRecovery(nextTab.path, String(error), vault);
+        return "abort-silently";
+      },
+      resumeOnAbort: true,
+      handoff: () => watcherHandoff.handoff(nextTab?.path, vault),
+      commit: (freshValue) => {
+        const fresh = freshValue as { text: string; mtime: number } | undefined;
+        const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, scope);
+        setRoutedVault(vault);
+        const selection = selectVaultView(nextTabs);
+        if (selection.kind === "document" && fresh) openInWindow(selection.tab.path, fresh, {});
+        else renderWelcomeForVault();
+      },
+    });
+  }
+
   return {
     get current() { return current; },
     get currentFile() { return currentFile; },
@@ -546,6 +586,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     openDocument,
     openDocumentSafely,
     enterVaultWelcome,
+    closeActiveTab,
 
     commitBeforeSwitch,
     renderWelcomeForVault,
