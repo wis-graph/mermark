@@ -107,6 +107,7 @@ export interface DocumentSession {
 
   openDocument(absPath: string, opts?: OpenOptions): Promise<boolean>;
   openDocumentSafely(absPath: string, opts?: OpenOptions): Promise<boolean>;
+  enterVaultWelcome(opts: { onCommit: () => void; onRendered?: () => void }): Promise<void>;
 
   commitBeforeSwitch(): Promise<boolean>;
   renderWelcomeForVault(): void;
@@ -206,7 +207,8 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     readonly token: RequestToken;
     readonly sourceEditor: EditorController | undefined;
     readonly read?: () => Promise<F>;
-    readonly onReadError: (error: unknown) => "abort-silently";
+    /** Required iff `read` is given — nothing to fail without a read. */
+    readonly onReadError?: (error: unknown) => "abort-silently";
     readonly resumeOnAbort: boolean;
     readonly handoff: () => Promise<boolean>;
     readonly commit: (fresh: F | undefined) => void;
@@ -220,7 +222,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
       try {
         fresh = await spec.read();
       } catch (error: unknown) {
-        if (spec.token.isCurrent()) spec.onReadError(error); // may throw (T1's "rethrow" policy)
+        if (spec.token.isCurrent()) spec.onReadError?.(error); // may throw (T1's "rethrow" policy)
         return false;
       }
     }
@@ -508,6 +510,32 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     });
   }
 
+  /** T2 (onSelectVault's welcome branch, HEAD's D2/D3) — the ONLY transaction
+   *  with no `read` at all, so the pre-commit stale check is trivially true
+   *  (nothing async has happened yet between `beginToken()` and this call) —
+   *  the exact "동치" (equivalent) relationship design §2.1's D2 row
+   *  documents, not a behavior change from omitting a check HEAD never had
+   *  either. `resumeOnAbort: true` matches HEAD's D5. `onCommit` (select the
+   *  vault) runs, THEN `renderWelcomeForVault()`, THEN `onRendered` (jump the
+   *  Explorer to the vault's root) — same order HEAD's onSelectVault welcome
+   *  branch committed in, so `syncExplorerToOpenedDocument`'s branch-2 still
+   *  sees the jump that already landed (HEAD's own ordering comment). */
+  async function enterVaultWelcome(opts: { onCommit: () => void; onRendered?: () => void }): Promise<void> {
+    const token = beginToken();
+    const sourceEditor = current;
+    await runTransition<never>({
+      token,
+      sourceEditor,
+      resumeOnAbort: true,
+      handoff: () => watcherHandoff.handoff(undefined),
+      commit: () => {
+        opts.onCommit();
+        renderWelcomeForVault();
+        opts.onRendered?.();
+      },
+    });
+  }
+
   return {
     get current() { return current; },
     get currentFile() { return currentFile; },
@@ -517,6 +545,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
 
     openDocument,
     openDocumentSafely,
+    enterVaultWelcome,
 
     commitBeforeSwitch,
     renderWelcomeForVault,

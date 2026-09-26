@@ -1150,17 +1150,12 @@ async function boot() {
         if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(session.currentFile)) openDocumentSafely(selection.tab.path, commitSelection, selectedVault);
         else commitSelection();
       } else {
-        const requestId = session.beginLifecycleRequest();
-        const sourceEditor = session.current;
-        void session.commitBeforeSwitch().then(async (saved) => {
-          if (!saved || !session.isCurrentRequest(requestId) || !(await session.watcherHandoff.handoff(undefined)) || !session.isCurrentRequest(requestId)) {
-            if (sourceEditor && session.current === sourceEditor) sourceEditor.resumeWrites();
-            return;
-          }
-          workspaceStore.selectVault(selectedVault.vaultId);
-          setRoutedVault(selectedVault);
-          session.renderWelcomeForVault();
-          jumpExplorerToVaultRoot(selectedVault);
+        void session.enterVaultWelcome({
+          onCommit: () => {
+            workspaceStore.selectVault(selectedVault.vaultId);
+            setRoutedVault(selectedVault);
+          },
+          onRendered: () => jumpExplorerToVaultRoot(selectedVault),
         });
       }
     },
