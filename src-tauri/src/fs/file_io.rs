@@ -55,6 +55,34 @@ fn requires_absolute_write_path(path: &Path) -> bool {
     path.is_absolute()
 }
 
+/// Whether the write's original target has genuinely vanished from disk
+/// since the frontend read it (R1 fix round). `mtime_ms`'s "unmeasurable
+/// means 0, skip the check" contract stays exactly as-is — that function
+/// still doesn't distinguish "missing" from any other reason a filesystem
+/// can't report a time — but that ambiguity is precisely what let an
+/// autosave racing a user delete slip through the conflict guard: with the
+/// original gone, `mtime_ms` returns 0, `0 > baseline` is false, and the old
+/// code happily recreated the deleted file. This predicate asks the
+/// narrower, stronger question directly via `symlink_metadata` (not
+/// `metadata`, so a dangling symlink counts as vanished too, consistent with
+/// how the rest of this module treats broken links) rather than inferring
+/// "missing" from a zero mtime.
+///
+/// `baseline == 0` never counts as vanished, regardless of what's on disk:
+/// it means "no baseline" (a new file, save-as, a `.mermark-recovered`
+/// copy), not "the file existed and disappeared" — those callers must keep
+/// creating freely. Named and unit-tested on its own (mirrors
+/// `requires_absolute_write_path`'s shape) so the rule stays visible.
+fn original_vanished_since_read(path: &str, baseline: u64) -> bool {
+    if baseline == 0 {
+        return false;
+    }
+    matches!(
+        std::fs::symlink_metadata(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
 /// Pure core of `write_file`, threading the `WatchState` explicitly so tests can
 /// inject a fresh one and assert the self-write was recorded. The atomic
 /// temp-rename and `CONFLICT:` conflict-guard live here unchanged; the only added
@@ -69,6 +97,9 @@ pub(crate) fn write_file_with_state(
         return Err(format!("INVALID_PATH: write_file requires an absolute path, got \"{path}\""));
     }
     let normalized = normalize_path(Path::new(path)).to_string_lossy().into_owned();
+    if original_vanished_since_read(&normalized, baseline) {
+        return Err(format!("MISSING: file no longer exists on disk (baseline={baseline})"));
+    }
     if baseline != 0 {
         // `>` (strictly newer) flags an external change without false-positiving
         // on our own writes. Caveat: on coarse-resolution filesystems (HFS+ 1s,
@@ -248,6 +279,48 @@ mod tests {
         assert!(write_file_with_state(&p, "forced", 0, &fresh_watch_state()).is_ok());
         assert_eq!(fs::read_to_string(&p).unwrap(), "forced");
         fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn write_rejects_a_baseline_write_to_a_vanished_original_and_does_not_recreate_it() {
+        // R1: an autosave racing a user delete must never resurrect the file.
+        // baseline != 0 (the frontend read the file, so it had a real mtime),
+        // but the target has since vanished — mtime_ms(missing) is 0, which
+        // would otherwise make `current > baseline` false and let the write
+        // sail through as if nothing happened (the bug this guards against).
+        let p = temp_path("vanished");
+        fs::write(&p, "v1").unwrap();
+        let base = read_file(p.clone()).unwrap().mtime;
+        fs::remove_file(&p).unwrap(); // the "user deleted it" step
+        let err = write_file_with_state(&p, "resurrected", base, &fresh_watch_state()).unwrap_err();
+        assert!(err.starts_with("MISSING:"), "got: {err}");
+        assert!(!std::path::Path::new(&p).exists(), "a rejected write must not recreate the file");
+    }
+
+    #[test]
+    fn baseline_zero_write_still_creates_a_missing_file() {
+        // GREEN lock: `original_vanished_since_read` must never block a
+        // baseline=0 write (new file, save-as, `.mermark-recovered` copy) —
+        // "no baseline" is not "the file existed and vanished".
+        let p = temp_path("zero_missing");
+        assert!(!std::path::Path::new(&p).exists());
+        assert!(write_file_with_state(&p, "brand new", 0, &fresh_watch_state()).is_ok());
+        assert_eq!(fs::read_to_string(&p).unwrap(), "brand new");
+        fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn original_vanished_since_read_is_true_only_for_a_missing_path_with_a_nonzero_baseline() {
+        let p = temp_path("predicate_missing");
+        assert!(!std::path::Path::new(&p).exists());
+        assert!(original_vanished_since_read(&p, 123));
+    }
+
+    #[test]
+    fn original_vanished_since_read_is_false_when_baseline_is_zero_even_if_missing() {
+        let p = temp_path("predicate_zero_baseline");
+        assert!(!std::path::Path::new(&p).exists());
+        assert!(!original_vanished_since_read(&p, 0));
     }
 
     #[test]
