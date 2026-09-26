@@ -426,4 +426,44 @@ describe("DocumentSession.readonlyView (design §3.6 — read-only, future-plugi
     expect(subscribeFn).toHaveBeenCalledTimes(1); // no further calls
     expect(bindFn).toHaveBeenCalledTimes(2);
   });
+
+  it("audit 🟡-4(a) — the welcome snapshot clears isRemote/vaultId instead of keeping the previous document's values", async () => {
+    documentContents.set("노트.md", "# 원격 문서");
+    const remoteVault = { vaultId: "vault-remote-1", workspaceId: "workspace-default", displayName: "R", rootPath: null, persistenceKind: "remote" as const, explorerRoot: "", host: "h", remoteVaultId: "rv-1" };
+    const session = createDocumentSession(makeDeps());
+    await session.openDocumentSafely("노트.md", { vault: remoteVault });
+    expect(session.readonlyView.get()).toMatchObject({ isRemote: true, vaultId: "vault-remote-1" });
+
+    await session.enterVaultWelcome({ onCommit: () => {} });
+    const welcome = session.readonlyView.get();
+
+    expect(welcome.file).toBe("");
+    // A "no document open" snapshot must not still promise a vault/remote-ness
+    // for a document that no longer exists (audit 🟡-4a) — the OLD (remote)
+    // document's cells stayed put internally (only `currentFile` was
+    // cleared), so this must be a DERIVED value, not the raw cell.
+    expect(welcome.isRemote).toBe(false);
+    expect(welcome.vaultId).toBeNull();
+  });
+
+  it("audit 🟡-4(b) — a throwing subscriber doesn't break other subscribers or the transaction itself", async () => {
+    documentContents.set("/a.md", "# A");
+    const session = createDocumentSession(makeDeps());
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const throwing = vi.fn(() => { throw new Error("boom"); });
+    const healthy = vi.fn();
+    session.readonlyView.subscribe(throwing);
+    session.readonlyView.subscribe(healthy);
+
+    // bind's OWN immediate call must not throw out of the subscribe call site.
+    expect(() => session.readonlyView.bind(throwing)).not.toThrow();
+
+    const ok = await session.openDocumentSafely("/a.md");
+
+    expect(ok).toBe(true); // the transaction itself must not reject/abort
+    expect(session.currentFile).toBe("/a.md");
+    expect(healthy).toHaveBeenCalledWith(expect.objectContaining({ file: "/a.md" })); // still notified
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
 });

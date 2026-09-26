@@ -178,11 +178,38 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
   //    renderWelcomeForVault (no document open). No subscriber exists inside
   //    the app today, so this changes zero observable behavior on its own.
   const snapshotListeners = new Set<(snapshot: DocumentSnapshot) => void>();
-  const snapshot = (): DocumentSnapshot =>
-    Object.freeze({ file: currentFile, baseDir: currentBaseDir, isRemote: currentIsRemote, vaultId: currentOpenVaultId });
+  /** `currentIsRemote`/`currentOpenVaultId` stay put internally on welcome
+   *  (only `currentFile` is cleared — see `renderWelcomeForVault`, unchanged:
+   *  changing the CELLS would also change `sessionStateKey`'s vaultId
+   *  argument and other internal call sites that don't need this fix).
+   *  The PUBLIC snapshot derives "no document open" instead (audit 🟡-4a):
+   *  a welcome snapshot must never still promise a vault/remote-ness for a
+   *  document that no longer exists. */
+  const snapshot = (): DocumentSnapshot => {
+    const isWelcome = currentFile === "";
+    return Object.freeze({
+      file: currentFile,
+      baseDir: currentBaseDir,
+      isRemote: isWelcome ? false : currentIsRemote,
+      vaultId: isWelcome ? null : currentOpenVaultId,
+    });
+  };
+  /** A subscriber that throws must never break another subscriber, or the
+   *  transaction whose commit happened to trigger the notification (audit
+   *  🟡-4b) — `notifySnapshot` runs synchronously inside `openInWindow`'s/
+   *  `renderWelcomeForVault`'s own commit, so an uncaught throw here would
+   *  otherwise surface as an `openDocumentSafely` rejection long after the
+   *  document has already mounted. */
+  const notifySafely = (fn: (s: DocumentSnapshot) => void, s: DocumentSnapshot): void => {
+    try {
+      fn(s);
+    } catch (error) {
+      console.error("DocumentSession.readonlyView subscriber threw", error);
+    }
+  };
   const notifySnapshot = (): void => {
     const s = snapshot();
-    for (const fn of snapshotListeners) fn(s);
+    for (const fn of snapshotListeners) notifySafely(fn, s);
   };
   const readonlyView: ReadonlyDocumentView = Object.freeze({
     get: snapshot,
@@ -191,7 +218,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
       return () => snapshotListeners.delete(fn);
     },
     bind: (fn: (s: DocumentSnapshot) => void) => {
-      fn(snapshot());
+      notifySafely(fn, snapshot());
       snapshotListeners.add(fn);
       return () => snapshotListeners.delete(fn);
     },
