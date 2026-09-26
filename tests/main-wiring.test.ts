@@ -188,6 +188,7 @@ const emitEvent = (event: string, payload: unknown): void => {
 };
 
 const mainSource = readFileSync("src/main.ts", "utf8");
+const vaultSelectionSource = readFileSync("src/workspace/vault-selection.ts", "utf8");
 
 describe("main workspace wiring", () => {
   beforeEach(() => {
@@ -1263,7 +1264,8 @@ describe("main workspace wiring", () => {
     });
 
     it("wires routeDocumentPath/openDocument/navigateHistory to actually USE routingTrustsCurrentVault/resolveTargetVault (not a parallel inline copy of the same rule)", () => {
-      expect(mainSource).toContain("if (current && routingTrustsCurrentVault(current.persistenceKind)) return current;");
+      // C1: routeDocumentPath moved verbatim to src/workspace/vault-selection.ts.
+      expect(vaultSelectionSource).toContain("if (current && routingTrustsCurrentVault(current.persistenceKind)) return current;");
       expect(mainSource).toContain("const readVault = resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault());");
       expect(mainSource).toContain("fileHostFor(readVault).readFile(absPath);");
       expect(mainSource).toContain("resolveTargetVault(workspaceStore.getVault(entry.vaultId), currentVault(), workspaceStore.getGlobalVault());");

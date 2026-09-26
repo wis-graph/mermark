@@ -101,7 +101,6 @@ import {
   permanentRootsOf,
   resolveHomeRoot,
   resolveTargetVault,
-  routingTrustsCurrentVault,
   shouldPreserveGlobalExplorerRoot,
   standardLinkRejectionFor,
   tabScopeForVault,
@@ -116,6 +115,7 @@ import {
   shouldMigrateLegacyFavorites,
 } from "./workspace/favorite-vault-migration";
 import { createWorkspaceSidebar } from "./workspace/workspace-sidebar";
+import { createVaultSelection } from "./workspace/vault-selection";
 import { selectVaultView, VaultTabStore } from "./workspace/vault-tabs";
 import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
@@ -214,14 +214,11 @@ async function boot() {
   const homeRoot = await resolveHomeRoot((path) => invoke<string>("canonicalize_path", { path }), SAFE_EXPLORER_BASE_PATH);
   const vaultTabs = new VaultTabStore();
   const conflictRecovery = createConflictRecovery();
-  let routedVault = reloadHandoff.globalExplorerRoot !== null ? workspaceStore.getGlobalVault() : cliRoute?.vault;
-  const selectedWorkspaceVault = (): Vault | undefined => {
-    const workspace = workspaceStore.get().workspaces.find((item) => item.workspaceId === workspaceStore.get().currentWorkspaceId);
-    return workspace?.currentVaultId ? workspaceStore.getVault(workspace.currentVaultId) : undefined;
-  };
-  const currentVault = () => {
-    return routedVault ?? selectedWorkspaceVault();
-  };
+  const vaultSelection = createVaultSelection({
+    workspaceStore,
+    initialRoutedVault: reloadHandoff.globalExplorerRoot !== null ? workspaceStore.getGlobalVault() : cliRoute?.vault,
+  });
+  const { currentVault, selectedWorkspaceVault, routeDocumentPath, setRoutedVault } = vaultSelection;
   // The vault root that OWNS the current document — image-search-root.ts's
   // `owningVaultRoot`, a pure function of the document's own path and the
   // registered permanent vaults, NEVER of `currentVault()` (which is app
@@ -233,13 +230,6 @@ async function boot() {
   // exactly the bug this whole change reverts).
   const currentOwningVaultRoot = (): string | null =>
     currentFile ? owningVaultRoot(dirOf(currentFile), permanentRootsOf(workspaceStore.get())) : null;
-  const routeDocumentPath = (path: string) => {
-    const current = routedVault;
-    if (current && routingTrustsCurrentVault(current.persistenceKind)) return current;
-    const route = routeCliFile(workspaceStore, path);
-    routedVault = route.vault;
-    return route.vault;
-  };
   const currentConflictIdentity = (): ConflictIdentity | null => {
     const vault = currentVault();
     if (!vault || !currentFile) return null;
@@ -1148,15 +1138,15 @@ async function boot() {
         if (existing) {
           const wasCurrent = currentVault()?.vaultId === existing.vaultId;
           workspaceStore.unregisterVault(existing.vaultId);
-          if (wasCurrent) routedVault = undefined;
+          if (wasCurrent) setRoutedVault(undefined);
         } else {
           const wasGlobal = currentVault()?.persistenceKind === "global";
           const registered = workspaceStore.registerCanonicalVault(canonical);
           if (wasGlobal) {
             workspaceStore.selectVault(GLOBAL_VAULT_ID);
-            routedVault = workspaceStore.getGlobalVault();
+            setRoutedVault(workspaceStore.getGlobalVault());
           } else {
-            routedVault = registered;
+            setRoutedVault(registered);
           }
         }
       } catch (error) {
@@ -1188,7 +1178,7 @@ async function boot() {
         // root against the new target and silently refuse to move.
         const commitSelection = (): void => {
           workspaceStore.selectVault(selectedVault.vaultId);
-          routedVault = selectedVault;
+          setRoutedVault(selectedVault);
           jumpExplorerToVaultRoot(selectedVault);
         };
         if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path, commitSelection, selectedVault);
@@ -1202,7 +1192,7 @@ async function boot() {
             return;
           }
           workspaceStore.selectVault(selectedVault.vaultId);
-          routedVault = selectedVault;
+          setRoutedVault(selectedVault);
           renderWelcomeForVault();
           jumpExplorerToVaultRoot(selectedVault);
         });
@@ -1213,7 +1203,7 @@ async function boot() {
       const scope = tabScopeForVault(selectedVault);
       return openDocumentSafely(tab.path, () => {
         workspaceStore.selectVault(selectedVault.vaultId);
-        routedVault = selectedVault;
+        setRoutedVault(selectedVault);
         vaultTabs.select(selectedVault.vaultId, tab.tabId, scope);
       }, selectedVault);
     },
@@ -1248,7 +1238,7 @@ async function boot() {
           return;
         }
         const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, scope);
-        routedVault = vault;
+        setRoutedVault(vault);
         const selection = selectVaultView(nextTabs);
         if (selection.kind === "document" && fresh) openInWindow(selection.tab.path, fresh, {});
         else renderWelcomeForVault();
@@ -1535,7 +1525,7 @@ async function boot() {
     // return type fails loudly here instead of quietly mounting a document
     // with no vault context.
     if (!selectedVault) throw new Error(`openInWindow: no vault resolved for "${file}"`);
-    if (targetVault) routedVault = targetVault;
+    if (targetVault) setRoutedVault(targetVault);
     closeConflict();
     closeOpenViewer(); // opening a document closes any open viewer (design §A rule 1)
     teardownCurrent();
