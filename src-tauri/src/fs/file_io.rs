@@ -63,10 +63,14 @@ fn requires_absolute_write_path(path: &Path) -> bool {
 /// autosave racing a user delete slip through the conflict guard: with the
 /// original gone, `mtime_ms` returns 0, `0 > baseline` is false, and the old
 /// code happily recreated the deleted file. This predicate asks the
-/// narrower, stronger question directly via `symlink_metadata` (not
-/// `metadata`, so a dangling symlink counts as vanished too, consistent with
-/// how the rest of this module treats broken links) rather than inferring
-/// "missing" from a zero mtime.
+/// narrower, stronger question directly via `std::fs::metadata` (which
+/// *follows* symlinks — deliberately **not** `symlink_metadata`, which
+/// reports the link itself and so would call a *dangling* symlink "exists":
+/// audit fix, 🟡-1 on the first R1 commit. A document opened through a
+/// symlink whose target gets deleted must be treated as vanished exactly
+/// like a plain file would be — matching `Path::exists` (also link-
+/// following), which is what the watcher already calls "deleted") rather
+/// than inferring "missing" from a zero mtime.
 ///
 /// `baseline == 0` never counts as vanished, regardless of what's on disk:
 /// it means "no baseline" (a new file, save-as, a `.mermark-recovered`
@@ -78,7 +82,7 @@ fn original_vanished_since_read(path: &str, baseline: u64) -> bool {
         return false;
     }
     matches!(
-        std::fs::symlink_metadata(path),
+        std::fs::metadata(path),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound
     )
 }
@@ -321,6 +325,63 @@ mod tests {
         let p = temp_path("predicate_zero_baseline");
         assert!(!std::path::Path::new(&p).exists());
         assert!(!original_vanished_since_read(&p, 0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_rejects_a_baseline_write_through_a_symlink_whose_target_vanished() {
+        // Audit finding (🟡-1 on d796f3f): `symlink_metadata` reports the link
+        // itself, not what it points at, so a dangling symlink "exists" as far
+        // as that call is concerned — the original bug (autosave resurrecting
+        // a deleted file) reopens for a document opened *through* a symlink
+        // whose target gets deleted out from under it. The watcher instead
+        // uses `Path::exists` (which follows links) and would already call
+        // this "deleted"; the write path must agree, not silently rename a
+        // fresh temp file over the dangling link and resurrect the content.
+        use std::os::unix::fs::symlink;
+        let target = temp_path("symlink_target");
+        fs::write(&target, "v1").unwrap();
+        let link = temp_path("symlink_link");
+        symlink(&target, &link).unwrap();
+        let base = read_file(link.clone()).unwrap().mtime; // reads through the link
+        fs::remove_file(&target).unwrap(); // the target vanishes; the link itself remains (now dangling)
+
+        let err = write_file_with_state(&link, "resurrected", base, &fresh_watch_state()).unwrap_err();
+        assert!(err.starts_with("MISSING:"), "got: {err}");
+        assert!(
+            std::fs::symlink_metadata(&link).is_ok(),
+            "the dangling link itself is untouched by a rejected write"
+        );
+        assert!(!std::path::Path::new(&target).exists(), "the deleted target must not be recreated");
+        assert!(
+            !std::path::Path::new(&link).exists(),
+            "Path::exists follows the link, so it must still read as gone — nothing resurrected"
+        );
+        fs::remove_file(&link).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_through_a_live_symlink_still_succeeds_as_today() {
+        // Flip side of the dangling-symlink guard: a symlink whose target is
+        // still there must keep writing exactly as it does today — `metadata`
+        // follows the link to the *live* target's real mtime, so this is
+        // never mistaken for vanished and no MISSING error fires. (The
+        // temp+rename mechanics that follow are unrelated to this predicate
+        // and unchanged by this fix — POSIX rename() replaces whatever sits
+        // at the link's own path, same as it always has.)
+        use std::os::unix::fs::symlink;
+        let target = temp_path("symlink_live_target");
+        fs::write(&target, "v1").unwrap();
+        let link = temp_path("symlink_live_link");
+        symlink(&target, &link).unwrap();
+        let base = read_file(link.clone()).unwrap().mtime;
+
+        let m = write_file_with_state(&link, "v2", base, &fresh_watch_state()).unwrap();
+        assert!(m > 0);
+        assert_eq!(fs::read_to_string(&link).unwrap(), "v2", "the write is not rejected");
+        fs::remove_file(&link).ok();
+        fs::remove_file(&target).ok();
     }
 
     #[test]
