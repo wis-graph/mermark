@@ -5,7 +5,7 @@
 // `createWatcherHandoff.accepts()` (file-watch.ts) silently drops any event
 // whose path/generation don't match the live session.
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { startWorkspaceSmokeBridge } from "../scripts/lib/workspace-smoke-bridge.mjs";
@@ -95,5 +95,40 @@ describe("workspace smoke bridge write_file MISSING contract", () => {
 
     expect(result.ok).toBe(true);
     expect(typeof result.body).toBe("number");
+  });
+});
+
+// Audit 🟡-3 (_workspace/04_audit_report.md): the bridge's write_file used to
+// unconditionally `mkdir(dirname(path), { recursive: true })` before every
+// write. The real backend (file_io.rs's write_file_with_state) never creates
+// parent directories — only create_markdown_file (an entirely different
+// command, for wikilink auto-create) does. That divergence is the SAME kind
+// of harness-masking as R1: after a whole folder is deleted, "save recovered
+// copy" / "save as" fails in the real app but silently succeeds in this
+// golden bridge, because the bridge quietly recreates the missing folder.
+describe("workspace smoke bridge write_file parent-directory parity", () => {
+  let bridge: Awaited<ReturnType<typeof startWorkspaceSmokeBridge>> | undefined;
+  let fixtureRoot = "";
+
+  afterEach(async () => {
+    await bridge?.close();
+    bridge = undefined;
+    if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true });
+    fixtureRoot = "";
+  });
+
+  it("does not create a missing parent directory for write_file (Rust's write_file_with_state never does either)", async () => {
+    fixtureRoot = await mkdtemp(join(tmpdir(), "mermark-bridge-test-"));
+    const token = "test-token";
+    bridge = await startWorkspaceSmokeBridge({ roots: [resolve("."), fixtureRoot], token, events: [] });
+    const targetInMissingFolder = join(fixtureRoot, "gone-folder", "note.md.mermark-recovered");
+
+    const result = await post(bridge.url, token, "write_file", { path: targetInMissingFolder, text: "x", baseline: 0 });
+
+    expect(result.ok).toBe(false);
+    // The folder itself must stay absent — a bridge that swallowed the
+    // ENOENT and mkdir'd anyway would pass the assertion above too if it
+    // then failed for some OTHER reason, so check the actual side effect.
+    await expect(readdir(join(fixtureRoot, "gone-folder"))).rejects.toThrow();
   });
 });

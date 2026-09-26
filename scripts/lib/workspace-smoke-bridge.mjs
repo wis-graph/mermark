@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
-import { dirname, extname, isAbsolute, join, normalize, resolve } from "node:path";
+import { readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { extname, isAbsolute, join, normalize, resolve } from "node:path";
 
 const JSON_HEADERS = {
   "Access-Control-Allow-Headers": "content-type, x-mermark-smoke-token",
@@ -53,7 +53,16 @@ async function invoke(command, args, roots, state, faults) {
         });
         if (Math.trunc(current.mtimeMs) > baseline) throw new Error("CONFLICT: smoke fixture changed on disk");
       }
-      await mkdir(dirname(path), { recursive: true });
+      // Audit 🟡-3: this used to unconditionally `mkdir(dirname(path), {
+      // recursive: true })` before every write. The real backend
+      // (file_io.rs's write_file_with_state) never creates parent
+      // directories — only create_markdown_file (a different command,
+      // wikilink auto-create) does — so a bridge that mkdir'd here made
+      // "save recovered copy"/"save as" into a deleted folder silently
+      // SUCCEED in this golden while it fails in the real app. Scenarios
+      // that genuinely need a fresh subdirectory must create it themselves
+      // (Node's own mkdir, before opening the page), matching how every
+      // existing scenario's vault/fixtureRoot is already set up.
       const temporary = `${path}.mermark-smoke-tmp`;
       await writeFile(temporary, String(args.text ?? ""), "utf8");
       await rename(temporary, path);
