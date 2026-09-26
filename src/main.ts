@@ -95,7 +95,7 @@ import {
   standardLinkRejectionFor,
   tabScopeForVault,
 } from "./workspace/vault-routing";
-import { createDocumentReloadUrl, readDocumentReloadHandoff } from "./workspace/reload-handoff";
+import { readDocumentReloadHandoff } from "./workspace/reload-handoff";
 import {
   favoriteFoldersStorageKey,
   favoriteVaultMigrationKey,
@@ -765,33 +765,20 @@ async function boot() {
     getBaseDir: explorerRootForCurrentSelection,
     onOpenFile: async (absPath) => {
       const openVault = currentVault();
-      // The cold-start reload (below) carries the target through the URL so
-      // the NEXT boot can re-derive which vault owns it — createDocumentReloadUrl
-      // only ever encodes a local/global root (routeCliFileResolved, called at
-      // boot, can only resolve "permanent" or "global" — see
-      // routingTrustsCurrentVault's doc comment). A remote document's path is
-      // vault-relative and carries no such information, so a reload would
-      // strand the user back on the Global Vault welcome screen instead of
-      // reopening it. Opening in-place is strictly correct for remote
-      // regardless of whether a document is already open elsewhere in this
-      // window — there is no "first-ever open" special case for remote to
-      // begin with, since a reload could never have served it anyway.
-      if (!session.currentFile && openVault?.persistenceKind !== "remote") {
-        location.href = createDocumentReloadUrl(absPath, openVault?.persistenceKind === "global" ? currentExplorerFolder : null);
-      } else if (openVault?.persistenceKind === "remote") {
-        // Explicit targetVault (Ruling 9's resolveTargetVault pattern) — not
-        // optional here the way it is for permanent. routeDocumentPath's
-        // fallback (routeCliFile) can only ever land on "permanent" or
-        // "global" (its own doc comment); a vault-relative remote path like
-        // "노트.md" matches no registered permanent root and would silently
-        // fall through to the Global Vault — reading (and re-saving any tab
-        // state for) the WRONG vault even though the Explorer, one line
-        // above, is unambiguously already browsing this remote vault via the
-        // very same `currentVault()`.
-        openDocumentSafely(absPath, undefined, openVault);
-      } else {
-        openDocumentSafely(absPath);
-      }
+      // Reload-vs-in-place (R1) now lives in session.openFromPanel (C7,
+      // design §2.2/§3.2) — the SAME rule R2 (recent)/R3 (search) apply.
+      // `vault` (mount) is explicit only for remote here (Ruling 9's
+      // resolveTargetVault pattern — routeDocumentPath's path-based
+      // fallback can only ever land on "permanent"/"global", so a
+      // vault-relative remote path like "노트.md" would silently fall
+      // through to the Global Vault otherwise, reading/re-saving tab state
+      // for the WRONG vault even though the Explorer is unambiguously
+      // already browsing this remote vault via `currentVault()`); a
+      // non-remote in-place open omits it (RD1 — path re-derivation).
+      await session.openFromPanel(absPath, {
+        panelVault: openVault,
+        vault: openVault?.persistenceKind === "remote" ? openVault : undefined,
+      });
     },
     // SAME RULE as `openPathEntry` above, expressed as a predicate + a command
     // instead of one call. The panels need the QUESTION ("is this row even
@@ -990,11 +977,10 @@ async function boot() {
       save.set("error", "이 최근 문서가 속한 볼트를 찾을 수 없습니다 (삭제되었거나 연결이 해제됨)");
       return;
     }
-    if (!session.currentFile && targetVault.persistenceKind !== "remote") {
-      location.href = createDocumentReloadUrl(entry.path, targetVault.persistenceKind === "global" ? currentExplorerFolder : null);
-      return;
-    }
-    await openDocumentSafely(entry.path, undefined, targetVault);
+    // R2 — session.openFromPanel (C7). Unlike R1, the entry's own vault is
+    // ALWAYS threaded explicitly for the mount too (RD2 — "this row is
+    // unambiguously this entry's vault", no path re-derivation needed).
+    await session.openFromPanel(entry.path, { panelVault: targetVault, vault: targetVault });
   }
 
   const welcomePane = createWelcomePane({
@@ -1192,12 +1178,10 @@ async function boot() {
     },
     getRoot: () => explorer.currentRootPath() ?? session.currentBaseDir,
     onOpenFile: async (absPath) => {
+      // R3 — session.openFromPanel (C7), same shape as R2 (RD2: always
+      // thread the scan's own vault explicitly).
       const targetVault = searchScanVault ?? currentVault() ?? workspaceStore.getGlobalVault();
-      if (!session.currentFile && targetVault.persistenceKind !== "remote") {
-        location.href = createDocumentReloadUrl(absPath, targetVault.persistenceKind === "global" ? currentExplorerFolder : null);
-      } else {
-        await openDocumentSafely(absPath, undefined, targetVault);
-      }
+      await session.openFromPanel(absPath, { panelVault: targetVault, vault: targetVault });
     },
     // I3: same visible refusal as the Explorer's onOpenFileNewWindow above,
     // routed through the same `searchScanVault` this panel's own onOpenFile

@@ -40,6 +40,7 @@ import {
 import type { Vault, WorkspaceStore } from "../workspace/workspace-state";
 import { selectVaultView, type TabPersistenceScope, type VaultTab, type VaultTabStore } from "../workspace/vault-tabs";
 import { makeHistory, pushHistory, back, forward, currentEntry, pruneAt, type NavHistory } from "../document/history/nav-history";
+import { createDocumentReloadUrl } from "../workspace/reload-handoff";
 
 export interface OpenOptions {
   /** An explicit target vault. Omitted = read falls back to `currentVault()
@@ -103,6 +104,7 @@ export interface DocumentSession {
 
   openDocument(absPath: string, opts?: OpenOptions): Promise<boolean>;
   openDocumentSafely(absPath: string, opts?: OpenOptions): Promise<boolean>;
+  openFromPanel(path: string, opts: { panelVault: Vault | undefined; vault?: Vault }): Promise<boolean>;
   enterVaultWelcome(opts: { onCommit: () => void; onRendered?: () => void }): Promise<void>;
   closeActiveTab(vault: Vault, tab: VaultTab, scope: TabPersistenceScope): Promise<void>;
   goBack(): void;
@@ -501,6 +503,25 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     });
   }
 
+  /** R1 (explorer)/R2 (recent)/R3 (search) — the SAME reload-vs-in-place rule
+   *  body all three panels hand-copied (design §2.2): with no document open
+   *  yet AND the panel's own vault isn't remote, reload the whole page
+   *  (`createDocumentReloadUrl`) rather than mount in place — a remote
+   *  vault has no way to encode itself in the reload URL (§2.2's RD3), so it
+   *  always opens in place regardless of `currentFile`. `vault` (mount) is
+   *  deliberately SEPARATE from `panelVault` (only used for this decision):
+   *  R1 omits it for a non-remote in-place open (RD1 — path re-derivation,
+   *  see openInWindow's own comment), R2/R3 always pass their own entry/scan
+   *  vault explicitly (RD2). */
+  async function openFromPanel(path: string, opts: { panelVault: Vault | undefined; vault?: Vault }): Promise<boolean> {
+    const { panelVault, vault } = opts;
+    if (!currentFile && panelVault?.persistenceKind !== "remote") {
+      location.href = createDocumentReloadUrl(path, panelVault?.persistenceKind === "global" ? deps.explorerFolder() : null);
+      return true;
+    }
+    return openDocumentSafely(path, { vault });
+  }
+
   /** T2 (onSelectVault's welcome branch, HEAD's D2/D3) — the ONLY transaction
    *  with no `read` at all, so the pre-commit stale check is trivially true
    *  (nothing async has happened yet between `beginToken()` and this call) —
@@ -647,6 +668,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
 
     openDocument,
     openDocumentSafely,
+    openFromPanel,
     enterVaultWelcome,
     closeActiveTab,
     goBack,
