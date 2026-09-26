@@ -1333,6 +1333,20 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
   }
 }
 
+// D2 regression tripwire (_workspace/01_architect_design.md §4.2 H2): a
+// second instance of this module booting — e.g. because Vite's dep
+// optimizer pre-bundled a @tauri-apps/plugin-* package and inlined its OWN
+// copy of this aliased file into a shared chunk (node_modules/.vite/deps/
+// chunk-*.js) — silently stomps these globals with an empty store below,
+// leaving the running app bound to a DIFFERENT instance than whatever a
+// golden/CDP script reads off `window`. The overwrite below still happens
+// (unchanged behavior — the last-booted instance is what a fresh page load
+// should observe), but this makes the failure mode LOUD: workspace-smoke
+// collects console output and now fails the run on this exact string
+// instead of silently reading a disconnected mock (H2 in the design doc).
+if (window.__mockInvoke) {
+  console.error("[mock] duplicate tauri-core instance detected — window.__mockInvoke was already set before this module ran (see vite.config.ts optimizeDeps.exclude)");
+}
 window.__mockInvoke = invoke;
 window.__mockCurrentWatchSession = currentMockWatchSession;
 

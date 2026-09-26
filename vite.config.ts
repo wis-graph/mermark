@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import { fileURLToPath } from "node:url";
-import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, copyFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, copyFileSync } from "node:fs";
 import { join, extname } from "node:path";
 
 // @ts-expect-error process is a nodejs global
@@ -73,6 +73,28 @@ function pdfjsAssetsPlugin(): Plugin {
   };
 }
 
+// browser-mode dep optimization (D2, _workspace/01_architect_design.md §4.2
+// H2): every `@tauri-apps/plugin-*` package's own `import { invoke } from
+// "@tauri-apps/api/core"` must resolve to the SAME aliased mock module the
+// app itself imports (src/mocks/tauri-core.ts) — never a pre-bundled COPY.
+// If Vite's dep optimizer pre-bundles a plugin, that plugin's import of
+// "@tauri-apps/api/core" gets resolved and inlined into a shared chunk
+// (node_modules/.vite/deps/chunk-*.js) at OPTIMIZE time, which is a second,
+// independent module instantiation of the aliased mock — its own top-level
+// code runs again and stomps `window.__mockInvoke`/
+// `window.__mockCurrentWatchSession` with ITS OWN (empty) state, even though
+// the running app is bound to a different instance. Golden/CDP scripts that
+// read those globals off `window` then observe a disconnected mock.
+// Derived from package.json rather than hardcoded so a newly added plugin
+// dependency is excluded automatically instead of silently regressing this.
+function tauriPluginPackageNames(): string[] {
+  const pkg = JSON.parse(readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf8")) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  return Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).filter((name) => name.startsWith("@tauri-apps/plugin-"));
+}
+
 // https://vite.dev/config/
 export default defineConfig(async ({ mode }) => ({
   plugins: [pdfjsAssetsPlugin()],
@@ -83,6 +105,15 @@ export default defineConfig(async ({ mode }) => ({
   // return real bytes without a Tauri asset-protocol backend. `false` in
   // every other mode, so this directory is NEVER bundled into a Tauri build.
   publicDir: mode === "browser" ? "mock-assets" : false,
+
+  // browser-mode-only (see tauriPluginPackageNames() above for why): keeps
+  // dev:browser's dep optimizer from pre-bundling any @tauri-apps/plugin-*
+  // package, so every plugin's own @tauri-apps/api/core import resolves
+  // through the SAME alias below instead of a second, disconnected mock
+  // instance in a shared pre-bundle chunk. Dev-only (optimizeDeps never runs
+  // in `vite build`) and mode-gated, so `npm run dev`/`tauri build` (Tauri
+  // modes) are untouched.
+  optimizeDeps: mode === "browser" ? { exclude: tauriPluginPackageNames() } : undefined,
 
   // `--mode browser`: run frontend with no Rust backend by swapping the Tauri
   // IPC module for an in-memory mock (src/mocks/tauri-core.ts). Tauri builds untouched.

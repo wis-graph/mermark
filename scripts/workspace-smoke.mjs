@@ -156,7 +156,16 @@ if (ready) {
     await page.waitForTimeout(700);
     const saved = await invoke("read_file", { path });
     await screenshot("workspace-autosave");
-    return { readBackContainsMarker: saved.text.includes(marker), readBackBytes: new TextEncoder().encode(saved.text).byteLength, marker };
+    const readBackContainsMarker = saved.text.includes(marker);
+    // D2 (_workspace/01_architect_design.md §4.2 H2): this used to be
+    // recorded but never asserted — a mock split across two module
+    // instances (the H2 bug) makes `invoke()` (routed through
+    // window.__mockInvoke, i.e. the app's OWN instance) read back bytes the
+    // app itself never wrote, so `readBackContainsMarker` silently sat at
+    // `false` in the JSON for a month with the scenario still reporting a
+    // green "not failed". Asserting turns that into a real gate failure.
+    if (!readBackContainsMarker) throw new Error(`autosave: read-back did not contain marker "${marker}" (got ${saved.text.length} chars)`);
+    return { readBackContainsMarker, readBackBytes: new TextEncoder().encode(saved.text).byteLength, marker };
   });
 
   // Deletion recovery and cancellation retain the exact dirty buffer/tab.
@@ -197,7 +206,11 @@ if (ready) {
     if (!flushSaveAvailable) throw new Error("dev editor controller flushSave unavailable");
     await page.evaluate(() => window.__mermark.flushSave());
     const closeSaved = await invoke("read_file", { path });
-    return { flushSaveAvailable, readBackContainsMarker: closeSaved.text.includes(marker) };
+    const readBackContainsMarker = closeSaved.text.includes(marker);
+    // Same reasoning as the autosave scenario above (D2, H2): assert instead
+    // of just recording.
+    if (!readBackContainsMarker) throw new Error(`appCloseEquivalent: read-back did not contain marker "${marker}" (got ${closeSaved.text.length} chars)`);
+    return { flushSaveAvailable, readBackContainsMarker };
   });
 
   // Preserve a separate marker for recovery evidence and ensure no write was
@@ -269,6 +282,19 @@ if (ready) {
 }
 
 await page.screenshot({ path: `${outDir}/workspace-final.png`, fullPage: true }).catch(() => {});
+
+// D2 (_workspace/01_architect_design.md §4.2 H2) regression tripwire: the
+// mock (src/mocks/tauri-core.ts) logs this exact string via console.error
+// the moment a second module instance boots (e.g. a @tauri-apps/plugin-*
+// package pre-bundled by Vite's dep optimizer, carrying its own copy of the
+// aliased mock into a shared chunk). That second instance silently stomps
+// window.__mockInvoke/__mockCurrentWatchSession with an empty store — this
+// is the exact console signal H2's diagnosis (probe E3-E7) used to detect
+// it, wired into this gate so the failure is a hard exit code, not just a
+// line in workspace-console.log nobody reads.
+const duplicateInstanceLogs = events.filter((event) => event.type?.startsWith("console") && event.text?.includes("[mock] duplicate tauri-core instance"));
+if (duplicateInstanceLogs.length > 0) result.errors.push(`duplicate tauri-core mock instance detected (${duplicateInstanceLogs.length}x) — see workspace-console.log`);
+
 await writeFile(`${outDir}/workspace-smoke.json`, JSON.stringify(result, null, 2));
 await writeFile(`${outDir}/workspace-console.log`, events.map((event) => JSON.stringify(event)).join("\n") + "\n");
 await browser.close();
