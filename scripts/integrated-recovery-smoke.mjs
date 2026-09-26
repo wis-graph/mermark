@@ -142,10 +142,21 @@ try {
     await page.keyboard.press("Meta+End");
     await page.keyboard.insertText("\nINTEGRATED_DELETED_RECOVERY_DIRTY");
     await unlink(fixtureA);
-    await page.evaluate(async () => {
+    // D1 (_workspace/01_architect_design.md §4.1 H1): the payload must carry
+    // the LIVE watch session's path/generation — createWatcherHandoff.accepts()
+    // (file-watch.ts) silently drops any file-unavailable event whose
+    // path/generation don't match exactly, which is why this emit used to
+    // produce no visible effect at all (the "저장하지 못했습니다" modal
+    // observed instead came from autosave's own write_file failing against
+    // the now-deleted file, not from this event). `bridge.snapshot().session`
+    // is now the same WatchSession shape the real backend's watch_file
+    // returns (fixed alongside this script — see workspace-smoke-bridge.mjs).
+    const session = bridge.snapshot().session;
+    if (!session) throw new Error("deleted: no active bridge watch session to target");
+    await page.evaluate(async ({ path, generation, detail }) => {
       const eventModule = await import("/src/mocks/tauri-event.ts");
-      await eventModule.emit("file-unavailable", { kind: "deleted", detail: "integrated deletion" });
-    });
+      await eventModule.emit("file-unavailable", { path, generation, kind: "deleted", detail });
+    }, { path: session.path, generation: session.generation, detail: "integrated deletion" });
     await recovery.waitFor();
     const deletionTitle = await page.locator(".recovery-title").innerText();
     const deletionActions = await page.locator(".recovery-action").allTextContents();

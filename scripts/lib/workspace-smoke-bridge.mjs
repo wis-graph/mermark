@@ -63,12 +63,26 @@ async function invoke(command, args, roots, state, faults) {
     case "path_exists":
       await stat(path);
       return true;
-    case "watch_file":
+    case "watch_file": {
+      // Mirrors the real backend's `watch_file` (`watcher.rs`'s `set_watch`,
+      // which returns `WatchSession { path, generation }`): `path` is the
+      // caller's argument VERBATIM (Rust never resolves it), `generation` is
+      // a monotonically increasing string. Returning `null` here (as this
+      // bridge used to) makes `createWatcherHandoff.accepts()` in
+      // file-watch.ts silently reject every `file-unavailable`/`file-changed`
+      // payload a golden script builds from `bridge.snapshot()`, since
+      // that check compares against the LIVE session, not this bridge's
+      // separate (resolved) `watchedPath` bookkeeping below.
       state.watchedPath = path;
       state.maxWatcherCount = Math.max(state.maxWatcherCount, 1);
-      return null;
+      state.generation += 1;
+      const session = { path: rawPath, generation: String(state.generation) };
+      state.session = session;
+      return session;
+    }
     case "unwatch_file":
       state.watchedPath = null;
+      state.session = null;
       return null;
     default:
       throw new Error(`unsupported smoke command: ${command}`);
@@ -78,7 +92,7 @@ async function invoke(command, args, roots, state, faults) {
 export async function startWorkspaceSmokeBridge({ roots, token, events }) {
   const normalizedRoots = roots.map((root) => resolve(root));
   const faults = new Map();
-  const state = { watchedPath: null, maxWatcherCount: 0 };
+  const state = { watchedPath: null, maxWatcherCount: 0, generation: 0, session: null };
   const server = createServer(async (request, response) => {
     Object.entries(JSON_HEADERS).forEach(([name, value]) => response.setHeader(name, value));
     if (request.method === "OPTIONS") {
