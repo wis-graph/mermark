@@ -542,17 +542,17 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       expect(document.querySelector('[data-tab-id="a"]')).not.toBeNull();
     });
 
-    it("C3.5: CHARACTERIZATION(BC-3) — closing inactive tab b while active tab c's own close races b's nextTab read: current behavior mounts B's content under A's path", async () => {
+    it("C3.5: BC-3 — closing inactive tab b while active tab c's own close races b's nextTab read: the commit-time guard aborts instead of mounting B's content under A's path", async () => {
       // [a,b,c] active c. Close c (lifecycle transaction begins reading
       // nextTab=b). WHILE that read is pending, close the now-inactive b
       // directly (guard fires: !wasActive → vaultTabs.close(b) with no
-      // lifecycle participation at all). When c's transaction's read of b
-      // resolves, it commits as though b were still a live tab: closes c,
-      // selects the new last tab (a), but mounts the ALREADY-READ b content
-      // under a's path. THIS is exactly the BC-3 content/path mismatch the
-      // design flags as unsafe (autosave would then write b's content to
-      // a's path) — this test locks that CURRENT behavior; BC-3 (if
-      // approved) adds a close-time guard that aborts instead.
+      // lifecycle participation at all — ordinary token staleness can't see
+      // this). When c's transaction's read of b resolves, its token is
+      // STILL current (nothing invalidated it), so it reaches the BC-3
+      // guard: re-derive "what would be last after removing c" from the
+      // CURRENT vaultTabs store (now [a, c] — b's gone) and compare to
+      // nextTab (b). Mismatch → abort: resumeWrites, tab c stays open and
+      // mounted, exactly as it was before any of this started.
       documentContents.set("/P/a.md", "# A");
       documentContents.set("/P/b.md", "# B");
       documentContents.set("/P/c.md", "# C");
@@ -570,8 +570,9 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       resolveB?.({ text: "# B", mtime: 1 });
       await new Promise((r) => setTimeout(r, 20));
 
-      expect(document.querySelector('[data-tab-id="a"]')?.getAttribute("data-active")).toBe("true");
-      expect(cmText()).toBe("B"); // CHARACTERIZATION: content/path mismatch — B's content under a's path
+      expect(document.querySelector('[data-tab-id="c"]')?.getAttribute("data-active")).toBe("true");
+      expect(document.querySelector('[data-tab-id="a"]')).not.toBeNull();
+      expect(cmText()).toBe("C"); // BC-3: aborted — never mounted B's content anywhere
     });
   });
 

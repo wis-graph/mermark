@@ -232,7 +232,14 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
    *     be resumed by this one's late abort.
    *  7. `commit(fresh)` runs synchronously (no await between it and the
    *     handoff check) — callers pack the old `onCommit?.(); openInWindow(...)`
-   *     pair straight into `commit`. */
+   *     pair straight into `commit`.
+   *  8. `guard` (BC-3, C11) is an OPTIONAL extra abort condition checked
+   *     right before `commit`, on top of (not instead of) the token
+   *     staleness checks above — for a mismatch ordinary token staleness
+   *     can't see at all (design §2.4's BC-3: an inactive tab close bypasses
+   *     the lifecycle counter entirely, so the ACTIVE tab's own close can
+   *     still look "current" while the tab list it's about to act on has
+   *     silently changed underneath it). Most transactions don't need one. */
   async function runTransition<F>(spec: {
     readonly token: RequestToken;
     readonly sourceEditor: EditorController | undefined;
@@ -241,6 +248,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     readonly onReadError?: (error: unknown) => "abort-silently";
     readonly resumeOnAbort: boolean;
     readonly handoff: () => Promise<boolean>;
+    readonly guard?: () => boolean;
     readonly commit: (fresh: F | undefined) => void;
   }): Promise<boolean> {
     const abort = (): boolean => {
@@ -258,6 +266,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     }
     if (!spec.token.isCurrent() || !(await commitBeforeSwitch()) || !spec.token.isCurrent()) return abort();
     if (!(await spec.handoff()) || !spec.token.isCurrent()) return abort();
+    if (spec.guard && !spec.guard()) return abort();
     spec.commit(fresh);
     return true;
   }
@@ -587,6 +596,28 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     });
   }
 
+  /** BC-3 (approved, C11) — closeActiveTab's commit-time guard. An INACTIVE
+   *  tab can be closed with no lifecycle participation at all (the
+   *  pre-transaction guard in main.ts's handler, design §3.2/plan C5 —
+   *  `!wasActive` skips `beginLifecycleRequest` entirely), so ordinary
+   *  token staleness is blind to it: the ACTIVE tab's own close can finish
+   *  reading its `nextTab` and still find its token "current", even though
+   *  that exact tab was independently removed while the read was pending.
+   *  Re-derives what the next-active path WOULD be from the CURRENT
+   *  `vaultTabs` store (after removing the tab THIS transaction is
+   *  closing) and compares it to the `nextTab` this transaction actually
+   *  read — a mismatch means mounting that already-read content under
+   *  whatever tab is now last would write it to the WRONG path on the next
+   *  autosave (the exact corruption tests/document-transactions.test.ts's
+   *  C3.5 used to characterize before BC-3). Named so the rule isn't an
+   *  inline `if` inside the transaction spec (intent-review). Pure query
+   *  (CQS) — `undefined === undefined` (both "no next tab") counts as a
+   *  match, so closing the last tab is never blocked by this guard. */
+  function closeTargetStillMatchesRead(vault: Vault, tab: VaultTab, nextTab: VaultTab | undefined): boolean {
+    const stillThere = vaultTabs.get(vault.vaultId).tabs.filter((candidate) => candidate.tabId !== tab.tabId);
+    return stillThere[stillThere.length - 1]?.path === nextTab?.path;
+  }
+
   /** T3 (onCloseTab's active-tab branch). The pre-transaction guard (an
    *  inactive tab, or a different vault than the one currently routed —
    *  closeable with no lifecycle participation at all) stays in main.ts's
@@ -596,9 +627,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
    *  (the `nextTab` a stale reader raced against is frozen at commit time,
    *  never re-read). `read` is omitted entirely when there's no `nextTab`
    *  (closing the last tab — HEAD never called `fileHostFor` in that case
-   *  either). No BC-3 content/path-match guard here — that's BC-3 (C11,
-   *  owner approval gated); tests/document-transactions.test.ts's C3.5
-   *  CHARACTERIZATION test pins today's actual (unguarded) outcome. */
+   *  either). */
   async function closeActiveTab(vault: Vault, tab: VaultTab, scope: TabPersistenceScope): Promise<void> {
     const currentTabs = vaultTabs.get(vault.vaultId);
     const remainingTabs = currentTabs.tabs.filter((candidate) => candidate.tabId !== tab.tabId);
@@ -615,6 +644,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
       },
       resumeOnAbort: true,
       handoff: () => watcherHandoff.handoff(nextTab?.path, vault),
+      guard: () => closeTargetStillMatchesRead(vault, tab, nextTab),
       commit: (freshValue) => {
         const fresh = freshValue as { text: string; mtime: number } | undefined;
         const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, scope);

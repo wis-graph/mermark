@@ -245,6 +245,67 @@ describe("DocumentSession — runTransition contract (via openDocument/openDocum
   });
 });
 
+describe("closeActiveTab's BC-3 guard (closeTargetStillMatchesRead, design §2.4/C11)", () => {
+  const vault = { vaultId: "vault-P", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent" as const, explorerRoot: "/P" };
+
+  beforeEach(() => {
+    documentContents.clear();
+    deferredReads.clear();
+    rejectedReads.clear();
+    rejectWatch = false;
+    invokeMock.mockClear();
+    mountEditorMock.mockClear();
+    nextEditor = undefined;
+  });
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("matches (guard passes) when nothing else touched the tab list — the close proceeds normally", async () => {
+    documentContents.set("/P/a.md", "# A");
+    documentContents.set("/P/b.md", "# B");
+    documentContents.set("/P/c.md", "# C");
+    const vaultTabs = new VaultTabStore();
+    vaultTabs.open(vault.vaultId, "/P/a.md", "permanent");
+    vaultTabs.open(vault.vaultId, "/P/b.md", "permanent");
+    vaultTabs.open(vault.vaultId, "/P/c.md", "permanent"); // active = c
+    const session = createDocumentSession(makeDeps({ vaultTabs, currentVault: () => vault, routeDocumentPath: () => vault }));
+    await session.openDocumentSafely("/P/c.md", { vault });
+
+    const tabs = vaultTabs.get(vault.vaultId).tabs;
+    const c = tabs.find((t) => t.path === "/P/c.md")!;
+    await session.closeActiveTab(vault, c, "permanent");
+
+    expect(session.currentFile).toBe("/P/b.md"); // nextTab (last remaining after removing c) mounted
+    expect(vaultTabs.get(vault.vaultId).tabs.some((t) => t.path === "/P/c.md")).toBe(false); // c actually closed
+  });
+
+  it("mismatches (guard fails) when nextTab was independently removed while the read was pending — aborts, tab NOT closed", async () => {
+    documentContents.set("/P/a.md", "# A");
+    documentContents.set("/P/b.md", "# B");
+    documentContents.set("/P/c.md", "# C");
+    const vaultTabs = new VaultTabStore();
+    vaultTabs.open(vault.vaultId, "/P/a.md", "permanent");
+    vaultTabs.open(vault.vaultId, "/P/b.md", "permanent");
+    vaultTabs.open(vault.vaultId, "/P/c.md", "permanent"); // active = c
+    const session = createDocumentSession(makeDeps({ vaultTabs, currentVault: () => vault, routeDocumentPath: () => vault }));
+    await session.openDocumentSafely("/P/c.md", { vault });
+
+    let resolveB: ((v: unknown) => void) | undefined;
+    deferredReads.set("/P/b.md", { promise: new Promise((resolve) => { resolveB = resolve; }) }); // c's nextTab read (b) stalls
+    const tabs = vaultTabs.get(vault.vaultId).tabs;
+    const b = tabs.find((t) => t.path === "/P/b.md")!;
+    const c = tabs.find((t) => t.path === "/P/c.md")!;
+    const closing = session.closeActiveTab(vault, c, "permanent");
+    vaultTabs.close(vault.vaultId, b.tabId, "permanent"); // independent removal, no lifecycle
+    resolveB?.({ text: "# B", mtime: 1 });
+    await closing;
+
+    expect(session.currentFile).toBe("/P/c.md"); // never swapped — aborted before commit
+    expect(vaultTabs.get(vault.vaultId).tabs.some((t) => t.path === "/P/c.md")).toBe(true); // c NOT closed either
+  });
+});
+
 describe("DocumentSession.readonlyView (design §3.6 — read-only, future-plugin-API-shaped)", () => {
   beforeEach(() => {
     documentContents.clear();
