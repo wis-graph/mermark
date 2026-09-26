@@ -39,6 +39,7 @@ import {
 } from "../settings/app";
 import type { Vault, WorkspaceStore } from "../workspace/workspace-state";
 import { selectVaultView, type TabPersistenceScope, type VaultTab, type VaultTabStore } from "../workspace/vault-tabs";
+import { makeHistory, pushHistory, back, forward, currentEntry, pruneAt, type NavHistory } from "../document/history/nav-history";
 
 export interface OpenOptions {
   /** An explicit target vault. Omitted = read falls back to `currentVault()
@@ -91,11 +92,6 @@ export interface DocumentSessionDeps {
   readonly welcomeBaseDir: (vault: Vault | undefined) => string; // baseDirForVault
   readonly onWelcomeCleared: () => void; // explorer.setActiveFile(null)
   readonly explorerFolder: () => string; // currentExplorerFolder — reload URL only, C7
-  // T3/T4 still live in main.ts (C2-C5/C6) — openInWindow needs their
-  // pre-fetched `fresh` payload mounted without re-reading, and its own
-  // history push needs main's still-resident navHistory/recordNavigation
-  // (that cell/function moves in C6, alongside T4 itself).
-  readonly recordNavigation: (file: string, vaultId: string, viaHistory: boolean) => void;
 }
 
 export interface DocumentSession {
@@ -109,28 +105,13 @@ export interface DocumentSession {
   openDocumentSafely(absPath: string, opts?: OpenOptions): Promise<boolean>;
   enterVaultWelcome(opts: { onCommit: () => void; onRendered?: () => void }): Promise<void>;
   closeActiveTab(vault: Vault, tab: VaultTab, scope: TabPersistenceScope): Promise<void>;
+  goBack(): void;
+  goForward(): void;
 
   commitBeforeSwitch(): Promise<boolean>;
   renderWelcomeForVault(): void;
   saveSessionState(immediate?: boolean): void;
   acceptsWatchEvent(change: Pick<WatchSession, "path" | "generation">): boolean;
-
-  /** @internal transitional — removed in C6 once T4 folds into goBack/goForward
-   *  and the negative main-source guard lands. */
-  beginLifecycleRequest(): number;
-  /** @internal transitional — removed in C6 (see beginLifecycleRequest). */
-  isCurrentRequest(id: number): boolean;
-  /** @internal transitional — removed in C6 (see beginLifecycleRequest). T2/T3
-   *  (still main-resident) call `.handoff(...)` directly until they fold. */
-  readonly watcherHandoff: ReturnType<typeof createWatcherHandoff>;
-  /** @internal transitional — removed once T3 (C5) and T4 (C6) fold and stop
-   *  needing to mount an already-fetched `fresh` payload themselves. */
-  openInWindow(
-    file: string,
-    fresh: { text: string; mtime: number },
-    opts?: { readonly viaHistory?: boolean },
-    targetVault?: Vault,
-  ): void;
 }
 
 export function createDocumentSession(deps: DocumentSessionDeps): DocumentSession {
@@ -168,16 +149,25 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
   /** A single stale-request check, captured once per transaction (design
    *  §3.3) — replaces the old `requestId !== lifecycleRequest` hand-copy at
    *  every T1/T2/T3/T4 call site with one comparable object. Built on TOP of
-   *  `beginLifecycleRequest`/`isCurrentRequest` (the transitional API T2/T3
-   *  still use directly until they fold) — same counter, same
-   *  `watcherHandoff.invalidate()` side effect, so a stale T1 token and a
-   *  stale raw `requestId` number can never disagree about which request is
-   *  current. */
+   *  `beginLifecycleRequest`/`isCurrentRequest` — same counter, same
+   *  `watcherHandoff.invalidate()` side effect. */
   interface RequestToken { isCurrent(): boolean }
   const beginToken = (): RequestToken => {
     const id = beginLifecycleRequest();
     return { isCurrent: () => isCurrentRequest(id) };
   };
+  /** T4's history moves never participate in the lifecycle counter (D1: HEAD
+   *  never called `beginLifecycleRequest` for ⌘[/⌘]) — a token that always
+   *  reports current gives `runTransition` that exact behavior for free: its
+   *  own stale re-checks (pre-commit/post-commit/post-handoff) never abort,
+   *  and `onReadError` always fires regardless of any OTHER transaction's
+   *  state (D4: T4 prunes "staleness와 무관하게"). Design §2.4/§3.3 —
+   *  `HISTORY_LEGACY_POLICY` below pairs this with `resumeOnAbort: false`
+   *  (D5) to preserve BOTH accidental properties until BC-1/BC-2 are
+   *  approved (C9/C10), at which point T4 gets a real `beginToken()` and
+   *  `resumeOnAbort: true` instead. */
+  const LEGACY_NO_LIFECYCLE: RequestToken = { isCurrent: () => true };
+  const HISTORY_LEGACY_POLICY = { token: LEGACY_NO_LIFECYCLE, resumeOnAbort: false } as const;
 
   /** The open-transaction primitive (design §3.4) every T1/T2/T3/T4 spec
    *  re-expresses onto: read (if any) → stale-check → commitBeforeSwitch →
@@ -446,7 +436,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     // handler already moved the pointer), else ⌘[ would loop. Named so the "don't
     // re-record a history move" rule isn't an inline if. Still main-resident
     // until T4 folds (C6) — session calls through the injected dep.
-    deps.recordNavigation(file, selectedVault.vaultId, opts.viaHistory ?? false);
+    recordNavigation(file, selectedVault.vaultId, opts.viaHistory ?? false);
 
     // dev-only: expose the live controller so the debug harness can read real
     // editor state (selection offsets, block specs) instead of guessing.
@@ -576,6 +566,78 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     });
   }
 
+  // Document navigation history (⌘[/⌘]) — ephemeral in-memory session state, NOT
+  // a setting: starts empty; the first openInWindow records the launch file.
+  // Distinct from the recent MRU list (recentDocsSetting) — see nav-history.ts.
+  // Ruling 9: each history entry remembers the vault it was opened FROM
+  // (`vaultId`, resolved back to a live `Vault` via workspaceStore at
+  // navigate time — never a captured `Vault` object, which could go stale
+  // if the vault is later unregistered). nav-history.ts's stack arithmetic
+  // is generic over the entry type and stores/returns `NavEntry` opaquely,
+  // so its own pure logic (and tests) never need to know "vault" exists.
+  interface NavEntry {
+    readonly path: string;
+    readonly vaultId: string;
+  }
+  let navHistory: NavHistory<NavEntry> = makeHistory();
+
+  /** Record a document mount in the back/forward history — unless it WAS a
+   *  history move (viaHistory), in which case the pointer was already set by the
+   *  handler and re-pushing would break back/forward. Named so the "don't
+   *  re-record a history move" rule lives in one place, not an inline if.
+   *  `vaultId` (not a `Vault` object) — navigateHistory re-resolves it through
+   *  workspaceStore at navigate time, so a vault unregistered after this push
+   *  is a normal "unknown vault" fallback, never a stale captured object. */
+  function recordNavigation(file: string, vaultId: string, viaHistory: boolean): void {
+    if (viaHistory) return;
+    navHistory = pushHistory(navHistory, { path: file, vaultId });
+  }
+
+  /** T4 (navigateHistory/goBack/goForward) — folded onto runTransition with
+   *  `HISTORY_LEGACY_POLICY` (BC-1/BC-2 not yet approved, design §2.4): no
+   *  real lifecycle participation (`LEGACY_NO_LIFECYCLE` token, always
+   *  current) and no resumeWrites on abort. `onReadError` prunes the dead
+   *  entry regardless of staleness — the SAME "always fires" property the
+   *  always-current token already gives every other stale re-check in
+   *  `runTransition`, so no separate staleness branch is needed here. The
+   *  pointer (`navHistory = next`) commits inside `commit`, same position
+   *  HEAD's own body had it (only after read+commitBeforeSwitch+handoff all
+   *  succeeded). */
+  async function navigateHistory(move: (h: NavHistory<NavEntry>) => NavHistory<NavEntry>): Promise<void> {
+    const next = move(navHistory);
+    if (next === navHistory) return; // at an end → no-op (same-ref signal)
+    const entry = currentEntry(next);
+    if (!entry) return;
+    const target = entry.path;
+    // Ruling 9: the vault THIS history entry was opened from — resolved fresh
+    // by id through workspaceStore (never a captured Vault object, which
+    // could go stale if the vault was unregistered since this entry was
+    // pushed) — never `currentVault()`, which is the vault of whatever is
+    // open RIGHT NOW, i.e. the navigation's SOURCE, not its target. An
+    // unresolvable id (vault unregistered, or a same-session edge case)
+    // falls back to the old behavior.
+    const targetVault = resolveTargetVault(workspaceStore.getVault(entry.vaultId), currentVault(), workspaceStore.getGlobalVault());
+    await runTransition<{ text: string; mtime: number }>({
+      token: HISTORY_LEGACY_POLICY.token,
+      sourceEditor: current,
+      read: async () => { return fileHostFor(targetVault).readFile(target); },
+      onReadError: () => {
+        // The target file is gone: forget it and skip (no navigation).
+        navHistory = pruneAt(navHistory, next.index);
+        return "abort-silently";
+      },
+      resumeOnAbort: HISTORY_LEGACY_POLICY.resumeOnAbort,
+      handoff: () => watcherHandoff.handoff(target, targetVault),
+      commit: (freshValue) => {
+        const fresh = freshValue as { text: string; mtime: number };
+        navHistory = next; // commit the pointer only after the read succeeded
+        openInWindow(target, fresh, { viaHistory: true }, targetVault);
+      },
+    });
+  }
+  const goBack = (): void => void navigateHistory(back);
+  const goForward = (): void => void navigateHistory(forward);
+
   return {
     get current() { return current; },
     get currentFile() { return currentFile; },
@@ -587,15 +649,12 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     openDocumentSafely,
     enterVaultWelcome,
     closeActiveTab,
+    goBack,
+    goForward,
 
     commitBeforeSwitch,
     renderWelcomeForVault,
     saveSessionState,
     acceptsWatchEvent,
-
-    beginLifecycleRequest,
-    isCurrentRequest,
-    watcherHandoff,
-    openInWindow,
   };
 }

@@ -1267,20 +1267,39 @@ describe("main workspace wiring", () => {
     it("wires routeDocumentPath/openDocument/navigateHistory to actually USE routingTrustsCurrentVault/resolveTargetVault (not a parallel inline copy of the same rule)", () => {
       // C1: routeDocumentPath moved verbatim to src/workspace/vault-selection.ts.
       expect(vaultSelectionSource).toContain("if (current && routingTrustsCurrentVault(current.persistenceKind)) return current;");
-      // C2: openDocument's body (readVault/read/handoff/openInWindow) moved
-      // verbatim to src/document/session.ts. navigateHistory (T4) is still
-      // main-resident until C6 — its own resolveTargetVault/openInWindow/
-      // handoff lines stay asserted against mainSource.
+      // C2/C6: openDocument's AND navigateHistory's (T4, folded C6) bodies
+      // both moved verbatim to src/document/session.ts — every one of these
+      // lines now lives there, not in main.ts.
       expect(sessionSource).toContain("const readVault = resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault());");
       expect(sessionSource).toContain("fileHostFor(readVault).readFile(absPath);");
-      expect(mainSource).toContain("resolveTargetVault(workspaceStore.getVault(entry.vaultId), currentVault(), workspaceStore.getGlobalVault());");
+      expect(sessionSource).toContain("resolveTargetVault(workspaceStore.getVault(entry.vaultId), currentVault(), workspaceStore.getGlobalVault());");
       expect(sessionSource).toContain("openInWindow(absPath, fresh, {}, targetVault);");
-      expect(mainSource).toContain("openInWindow(target, fresh, { viaHistory: true }, targetVault);");
+      expect(sessionSource).toContain("openInWindow(target, fresh, { viaHistory: true }, targetVault);");
       // C2: the SAME vault resolved for the read is what handoff uses to
       // decide whether to watch at all (shouldWatchDocument) — not
       // re-derived, and not skipped.
       expect(sessionSource).toContain("watcherHandoff.handoff(absPath, readVault)");
-      expect(mainSource).toContain("watcherHandoff.handoff(target, targetVault)");
+      expect(sessionSource).toContain("watcherHandoff.handoff(target, targetVault)");
+    });
+
+    // C6 (design §5.1-3): the single-token mechanism (RequestToken) fully
+    // replaces the raw `requestId !== lifecycleRequest` idiom everywhere —
+    // main.ts no longer even has the WORD `lifecycleRequest`, and
+    // session.ts's own token comparison never spells out the raw
+    // `=== lifecycleRequest` form outside `isCurrentRequest`'s one
+    // definition. Negative guards so a future edit can't reintroduce a
+    // hand-rolled copy of either.
+    it("main.ts has NO hand-rolled lifecycle-counter/session-transaction copies left (C6 fold complete)", () => {
+      expect(mainSource).not.toContain("lifecycleRequest");
+      expect(mainSource).not.toContain("beginLifecycleRequest");
+      expect(mainSource).not.toContain("watcherHandoff.handoff(");
+      expect(mainSource).not.toContain("fileHostFor(readVault)");
+      expect(mainSource).not.toContain("commitBeforeSwitch().then");
+      expect(mainSource).not.toContain("navHistory =");
+    });
+    it("session.ts's token comparison is centralized in isCurrentRequest, not re-spelled at each call site", () => {
+      // one definition site only: `const isCurrentRequest = (id: number): boolean => id === lifecycleRequest;`
+      expect(sessionSource.split("=== lifecycleRequest").length - 1).toBe(1);
     });
 
     it("onSelectVault/onSelectTab pass their own already-known target vault through, not the sidebar's currentVault()", () => {

@@ -63,15 +63,6 @@ import { openFindPanel, enterEditModeForReplace } from "./markdown/find";
 import type { RecentEntry } from "./sidebar/recent/recent-docs";
 import { readLegacyRecentDocPaths, migrateLegacyRecentPaths } from "./sidebar/recent/recent-vault-migration";
 import { createWelcomePane } from "./chrome/welcome/welcome-pane";
-import {
-  makeHistory,
-  pushHistory,
-  back,
-  forward,
-  currentEntry,
-  pruneAt,
-  type NavHistory,
-} from "./document/history/nav-history";
 import { decideExternalChange, onFileChanged, onFileUnavailable, unwatchFile } from "./document/file-watch";
 import { openConflictModal } from "./document/conflict/conflict-modal";
 import { createConflictRecovery, sameConflictIdentity, type ConflictIdentity } from "./document/conflict/conflict-recovery";
@@ -100,7 +91,6 @@ import {
   isVaultRootLocked,
   permanentRootsOf,
   resolveHomeRoot,
-  resolveTargetVault,
   shouldPreserveGlobalExplorerRoot,
   standardLinkRejectionFor,
   tabScopeForVault,
@@ -305,7 +295,7 @@ async function boot() {
   // (DocumentSession, riffactor B C2 — _workspace/01_architect_design.md
   // §3.1). Every dep below that isn't already defined at this point in boot()
   // (explorer/outline/welcomePane/baseDirForVault/replaceHintEntry/
-  // syncExplorerToOpenedDocument/recordNavigation/closeConflict/
+  // syncExplorerToOpenedDocument/closeConflict/
   // closeOpenViewer/closeRecovery/showDocumentRecovery/showOpenRecovery) is
   // wired as a closure evaluated at CALL time, not at this construction site
   // — same "aren't born yet" rule explorer/outline/welcomePane already
@@ -346,7 +336,6 @@ async function boot() {
     welcomeBaseDir: (vault) => baseDirForVault(vault),
     onWelcomeCleared: () => explorer.setActiveFile(null),
     explorerFolder: () => currentExplorerFolder,
-    recordNavigation: (file, vaultId, viaHistory) => recordNavigation(file, vaultId, viaHistory),
   });
   let currentExplorerFolder = reloadHandoff.globalExplorerRoot ?? session.currentBaseDir;
   // A remote vault's `explorerRoot` is a virtual browsing root on the HOST,
@@ -414,20 +403,6 @@ async function boot() {
     const root = explorerRootForVault(vault);
     if (root !== null) explorer.jumpToRoot(root);
   };
-  // Document navigation history (⌘[/⌘]) — ephemeral in-memory session state, NOT
-  // a setting: starts empty; the first openInWindow records the launch file.
-  // Distinct from the recent MRU list (recentDocsSetting) — see nav-history.ts.
-  // Ruling 9: each history entry remembers the vault it was opened FROM
-  // (`vaultId`, resolved back to a live `Vault` via workspaceStore at
-  // navigate time — never a captured `Vault` object, which could go stale
-  // if the vault is later unregistered). nav-history.ts's stack arithmetic
-  // is generic over the entry type and stores/returns `NavEntry` opaquely,
-  // so its own pure logic (and tests) never need to know "vault" exists.
-  interface NavEntry {
-    readonly path: string;
-    readonly vaultId: string;
-  }
-  let navHistory: NavHistory<NavEntry> = makeHistory();
   let openConflict: { close(): void } | null = null;
   let openRecovery: RecoveryModalHandle | null = null;
   const closeConflict = (): void => {
@@ -1364,53 +1339,6 @@ async function boot() {
     explorer.setActiveFile(file);
   }
 
-  /** Record a document mount in the back/forward history — unless it WAS a
-   *  history move (viaHistory), in which case the pointer was already set by the
-   *  handler and re-pushing would break back/forward. Named so the "don't
-   *  re-record a history move" rule lives in one place, not an inline if.
-   *  `vaultId` (not a `Vault` object) — navigateHistory re-resolves it through
-   *  workspaceStore at navigate time, so a vault unregistered after this push
-   *  is a normal "unknown vault" fallback, never a stale captured object. */
-  function recordNavigation(file: string, vaultId: string, viaHistory: boolean): void {
-    if (viaHistory) return;
-    navHistory = pushHistory(navHistory, { path: file, vaultId });
-  }
-
-  /** Step the history cursor by `move` (back/forward) and open the target,
-   *  reusing the single open path. A no-op move (already at an end) returns
-   *  early. The pointer is only committed AFTER a successful read, so a failed
-   *  read leaves the history unchanged — a dead entry is pruned and skipped.
-   *  Command (void). Shared body so back and forward differ by one function. */
-  async function navigateHistory(move: (h: NavHistory<NavEntry>) => NavHistory<NavEntry>): Promise<void> {
-    const next = move(navHistory);
-    if (next === navHistory) return; // at an end → no-op (same-ref signal)
-    const entry = currentEntry(next);
-    if (!entry) return;
-    const target = entry.path;
-    // Ruling 9: the vault THIS history entry was opened from — resolved fresh
-    // by id through workspaceStore (never a captured Vault object, which
-    // could go stale if the vault was unregistered since this entry was
-    // pushed) — never `currentVault()`, which is the vault of whatever is
-    // open RIGHT NOW, i.e. the navigation's SOURCE, not its target. An
-    // unresolvable id (vault unregistered, or a same-session edge case)
-    // falls back to the old behavior.
-    const targetVault = resolveTargetVault(workspaceStore.getVault(entry.vaultId), currentVault(), workspaceStore.getGlobalVault());
-    let fresh: { text: string; mtime: number };
-    try {
-      fresh = await fileHostFor(targetVault).readFile(target);
-    } catch {
-      // The target file is gone: forget it and skip (no navigation).
-      navHistory = pruneAt(navHistory, next.index);
-      return;
-    }
-    if (!(await session.commitBeforeSwitch())) return;
-    if (!(await session.watcherHandoff.handoff(target, targetVault))) return;
-    navHistory = next; // commit the pointer only after the read succeeded
-    session.openInWindow(target, fresh, { viaHistory: true }, targetVault);
-  }
-  const goBack = (): void => void navigateHistory(back);
-  const goForward = (): void => void navigateHistory(forward);
-
   // ── Window-global wiring (installed ONCE; reads `current` so it always
   //    reaches the live editor after a re-mount). ─────────────────────────────
 
@@ -1569,8 +1497,8 @@ async function boot() {
   registerHandler("explorer.toggle", () => explorer.button.click());
   registerHandler("recent.toggle", () => recent.button.click());
   registerHandler("outline.toggle", () => outline.button.click());
-  registerHandler("history.back", goBack);
-  registerHandler("history.forward", goForward);
+  registerHandler("history.back", session.goBack);
+  registerHandler("history.forward", session.goForward);
   registerHandler("openPath.toggle", () => prompt.button.click());
   registerHandler("zoom.in", zoomIn);
   registerHandler("zoom.out", zoomOut);

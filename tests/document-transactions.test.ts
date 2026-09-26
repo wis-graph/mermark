@@ -896,15 +896,18 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 });
 
 describe("document-transactions.test.ts — main.ts source shape (sanity, not a duplicate of main-wiring.test.ts)", () => {
-  // C2: T1's body (openDocument/openDocumentSafely) moved verbatim into
-  // src/document/session.ts; main.ts keeps call-site-unchanged adapters
-  // (design §3.2). T2/T3/T4 (onSelectVault welcome/onCloseTab/navigateHistory)
-  // still live in main.ts until C4/C5/C6.
-  it("still reads T1's adapters + T2/T3/T4's bodies from src/main.ts, and T1's real body from session.ts", () => {
+  // C2-C6: all four transactions (T1 openDocument/openDocumentSafely, T2
+  // enterVaultWelcome, T3 closeActiveTab, T4 navigateHistory/goBack/
+  // goForward) have folded into src/document/session.ts. main.ts keeps
+  // call-site-unchanged adapters for T1 (design §3.2) and thin handler
+  // wiring for T2-T4; none of the four bodies live in main.ts anymore.
+  it("reads T1's adapters from src/main.ts, and every transaction's real body from session.ts", () => {
     expect(mainSource).toContain("session.openDocument(absPath, { vault: targetVault });");
     expect(mainSource).toContain("session.openDocumentSafely(absPath, { onCommit, vault: targetVault });");
-    expect(mainSource).toContain("async function navigateHistory(");
     const sessionSource = readFileSync("src/document/session.ts", "utf8");
     expect(sessionSource).toContain("async function openDocument(");
+    expect(sessionSource).toContain("async function enterVaultWelcome(");
+    expect(sessionSource).toContain("async function closeActiveTab(");
+    expect(sessionSource).toContain("async function navigateHistory(");
   });
 });

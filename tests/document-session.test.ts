@@ -125,7 +125,6 @@ function makeDeps(overrides: Partial<DocumentSessionDeps> = {}): DocumentSession
     welcomeBaseDir: () => "/",
     onWelcomeCleared: vi.fn(),
     explorerFolder: () => "/",
-    recordNavigation: vi.fn(),
     ...overrides,
   };
 }
