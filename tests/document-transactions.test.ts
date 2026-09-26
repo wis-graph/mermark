@@ -676,7 +676,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       expect(cmText()).toContain("B");
     });
 
-    it("C4.6: CHARACTERIZATION(BC-2) — dirty B saved ok but A's watch attach rejects on ⌘[: B stays, but autosave does NOT resume", async () => {
+    it("C4.6: BC-2 — dirty B saved ok but A's watch attach rejects on ⌘[: B stays, and autosave DOES resume (resumeWrites on abort)", async () => {
       documentContents.set("/P/a.md", "# A");
       documentContents.set("/P/b.md", "# B");
       seedWorkspace({ vaults: [{ root: "/P" }], tabsByRoot: { "/P": [{ tabId: "a", path: "/P/a.md" }, { tabId: "b", path: "/P/b.md" }] }, activeTabByRoot: { "/P": "a" } });
@@ -697,10 +697,9 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       rejectWatchPath = undefined;
       invokeMock.mockClear();
       liveEditor()?.view.dispatch({ changes: { from: 0, to: 0, insert: "z" } });
-      await new Promise((r) => setTimeout(r, 300)); // past the default autosave debounce
-      // CHARACTERIZATION: T4 does not resumeWrites on abort (D5) — the editor
-      // is left suspended, so the next edit does NOT trigger a write_file.
-      expect(invokeMock).not.toHaveBeenCalledWith("write_file", expect.anything());
+      // BC-2: T4 now resumeWrites() on abort, same as T1/T2/T3 — the next
+      // edit autosaves normally instead of staying suspended.
+      await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledWith("write_file", expect.anything()));
     });
 
     it("C4.7: BC-1 — recent-panel read of C stalls, ⌘[ mounts A immediately, then C's now-stale read resolves and is DROPPED (last user action wins)", async () => {
