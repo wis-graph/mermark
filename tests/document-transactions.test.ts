@@ -896,8 +896,15 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 });
 
 describe("document-transactions.test.ts — main.ts source shape (sanity, not a duplicate of main-wiring.test.ts)", () => {
-  it("still reads the T1/T2/T3/T4 bodies from src/main.ts (fails loudly if this file's line anchors move before C1 lands)", () => {
-    expect(mainSource).toContain("const openDocument = async (");
+  // C2: T1's body (openDocument/openDocumentSafely) moved verbatim into
+  // src/document/session.ts; main.ts keeps call-site-unchanged adapters
+  // (design §3.2). T2/T3/T4 (onSelectVault welcome/onCloseTab/navigateHistory)
+  // still live in main.ts until C4/C5/C6.
+  it("still reads T1's adapters + T2/T3/T4's bodies from src/main.ts, and T1's real body from session.ts", () => {
+    expect(mainSource).toContain("session.openDocument(absPath, { vault: targetVault });");
+    expect(mainSource).toContain("session.openDocumentSafely(absPath, { onCommit, vault: targetVault });");
     expect(mainSource).toContain("async function navigateHistory(");
+    const sessionSource = readFileSync("src/document/session.ts", "utf8");
+    expect(sessionSource).toContain("async function openDocument(");
   });
 });

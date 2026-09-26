@@ -10,7 +10,7 @@ import { createOutlinePanel } from "./sidebar/outline/outline-panel";
 import { createExplorerPanel } from "./sidebar/explorer/explorer-panel";
 import { localFileHost, fileHostFor, classifyRemoteError } from "./document/file-host";
 import { badgeFor } from "./workspace/add-remote-vault";
-import { mountEditor, type EditorController } from "./editor";
+import type { EditorController } from "./editor";
 import { onFeaturesChanged } from "./markdown/live-preview";
 import { activateExtensions } from "./extensions";
 import { makeThemeToggle } from "./theme";
@@ -60,7 +60,7 @@ import { createBreadcrumb } from "./chrome/breadcrumb";
 import { createRecentPanel } from "./sidebar/recent/recent-panel";
 import { createSearchPanel } from "./sidebar/search/search-panel";
 import { openFindPanel, enterEditModeForReplace } from "./markdown/find";
-import { pushRecent, type RecentEntry } from "./sidebar/recent/recent-docs";
+import type { RecentEntry } from "./sidebar/recent/recent-docs";
 import { readLegacyRecentDocPaths, migrateLegacyRecentPaths } from "./sidebar/recent/recent-vault-migration";
 import { createWelcomePane } from "./chrome/welcome/welcome-pane";
 import {
@@ -72,7 +72,7 @@ import {
   pruneAt,
   type NavHistory,
 } from "./document/history/nav-history";
-import { createWatcherHandoff, decideExternalChange, onFileChanged, onFileUnavailable, watchFile, unwatchFile } from "./document/file-watch";
+import { decideExternalChange, onFileChanged, onFileUnavailable, unwatchFile } from "./document/file-watch";
 import { openConflictModal } from "./document/conflict/conflict-modal";
 import { createConflictRecovery, sameConflictIdentity, type ConflictIdentity } from "./document/conflict/conflict-recovery";
 import { openRecoveryModal, type RecoveryModalHandle } from "./document/recovery-modal";
@@ -116,6 +116,7 @@ import {
 } from "./workspace/favorite-vault-migration";
 import { createWorkspaceSidebar } from "./workspace/workspace-sidebar";
 import { createVaultSelection } from "./workspace/vault-selection";
+import { createDocumentSession } from "./document/session";
 import { selectVaultView, VaultTabStore } from "./workspace/vault-tabs";
 import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
@@ -229,13 +230,13 @@ async function boot() {
   // _workspace/00_request_vaultimage_fix.md's 결함1 for why that drift is
   // exactly the bug this whole change reverts).
   const currentOwningVaultRoot = (): string | null =>
-    currentFile ? owningVaultRoot(dirOf(currentFile), permanentRootsOf(workspaceStore.get())) : null;
+    session.currentFile ? owningVaultRoot(dirOf(session.currentFile), permanentRootsOf(workspaceStore.get())) : null;
   const currentConflictIdentity = (): ConflictIdentity | null => {
     const vault = currentVault();
-    if (!vault || !currentFile) return null;
+    if (!vault || !session.currentFile) return null;
     const tabs = vaultTabs.get(vault.vaultId);
-    const tabId = tabs.tabs.find((tab) => tab.path === normalizePath(currentFile))?.tabId;
-    return tabId ? { vaultId: vault.vaultId, tabId, documentId: `document-${normalizePath(currentFile)}` } : null;
+    const tabId = tabs.tabs.find((tab) => tab.path === normalizePath(session.currentFile))?.tabId;
+    return tabId ? { vaultId: vault.vaultId, tabId, documentId: `document-${normalizePath(session.currentFile)}` } : null;
   };
   const selectedVault = currentVault();
   const restoredTabs = selectedVault?.persistenceKind === "permanent" ? vaultTabs.get(selectedVault.vaultId) : null;
@@ -272,42 +273,17 @@ async function boot() {
   // read the mutable `current` (set by openInWindow), so they always reach the
   // live editor.
   const mode = makeModeToggle();
-  // Whether the CURRENTLY OPEN document belongs to a remote vault — set once
-  // per `openInWindow` mount (see below), read by `syncModeIndicator`. Kept
-  // as its own cell rather than re-deriving from `currentVault()` at render
-  // time: `currentVault()` is APP-selection state (routedVault/workspace
-  // selection) and can briefly point elsewhere mid vault-crossing switch
-  // (see its own doc comment); this flag is a property of the document
-  // `current` actually has mounted, set at the exact moment `mountEditor`
-  // decided it (mirrors editor.ts's own `remoteReadOnly` local).
-  let currentIsRemote = false;
-  /** The CURRENTLY OPEN document's own vault id — same "property of the
-   *  mounted document, not app-selection state" reasoning as `currentIsRemote`
-   *  just above, set at the same site. Feeds `sessionStateKey` (Minor, final
-   *  review): `currentFile` alone is not a unique document identity — a
-   *  remote document's path is vault-relative ("노트.md"), so two different
-   *  remote vaults with a same-named document at their root used to collide
-   *  on the exact same `mermark.session.*` localStorage key. */
-  let currentOpenVaultId: string | null = null;
-
-  /** The localStorage key `mermark.session.*` state is keyed by — ONE named
-   *  function so the save site and the restore site (both below) can never
-   *  drift onto two different key shapes. `vaultId ?? ""` keeps a legacy/no-
-   *  vault key stable in shape (still 4 dot-segments after the prefix would
-   *  change grep-ability for no benefit) while still disambiguating from a
-   *  DIFFERENT vault's same-named file, which is the actual bug this exists
-   *  to close. */
-  function sessionStateKey(vaultId: string | null, file: string): string {
-    return `mermark.session.${vaultId ?? ""}.${file}`;
-  }
   /** The mode indicator's single source of truth (Task 11): folds the global
    *  `modeSetting` and the open document's remote-forced read-only state into
    *  one render call, so the title-bar toggle can never show "편집" for a
    *  document that is actually uneditable. Bound to modeSetting's own change
    *  event AND called once more right after every mount (modeSetting alone
    *  doesn't change when a document with a DIFFERENT remote-ness opens while
-   *  the setting itself stays "edit"). Command (void). */
-  const syncModeIndicator = () => mode.render(modeSetting.get(), currentIsRemote);
+   *  the setting itself stays "edit"). Command (void). `currentIsRemote` is
+   *  now DocumentSession's own cell (§1) — read via `session.currentIsRemote`,
+   *  a property of whichever document `session.current` actually has
+   *  mounted, set at the exact moment `mountEditor` decided it. */
+  const syncModeIndicator = () => mode.render(modeSetting.get(), session.currentIsRemote);
   const pos = el("span", "status-pos");
   const spacer = el("span", "status-spacer");
   const widthSlider = makeWidthSlider();
@@ -324,12 +300,55 @@ async function boot() {
   // contracts (single named ordering function each, M2 §1/§2).
 
   // "Currently open document" — the single source of truth for which editor /
-  // file / baseDir is live. All window-global sinks and listeners read this
-  // mutable cell; openInWindow re-points it. No second copy of "which file".
-  let current: EditorController;
-  let currentFile = initialFile ?? "";
-  let currentBaseDir = initialFile ? dirOf(initialFile) || SAFE_EXPLORER_BASE_PATH : SAFE_EXPLORER_BASE_PATH;
-  let currentExplorerFolder = reloadHandoff.globalExplorerRoot ?? currentBaseDir;
+  // file / baseDir is live. All window-global sinks and listeners now read it
+  // through `session.current`/`session.currentFile`/`session.currentBaseDir`
+  // (DocumentSession, riffactor B C2 — _workspace/01_architect_design.md
+  // §3.1). Every dep below that isn't already defined at this point in boot()
+  // (explorer/outline/welcomePane/baseDirForVault/replaceHintEntry/
+  // syncExplorerToOpenedDocument/recordNavigation/closeConflict/
+  // closeOpenViewer/closeRecovery/showDocumentRecovery/showOpenRecovery) is
+  // wired as a closure evaluated at CALL time, not at this construction site
+  // — same "aren't born yet" rule explorer/outline/welcomePane already
+  // needed from other forward references in this file.
+  const session = createDocumentSession({
+    host,
+    workspaceStore,
+    vaultTabs,
+    currentVault,
+    routeDocumentPath,
+    setRoutedVault,
+    initialFile,
+    initialBaseDir: initialFile ? dirOf(initialFile) || SAFE_EXPLORER_BASE_PATH : SAFE_EXPLORER_BASE_PATH,
+    closeConflict: () => closeConflict(),
+    closeOpenViewer: () => closeOpenViewer(),
+    closeRecovery: () => closeRecovery(),
+    hasOpenRecovery: () => openRecovery !== null,
+    showDocumentRecovery: (kind, detail) => showDocumentRecovery(kind, detail),
+    showOpenRecovery: (path, detail, vault) => showOpenRecovery(path, detail, vault),
+    baseDirForOpenedDocument,
+    editorOptions: () => ({
+      onStatus: (status, detail) => {
+        save.set(status, detail);
+        if (status === "recovery" && !openRecovery) showDocumentRecovery("save", detail ?? "저장 경로를 사용할 수 없습니다");
+      },
+      onCursorChrome: (line, col) => {
+        pos.textContent = `Ln ${line}, Col ${col}`;
+      },
+      extraExtensions: outline.listener,
+      findReplaceHint: replaceHintEntry,
+    }),
+    onDocumentMounted: syncModeIndicator,
+    onDocumentShown: (file) => {
+      outline.refresh();
+      syncExplorerToOpenedDocument(file);
+    },
+    welcomeElement: () => welcomePane,
+    welcomeBaseDir: (vault) => baseDirForVault(vault),
+    onWelcomeCleared: () => explorer.setActiveFile(null),
+    explorerFolder: () => currentExplorerFolder,
+    recordNavigation: (file, vaultId, viaHistory) => recordNavigation(file, vaultId, viaHistory),
+  });
+  let currentExplorerFolder = reloadHandoff.globalExplorerRoot ?? session.currentBaseDir;
   // A remote vault's `explorerRoot` is a virtual browsing root on the HOST,
   // not a path this window's local filesystem can `list_dir` — it must never
   // be confused with a LOCAL folder (task-2b brief: this exact confusion is
@@ -349,11 +368,11 @@ async function boot() {
     const selected = selectedWorkspaceVault();
     if (shouldPreserveGlobalExplorerRoot(selected)) return currentExplorerFolder;
     const vault = currentVault();
-    if (!vault) return currentBaseDir;
+    if (!vault) return session.currentBaseDir;
     const kind = vault.persistenceKind;
     switch (kind) {
       case "permanent": return vault.explorerRoot;
-      case "global": return currentBaseDir;
+      case "global": return session.currentBaseDir;
       case "remote": return vault.explorerRoot;
       default: return assertNever(kind);
     }
@@ -409,24 +428,8 @@ async function boot() {
     readonly vaultId: string;
   }
   let navHistory: NavHistory<NavEntry> = makeHistory();
-  // The per-file teardown closures the previous openInWindow installed (scroll
-  // listener, pending session timer). teardownCurrent runs them before swap.
-  let detachScroll: (() => void) | undefined;
-  let cancelSessionTimer: (() => void) | undefined;
   let openConflict: { close(): void } | null = null;
   let openRecovery: RecoveryModalHandle | null = null;
-  let lifecycleRequest = 0;
-  let pendingPrepare: { readonly editor: EditorController; readonly file: string; readonly promise: Promise<boolean> } | null = null;
-  const watcherHandoff = createWatcherHandoff({ watch: watchFile, unwatch: unwatchFile }, (phase, error) => {
-    const label = phase === "detach" ? "detach" : phase === "attach" ? "attach" : "rollback";
-    if (error instanceof Error) console.error(`File watcher ${label} failed`, error.message);
-    else console.error(`File watcher ${label} failed`, String(error));
-  });
-  const beginLifecycleRequest = (): number => {
-    watcherHandoff.invalidate();
-    lifecycleRequest += 1;
-    return lifecycleRequest;
-  };
   const closeConflict = (): void => {
     openConflict?.close();
     openConflict = null;
@@ -444,7 +447,7 @@ async function boot() {
   const prompt = createOpenPathPrompt({
     bar: titleBar.el,
     onOpen: async (raw) => {
-      const target = resolveOpenPath(raw, currentBaseDir);
+      const target = resolveOpenPath(raw, session.currentBaseDir);
       if (!target) throw new Error("경로를 입력하세요");
       // Viewer-vs-document is decided once, in `openPathEntry` (see its
       // comment for the bug this consolidation fixes — this used to be a
@@ -457,7 +460,7 @@ async function boot() {
       // `openDocument` directly and does both itself.
       await openPathEntry(target, async (path, targetVault) => {
         try {
-          await openDocument(path, undefined, undefined, targetVault);
+          await openDocument(path, targetVault);
           return true;
         } catch (error: unknown) {
           showOpenRecovery(path, String(error), targetVault);
@@ -517,7 +520,7 @@ async function boot() {
       }
       if (action !== "retry") return "failed";
       try {
-        await openDocument(path, undefined, undefined, vault);
+        await openDocument(path, vault);
         return "succeeded";
       } catch {
         return "failed";
@@ -547,7 +550,7 @@ async function boot() {
   const dummyState = EditorState.create({ doc: "" });
   const dummyView = { state: dummyState } as unknown as EditorView;
   const outline = createOutlinePanel({
-    getView: () => current?.view ?? dummyView,
+    getView: () => session.current?.view ?? dummyView,
     onOpen: () => closeOtherSidebarPanels("outline"),
   });
 
@@ -639,7 +642,7 @@ async function boot() {
       // No breadcrumb rewrite here (L4, design §6): `dirOf(absPath)` would
       // treat a vault-relative path as though it named a local folder. A
       // remote open leaves the breadcrumb exactly where it already was.
-      handle.onClose(() => breadcrumb.render(currentBaseDir));
+      handle.onClose(() => breadcrumb.render(session.currentBaseDir));
       return;
     }
     const handle = viewerSlot.open(() => v.open(absPath));
@@ -653,7 +656,7 @@ async function boot() {
     // the breadcrumb to the live document's folder. `currentBaseDir` is read
     // at close time, so a document switch that happened meanwhile still wins.
     breadcrumb.render(dirOf(absPath));
-    handle.onClose(() => breadcrumb.render(currentBaseDir));
+    handle.onClose(() => breadcrumb.render(session.currentBaseDir));
   }
 
   /** Open `path` the way anything OUTSIDE the live editor is allowed to —
@@ -798,7 +801,7 @@ async function boot() {
       // regardless of whether a document is already open elsewhere in this
       // window — there is no "first-ever open" special case for remote to
       // begin with, since a reload could never have served it anyway.
-      if (!currentFile && openVault?.persistenceKind !== "remote") {
+      if (!session.currentFile && openVault?.persistenceKind !== "remote") {
         location.href = createDocumentReloadUrl(absPath, openVault?.persistenceKind === "global" ? currentExplorerFolder : null);
       } else if (openVault?.persistenceKind === "remote") {
         // Explicit targetVault (Ruling 9's resolveTargetVault pattern) — not
@@ -909,40 +912,16 @@ async function boot() {
   // selected: `fileHostFor(remoteVault)` sent the local path to
   // `remote_read_file`, the host rejected it, and a perfectly valid local
   // file showed the open-failure recovery modal instead of opening.
-  const openDocument = async (
-    absPath: string,
-    requestId = beginLifecycleRequest(),
-    onCommit?: () => void,
-    targetVault?: Vault,
-  ): Promise<boolean> => {
-    const sourceEditor = current;
-    const readVault = resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault());
-    let fresh: { text: string; mtime: number };
-    try {
-      fresh = await fileHostFor(readVault).readFile(absPath);
-    } catch (error: unknown) {
-      if (requestId === lifecycleRequest) throw error;
-      return false;
-    }
-    if (requestId !== lifecycleRequest || !(await commitBeforeSwitch()) || requestId !== lifecycleRequest) {
-      if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
-      return false;
-    }
-    if (!(await watcherHandoff.handoff(absPath, readVault)) || requestId !== lifecycleRequest) {
-      if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
-      return false;
-    }
-    onCommit?.();
-    openInWindow(absPath, fresh, {}, targetVault);
-    return true;
-  };
-  const openDocumentSafely = (absPath: string, onCommit?: () => void, targetVault?: Vault): Promise<boolean> => {
-    const requestId = beginLifecycleRequest();
-    return openDocument(absPath, requestId, onCommit, targetVault).catch((error: unknown) => {
-      if (requestId === lifecycleRequest) showOpenRecovery(absPath, String(error), targetVault);
-      return false;
-    });
-  };
+  // Call-site-unchanged adapters (design §3.2): DocumentSession's public
+  // `openDocument`/`openDocumentSafely` take an options object
+  // (`{ onCommit?, vault? }`); every one of this file's ~12 call sites
+  // (plus tests/main-wiring.test.ts's mainSource assertions 1112/1280/1281)
+  // still uses the OLD positional shape, so these two one-liners are the
+  // whole diff those call sites see.
+  const openDocument = (absPath: string, targetVault?: Vault): Promise<boolean> =>
+    session.openDocument(absPath, { vault: targetVault });
+  const openDocumentSafely = (absPath: string, onCommit?: () => void, targetVault?: Vault): Promise<boolean> =>
+    session.openDocumentSafely(absPath, { onCommit, vault: targetVault });
 
   // CLI file-open routing (single-window-opening Todo 2): the backend's
   // single-instance broker queues an ordinary `mermark <file>` request from a
@@ -992,8 +971,8 @@ async function boot() {
       return;
     }
     const context =
-      vault?.persistenceKind === "permanent" && currentFile
-        ? { documentPath: currentFile, vaultRootPath: vault.rootPath }
+      vault?.persistenceKind === "permanent" && session.currentFile
+        ? { documentPath: session.currentFile, vaultRootPath: vault.rootPath }
         : null;
     void openStandardLocalLink(request, context, openDocumentSafely);
   });
@@ -1036,7 +1015,7 @@ async function boot() {
       save.set("error", "이 최근 문서가 속한 볼트를 찾을 수 없습니다 (삭제되었거나 연결이 해제됨)");
       return;
     }
-    if (!currentFile && targetVault.persistenceKind !== "remote") {
+    if (!session.currentFile && targetVault.persistenceKind !== "remote") {
       location.href = createDocumentReloadUrl(entry.path, targetVault.persistenceKind === "global" ? currentExplorerFolder : null);
       return;
     }
@@ -1072,36 +1051,23 @@ async function boot() {
     }
   };
 
-  const renderWelcomeForVault = (): void => {
-    closeOpenViewer();
-    closeConflict();
-    closeRecovery();
-    teardownCurrent();
-    currentFile = "";
-    explorer.setActiveFile(null); // no document open — clear the tree highlight
-    const vault = currentVault();
-    currentBaseDir = baseDirForVault(vault);
-    host.classList.add("welcome-host");
-    host.append(welcomePane);
-  };
-
   function discardCurrentDocument(editor: EditorController, file: string): void {
-    if (current !== editor || currentFile !== file) return;
+    if (session.current !== editor || session.currentFile !== file) return;
     const vault = currentVault();
     const identity = currentConflictIdentity();
     if (vault && identity) {
       const scope = tabScopeForVault(vault);
       vaultTabs.close(vault.vaultId, identity.tabId, scope);
     }
-    renderWelcomeForVault();
+    session.renderWelcomeForVault();
   }
 
   function showDocumentRecovery(kind: "deleted" | "unreadable" | "save", detail: string): void {
-    const editor = current;
-    const file = currentFile;
+    const editor = session.current;
+    const file = session.currentFile;
     if (!editor || !file) return;
     showRecovery(kind, detail, async (action) => {
-      if (current !== editor || currentFile !== file) return "failed";
+      if (session.current !== editor || session.currentFile !== file) return "failed";
       if (action === "retry") return (await editor.retryOriginal()) ? "succeeded" : "failed";
       if (action === "save-recovered-copy") return (await editor.saveRecoveredCopy()) ? "succeeded" : "failed";
       if (action === "save-as") {
@@ -1181,19 +1147,19 @@ async function boot() {
           setRoutedVault(selectedVault);
           jumpExplorerToVaultRoot(selectedVault);
         };
-        if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(currentFile)) openDocumentSafely(selection.tab.path, commitSelection, selectedVault);
+        if (previousVaultId !== selectedVault.vaultId || selection.tab.path !== normalizePath(session.currentFile)) openDocumentSafely(selection.tab.path, commitSelection, selectedVault);
         else commitSelection();
       } else {
-        const requestId = beginLifecycleRequest();
-        const sourceEditor = current;
-        void commitBeforeSwitch().then(async (saved) => {
-          if (!saved || requestId !== lifecycleRequest || !(await watcherHandoff.handoff(undefined)) || requestId !== lifecycleRequest) {
-            if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
+        const requestId = session.beginLifecycleRequest();
+        const sourceEditor = session.current;
+        void session.commitBeforeSwitch().then(async (saved) => {
+          if (!saved || !session.isCurrentRequest(requestId) || !(await session.watcherHandoff.handoff(undefined)) || !session.isCurrentRequest(requestId)) {
+            if (sourceEditor && session.current === sourceEditor) sourceEditor.resumeWrites();
             return;
           }
           workspaceStore.selectVault(selectedVault.vaultId);
           setRoutedVault(selectedVault);
-          renderWelcomeForVault();
+          session.renderWelcomeForVault();
           jumpExplorerToVaultRoot(selectedVault);
         });
       }
@@ -1215,8 +1181,8 @@ async function boot() {
         vaultTabs.close(vault.vaultId, tab.tabId, scope);
         return;
       }
-      const requestId = beginLifecycleRequest();
-      const sourceEditor = current;
+      const requestId = session.beginLifecycleRequest();
+      const sourceEditor = session.current;
       void (async (): Promise<void> => {
         const remainingTabs = currentTabs.tabs.filter((candidate) => candidate.tabId !== tab.tabId);
         const nextTab = remainingTabs[remainingTabs.length - 1];
@@ -1225,23 +1191,23 @@ async function boot() {
           try {
             fresh = await fileHostFor(vault).readFile(nextTab.path);
           } catch (error: unknown) {
-            if (requestId === lifecycleRequest) showOpenRecovery(nextTab.path, String(error), vault);
+            if (session.isCurrentRequest(requestId)) showOpenRecovery(nextTab.path, String(error), vault);
             return;
           }
         }
-        if (requestId !== lifecycleRequest || !(await commitBeforeSwitch()) || requestId !== lifecycleRequest) {
-          if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
+        if (!session.isCurrentRequest(requestId) || !(await session.commitBeforeSwitch()) || !session.isCurrentRequest(requestId)) {
+          if (sourceEditor && session.current === sourceEditor) sourceEditor.resumeWrites();
           return;
         }
-        if (!(await watcherHandoff.handoff(nextTab?.path, vault)) || requestId !== lifecycleRequest) {
-          if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
+        if (!(await session.watcherHandoff.handoff(nextTab?.path, vault)) || !session.isCurrentRequest(requestId)) {
+          if (sourceEditor && session.current === sourceEditor) sourceEditor.resumeWrites();
           return;
         }
         const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, scope);
         setRoutedVault(vault);
         const selection = selectVaultView(nextTabs);
-        if (selection.kind === "document" && fresh) openInWindow(selection.tab.path, fresh, {});
-        else renderWelcomeForVault();
+        if (selection.kind === "document" && fresh) session.openInWindow(selection.tab.path, fresh, {});
+        else session.renderWelcomeForVault();
       })();
     },
     getTabs: (vaultId) => vaultTabs.get(vaultId),
@@ -1281,10 +1247,10 @@ async function boot() {
       searchScanVault = currentVault() ?? workspaceStore.getGlobalVault();
       return fileHostFor(searchScanVault).listFilesRecursive(root, showHiddenFilesSetting.get() === "on");
     },
-    getRoot: () => explorer.currentRootPath() ?? currentBaseDir,
+    getRoot: () => explorer.currentRootPath() ?? session.currentBaseDir,
     onOpenFile: async (absPath) => {
       const targetVault = searchScanVault ?? currentVault() ?? workspaceStore.getGlobalVault();
-      if (!currentFile && targetVault.persistenceKind !== "remote") {
+      if (!session.currentFile && targetVault.persistenceKind !== "remote") {
         location.href = createDocumentReloadUrl(absPath, targetVault.persistenceKind === "global" ? currentExplorerFolder : null);
       } else {
         await openDocumentSafely(absPath, undefined, targetVault);
@@ -1385,77 +1351,6 @@ async function boot() {
   // showHidden value (read at call time via the closure above, not cached).
   showHiddenFilesSetting.subscribe(() => explorer.refreshListing());
 
-  // ── Per-file session persistence. The key is recomputed per open; the timer
-  //    is scoped to the live editor and cancelled on teardown. ────────────────
-  function saveSessionState(immediate = false): void {
-    cancelSessionTimer?.();
-    const doSave = () => {
-      if (!current) return;
-      const scroller = host.querySelector(".cm-scroller");
-      const scroll = scroller ? scroller.scrollTop : 0;
-      const cursor = current.view.state.selection.main.anchor;
-      try {
-        localStorage.setItem(sessionStateKey(currentOpenVaultId, currentFile), JSON.stringify({ scroll, cursor }));
-      } catch (err) {
-        console.error("Failed to save session state to localStorage", err);
-      }
-    };
-    if (immediate) {
-      cancelSessionTimer = undefined;
-      doSave();
-    } else {
-      const t = setTimeout(doSave, 150);
-      cancelSessionTimer = () => {
-        clearTimeout(t);
-        cancelSessionTimer = undefined;
-      };
-    }
-  }
-
-  /** Persist any unsaved buffer BEFORE switching files, so a re-open never
-   *  drops edits. On conflict, saveOnClose writes the `.mermark-recovered`
-   *  sibling, so neither the edits nor the external change are lost. Named so
-   *  the "don't lose work on switch" rule lives in one place. */
-  async function commitBeforeSwitch(): Promise<boolean> {
-    if (!current) return true;
-    if (!current.hasUnsaved()) return true;
-    const editor = current;
-    const file = currentFile;
-    if (pendingPrepare?.editor === editor && pendingPrepare.file === file) return pendingPrepare.promise;
-    editor.beginClose();
-    const promise = editor.saveOnClose().then((saved) => {
-      if (!saved && current === editor && currentFile === file) {
-        editor.resumeWrites();
-        if (!openRecovery) showDocumentRecovery("save", "전환 전에 저장하지 못했습니다");
-      }
-      return saved;
-    }).finally(() => {
-      if (pendingPrepare?.promise === promise) pendingPrepare = null;
-    });
-    pendingPrepare = { editor, file, promise };
-    return promise;
-  }
-
-  /** Tear down the live editor before a swap: persist its session immediately,
-   *  stop its autosave (beginClose), detach its scroll listener + session timer,
-   *  then drop its CM DOM. Leaves host empty for the next mount. */
-  function teardownCurrent(): void {
-    if (current) {
-      saveSessionState(true);
-      current.beginClose();
-      detachScroll?.();
-      detachScroll = undefined;
-      cancelSessionTimer?.();
-      cancelSessionTimer = undefined;
-    }
-    host.replaceChildren();
-  }
-
-  /** Mount `file`'s content as the live editor in `host`, re-pointing every
-   *  per-file binding (doc, baseDir for images/wikilinks, autosave target +
-   *  mtime baseline, session key) by going through the verified mountEditor
-   *  boot path. Tears down any previous editor first. Mode/vim are preserved
-   *  from the live settings (a re-open keeps your edit/read + vim state). */
   /** Reconcile the explorer (tree + breadcrumb) with a document that just
    *  became `currentFile`, and mark it as the tree's active-highlight target.
    *  Runs the domain rule "opening a document is not a navigation act" —
@@ -1493,147 +1388,12 @@ async function boot() {
     if (shouldPreserveGlobalExplorerRoot(selectedWorkspaceVault())) {
       breadcrumb.render(currentExplorerFolder);
     } else if (explorer.showsFolderOf(file)) {
-      breadcrumb.render(explorer.currentRootPath() ?? currentBaseDir);
+      breadcrumb.render(explorer.currentRootPath() ?? session.currentBaseDir);
     } else {
       explorer.resetToBaseDir();
-      breadcrumb.render(currentBaseDir);
+      breadcrumb.render(session.currentBaseDir);
     }
     explorer.setActiveFile(file);
-  }
-
-  function openInWindow(
-    file: string,
-    fresh: { text: string; mtime: number },
-    opts: { readonly viaHistory?: boolean } = {},
-    targetVault?: Vault,
-  ): void {
-    // `targetVault`, when the caller already knows it (a vault-crossing
-    // open: onSelectVault/onSelectTab via openDocument above, or
-    // navigateHistory below), wins over routeDocumentPath's own
-    // path-based re-derivation — routeDocumentPath can only ever land on
-    // "permanent"/"global" (see its own comment), so a remote target passed
-    // explicitly would otherwise get silently reclassified. Explicitly
-    // setting `routedVault` here covers navigateHistory, which has no
-    // onCommit callback to have already done it (onSelectVault/onSelectTab's
-    // onCommit already did, redundantly but harmlessly).
-    const selectedVault = targetVault ?? routeDocumentPath(file);
-    // Every real document open resolves SOME vault (permanent/global/remote —
-    // routeDocumentPath/targetVault never return undefined); this is the
-    // invariant mountEditor's documentVault facet relies on to never be
-    // undefined for a genuinely open document. A cheap runtime guard (not
-    // just a type) so a future change that loosens routeDocumentPath's
-    // return type fails loudly here instead of quietly mounting a document
-    // with no vault context.
-    if (!selectedVault) throw new Error(`openInWindow: no vault resolved for "${file}"`);
-    if (targetVault) setRoutedVault(targetVault);
-    closeConflict();
-    closeOpenViewer(); // opening a document closes any open viewer (design §A rule 1)
-    teardownCurrent();
-    host.classList.remove("welcome-host");
-    currentFile = file;
-    currentBaseDir = baseDirForOpenedDocument(file, selectedVault);
-    if (selectedVault) vaultTabs.open(selectedVault.vaultId, file, tabScopeForVault(selectedVault));
-    const { text, mtime } = fresh;
-
-    current = mountEditor(host, text, currentBaseDir, file, {
-      onStatus: (status, detail) => {
-        save.set(status, detail);
-        if (status === "recovery" && !openRecovery) showDocumentRecovery("save", detail ?? "저장 경로를 사용할 수 없습니다");
-      },
-      initialMode: modeSetting.get(),
-      onCursor: (line, col) => {
-        pos.textContent = `Ln ${line}, Col ${col}`;
-        saveSessionState();
-      },
-      baseMtime: mtime,
-      autosaveDelay: autosaveDelaySetting.get(),
-      conflictPolicy: conflictPolicySetting.get(),
-      vimMode: vimModeSetting.get(),
-      vault: selectedVault,
-      // Outline panel's docChanged listener — re-attaches per mount, so the
-      // outline tracks whichever document is currently live.
-      extraExtensions: outline.listener,
-      // Search-panel replace-hint (v0.9.12/v0.9.13 defects) — replaceHintEntry
-      // is defined below (registerHandler block) and shared with
-      // search.document's initial ⌘F open; a getter (not a value) so a
-      // keybindings rebind is reflected the next time a mode switch resyncs
-      // an open panel. Safe forward reference: openInWindow (this call's
-      // enclosing function) only ever RUNS after the registerHandler block
-      // below has executed at boot.
-      findReplaceHint: replaceHintEntry,
-    });
-    currentIsRemote = isRemoteVault(selectedVault);
-    currentOpenVaultId = selectedVault.vaultId;
-    syncModeIndicator();
-
-    const scroller = host.querySelector(".cm-scroller");
-    if (scroller) {
-      const onScroll = () => saveSessionState();
-      scroller.addEventListener("scroll", onScroll, { passive: true });
-      detachScroll = () => scroller.removeEventListener("scroll", onScroll);
-    }
-
-    // Restore session state for this file's key.
-    let savedSession: string | null = null;
-    try {
-      savedSession = localStorage.getItem(sessionStateKey(selectedVault.vaultId, file));
-    } catch (err) {
-      console.error("Failed to read session state from localStorage", err);
-    }
-    if (savedSession) {
-      try {
-        const { scroll, cursor } = JSON.parse(savedSession);
-        if (typeof cursor === "number" && cursor >= 0 && cursor <= text.length) {
-          current.view.dispatch({ selection: { anchor: cursor, head: cursor } });
-        }
-        if (typeof scroll === "number") {
-          requestAnimationFrame(() => {
-            const sc = host.querySelector(".cm-scroller");
-            if (sc) sc.scrollTop = scroll;
-          });
-        }
-      } catch (err: any) {
-        console.error("Failed to restore session state", err);
-      }
-    }
-
-    // No `!opts.watcherReady` fallback here (there used to be one): every
-    // real caller of `openInWindow` already threads `watcherReady: true`
-    // after having done its OWN `watcherHandoff.handoff` call first (final
-    // review C2 found this branch dead — the guard it was gated behind never
-    // actually fired). Watching (or skipping, for a remote vault) now
-    // happens exactly once per open, at each of those call sites, gated
-    // structurally by `handoff` itself via `shouldWatchDocument` — not
-    // re-decided here from `selectedVault.persistenceKind` a second time.
-
-    // Re-opening swaps the document without firing docChanged on the new editor,
-    // so an open outline panel would show the previous file's headings. Refresh
-    // explicitly here (no-op when the panel is closed) so it tracks the swap.
-    outline.refresh();
-    // Reconcile the explorer tree/breadcrumb/highlight with the newly-opened
-    // document — see syncExplorerToOpenedDocument's doc comment for the
-    // three-branch rule ("opening a document is not a navigation act").
-    syncExplorerToOpenedDocument(file);
-
-    // Record this document as most-recent — the SINGLE write point for the recent
-    // list (dedup → front → cap via pushRecent). The recent panel re-renders from
-    // its recentDocsSetting subscription; localStorage persists it across restarts.
-    // `selectedVault.vaultId` rides along (Task 11 fix round 3) — without it a
-    // remote document's vault-relative `file` ("노트.md") would be
-    // indistinguishable from an unrelated local/other-remote entry, and
-    // opening it later would have nothing to resolve the right backend from.
-    recentDocsSetting.set(pushRecent(recentDocsSetting.get(), { path: file, vaultId: selectedVault.vaultId }));
-
-    // Record the navigation in the back/forward history — the SAME single locus
-    // as the recent write. A back/forward move (viaHistory) must NOT re-push (the
-    // handler already moved the pointer), else ⌘[ would loop. Named so the "don't
-    // re-record a history move" rule isn't an inline if.
-    recordNavigation(file, selectedVault.vaultId, opts.viaHistory ?? false);
-
-    // dev-only: expose the live controller so the debug harness can read real
-    // editor state (selection offsets, block specs) instead of guessing.
-    if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
-      (window as unknown as { __mermark?: unknown }).__mermark = current;
   }
 
   /** Record a document mount in the back/forward history — unless it WAS a
@@ -1675,10 +1435,10 @@ async function boot() {
       navHistory = pruneAt(navHistory, next.index);
       return;
     }
-    if (!(await commitBeforeSwitch())) return;
-    if (!(await watcherHandoff.handoff(target, targetVault))) return;
+    if (!(await session.commitBeforeSwitch())) return;
+    if (!(await session.watcherHandoff.handoff(target, targetVault))) return;
     navHistory = next; // commit the pointer only after the read succeeded
-    openInWindow(target, fresh, { viaHistory: true }, targetVault);
+    session.openInWindow(target, fresh, { viaHistory: true }, targetVault);
   }
   const goBack = (): void => void navigateHistory(back);
   const goForward = (): void => void navigateHistory(forward);
@@ -1707,22 +1467,22 @@ async function boot() {
    *  rebaseline) or use external (reloadFromFile). Named so the "auto-reload vs
    *  conflict" decision isn't an inline if at the listener site. Command: void. */
   function resolveExternalChange(text: string, mtime: number): void {
-    if (!current) return;
-    if (decideExternalChange(current.hasUnsaved()) === "reload") {
-      current.reloadFromFile(text, mtime);
+    if (!session.current) return;
+    if (decideExternalChange(session.current.hasUnsaved()) === "reload") {
+      session.current.reloadFromFile(text, mtime);
       return;
     }
-    const editor = current;
-    const file = currentFile;
+    const editor = session.current;
+    const file = session.currentFile;
     const identity = currentConflictIdentity();
     if (!identity) return;
-    const isLive = (): boolean => current === editor && currentFile === file && sameConflictIdentity(currentConflictIdentity() ?? identity, identity);
+    const isLive = (): boolean => session.current === editor && session.currentFile === file && sameConflictIdentity(currentConflictIdentity() ?? identity, identity);
     const rejectStaleAction = (): boolean => {
       if (isLive()) return false;
       closeConflict();
       return true;
     };
-    conflictRecovery.detect(identity, current.view.state.doc.toString(), text);
+    conflictRecovery.detect(identity, session.current.view.state.doc.toString(), text);
     if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
       (window as unknown as { __mermarkConflictRecovery?: unknown }).__mermarkConflictRecovery = conflictRecovery;
     closeConflict();
@@ -1755,13 +1515,13 @@ async function boot() {
   // are filtered in the backend (mtime baseline), so this only fires on real
   // external edits. Guarded to Tauri/browser-mock environments that emit events.
   void onFileChanged((change) => {
-    if (!watcherHandoff.accepts(change, currentFile)) return;
+    if (!session.acceptsWatchEvent(change)) return;
     resolveExternalChange(change.text, change.mtime);
   });
   void onFileUnavailable((change) => {
-    if (!watcherHandoff.accepts(change, currentFile)) return;
-    if (!current || !currentFile) return;
-    current.suspendWrites(change.detail);
+    if (!session.acceptsWatchEvent(change)) return;
+    if (!session.current || !session.currentFile) return;
+    session.current.suspendWrites(change.detail);
     showDocumentRecovery(change.kind, change.detail);
   });
   // Don't lose the last keystrokes typed within the autosave debounce window:
@@ -1770,15 +1530,15 @@ async function boot() {
   if ("__TAURI_INTERNALS__" in window) {
     const win = getCurrentWindow();
     await win.onCloseRequested(async (e) => {
-      saveSessionState(true);
-      if (!current) return;
-      if (!current.hasUnsaved()) return;
+      session.saveSessionState(true);
+      if (!session.current) return;
+      if (!session.current.hasUnsaved()) return;
       e.preventDefault();
-      current.beginClose();
-      const saved = await current.saveOnClose();
+      session.current.beginClose();
+      const saved = await session.current.saveOnClose();
       if (saved) await win.destroy();
       else {
-        current.resumeWrites();
+        session.current.resumeWrites();
         showDocumentRecovery("save", "닫기 전에 저장하지 못했습니다");
       }
     });
@@ -1787,7 +1547,7 @@ async function boot() {
   // cache + re-render every block. Change-only sink (no initial work needed).
   themeSetting.subscribe((t) => {
     refreshMermaidTheme(t);
-    current?.refresh();
+    session.current?.refresh();
   });
   // mermaid's themeVariables are now derived from themeJsonSetting (SSOT), so a
   // JSON-only change (e.g. a swatch edit) must also re-bake mermaid even when
@@ -1797,33 +1557,33 @@ async function boot() {
   // cost is one redundant redraw pass, accepted rather than adding de-dupe.
   themeJsonSetting.subscribe(() => {
     refreshMermaidTheme(themeSetting.get());
-    current?.refresh();
+    session.current?.refresh();
   });
   // Editor-behavior sinks: the settings are the writers, the live editor is the
   // single sink for each (no hand fan-out). autosaveDelay/conflictPolicy were
   // seeded via mountEditor opts; these keep them live across re-mounts.
-  autosaveDelaySetting.subscribe((ms) => current?.setAutosaveDelay(ms));
-  conflictPolicySetting.subscribe((p) => current?.setConflictPolicy(p));
-  vimModeSetting.subscribe((mode) => current?.setVimMode(mode === "on"));
+  autosaveDelaySetting.subscribe((ms) => session.current?.setAutosaveDelay(ms));
+  conflictPolicySetting.subscribe((p) => session.current?.setConflictPolicy(p));
+  vimModeSetting.subscribe((mode) => session.current?.setVimMode(mode === "on"));
   // Feature registry SSOT sink: a late registerInlineFeature/registerBlockFeature
   // call (an extension that finishes async init after boot, or a test) reaches
   // the currently-open editor through the ONE subscription below — no hand
   // fan-out to wherever registration might happen. Mirrors the
   // themeSetting.subscribe(() => current?.refresh()) shape above.
-  onFeaturesChanged(() => current?.reloadFeatures());
+  onFeaturesChanged(() => session.current?.reloadFeatures());
   // themeForce: mermaid-widget owns the re-bake (subscribeThemeForceRebake);
   // main only triggers the redraw it alone can dispatch. Order matters —
   // re-bake first (see that function's doc).
   subscribeThemeForceRebake();
-  themeForceSetting.subscribe(() => current?.refresh());
+  themeForceSetting.subscribe(() => session.current?.refresh());
   // panZoom toggle: re-render blocks so MermaidWidget (which snapshots panZoom
   // in eq) re-creates and attachPanZoom re-runs with the new value.
-  panZoomSetting.subscribe(() => current?.refresh());
+  panZoomSetting.subscribe(() => session.current?.refresh());
 
   // Auto-restart on a finished update download: installAutoRestartOnUpdate
   // owns the subscription (src/update/auto-install.ts); commitBeforeSwitch
   // is the only editor-specific bit it needs, injected here.
-  installAutoRestartOnUpdate(commitBeforeSwitch);
+  installAutoRestartOnUpdate(session.commitBeforeSwitch);
 
   mode.btn.addEventListener("click", toggleMode);
 
@@ -1850,15 +1610,15 @@ async function boot() {
   registerHandler("vim.toggle", () =>
     vimModeSetting.set(vimModeSetting.get() === "on" ? "off" : "on"),
   );
-  registerHandler("save.flush", () => current?.flushSave());
+  registerHandler("save.flush", () => session.current?.flushSave());
   // Mod-Alt-F ("찾아 바꾸기"): switch out of reader mode (see find.ts's
   // enterEditModeForReplace for why that's necessary — v0.9.12 real-app
   // bug), then open the same panel ⌘F uses. Same viewer/no-current guard as
   // search.document below.
   const openReplacePanel = (): void => {
-    if (viewerSlot.current() || !current) return;
+    if (viewerSlot.current() || !session.current) return;
     enterEditModeForReplace();
-    openFindPanel(current.view);
+    openFindPanel(session.current.view);
   };
   registerHandler("search.replace", openReplacePanel);
   // The search-panel replace-hint entry (label + activate) — ONE definition
@@ -1887,8 +1647,8 @@ async function boot() {
   // the row is actually missing, and remove it once edit mode supplies the
   // real row, so edit mode never shows a redundant hint.
   registerHandler("search.document", () => {
-    if (viewerSlot.current() || !current) return;
-    openFindPanel(current.view, replaceHintEntry());
+    if (viewerSlot.current() || !session.current) return;
+    openFindPanel(session.current.view, replaceHintEntry());
   });
   registerHandler("search.files", () => searchPanel.revealSearch());
   // Transient status-bar feedback shared by clipboard-copy handlers: shows
@@ -1918,7 +1678,7 @@ async function boot() {
   // clipboard. Reads the live file via `currentFile` so it tracks re-opens;
   // transient feedback rides in the `pos` cell.
   registerHandler("bundle.copy", () => {
-    if (!currentFile) return;
+    if (!session.currentFile) return;
     // Minor (final review, same class as I3): `bundle_doc` is a LOCAL
     // command — a remote document's `currentFile` is a vault-relative name
     // ("노트.md"), which either fails invisibly on the host's own machine
@@ -1929,7 +1689,7 @@ async function boot() {
       flashStatus(REMOTE_VAULT_LOCAL_LINK_MESSAGE);
       return;
     }
-    void copyBundleToClipboard(currentFile).then((copied) => {
+    void copyBundleToClipboard(session.currentFile).then((copied) => {
       flashStatus(copied ? "✓ 번들 복사됨" : "⚠ 번들 복사 실패");
     });
   });
@@ -1938,8 +1698,8 @@ async function boot() {
   // uses). `currentFile` is already the live-file SSOT cell. Graceful no-op
   // when no document is open.
   registerHandler("path.copy", () => {
-    if (!currentFile) return;
-    void copyTextToClipboard(currentFile).then((ok) =>
+    if (!session.currentFile) return;
+    void copyTextToClipboard(session.currentFile).then((ok) =>
       flashStatus(ok ? "✓ 경로 복사됨" : "⚠ 경로 복사 실패"),
     );
   });
@@ -1952,7 +1712,7 @@ async function boot() {
   registerHandler("image.attach", () => {
     void attachImageToVault({
       vaultRoot: currentOwningVaultRoot(),
-      view: current?.view ?? null,
+      view: session.current?.view ?? null,
       invoke,
       flash: flashStatus,
     });
@@ -1969,7 +1729,7 @@ async function boot() {
   // mode is the SSOT: the button label binds to it; the live editor reacts to
   // changes. Persistence is handled by the store.
   modeSetting.bind(() => syncModeIndicator()); // initial label + on change
-  modeSetting.subscribe((m) => current?.setMode(m));
+  modeSetting.subscribe((m) => session.current?.setMode(m));
   // Boot-time auto-check for updates (design C-5): deferred via setTimeout so
   // it costs nothing on cold load / first paint, and placed BEFORE the
   // welcome/editor branch below so it fires whichever screen boot() ends up

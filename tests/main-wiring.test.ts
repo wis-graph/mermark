@@ -189,6 +189,7 @@ const emitEvent = (event: string, payload: unknown): void => {
 
 const mainSource = readFileSync("src/main.ts", "utf8");
 const vaultSelectionSource = readFileSync("src/workspace/vault-selection.ts", "utf8");
+const sessionSource = readFileSync("src/document/session.ts", "utf8");
 
 describe("main workspace wiring", () => {
   beforeEach(() => {
@@ -245,7 +246,7 @@ describe("main workspace wiring", () => {
 
   it("subscribes mermaid-widget's themeForce re-bake BEFORE main's own redraw subscription (order contract: re-bake must land before the redraw re-creates widgets)", () => {
     const rebakeIndex = mainSource.indexOf("subscribeThemeForceRebake();");
-    const redrawIndex = mainSource.indexOf("themeForceSetting.subscribe(() => current?.refresh());");
+    const redrawIndex = mainSource.indexOf("themeForceSetting.subscribe(() => session.current?.refresh());");
     expect(rebakeIndex).toBeGreaterThan(-1);
     expect(redrawIndex).toBeGreaterThan(-1);
     expect(rebakeIndex).toBeLessThan(redrawIndex);
@@ -1207,7 +1208,7 @@ describe("main workspace wiring", () => {
     it("wires setImageSearchRoot from the document's OWNING vault root at boot (never the active vault)", () => {
       expect(mainSource).toContain("setImageSearchRoot(currentOwningVaultRoot);");
       expect(mainSource).toContain(
-        "owningVaultRoot(dirOf(currentFile), permanentRootsOf(workspaceStore.get())) : null;",
+        "owningVaultRoot(dirOf(session.currentFile), permanentRootsOf(workspaceStore.get())) : null;",
       );
     });
   });
@@ -1266,15 +1267,19 @@ describe("main workspace wiring", () => {
     it("wires routeDocumentPath/openDocument/navigateHistory to actually USE routingTrustsCurrentVault/resolveTargetVault (not a parallel inline copy of the same rule)", () => {
       // C1: routeDocumentPath moved verbatim to src/workspace/vault-selection.ts.
       expect(vaultSelectionSource).toContain("if (current && routingTrustsCurrentVault(current.persistenceKind)) return current;");
-      expect(mainSource).toContain("const readVault = resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault());");
-      expect(mainSource).toContain("fileHostFor(readVault).readFile(absPath);");
+      // C2: openDocument's body (readVault/read/handoff/openInWindow) moved
+      // verbatim to src/document/session.ts. navigateHistory (T4) is still
+      // main-resident until C6 — its own resolveTargetVault/openInWindow/
+      // handoff lines stay asserted against mainSource.
+      expect(sessionSource).toContain("const readVault = resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault());");
+      expect(sessionSource).toContain("fileHostFor(readVault).readFile(absPath);");
       expect(mainSource).toContain("resolveTargetVault(workspaceStore.getVault(entry.vaultId), currentVault(), workspaceStore.getGlobalVault());");
-      expect(mainSource).toContain("openInWindow(absPath, fresh, {}, targetVault);");
+      expect(sessionSource).toContain("openInWindow(absPath, fresh, {}, targetVault);");
       expect(mainSource).toContain("openInWindow(target, fresh, { viaHistory: true }, targetVault);");
       // C2: the SAME vault resolved for the read is what handoff uses to
       // decide whether to watch at all (shouldWatchDocument) — not
       // re-derived, and not skipped.
-      expect(mainSource).toContain("watcherHandoff.handoff(absPath, readVault)");
+      expect(sessionSource).toContain("watcherHandoff.handoff(absPath, readVault)");
       expect(mainSource).toContain("watcherHandoff.handoff(target, targetVault)");
     });
 
@@ -1284,8 +1289,9 @@ describe("main workspace wiring", () => {
     });
 
     it("openInWindow throws rather than silently mounting a document with no vault, and passes the resolved vault into mountEditor's documentVault facet", () => {
-      expect(mainSource).toContain('if (!selectedVault) throw new Error(`openInWindow: no vault resolved for "${file}"`);');
-      expect(mainSource).toContain("vault: selectedVault,");
+      // C2: openInWindow moved verbatim to src/document/session.ts.
+      expect(sessionSource).toContain('if (!selectedVault) throw new Error(`openInWindow: no vault resolved for "${file}"`);');
+      expect(sessionSource).toContain("vault: selectedVault,");
     });
 
     it("wires setDocumentOpenHandler to standardLinkRejectionFor BEFORE building a canonicalize_path context", () => {
