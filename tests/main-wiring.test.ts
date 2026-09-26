@@ -285,13 +285,27 @@ describe("main workspace wiring", () => {
     expect(reload.searchParams.get("root")).toBe("/");
   });
 
-  it("routes live tab selection and close fallback through main", () => {
+  it("routes live tab selection through main; the active-tab close fallback is session.closeActiveTab's, not main's (audit 🟡-2)", () => {
     expect(mainSource).toContain("onSelectTab: (vault, tab) => {");
     expect(mainSource).toContain("const selectedVault = workspaceStore.get().vaults.find((candidate) => candidate.vaultId === vault.vaultId) ?? vault;");
     expect(mainSource).toContain("vaultTabs.select(selectedVault.vaultId, tab.tabId");
     expect(mainSource).toContain("onCloseTab: (vault, tab) => {");
-    expect(mainSource).toContain("vaultTabs.close(vault.vaultId, tab.tabId");
-    expect(mainSource).toContain("renderWelcomeForVault()");
+    // The PRE-transaction guard (an inactive tab, or a different vault than
+    // routed) still closes with no lifecycle participation, straight in
+    // main's handler (design §3.2/C5) — this is the ONLY vaultTabs.close
+    // call site left in main.ts.
+    expect(mainSource).toContain("vaultTabs.close(vault.vaultId, tab.tabId, scope);");
+    // The active-tab close (the real "close fallback" this test's name
+    // promises) delegates to the session transaction — it does NOT hand-roll
+    // renderWelcomeForVault()/vaultTabs.close() itself anymore (C5). Audit
+    // 🟡-2: the OLD `renderWelcomeForVault()` assertion here kept passing by
+    // accident via discardCurrentDocument's own (unrelated) call, not via
+    // T3's fallback, which had already moved to session.ts.
+    expect(mainSource).toContain("void session.closeActiveTab(vault, tab, scope);");
+    // T3's own close fallback (no restorable next tab -> welcome) lives in
+    // session.ts now — NOT asserted against mainSource, where it used to
+    // pass by accident via discardCurrentDocument's own unrelated call.
+    expect(sessionSource).toContain("else renderWelcomeForVault();");
   });
 
   it("canonicalizes and registers or unregisters the matching permanent vault", () => {
