@@ -10,6 +10,22 @@ export const selectVaultView = (tabs: VaultTabs): VaultViewSelection => {
   return active ? { kind: "document", tab: active } : { kind: "welcome" };
 };
 
+/** What `VaultTabs` would look like after closing `tabId` — the "which tab
+ *  becomes active" rule in ONE place (audit 🟡-3: this used to be hand-copied
+ *  at `close()`'s own site, `closeActiveTab`'s nextTab computation, and the
+ *  BC-3 guard, in `src/document/session.ts`). If `tabId` was the active tab,
+ *  the new active tab is the LAST one remaining (or none, landing on
+ *  welcome); otherwise the active selection doesn't change at all — closing
+ *  a background tab is not a navigation act. Pure query (CQS): returns the
+ *  SAME `tabs` reference (identity) when `tabId` isn't present, so callers
+ *  can cheaply detect a no-op the way `close()` already did. */
+export function tabsAfterClose(tabs: VaultTabs, tabId: string): VaultTabs {
+  const remaining = tabs.tabs.filter((tab) => tab.tabId !== tabId);
+  if (remaining.length === tabs.tabs.length) return tabs;
+  const activeTabId = tabs.activeTabId === tabId ? remaining[remaining.length - 1]?.tabId ?? null : tabs.activeTabId;
+  return { vaultId: tabs.vaultId, tabs: remaining, activeTabId };
+}
+
 const storageKey = (vaultId: string): string => `mermark.vaultTabs.${vaultId}`;
 
 export class VaultTabStore {
@@ -53,10 +69,8 @@ export class VaultTabStore {
 
   close(vaultId: string, tabId: string, scope: TabPersistenceScope): VaultTabs {
     const current = this.get(vaultId);
-    const tabs = current.tabs.filter((tab) => tab.tabId !== tabId);
-    if (tabs.length === current.tabs.length) return current;
-    const activeTabId = current.activeTabId === tabId ? tabs[tabs.length - 1]?.tabId ?? null : current.activeTabId;
-    const next: VaultTabs = { vaultId, tabs, activeTabId };
+    const next = tabsAfterClose(current, tabId);
+    if (next === current) return current;
     this.commit(next, scope);
     return next;
   }

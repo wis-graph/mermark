@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { selectVaultView, VaultTabStore } from "../src/workspace/vault-tabs";
+import { selectVaultView, tabsAfterClose, VaultTabStore, type VaultTabs } from "../src/workspace/vault-tabs";
 import { GLOBAL_VAULT_ID } from "../src/workspace/workspace-state";
 
 describe("VaultTabStore", () => {
@@ -116,5 +116,57 @@ describe("VaultTabStore", () => {
     expect(next).toEqual({ vaultId: GLOBAL_VAULT_ID, tabs: [], activeTabId: null });
     expect(selectVaultView(next)).toEqual({ kind: "welcome" });
     expect(localStorage.getItem(`mermark.vaultTabs.${GLOBAL_VAULT_ID}`)).toBeNull();
+  });
+});
+
+// audit 🟡-3: "which tab becomes active after closing the active one" used
+// to be hand-copied at close()'s own site, closeActiveTab's nextTab
+// computation (session.ts), and the BC-3 guard (session.ts) — one pure
+// function now, used by all three (VaultTabStore.close delegates to it;
+// session.ts imports it directly).
+describe("tabsAfterClose (the one place VaultTabStore.close's own selection rule lives)", () => {
+  const tabs: VaultTabs = {
+    vaultId: "vault-a",
+    tabs: [{ tabId: "a", path: "/a.md" }, { tabId: "b", path: "/b.md" }, { tabId: "c", path: "/c.md" }],
+    activeTabId: "b",
+  };
+
+  it("closing the ACTIVE tab selects the LAST remaining tab", () => {
+    const next = tabsAfterClose(tabs, "b");
+    expect(next.tabs.map((t) => t.tabId)).toEqual(["a", "c"]);
+    expect(next.activeTabId).toBe("c");
+  });
+
+  it("closing an INACTIVE tab leaves the active selection unchanged", () => {
+    const next = tabsAfterClose(tabs, "c");
+    expect(next.tabs.map((t) => t.tabId)).toEqual(["a", "b"]);
+    expect(next.activeTabId).toBe("b"); // unchanged — was already active, and still present
+  });
+
+  it("closing the LAST remaining tab lands on welcome (activeTabId null)", () => {
+    const single: VaultTabs = { vaultId: "vault-a", tabs: [{ tabId: "only", path: "/only.md" }], activeTabId: "only" };
+    const next = tabsAfterClose(single, "only");
+    expect(next).toEqual({ vaultId: "vault-a", tabs: [], activeTabId: null });
+    expect(selectVaultView(next)).toEqual({ kind: "welcome" });
+  });
+
+  it("closing a tabId that isn't present is a no-op — returns the SAME reference", () => {
+    expect(tabsAfterClose(tabs, "does-not-exist")).toBe(tabs);
+  });
+
+  it("VaultTabStore.close delegates to it — same outcome as calling it directly", () => {
+    const store = new VaultTabStore();
+    const a = store.open("vault-b", "/a.md", "permanent");
+    const b = store.open("vault-b", "/b.md", "permanent");
+    store.open("vault-b", "/c.md", "permanent"); // c becomes active
+    const before = store.get("vault-b");
+
+    const viaStore = store.close("vault-b", b.tabId, "permanent");
+    const viaFunction = tabsAfterClose(before, b.tabId);
+
+    expect(viaStore.tabs).toEqual(viaFunction.tabs);
+    expect(viaStore.activeTabId).toBe(viaFunction.activeTabId);
+    expect(viaStore.activeTabId).toBe(before.activeTabId); // b wasn't active (c is) — unchanged
+    void a;
   });
 });

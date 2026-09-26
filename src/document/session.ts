@@ -38,7 +38,7 @@ import {
   vimModeSetting,
 } from "../settings/app";
 import type { Vault, WorkspaceStore } from "../workspace/workspace-state";
-import { selectVaultView, type TabPersistenceScope, type VaultTab, type VaultTabStore } from "../workspace/vault-tabs";
+import { selectVaultView, tabsAfterClose, type TabPersistenceScope, type VaultTab, type VaultTabStore } from "../workspace/vault-tabs";
 import { makeHistory, pushHistory, back, forward, currentEntry, pruneAt, type NavHistory } from "../document/history/nav-history";
 import { createDocumentReloadUrl } from "../workspace/reload-handoff";
 
@@ -628,17 +628,22 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
    *  C3.5 used to characterize before BC-3). Named so the rule isn't an
    *  inline `if` inside the transaction spec (intent-review). Pure query
    *  (CQS) — `undefined === undefined` (both "no next tab") counts as a
-   *  match, so closing the last tab is never blocked by this guard. */
+   *  match, so closing the last tab is never blocked by this guard.
+   *  `tabsAfterClose` (audit 🟡-3) is the SAME function `closeActiveTab`'s
+   *  own `nextTab` and `VaultTabStore.close()` use — the guard can never
+   *  drift onto a DIFFERENT "which tab becomes active" rule than the one
+   *  commit will actually apply. */
   function closeTargetStillMatchesRead(vault: Vault, tab: VaultTab, nextTab: VaultTab | undefined): boolean {
-    const stillThere = vaultTabs.get(vault.vaultId).tabs.filter((candidate) => candidate.tabId !== tab.tabId);
-    return stillThere[stillThere.length - 1]?.path === nextTab?.path;
+    const projected = selectVaultView(tabsAfterClose(vaultTabs.get(vault.vaultId), tab.tabId));
+    const stillNextPath = projected.kind === "document" ? projected.tab.path : undefined;
+    return stillNextPath === nextTab?.path;
   }
 
   /** T3 (onCloseTab's active-tab branch). The pre-transaction guard (an
    *  inactive tab, or a different vault than the one currently routed —
    *  closeable with no lifecycle participation at all) stays in main.ts's
    *  handler (design §3.2/plan C5 — `mainSource`'s own text asserts this).
-   *  `currentTabs`/`remainingTabs`/`nextTab` are computed in the SAME
+   *  `currentTabs`/`nextTab` are computed in the SAME
    *  synchronous span the token is minted in, matching HEAD's own timing
    *  (the `nextTab` a stale reader raced against is frozen at commit time,
    *  never re-read). `read` is omitted entirely when there's no `nextTab`
@@ -646,8 +651,8 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
    *  either). */
   async function closeActiveTab(vault: Vault, tab: VaultTab, scope: TabPersistenceScope): Promise<void> {
     const currentTabs = vaultTabs.get(vault.vaultId);
-    const remainingTabs = currentTabs.tabs.filter((candidate) => candidate.tabId !== tab.tabId);
-    const nextTab = remainingTabs[remainingTabs.length - 1];
+    const projectedSelection = selectVaultView(tabsAfterClose(currentTabs, tab.tabId));
+    const nextTab = projectedSelection.kind === "document" ? projectedSelection.tab : undefined;
     const token = beginToken();
     const sourceEditor = current;
     await runTransition<{ text: string; mtime: number }>({
@@ -655,7 +660,9 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
       sourceEditor,
       read: nextTab ? async () => { return fileHostFor(vault).readFile(nextTab.path); } : undefined,
       onReadError: (error) => {
-        deps.showOpenRecovery(nextTab.path, String(error), vault);
+        // Safe: onReadError only ever fires when `read` ran, and `read` is
+        // only ever defined when `nextTab` is (see the ternary above).
+        deps.showOpenRecovery(nextTab!.path, String(error), vault);
         return "abort-silently";
       },
       resumeOnAbort: true,
