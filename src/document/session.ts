@@ -207,18 +207,11 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     const id = beginLifecycleRequest();
     return { isCurrent: () => isCurrentRequest(id) };
   };
-  /** T4's history moves never participate in the lifecycle counter (D1: HEAD
-   *  never called `beginLifecycleRequest` for ⌘[/⌘]) — a token that always
-   *  reports current gives `runTransition` that exact behavior for free: its
-   *  own stale re-checks (pre-commit/post-commit/post-handoff) never abort,
-   *  and `onReadError` always fires regardless of any OTHER transaction's
-   *  state (D4: T4 prunes "staleness와 무관하게"). Design §2.4/§3.3 —
-   *  `HISTORY_LEGACY_POLICY` below pairs this with `resumeOnAbort: false`
-   *  (D5) to preserve BOTH accidental properties until BC-1/BC-2 are
-   *  approved (C9/C10), at which point T4 gets a real `beginToken()` and
-   *  `resumeOnAbort: true` instead. */
-  const LEGACY_NO_LIFECYCLE: RequestToken = { isCurrent: () => true };
-  const HISTORY_LEGACY_POLICY = { token: LEGACY_NO_LIFECYCLE, resumeOnAbort: false } as const;
+  /** BC-1 (approved, C9) gave T4 a real `beginToken()` — see navigateHistory's
+   *  own doc comment. BC-2 (approved, C10) is the only piece still pending:
+   *  `resumeOnAbort` stays `false` (D5's original, accidental "never resumes
+   *  writes on a history abort" behavior) until then. */
+  const HISTORY_LEGACY_POLICY = { resumeOnAbort: false } as const;
 
   /** The open-transaction primitive (design §3.4) every T1/T2/T3/T4 spec
    *  re-expresses onto: read (if any) → stale-check → commitBeforeSwitch →
@@ -665,19 +658,26 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     navHistory = pushHistory(navHistory, { path: file, vaultId });
   }
 
-  /** T4 (navigateHistory/goBack/goForward) — folded onto runTransition with
-   *  `HISTORY_LEGACY_POLICY` (BC-1/BC-2 not yet approved, design §2.4): no
-   *  real lifecycle participation (`LEGACY_NO_LIFECYCLE` token, always
-   *  current) and no resumeWrites on abort. `onReadError` prunes the dead
-   *  entry regardless of staleness — the SAME "always fires" property the
-   *  always-current token already gives every other stale re-check in
-   *  `runTransition`, so no separate staleness branch is needed here. The
-   *  pointer (`navHistory = next`) commits inside `commit`, same position
-   *  HEAD's own body had it (only after read+commitBeforeSwitch+handoff all
-   *  succeeded). */
+  /** T4 (navigateHistory/goBack/goForward) — folded onto runTransition.
+   *  **BC-1 (approved)**: T4 now shares the SAME lifecycle counter as
+   *  T1/T2/T3 (`beginToken()`, minted right after the no-op check — a no-op
+   *  move never touches the counter, matching D1's original "only a REAL
+   *  navigation is a user action" intent) — the "last user action wins"
+   *  property tests/document-transactions.test.ts's C4.7/C4.8/C4.10 pin.
+   *  `onReadError` (prune the dead entry) is now gated by the SAME
+   *  `token.isCurrent()` check every other transaction's read failure uses
+   *  — a STALE history read failure is silently dropped instead of
+   *  pruning, consistent with T1's stale-read handling. **BC-2 still
+   *  pending** — `resumeOnAbort` stays `HISTORY_LEGACY_POLICY.resumeOnAbort`
+   *  (false) until C10. The pointer (`navHistory = next`) commits inside
+   *  `commit`, same position HEAD's own body had it (only after
+   *  read+commitBeforeSwitch+handoff all succeeded) — and BC-1 closes D11's
+   *  race for free: `commit` only runs when the token is still current, so
+   *  a stale mover's `next` can never overwrite a later one's pointer. */
   async function navigateHistory(move: (h: NavHistory<NavEntry>) => NavHistory<NavEntry>): Promise<void> {
     const next = move(navHistory);
     if (next === navHistory) return; // at an end → no-op (same-ref signal)
+    const token = beginToken();
     const entry = currentEntry(next);
     if (!entry) return;
     const target = entry.path;
@@ -690,7 +690,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     // falls back to the old behavior.
     const targetVault = resolveTargetVault(workspaceStore.getVault(entry.vaultId), currentVault(), workspaceStore.getGlobalVault());
     await runTransition<{ text: string; mtime: number }>({
-      token: HISTORY_LEGACY_POLICY.token,
+      token,
       sourceEditor: current,
       read: async () => { return fileHostFor(targetVault).readFile(target); },
       onReadError: () => {

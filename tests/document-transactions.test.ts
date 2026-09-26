@@ -703,7 +703,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       expect(invokeMock).not.toHaveBeenCalledWith("write_file", expect.anything());
     });
 
-    it("C4.7: CHARACTERIZATION(BC-1) — recent-panel read of C stalls, ⌘[ mounts A immediately, then C's stale read resolves and OVERWRITES it (last-to-finish wins)", async () => {
+    it("C4.7: BC-1 — recent-panel read of C stalls, ⌘[ mounts A immediately, then C's now-stale read resolves and is DROPPED (last user action wins)", async () => {
       documentContents.set("/P/a.md", "# A");
       documentContents.set("/P/b.md", "# B");
       documentContents.set("/P/c.md", "# C");
@@ -723,15 +723,17 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       await goBackChord(); // A mounts immediately (no read involved: it's already a live tab's path — still goes through T1 read though)
       await vi.waitFor(() => expect(cmText()).toBe("A"));
       resolveC?.({ text: "# C", mtime: 1 });
-      await vi.waitFor(() => expect(cmText()).toBe("C"));
+      await new Promise((r) => setTimeout(r, 20));
 
-      // CHARACTERIZATION: no lifecycle token guards T4 today, so the
-      // earlier-started (recent-panel) request can still win the race and
-      // clobber the later ⌘[ — final document is C, not A.
-      expect(cmText()).toBe("C");
+      // BC-1: T4 now shares the SAME lifecycle counter as T1/T2/T3 — ⌘[
+      // invalidated the recent-panel's in-flight token, so C's late read is
+      // dropped silently (no mount, no recovery modal) instead of clobbering
+      // the later user action.
+      expect(cmText()).toBe("A");
+      expect(document.querySelector(".recovery-modal")).toBeNull();
     });
 
-    it("C4.8: CHARACTERIZATION(BC-1) — ⌘[ read of A stalls, tab C opens and completes first, then A's stale read resolves and OVERWRITES it", async () => {
+    it("C4.8: BC-1 — ⌘[ read of A stalls, tab C opens and completes first; A's now-stale read resolves and is DROPPED (last user action still wins)", async () => {
       documentContents.set("/P/a.md", "# A");
       documentContents.set("/P/b.md", "# B");
       documentContents.set("/P/c.md", "# C");
@@ -749,12 +751,38 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       document.querySelector<HTMLButtonElement>('[data-tab-id="c"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("C"));
       resolveA?.({ text: "# A", mtime: 1 });
+      await new Promise((r) => setTimeout(r, 20));
+
+      // BC-1: same shared counter, opposite direction —
+      // the later click (tab C) finishes first, and the EARLIER, now-stale
+      // ⌘[ read resolving afterward no longer overwrites it.
+      expect(cmText()).toBe("C");
+      expect(document.querySelector(".recovery-modal")).toBeNull();
+    });
+
+    it("C4.10: BC-1 — a REAL history move invalidates an in-flight openDocument (the earlier request's stale read is dropped, no recovery modal)", async () => {
+      documentContents.set("/P/a.md", "# A");
+      documentContents.set("/P/b.md", "# B");
+      documentContents.set("/P/c.md", "# C");
+      seedWorkspace({ vaults: [{ root: "/P" }], tabsByRoot: { "/P": [{ tabId: "a", path: "/P/a.md" }, { tabId: "b", path: "/P/b.md" }, { tabId: "c", path: "/P/c.md" }] }, activeTabByRoot: { "/P": "a" } });
+      vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+      await import("../src/main");
+      await vi.waitFor(() => expect(cmText()).toBe("A"));
+      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      document.querySelector<HTMLButtonElement>('[data-tab-id="c"]')?.click(); // history: [a, c]
+      await vi.waitFor(() => expect(cmText()).toBe("C"));
+      let resolveB: ((value: unknown) => void) | undefined;
+      deferredReads.set("/P/b.md", { promise: new Promise((resolve) => { resolveB = resolve; }) });
+      document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click(); // B read pending (T1)
+      await goBackChord(); // a REAL move (c -> a) — invalidates B's in-flight token
       await vi.waitFor(() => expect(cmText()).toBe("A"));
 
-      // CHARACTERIZATION: same no-token gap as C4.7, opposite direction —
-      // the later click (tab C) finishes first but the EARLIER, now-stale
-      // ⌘[ request still overwrites it once its own read resolves.
+      resolveB?.({ text: "# B", mtime: 1 });
+      await new Promise((r) => setTimeout(r, 20));
+
       expect(cmText()).toBe("A");
+      expect(document.querySelector(".recovery-modal")).toBeNull();
     });
 
     it("C4.9: a remote document in history reads through its OWN vault (remote_read_file), not the currently-selected local vault", async () => {
