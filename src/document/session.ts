@@ -163,6 +163,73 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
   const acceptsWatchEvent = (change: Pick<WatchSession, "path" | "generation">): boolean =>
     watcherHandoff.accepts(change, currentFile);
 
+  /** A single stale-request check, captured once per transaction (design
+   *  §3.3) — replaces the old `requestId !== lifecycleRequest` hand-copy at
+   *  every T1/T2/T3/T4 call site with one comparable object. Built on TOP of
+   *  `beginLifecycleRequest`/`isCurrentRequest` (the transitional API T2/T3
+   *  still use directly until they fold) — same counter, same
+   *  `watcherHandoff.invalidate()` side effect, so a stale T1 token and a
+   *  stale raw `requestId` number can never disagree about which request is
+   *  current. */
+  interface RequestToken { isCurrent(): boolean }
+  const beginToken = (): RequestToken => {
+    const id = beginLifecycleRequest();
+    return { isCurrent: () => isCurrentRequest(id) };
+  };
+
+  /** The open-transaction primitive (design §3.4) every T1/T2/T3/T4 spec
+   *  re-expresses onto: read (if any) → stale-check → commitBeforeSwitch →
+   *  stale-check → handoff → stale-check → commit, aborting (with an
+   *  optional resumeWrites) the moment staleness is detected. Control flow
+   *  is byte-for-byte what T1's hand-written body used to do — see the
+   *  design doc's "제어 흐름 동치성 체크리스트" this re-expression was
+   *  checked against:
+   *  1. token is created at the SAME point the old `requestId` default
+   *     parameter was (call time, before read).
+   *  2. `sourceEditor` is captured by the CALLER before this runs (not by
+   *     runTransition itself — it needs the value from the exact same
+   *     synchronous tick the token was minted in).
+   *  3. read failure: current token → `onReadError` (T1 rethrows); stale →
+   *     silently `false`, `onReadError` never called.
+   *  4. `!token.isCurrent() || !(await commitBeforeSwitch()) || !token.isCurrent()`
+   *     — short-circuits on the FIRST stale check without ever calling
+   *     commitBeforeSwitch (same `||` short-circuit HEAD's raw comparison had).
+   *  5. handoff only runs if step 4 passed; re-checked stale after it too.
+   *  6. abort resumes writes only when `resumeOnAbort` AND the mounted editor
+   *     is STILL the one this transaction started from (`current === sourceEditor`)
+   *     — a swap that already happened via a different transaction must not
+   *     be resumed by this one's late abort.
+   *  7. `commit(fresh)` runs synchronously (no await between it and the
+   *     handoff check) — callers pack the old `onCommit?.(); openInWindow(...)`
+   *     pair straight into `commit`. */
+  async function runTransition<F>(spec: {
+    readonly token: RequestToken;
+    readonly sourceEditor: EditorController | undefined;
+    readonly read?: () => Promise<F>;
+    readonly onReadError: (error: unknown) => "abort-silently";
+    readonly resumeOnAbort: boolean;
+    readonly handoff: () => Promise<boolean>;
+    readonly commit: (fresh: F | undefined) => void;
+  }): Promise<boolean> {
+    const abort = (): boolean => {
+      if (spec.resumeOnAbort && spec.sourceEditor && current === spec.sourceEditor) spec.sourceEditor.resumeWrites();
+      return false;
+    };
+    let fresh: F | undefined;
+    if (spec.read) {
+      try {
+        fresh = await spec.read();
+      } catch (error: unknown) {
+        if (spec.token.isCurrent()) spec.onReadError(error); // may throw (T1's "rethrow" policy)
+        return false;
+      }
+    }
+    if (!spec.token.isCurrent() || !(await commitBeforeSwitch()) || !spec.token.isCurrent()) return abort();
+    if (!(await spec.handoff()) || !spec.token.isCurrent()) return abort();
+    spec.commit(fresh);
+    return true;
+  }
+
   /** The localStorage key `mermark.session.*` state is keyed by — ONE named
    *  function so the save site and the restore site (both below) can never
    *  drift onto two different key shapes. `vaultId ?? ""` keeps a legacy/no-
@@ -404,43 +471,39 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
   // file showed the open-failure recovery modal instead of opening.
   //
   // `opts.vault`/`opts.onCommit` destructure to the SAME local names
-  // (`targetVault`/`onCommit`) HEAD's positional parameters used, so the
-  // rest of this body reads byte-identical to HEAD's. `requestId` is a
-  // third, non-public parameter (openDocumentSafely passes its own) — same
-  // sharing mechanism HEAD's default-parameter shape used, just repositioned
-  // now that the public signature is an options object (design §3.2).
+  // (`targetVault`/`onCommit`) HEAD's positional parameters used. `token` is
+  // a third, non-public parameter (openDocumentSafely passes its own) — same
+  // sharing mechanism HEAD's `requestId` default-parameter shape used, now a
+  // `RequestToken` (design §3.3/§3.4) instead of a raw number, re-expressed
+  // on top of `runTransition` — see that function's own doc comment for the
+  // control-flow equivalence this re-expression was checked against.
   async function openDocument(
     absPath: string,
     opts: OpenOptions = {},
-    requestId = beginLifecycleRequest(),
+    token = beginToken(),
   ): Promise<boolean> {
     const targetVault = opts.vault;
     const onCommit = opts.onCommit;
     const sourceEditor = current;
     const readVault = resolveTargetVault(targetVault, currentVault(), workspaceStore.getGlobalVault());
-    let fresh: { text: string; mtime: number };
-    try {
-      fresh = await fileHostFor(readVault).readFile(absPath);
-    } catch (error: unknown) {
-      if (requestId === lifecycleRequest) throw error;
-      return false;
-    }
-    if (requestId !== lifecycleRequest || !(await commitBeforeSwitch()) || requestId !== lifecycleRequest) {
-      if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
-      return false;
-    }
-    if (!(await watcherHandoff.handoff(absPath, readVault)) || requestId !== lifecycleRequest) {
-      if (sourceEditor && current === sourceEditor) sourceEditor.resumeWrites();
-      return false;
-    }
-    onCommit?.();
-    openInWindow(absPath, fresh, {}, targetVault);
-    return true;
+    return runTransition<{ text: string; mtime: number }>({
+      token,
+      sourceEditor,
+      read: async () => { return fileHostFor(readVault).readFile(absPath); },
+      onReadError: (error) => { throw error; }, // T1's "rethrow" policy (D4)
+      resumeOnAbort: true, // T1's D5
+      handoff: () => watcherHandoff.handoff(absPath, readVault),
+      commit: (freshValue) => {
+        const fresh = freshValue as { text: string; mtime: number };
+        onCommit?.();
+        openInWindow(absPath, fresh, {}, targetVault);
+      },
+    });
   }
   function openDocumentSafely(absPath: string, opts: OpenOptions = {}): Promise<boolean> {
-    const requestId = beginLifecycleRequest();
-    return openDocument(absPath, opts, requestId).catch((error: unknown) => {
-      if (requestId === lifecycleRequest) deps.showOpenRecovery(absPath, String(error), opts.vault);
+    const token = beginToken();
+    return openDocument(absPath, opts, token).catch((error: unknown) => {
+      if (token.isCurrent()) deps.showOpenRecovery(absPath, String(error), opts.vault);
       return false;
     });
   }
