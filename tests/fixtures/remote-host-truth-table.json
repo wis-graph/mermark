@@ -1,5 +1,6 @@
 {
-  "$comment": "The SINGLE source of truth for what a remote-vault host string means to reach — rejected or accepted — across all three places that judge it: Rust `base_url` (src-tauri/src/remote_client.rs), the browser mock's `remoteMockError` (src/mocks/tauri-core.ts), and TS's pre-flight `hostFieldProblem` (src/document/remote-host-field.ts). Each of the three implements this same rule independently (different languages, no shared code) — that's the drift risk. This table is what pins them together: tests/remote-host-truth-table.test.ts checks every row against BOTH TS surfaces (mock + hostFieldProblem) and fails loudly the moment either diverges from this table. The Rust side has its own cargo tests asserting the exact same rows (remote_client.rs's `#[cfg(test)]` module) — if you change what any ONE of the three accepts/rejects, update this table AND the Rust test data in the same change, or the two suites silently drift again.",
+  "$comment": "The SINGLE source of truth for what a remote-vault host string means to reach — rejected or accepted — across all three places that judge it: Rust `base_url` (src-tauri/src/remote_client.rs), the browser mock's `remoteMockError` (src/mocks/tauri-core.ts), and TS's pre-flight `hostFieldProblem` (src/document/remote-host-field.ts). Each of the three implements this same rule independently (different languages, no shared code) — that's the drift risk. This table is what pins them together: tests/remote-host-truth-table.test.ts checks every row against BOTH TS surfaces (mock + hostFieldProblem) and fails loudly the moment either diverges from this table. The Rust side has its own cargo tests asserting the exact same rows (remote_client.rs's `#[cfg(test)]` module) — if you change what any ONE of the three accepts/rejects, update this table AND the Rust test data in the same change, or the two suites silently drift again. `defaultPort`/`sharePortRows`/the SSH `share-port` rows below tie together the same three places by the same principle (Rust `DEFAULT_PORT`/`parse_ssh_host`/`validate_share_port` ⇄ TS `DEFAULT_SHARE_PORT`/`sshHostSuffixProblem`/`sharePortProblem` ⇄ mock `remote_share_start`/`remote_ssh_connect`/`remoteMockError`).",
+  "defaultPort": 47878,
   "rows": [
     { "input": "맥미니", "rejected": true, "why": "non-ASCII host" },
     { "input": "mac-mini", "rejected": false, "why": "plain ASCII host, no port" },
@@ -12,6 +13,16 @@
     { "input": "", "rejected": true, "why": "empty host — checked FIRST, before the ssh:// prefix check" },
     { "input": "http://mac-mini", "rejected": true, "why": "carries its own scheme — base_url's job is \"name a host\", not \"parse an arbitrary URL\"" },
     { "input": "mac-mini/vault", "rejected": true, "why": "carries a path — same scheme/path rejection as above, via the bare '/' check" },
-    { "input": "ssh://mac-mini", "rejected": false, "why": "ssh:// prefix on an otherwise-valid ASCII target" }
+    { "input": "ssh://mac-mini", "rejected": false, "why": "ssh:// prefix on an otherwise-valid ASCII target" },
+    { "input": "ssh://wis@mac-mini?share-port=47900", "rejected": false, "why": "SSH + explicit mermark share port" },
+    { "input": "ssh://wis@mac-mini?share-port=80",    "rejected": true,  "why": "share port below 1024" },
+    { "input": "ssh://wis@mac-mini?share-port=abc",   "rejected": true,  "why": "share port not numeric" },
+    { "input": "ssh://wis@mac-mini?port=47900",       "rejected": true,  "why": "unknown key — only share-port (avoids ssh-port confusion)" },
+    { "input": "ssh://wis@mac-mini:47900",            "rejected": true,  "why": "':port' on an ssh target reads as the SSH port — refused with guidance" },
+    { "input": "mac-mini:47900",                      "rejected": false, "why": "Tailscale host with a non-default share port (already supported)" }
+  ],
+  "sharePortRows": [
+    { "input": "47878", "rejected": false }, { "input": "1024", "rejected": false }, { "input": "65535", "rejected": false },
+    { "input": "1023", "rejected": true }, { "input": "0", "rejected": true }, { "input": "65536", "rejected": true }, { "input": "47a", "rejected": true }
   ]
 }
