@@ -57,14 +57,18 @@ export const remoteSharePortSetting = defineSetting<number>({
 });
 
 /** Turn a `remote_share_start` rejection into a sentence the user can act on,
- *  for the specific `port` that was just attempted. `PORT_IN_USE:` (Rust's
+ *  for the specific `port` that was just attempted. Recognizes all 3 error
+ *  prefixes backend confirmed for this port-conflict round
+ *  (_workspace/02_backend_changes.md): `PORT_IN_USE:` (Rust's
  *  `remote_host::bind` classifying `ErrorKind::AddrInUse`, mirrored by the
  *  mock's magic port 49999 — see tauri-core.ts) points the user at the exact
  *  "공유 포트" row below and offers a concrete alternative. `PORT_INVALID:`
  *  (only reachable if some other caller bypassed this module's own
- *  pre-flight) reuses the identical range message. Anything else falls back
- *  to the raw error text — this function never swallows an error it doesn't
- *  recognize. Pure query. */
+ *  pre-flight) reuses the identical range message. `SSH_TUNNEL_PORT_IN_USE:`
+ *  (a different failure domain — see its own branch below) is stripped to
+ *  its already-human-readable remainder. Anything else falls back to the raw
+ *  error text — this function never swallows an error it doesn't recognize.
+ *  Pure query. */
 export function shareStartErrorMessage(err: unknown, port: number): string {
   const msg = err instanceof Error ? err.message : String(err);
   if (msg.startsWith("PORT_IN_USE:")) {
@@ -72,6 +76,17 @@ export function shareStartErrorMessage(err: unknown, port: number): string {
   }
   if (msg.startsWith("PORT_INVALID:")) {
     return SHARE_PORT_RANGE_MESSAGE;
+  }
+  // SSH_TUNNEL_PORT_IN_USE: (remote_ssh.rs's connect_with, via remote_ssh_connect)
+  // can't actually reach a remote_share_start failure in practice — it's the
+  // CLIENT's own local SSH tunnel port (47879), a different conflict than
+  // this HOST's bind above — but it's still a recognized error prefix this
+  // module owns (team review, 2026-09-27: backend confirmed 3 prefixes total).
+  // Rust's own message is already a complete, actionable Korean sentence once
+  // the machine prefix is stripped, so this branch stays exhaustive instead of
+  // falling through to the raw-text fallback below for a prefix we DO know.
+  if (msg.startsWith("SSH_TUNNEL_PORT_IN_USE:")) {
+    return msg.slice("SSH_TUNNEL_PORT_IN_USE:".length).trim();
   }
   return msg;
 }

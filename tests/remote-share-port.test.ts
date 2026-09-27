@@ -84,4 +84,28 @@ describe("shareStartErrorMessage", () => {
     const msg = shareStartErrorMessage(new Error("Tailscale 주소를 찾을 수 없습니다"), 47878);
     expect(msg).toBe("Tailscale 주소를 찾을 수 없습니다");
   });
+
+  // The 3rd prefix backend confirmed for this round (_workspace/02_backend_changes.md,
+  // remote_ssh.rs's connect_with): the CLIENT's own local SSH tunnel port
+  // (47879), not the host's bind conflict above. This literal is copied
+  // VERBATIM from src-tauri/src/remote_ssh.rs's format! call so a drift in
+  // either wording is caught by this test, not discovered in the UI.
+  it("SSH_TUNNEL_PORT_IN_USE: strips the machine prefix and returns Rust's already-human-readable remainder", () => {
+    const rustLiteral = "SSH_TUNNEL_PORT_IN_USE: 이 기기의 127.0.0.1:47879를 다른 프로그램이 쓰고 있습니다 (이전 mermark의 ssh가 남아 있을 수 있습니다 — 종료 후 다시 시도).";
+    const msg = shareStartErrorMessage(new Error(rustLiteral), 47878);
+    expect(msg).toBe("이 기기의 127.0.0.1:47879를 다른 프로그램이 쓰고 있습니다 (이전 mermark의 ssh가 남아 있을 수 있습니다 — 종료 후 다시 시도).");
+    expect(msg).not.toContain("SSH_TUNNEL_PORT_IN_USE");
+  });
+});
+
+// 3-경계 parity: the mock's remote_ssh_connect must reproduce the EXACT
+// SSH_TUNNEL_PORT_IN_USE: string remote_ssh.rs's connect_with produces
+// (byte-for-byte, per team-lead's 2026-09-27 review of _workspace/02_backend_changes.md).
+describe("mock remote_ssh_connect — SSH_TUNNEL_PORT_IN_USE reproduction hook", () => {
+  it("the magic host string throws the exact Rust literal, prefix included", async () => {
+    const { invoke } = await import("../src/mocks/tauri-core");
+    await expect(invoke("remote_ssh_connect", { host: "ssh://mock-error-tunnel-port-busy" })).rejects.toBe(
+      "SSH_TUNNEL_PORT_IN_USE: 이 기기의 127.0.0.1:47879를 다른 프로그램이 쓰고 있습니다 (이전 mermark의 ssh가 남아 있을 수 있습니다 — 종료 후 다시 시도).",
+    );
+  });
 });

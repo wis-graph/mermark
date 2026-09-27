@@ -82,7 +82,7 @@ export const classifyRemoteError = (e: unknown): RemoteConnectionState => {
  *  not just the next app launch — gets to retry; the failure itself
  *  propagates as this read's own rejection, which `classifyRemoteError`
  *  already resolves to one of the four states (an SSH-prefixed error like
- *  `SSH_PORT_BUSY:`/`REMOTE:Unreachable` doesn't match `auth-expired`/
+ *  `SSH_TUNNEL_PORT_IN_USE:`/`REMOTE:Unreachable` doesn't match `auth-expired`/
  *  `sharing-off`, so it falls to `unreachable` — actionable, not silent). */
 const sshTunnelReady = new Map<string, Promise<void>>();
 export const ensureSshTunnel = (host: string, call: typeof invoke): Promise<void> => {

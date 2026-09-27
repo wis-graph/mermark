@@ -1259,6 +1259,19 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // `parse_ssh_host` independently right before dialing the tunnel.
       const suffixProblem = sshHostSuffixProblem(host);
       if (suffixProblem) throw suffixProblem;
+      // Reproduction hook for the THIRD error prefix backend confirmed for
+      // this round (_workspace/02_backend_changes.md, remote_ssh.rs's
+      // connect_with): the CLIENT's own local tunnel port (SSH_TUNNEL_LOCAL_PORT
+      // = 47879) being busy — a completely different conflict than
+      // remote_share_start's PORT_IN_USE (that one is the HOST's bind). No
+      // real OS port to collide with in a browser mock, so this exact host
+      // string is a discoverable magic trigger (same "mock-error:" idiom as
+      // hostShareMockError above, minus the colon — sshHostSuffixProblem
+      // rejects any ':' on an ssh target). Message copied VERBATIM from
+      // remote_ssh.rs's format! call — byte-for-byte, not a paraphrase.
+      if (host === "ssh://mock-error-tunnel-port-busy") {
+        throw "SSH_TUNNEL_PORT_IN_USE: 이 기기의 127.0.0.1:47879를 다른 프로그램이 쓰고 있습니다 (이전 mermark의 ssh가 남아 있을 수 있습니다 — 종료 후 다시 시도).";
+      }
       if (sshTunnelHost !== null && sshTunnelHost !== host) {
         throw `SSH_TUNNEL_BUSY: 이미 다른 호스트(${sshTunnelHost})로 SSH 터널이 연결되어 있습니다. 먼저 연결을 해제하세요.`;
       }
