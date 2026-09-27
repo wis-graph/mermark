@@ -1,15 +1,20 @@
 //! SSH tunnel fallback for users without Tailscale (docs/design/remote-vault.md
 //! §5). **mermark never touches SSH keys.** It spawns `ssh -N -L
-//! <port>:localhost:<port> user@host` as a child process and lets the user's
-//! own `~/.ssh` configuration do the authentication — no key reading, no
-//! passphrase prompting, no credential storage. Once the tunnel is up,
-//! `remote_client::base_url` already maps any `ssh://user@host` input to
-//! `http://127.0.0.1:<port>` (the local end of the forward), so every
-//! existing `remote_*` command works unchanged against it.
+//! <SSH_TUNNEL_LOCAL_PORT>:localhost:<share port> user@host` as a child
+//! process and lets the user's own `~/.ssh` configuration do the
+//! authentication — no key reading, no passphrase prompting, no credential
+//! storage. The share port is the *remote* host's own (`?share-port=N` on
+//! the `ssh://` host string, or `DEFAULT_PORT` when absent — see
+//! `parse_ssh_host`); the local end is always the fixed
+//! `SSH_TUNNEL_LOCAL_PORT`, deliberately different from `DEFAULT_PORT` (see
+//! that constant's doc comment). Once the tunnel is up, `remote_client::
+//! base_url` already maps any `ssh://user@host` input to
+//! `http://127.0.0.1:SSH_TUNNEL_LOCAL_PORT` (the local end of the forward),
+//! so every existing `remote_*` command works unchanged against it.
 //!
 //! Only one tunnel is ever held at a time (`SshTunnels`'s single `TunnelSlot`):
-//! the local end binds a *fixed* port (`remote_client::DEFAULT_PORT`), so a
-//! second concurrent tunnel to a different host would either fail to bind or
+//! the local end binds a *fixed* port (`remote_client::SSH_TUNNEL_LOCAL_PORT`),
+//! so a second concurrent tunnel to a different host would either fail to bind or
 //! — worse — silently win the bind and have every `remote_*` call for the
 //! *other* host read the wrong machine's files under the right host's name.
 //! `connect_with`'s `decide_connect` refuses that outright rather than
@@ -68,14 +73,95 @@ pub const READY_POLL_INTERVAL: Duration = Duration::from_millis(150);
 /// chatty host balloon an error string.
 const STDERR_LOG_CAP: usize = 2000;
 
-/// `ssh://user@host` → the argv for `ssh -o ExitOnForwardFailure=yes -N -L
-/// <port>:localhost:<port> user@host`. This is exec'd directly as an
-/// argument array (see `spawn_tunnel`) and never passed through a shell, so
-/// classic shell injection (`;`, `` ` ``, `$(...)`) is already structurally
-/// impossible — but the target string is still validated conservatively
-/// here, because `ssh` itself parses its trailing argument and a value
-/// starting with `-` could be read as an option (e.g. smuggling
-/// `-oProxyCommand=...`) rather than a hostname.
+/// A parsed `ssh://<target>[?share-port=<N>]` host string: the ssh target
+/// unchanged, and the mermark share port the remote host is listening on
+/// (parsed from `?share-port=N`, or `DEFAULT_PORT` when the suffix is
+/// absent). `target` is *not* validated for character shape here — see
+/// `parse_ssh_suffix` vs. `parse_ssh_host`'s doc comments for why that split
+/// exists.
+#[derive(Debug)]
+pub struct SshHost {
+    pub target: String,
+    pub share_port: u16,
+}
+
+/// The human-readable guidance for the one mistake this grammar exists to
+/// head off: writing `ssh://host:N` and meaning mermark's share port, when
+/// OpenSSH's own URI syntax reads `:N` as the *SSH* port instead. Named so
+/// both rejection sites below (rule ②'s unknown-key case doesn't need this,
+/// but rule ③ does) quote the identical text rather than two copies drifting.
+fn ssh_share_port_guidance() -> String {
+    "SSH 호스트의 공유 포트는 ?share-port=1024~65535 형식입니다 — SSH 포트는 ~/.ssh/config에서 지정하세요".into()
+}
+
+/// Rules ①②③⑤ of the `ssh://` host grammar (design §1.2) — the target string
+/// is split off and returned as-is, its *characters* deliberately
+/// unvalidated (rule ④ lives in `parse_ssh_host` alone). This is the
+/// narrower check `base_url` needs: is the string's *shape* well-formed
+/// (right scheme, a recognized-or-absent suffix, no `:port` confusion on the
+/// target) — not "is this actually safe to hand to `ssh`'s argv", which is a
+/// stronger question only `tunnel_args` (via `parse_ssh_host`) needs to ask.
+/// Splitting the two is what lets `base_url` keep accepting `ssh://맥미니` (a
+/// non-ASCII target it has always tolerated, since it never actually dials
+/// that string — the real dial target is the fixed local tunnel address)
+/// while `tunnel_args` — which DOES pass the target into a real `ssh` argv —
+/// still refuses it.
+pub fn parse_ssh_suffix(host: &str) -> Result<SshHost, String> {
+    let rest = host.strip_prefix("ssh://").ok_or("ssh:// 호스트가 아닙니다")?;
+    let mut parts = rest.splitn(2, '?');
+    let target = parts.next().unwrap_or("").to_string();
+    let share_port = match parts.next() {
+        None => crate::remote_client::DEFAULT_PORT,
+        Some(suffix) => {
+            let digits = suffix.strip_prefix("share-port=").ok_or_else(ssh_share_port_guidance)?;
+            let port: u32 = digits.parse().map_err(|_| ssh_share_port_guidance())?;
+            if !(1024..=65535).contains(&port) {
+                return Err(ssh_share_port_guidance());
+            }
+            port as u16
+        }
+    };
+    if target.contains(':') {
+        return Err(
+            "SSH 대상에 ':포트'를 쓸 수 없습니다 — mermark 공유 포트는 ?share-port=N, SSH 포트는 ~/.ssh/config에서 지정하세요".into(),
+        );
+    }
+    Ok(SshHost { target, share_port })
+}
+
+/// The full `ssh://<target>[?share-port=<N>]` grammar, rules ①–⑤ —
+/// `parse_ssh_suffix` plus the target character allowlist `tunnel_args` has
+/// always enforced (rule ④: non-empty, doesn't start with `-`, only
+/// alphanumeric/`@`/`.`/`-`/`_` — unchanged from the pre-`?share-port=`
+/// `tunnel_args` rule, just moved here so `tunnel_args` itself can shrink to
+/// "parse, then build the argv"). See `parse_ssh_suffix`'s doc comment for
+/// why the two are split rather than one function doing both jobs.
+pub fn parse_ssh_host(host: &str) -> Result<SshHost, String> {
+    let parsed = parse_ssh_suffix(host)?;
+    if parsed.target.is_empty() || parsed.target.starts_with('-') {
+        return Err("SSH 대상이 올바르지 않습니다".into());
+    }
+    let ok = parsed.target.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '-' | '_'));
+    if !ok {
+        return Err(format!("SSH 대상에 허용되지 않는 문자가 있습니다: {}", parsed.target));
+    }
+    Ok(parsed)
+}
+
+/// `ssh://user@host[?share-port=N]` → the argv for `ssh -o
+/// ExitOnForwardFailure=yes -N -L <SSH_TUNNEL_LOCAL_PORT>:localhost:<share
+/// port> user@host`. This is exec'd directly as an argument array (see
+/// `spawn_tunnel`) and never passed through a shell, so classic shell
+/// injection (`;`, `` ` ``, `$(...)`) is already structurally impossible —
+/// `parse_ssh_host` (rule ④) is what still refuses a target that could be
+/// misread as an `ssh` *option* (a leading `-`, e.g. smuggling
+/// `-oProxyCommand=...`), since `ssh` parses its own trailing argument.
+///
+/// The local end is always the fixed `SSH_TUNNEL_LOCAL_PORT` (never the
+/// caller's `?share-port=N`, which names the *remote* host's port only) —
+/// deliberately different from `DEFAULT_PORT` so this Mac sharing a vault of
+/// its own while also tunneling elsewhere can never self-collide on one
+/// loopback port (see `SSH_TUNNEL_LOCAL_PORT`'s doc comment).
 ///
 /// `ExitOnForwardFailure=yes` (fix round 1, Critical 1) is not optional:
 /// without it, `ssh -N -L` that loses a bind race (something else already
@@ -83,15 +169,8 @@ const STDERR_LOG_CAP: usize = 2000;
 /// forever, doing nothing — `wait_until_ready`'s "did the child exit" check
 /// would never fire, and its TCP probe would happily report success by
 /// connecting to whatever *that other* listener is.
-pub fn tunnel_args(host: &str, port: u16) -> Result<Vec<String>, String> {
-    let target = host.strip_prefix("ssh://").ok_or("ssh:// 호스트가 아닙니다")?;
-    if target.is_empty() || target.starts_with('-') {
-        return Err("SSH 대상이 올바르지 않습니다".into());
-    }
-    let ok = target.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '-' | '_'));
-    if !ok {
-        return Err(format!("SSH 대상에 허용되지 않는 문자가 있습니다: {target}"));
-    }
+pub fn tunnel_args(host: &str) -> Result<Vec<String>, String> {
+    let parsed = parse_ssh_host(host)?;
     Ok(vec![
         "-o".into(),
         "ExitOnForwardFailure=yes".into(),
@@ -108,8 +187,8 @@ pub fn tunnel_args(host: &str, port: u16) -> Result<Vec<String>, String> {
         "BatchMode=yes".into(),
         "-N".into(),
         "-L".into(),
-        format!("{port}:localhost:{port}"),
-        target.to_string(),
+        format!("{}:localhost:{}", crate::remote_client::SSH_TUNNEL_LOCAL_PORT, parsed.share_port),
+        parsed.target,
     ])
 }
 
@@ -387,11 +466,11 @@ async fn connect_with(
     if !port_is_free(port) {
         release_claim(state);
         return Err(format!(
-            "SSH_PORT_BUSY: 로컬 포트 {port}가 이미 사용 중입니다. 다른 SSH 터널이나 mermark 원격 공유가 그 포트를 쓰고 있는지 확인하세요."
+            "SSH_TUNNEL_PORT_IN_USE: 이 기기의 127.0.0.1:{port}를 다른 프로그램이 쓰고 있습니다 (이전 mermark의 ssh가 남아 있을 수 있습니다 — 종료 후 다시 시도)."
         ));
     }
 
-    let args = match tunnel_args(host, port) {
+    let args = match tunnel_args(host) {
         Ok(args) => args,
         Err(e) => {
             release_claim(state);
@@ -441,12 +520,12 @@ pub fn shutdown_all(state: &SshTunnels) {
 }
 
 /// Establishes (or reuses) an SSH tunnel to `host` so `remote_client`'s
-/// `ssh://`-mapped commands have a live `127.0.0.1:DEFAULT_PORT` to talk to.
-/// Idempotent for the same host; refuses a different host (or a second
-/// in-flight connect) while one is active — see `decide_connect`.
+/// `ssh://`-mapped commands have a live `127.0.0.1:SSH_TUNNEL_LOCAL_PORT` to
+/// talk to. Idempotent for the same host; refuses a different host (or a
+/// second in-flight connect) while one is active — see `decide_connect`.
 #[tauri::command]
 pub async fn remote_ssh_connect(host: String, state: tauri::State<'_, SshTunnels>) -> Result<(), String> {
-    connect_with("ssh", &host, crate::remote_client::DEFAULT_PORT, READY_TIMEOUT, READY_POLL_INTERVAL, &state).await
+    connect_with("ssh", &host, crate::remote_client::SSH_TUNNEL_LOCAL_PORT, READY_TIMEOUT, READY_POLL_INTERVAL, &state).await
 }
 
 /// Tears the tunnel for `host` down (vault removed, or the user explicitly
@@ -461,7 +540,7 @@ pub async fn remote_ssh_disconnect(host: String, state: tauri::State<'_, SshTunn
 /// would actually serve `host`. `remote_client.rs`'s ssh-routed commands
 /// check this immediately before sending, closing a hole `base_url` opens by
 /// design: `base_url` maps *every* `ssh://...` host to the same fixed local
-/// address (`127.0.0.1:DEFAULT_PORT`, the one shared tunnel slot this module
+/// address (`127.0.0.1:SSH_TUNNEL_LOCAL_PORT`, the one shared tunnel slot this module
 /// enforces — see this module's doc comment), discarding which host that
 /// address currently forwards to. Concretely: a tunnel to host A is Active;
 /// A reboots, so the `ssh` child exits on its own; the user opens a vault on
@@ -469,7 +548,7 @@ pub async fn remote_ssh_disconnect(host: String, state: tauri::State<'_, SshTunn
 /// lets B's `remote_ssh_connect` claim the same slot and spawn B's tunnel on
 /// the same local port; the user then switches back to the still-registered
 /// A vault. Without this guard, `remote_list_dir(host=A)` would resolve to
-/// `127.0.0.1:DEFAULT_PORT` exactly as before — which is now B's tunnel —
+/// `127.0.0.1:SSH_TUNNEL_LOCAL_PORT` exactly as before — which is now B's tunnel —
 /// and hand A's 128-bit device token to B's machine. Named so it reads as
 /// the promise it makes ("this tunnel currently serves this host"), not
 /// merely "is something active" — `decide_connect`'s `AlreadyConnected` asks
@@ -489,26 +568,39 @@ mod tests {
 
     #[test]
     fn builds_a_local_forward_command_without_touching_keys() {
-        let args = tunnel_args("ssh://wis@macmini", 8787).unwrap();
+        let args = tunnel_args("ssh://wis@macmini").unwrap();
         assert_eq!(
             args,
             vec![
                 "-o", "ExitOnForwardFailure=yes",
                 "-o", "BatchMode=yes",
-                "-N", "-L", "8787:localhost:8787", "wis@macmini",
+                "-N", "-L", "47879:localhost:47878", "wis@macmini",
+            ]
+        );
+    }
+
+    #[test]
+    fn tunnel_args_honors_an_explicit_share_port() {
+        let args = tunnel_args("ssh://wis@mac-mini?share-port=47900").unwrap();
+        assert_eq!(
+            args,
+            vec![
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "BatchMode=yes",
+                "-N", "-L", "47879:localhost:47900", "wis@mac-mini",
             ]
         );
     }
 
     #[test]
     fn rejects_a_host_that_is_not_ssh_scheme() {
-        assert!(tunnel_args("wis-macmini", 8787).is_err());
+        assert!(tunnel_args("wis-macmini").is_err());
     }
 
     #[test]
     fn rejects_shell_metacharacters_in_the_ssh_target() {
-        assert!(tunnel_args("ssh://wis@macmini; rm -rf /", 8787).is_err());
-        assert!(tunnel_args("ssh://wis@macmini$(whoami)", 8787).is_err());
+        assert!(tunnel_args("ssh://wis@macmini; rm -rf /").is_err());
+        assert!(tunnel_args("ssh://wis@macmini$(whoami)").is_err());
     }
 
     #[test]
@@ -516,7 +608,83 @@ mod tests {
         // A leading `-` in the (post-`ssh://`) target could otherwise smuggle
         // an ssh option (e.g. `-oProxyCommand=...`) past this function's own
         // validation and into `ssh`'s argv.
-        assert!(tunnel_args("ssh://-oProxyCommand=evil", 8787).is_err());
+        assert!(tunnel_args("ssh://-oProxyCommand=evil").is_err());
+    }
+
+    // --- parse_ssh_host / parse_ssh_suffix (the `?share-port=N` grammar,
+    // design §1.2 rules ①–⑤) ---------------------------------------------------
+
+    #[test]
+    fn parse_ssh_host_defaults_share_port_when_absent() {
+        let parsed = parse_ssh_host("ssh://wis@macmini").unwrap();
+        assert_eq!(parsed.target, "wis@macmini");
+        assert_eq!(parsed.share_port, crate::remote_client::DEFAULT_PORT);
+    }
+
+    #[test]
+    fn parse_ssh_host_accepts_an_explicit_share_port() {
+        let parsed = parse_ssh_host("ssh://wis@mac-mini?share-port=47900").unwrap();
+        assert_eq!(parsed.target, "wis@mac-mini");
+        assert_eq!(parsed.share_port, 47900);
+    }
+
+    #[test]
+    fn parse_ssh_host_rejects_a_share_port_below_1024() {
+        assert!(parse_ssh_host("ssh://wis@mac-mini?share-port=80").is_err());
+    }
+
+    #[test]
+    fn parse_ssh_host_rejects_a_non_numeric_share_port() {
+        assert!(parse_ssh_host("ssh://wis@mac-mini?share-port=abc").is_err());
+    }
+
+    #[test]
+    fn parse_ssh_host_rejects_an_unknown_query_key() {
+        // `?port=N` is refused, not silently treated as `?share-port=N` —
+        // the two are easy to confuse (SSH's own port vs. mermark's share
+        // port), so only the one exact key name is accepted.
+        let err = parse_ssh_host("ssh://wis@mac-mini?port=47900").unwrap_err();
+        assert!(err.contains("share-port"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_ssh_host_rejects_a_colon_port_on_the_target_with_guidance() {
+        // `ssh://host:N` reads as the SSH port in OpenSSH's own URI syntax —
+        // refusing it (rather than silently reinterpreting it as the share
+        // port) is what stops that exact confusion.
+        let err = parse_ssh_host("ssh://wis@mac-mini:47900").unwrap_err();
+        assert!(err.contains("share-port"), "got: {err}");
+        assert!(err.contains(".ssh/config"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_ssh_host_rejects_shell_metacharacters_in_the_target() {
+        assert!(parse_ssh_host("ssh://wis@macmini; rm -rf /").is_err());
+    }
+
+    #[test]
+    fn parse_ssh_host_rejects_a_target_starting_with_a_dash() {
+        assert!(parse_ssh_host("ssh://-oProxyCommand=evil").is_err());
+    }
+
+    #[test]
+    fn parse_ssh_host_rejects_a_non_ssh_scheme() {
+        assert!(parse_ssh_host("wis-macmini").is_err());
+    }
+
+    /// `parse_ssh_suffix` is the narrower rule `base_url` uses (rules ②③⑤
+    /// only, no rule ④ target character check) — it must keep accepting a
+    /// non-ASCII target `base_url`'s ssh branch has always tolerated, since
+    /// `base_url` never actually dials that string itself.
+    #[test]
+    fn parse_ssh_suffix_accepts_a_non_ascii_target_that_parse_ssh_host_would_reject() {
+        assert!(parse_ssh_suffix("ssh://맥미니").is_ok());
+        assert!(parse_ssh_host("ssh://맥미니").is_err());
+    }
+
+    #[test]
+    fn parse_ssh_suffix_still_rejects_the_colon_port_confusion() {
+        assert!(parse_ssh_suffix("ssh://wis@mac-mini:47900").is_err());
     }
 
     // --- decide_connect: the port-collision / connect-race guard, in
@@ -666,7 +834,7 @@ mod tests {
         let err = connect_with("ssh", "ssh://wis@macmini", port, Duration::from_secs(1), Duration::from_millis(20), &state)
             .await
             .unwrap_err();
-        assert!(err.starts_with("SSH_PORT_BUSY"), "got: {err}");
+        assert!(err.starts_with("SSH_TUNNEL_PORT_IN_USE"), "got: {err}");
         // The slot must not be left claimed after a refused connect.
         assert!(matches!(*state.active.lock().unwrap(), TunnelSlot::Empty));
         drop(listener);
@@ -719,7 +887,7 @@ mod tests {
             });
             match connect_with(program, host, port, timeout, poll, state).await {
                 Ok(()) => return port,
-                Err(e) if e.starts_with("SSH_PORT_BUSY") => continue,
+                Err(e) if e.starts_with("SSH_TUNNEL_PORT_IN_USE") => continue,
                 Err(e) => panic!("unexpected connect_with failure: {e}"),
             }
         }
@@ -753,7 +921,7 @@ mod tests {
         // an unrelated concurrent test in this same binary also cycling
         // through `bind("127.0.0.1:0")` (observed under a full `cargo test`
         // run, not `cargo test remote_ssh` alone) — that shows up as this
-        // test's own `connect_with` seeing `SSH_PORT_BUSY` for a port that
+        // test's own `connect_with` seeing `SSH_TUNNEL_PORT_IN_USE` for a port that
         // some other test's socket, not ours, ended up holding for a
         // moment. That's test-infra noise, not a regression in the guard
         // this test exists to exercise, so a few retries with a fresh port
@@ -913,7 +1081,7 @@ mod tests {
         // `connect_reuses_the_same_host_and_refuses_a_second_one` — this
         // test hits the identical concurrent-port-reuse race under a full
         // `cargo test` run and would otherwise panic on the same
-        // `SSH_PORT_BUSY` a bare single-shot bind can lose to.
+        // `SSH_TUNNEL_PORT_IN_USE` a bare single-shot bind can lose to.
         connect_with_retrying_port_race(&program, "ssh://b@h2", Duration::from_secs(2), Duration::from_millis(20), &state).await;
 
         assert!(

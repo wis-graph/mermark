@@ -18,7 +18,21 @@ use std::time::Duration;
 
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
-pub const DEFAULT_PORT: u16 = 8787;
+/// Default port a shared vault's HTTP server listens on (`remote_share.rs`'s
+/// `ShareConfig` default, and what a bare `name[:port]` host string falls
+/// back to below). Changed from `8787` (2026-09-26, owner report: 8787
+/// collided with another service already running on the Mac mini) — see
+/// `docs/design/remote-vault.md` §2 for the change note.
+pub const DEFAULT_PORT: u16 = 47878;
+/// Fixed local end of the `ssh -L` tunnel (`remote_ssh.rs`'s `tunnel_args`),
+/// deliberately **different** from `DEFAULT_PORT` (locked by
+/// `tunnel_local_port_differs_from_default_share_port`): a Mac sharing a
+/// vault itself (`LocalhostOnly`, bound to `DEFAULT_PORT`) while *also*
+/// SSH-tunneling to a different host would otherwise self-collide on its
+/// own loopback address the moment both features were on at once. The
+/// remote host's own share port (its `DEFAULT_PORT`, or whatever `?share-
+/// port=N` names) is the tunnel's *far* end — see `remote_ssh::parse_ssh_host`.
+pub const SSH_TUNNEL_LOCAL_PORT: u16 = 47879;
 
 /// The four connection states the frontend can distinguish and act on
 /// separately (e.g. "re-pair" for `AuthExpired` vs. "check the network" for
@@ -35,20 +49,29 @@ pub enum RemoteStatus {
 
 /// Turns a user-typed host string into the base URL every `remote_*` command
 /// talks to. `ssh://...` doesn't name a host to dial directly — mermark's own
-/// `ssh -L` tunnel (set up elsewhere) forwards `127.0.0.1:DEFAULT_PORT` to the
-/// remote host's server, so that's the address this returns for any
-/// `ssh://` input, regardless of what follows the scheme. A bare
-/// `name[:port]` is otherwise assumed to be directly reachable (e.g. over
-/// Tailscale) and becomes `http://name:port`, defaulting to `DEFAULT_PORT`
-/// when no port is given. Anything carrying its own scheme or a path is
-/// rejected outright — this function's job is "name a host", not "parse an
-/// arbitrary URL a peer could smuggle a redirect through".
+/// `ssh -L` tunnel (set up elsewhere) forwards `127.0.0.1:SSH_TUNNEL_LOCAL_PORT`
+/// to the remote host's server, so that's the address this returns for any
+/// `ssh://` input, once `parse_ssh_suffix` accepts its `?share-port=N` suffix
+/// (or absence of one) and its `:`-port rejection (an OpenSSH URI's `:N` reads
+/// as the *SSH* port, not mermark's — `~/.ssh/config` is the place for that).
+/// A bare `name[:port]` is otherwise assumed to be directly reachable (e.g.
+/// over Tailscale) and becomes `http://name:port`, defaulting to
+/// `DEFAULT_PORT` when no port is given — already-supported today for a host
+/// whose share port isn't the default. Anything carrying its own scheme or a
+/// path is rejected outright — this function's job is "name a host", not
+/// "parse an arbitrary URL a peer could smuggle a redirect through".
 pub fn base_url(host: &str) -> Result<String, String> {
     if host.is_empty() {
         return Err("호스트가 비어 있습니다".into());
     }
     if host.strip_prefix("ssh://").is_some() {
-        return Ok(format!("http://127.0.0.1:{DEFAULT_PORT}"));
+        // Rules ②③⑤ only (suffix syntax + `:` rejection) — target character
+        // validation (rule ④) stays in `parse_ssh_host`/`tunnel_args`'s layer
+        // so `ssh://맥미니` (a non-ASCII target this branch has always
+        // tolerated, since the actual dial target below never depends on it)
+        // keeps being accepted here.
+        crate::remote_ssh::parse_ssh_suffix(host)?;
+        return Ok(format!("http://127.0.0.1:{SSH_TUNNEL_LOCAL_PORT}"));
     }
     if host.contains("://") || host.contains('/') {
         return Err(format!("호스트에는 이름과 포트만 적습니다: {host}"));
@@ -548,8 +571,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn host_input_defaults_to_port_8787() {
-        assert_eq!(base_url("wis-macmini").unwrap(), "http://wis-macmini:8787");
+    fn host_input_defaults_to_port_47878() {
+        assert_eq!(base_url("wis-macmini").unwrap(), "http://wis-macmini:47878");
     }
 
     #[test]
@@ -559,7 +582,18 @@ mod tests {
 
     #[test]
     fn ssh_host_targets_the_local_tunnel_end() {
-        assert_eq!(base_url("ssh://wis@macmini").unwrap(), "http://127.0.0.1:8787");
+        assert_eq!(base_url("ssh://wis@macmini").unwrap(), "http://127.0.0.1:47879");
+    }
+
+    /// The port conflict this whole change exists to fix (owner report:
+    /// 8787 collided with another service on the Mac mini): the local SSH
+    /// tunnel end and the default share port must never be the same value,
+    /// or a Mac sharing a vault (LocalhostOnly, port 47878) while also
+    /// SSH-tunneling to a *different* host would self-collide on its own
+    /// loopback address.
+    #[test]
+    fn tunnel_local_port_differs_from_default_share_port() {
+        assert_ne!(SSH_TUNNEL_LOCAL_PORT, DEFAULT_PORT);
     }
 
     #[test]
@@ -584,6 +618,8 @@ mod tests {
     #[derive(serde::Deserialize)]
     struct TruthTable {
         rows: Vec<TruthTableRow>,
+        #[serde(rename = "defaultPort")]
+        default_port: u16,
     }
 
     /// Reads and parses the shared fixture at test time (not hand-copied
@@ -616,6 +652,15 @@ mod tests {
         }
     }
 
+    /// `DEFAULT_PORT` is the same 3-boundary fact the fixture's `defaultPort`
+    /// pins for TS/mock — if one changes without the other, this fails
+    /// loudly instead of the two silently drifting.
+    #[test]
+    fn base_url_matches_the_shared_default_port() {
+        let table = load_shared_truth_table();
+        assert_eq!(DEFAULT_PORT, table.default_port);
+    }
+
     /// The backstop for the "맥미니" incident: a frontend pre-flight check
     /// (`hostFieldProblem`) is supposed to catch this first, but this must
     /// refuse the same input for the same reason even if that gate is
@@ -630,10 +675,10 @@ mod tests {
     /// any of these.
     #[test]
     fn base_url_still_accepts_every_shape_it_already_did() {
-        assert_eq!(base_url("mac-mini").unwrap(), "http://mac-mini:8787");
+        assert_eq!(base_url("mac-mini").unwrap(), "http://mac-mini:47878");
         assert_eq!(base_url("mac-mini:9000").unwrap(), "http://mac-mini:9000");
-        assert_eq!(base_url("100.64.1.2").unwrap(), "http://100.64.1.2:8787");
-        assert!(base_url("ssh://whatever").unwrap().starts_with("http://127.0.0.1:"));
+        assert_eq!(base_url("100.64.1.2").unwrap(), "http://100.64.1.2:47878");
+        assert_eq!(base_url("ssh://whatever").unwrap(), "http://127.0.0.1:47879");
     }
 
     #[test]
