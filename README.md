@@ -117,6 +117,12 @@ who don't use it.
 - **Pairing is a six-digit code**, typed once, exchanged for a long-lived device token.
   The token never enters the webview — commands carry only the host and vault name, and
   Rust looks the token up.
+- The default share port is **47878** — change it in the host's Settings › Remote Share
+  › **Share port** if something else on that Mac is already using it. A host on a
+  non-default port needs `name:port` in the client's host field (`ssh://user@host?share-port=port`
+  for SSH); the SSH connection's own port is still set the usual way, in
+  `~/.ssh/config`. Keep both sides on the same mermark version — an older client still
+  dials the old default port.
 - Markdown, images, PDF, Word, Excel and HTML all open remotely. Broken connections get
   a retry button on the vault row, and badges refresh themselves when the host comes
   back.
