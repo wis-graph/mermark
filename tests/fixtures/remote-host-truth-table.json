@@ -1,6 +1,7 @@
 {
   "$comment": "The SINGLE source of truth for what a remote-vault host string means to reach — rejected or accepted — across all three places that judge it: Rust `base_url` (src-tauri/src/remote_client.rs), the browser mock's `remoteMockError` (src/mocks/tauri-core.ts), and TS's pre-flight `hostFieldProblem` (src/document/remote-host-field.ts). Each of the three implements this same rule independently (different languages, no shared code) — that's the drift risk. This table is what pins them together: tests/remote-host-truth-table.test.ts checks every row against BOTH TS surfaces (mock + hostFieldProblem) and fails loudly the moment either diverges from this table. The Rust side has its own cargo tests asserting the exact same rows (remote_client.rs's `#[cfg(test)]` module) — if you change what any ONE of the three accepts/rejects, update this table AND the Rust test data in the same change, or the two suites silently drift again. `defaultPort`/`sharePortRows`/the SSH `share-port` rows below tie together the same three places by the same principle (Rust `DEFAULT_PORT`/`parse_ssh_host`/`validate_share_port` ⇄ TS `DEFAULT_SHARE_PORT`/`sshHostSuffixProblem`/`sharePortProblem` ⇄ mock `remote_share_start`/`remote_ssh_connect`/`remoteMockError`).",
   "defaultPort": 47878,
+  "sshTunnelLocalPort": 47879,
   "rows": [
     { "input": "맥미니", "rejected": true, "why": "non-ASCII host" },
     { "input": "mac-mini", "rejected": false, "why": "plain ASCII host, no port" },
@@ -19,7 +20,13 @@
     { "input": "ssh://wis@mac-mini?share-port=abc",   "rejected": true,  "why": "share port not numeric" },
     { "input": "ssh://wis@mac-mini?port=47900",       "rejected": true,  "why": "unknown key — only share-port (avoids ssh-port confusion)" },
     { "input": "ssh://wis@mac-mini:47900",            "rejected": true,  "why": "':port' on an ssh target reads as the SSH port — refused with guidance" },
-    { "input": "mac-mini:47900",                      "rejected": false, "why": "Tailscale host with a non-default share port (already supported)" }
+    { "input": "mac-mini:47900",                      "rejected": false, "why": "Tailscale host with a non-default share port (already supported)" },
+    { "input": "ssh://wis@mac-mini?share-port=1023",  "rejected": true,  "why": "SSH share-port range boundary: one below the minimum" },
+    { "input": "ssh://wis@mac-mini?share-port=1024",  "rejected": false, "why": "SSH share-port range boundary: the minimum itself" },
+    { "input": "ssh://wis@mac-mini?share-port=65535", "rejected": false, "why": "SSH share-port range boundary: the maximum itself" },
+    { "input": "ssh://wis@mac-mini?share-port=65536", "rejected": true,  "why": "SSH share-port range boundary: one above the maximum" },
+    { "input": "ssh://wis@mac-mini?share-port=+47900","rejected": true,  "why": "a leading '+' is not a digit-only port — u32::parse accepts it but the TS regex does not, so Rust must reject it too" },
+    { "input": "ssh://wis@mac-mini?share-port=",      "rejected": true,  "why": "empty share-port value" }
   ],
   "sharePortRows": [
     { "input": "47878", "rejected": false }, { "input": "1024", "rejected": false }, { "input": "65535", "rejected": false },
