@@ -396,8 +396,22 @@ pub fn router(state: HostState) -> Router {
 /// observe a bind failure synchronously, *before* ever spawning the task
 /// that runs the server loop — a failure that only surfaced inside a
 /// detached background task would have nowhere to report back to.
+///
+/// A port-conflict failure (`ErrorKind::AddrInUse`) is classified with its
+/// own `PORT_IN_USE:` prefix — the owner-reported bug this exists to fix
+/// (mermark's old default port 8787 colliding with another program already
+/// running on the Mac mini) needs the settings UI to distinguish "pick a
+/// different port" from every other bind failure (Tailscale's interface not
+/// being up, a permission error on a privileged port, ...), which all keep
+/// falling through to the generic `bind {addr}: {e}` text below.
 pub async fn bind(addr: std::net::SocketAddr) -> Result<tokio::net::TcpListener, String> {
-    tokio::net::TcpListener::bind(addr).await.map_err(|e| format!("bind {addr}: {e}"))
+    tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AddrInUse {
+            format!("PORT_IN_USE: {addr} 포트를 이미 다른 프로그램이 쓰고 있습니다")
+        } else {
+            format!("bind {addr}: {e}")
+        }
+    })
 }
 
 /// Runs `router(state)` on an already-bound `listener` until `shutdown`
@@ -1680,8 +1694,13 @@ mod tests {
         let first = bind(addr).await.unwrap();
         let port = first.local_addr().unwrap().port();
         let addr2: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-        let result = bind(addr2).await;
-        assert!(result.is_err());
+        let err = bind(addr2).await.unwrap_err();
+        // B2 (owner report: 8787 collided with another program on the Mac
+        // mini): a bind conflict must be classified `PORT_IN_USE:`, not the
+        // raw `bind {addr}: ...` OS error text, so the frontend/settings UI
+        // can distinguish "pick a different port" from every other bind
+        // failure (e.g. Tailscale's interface not being up).
+        assert!(err.starts_with("PORT_IN_USE:"), "got: {err}");
     }
 
     // --- fix round 1: vault-root addressability, path relativization,

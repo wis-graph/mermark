@@ -49,6 +49,25 @@ pub struct VaultToArm {
     pub root: String,
 }
 
+/// Validates a user-supplied share port before it ever reaches `share_start`
+/// (B2, owner report: 8787 collided with another program on the Mac mini).
+/// `port < 1024` is refused as `PORT_INVALID:` — below the privileged-port
+/// line invites confusion with a system service, and the port's *upper*
+/// bound is already enforced by the `u16` type itself, so there is nothing
+/// left to check there.
+///
+/// Called **only** from the `#[tauri::command]` adapter (`remote_share_start`),
+/// never from `share_start` itself (pitfall 2, plan §함정) — `share_start`'s
+/// own tests pass `port: 0` (OS-assigned) throughout, and a check inside
+/// `share_start` would break every one of them for a value only the IPC
+/// boundary needs to police.
+pub(crate) fn validate_share_port(port: u16) -> Result<(), String> {
+    if port < 1024 {
+        return Err(format!("PORT_INVALID: 공유 포트는 1024~65535 사이여야 합니다 (받은 값 {port})"));
+    }
+    Ok(())
+}
+
 /// Converts the caller's `VaultToArm` list into `ArmedVault`s, rejecting any
 /// whose `root` isn't a directory that actually exists *right now* — before
 /// `share_start` ever tears down a running server or binds a socket for it
@@ -341,6 +360,7 @@ pub async fn remote_share_start(
     vaults: Vec<VaultToArm>,
     state: tauri::State<'_, RemoteShareState>,
 ) -> Result<(), String> {
+    validate_share_port(port)?;
     share_start(bind_mode, port, vaults, &state).await
 }
 
@@ -677,6 +697,108 @@ mod tests {
 
         let on_disk = crate::remote_token::load(&dir).unwrap();
         assert!(on_disk.is_empty(), "철회는 디스크에도 반영돼야 한다");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- validate_share_port (B2, owner report: 8787 collided with another
+    // program on the Mac mini) --------------------------------------------------
+
+    #[test]
+    fn validate_share_port_rejects_below_1024() {
+        assert!(validate_share_port(1023).is_err());
+        assert!(validate_share_port(0).is_err());
+    }
+
+    #[test]
+    fn validate_share_port_accepts_the_valid_range_boundaries() {
+        assert!(validate_share_port(1024).is_ok());
+        assert!(validate_share_port(65535).is_ok());
+    }
+
+    /// Pitfall 2 (plan §함정): `validate_share_port` must live in the
+    /// `#[tauri::command]` adapter only — `share_start` itself is called
+    /// directly by every test above with `port: 0` (OS-assigned), and must
+    /// keep working unvalidated. This pins that `share_start` itself never
+    /// grew the check.
+    #[tokio::test]
+    async fn share_start_still_accepts_port_zero_unvalidated() {
+        let dir = tmp_config_dir("port-zero-still-ok");
+        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let vaults = vec![VaultToArm {
+            id: "v1".into(),
+            display_name: "노트".into(),
+            root: std::env::temp_dir().to_string_lossy().into_owned(),
+        }];
+        share_start(BindMode::LocalhostOnly, 0, vaults, &state).await.unwrap();
+        assert!(share_status(&state).running);
+        stop_running(&state).await;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[derive(serde::Deserialize)]
+    struct SharePortRow {
+        input: String,
+        rejected: bool,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct SharePortTable {
+        #[serde(rename = "sharePortRows")]
+        share_port_rows: Vec<SharePortRow>,
+    }
+
+    /// Same shared-fixture pattern as `remote_client.rs`'s
+    /// `load_shared_truth_table` — read at test time so this file can never
+    /// itself drift from what the TS/mock sides read.
+    fn load_share_port_rows() -> SharePortTable {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/remote-host-truth-table.json");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("shared truth table fixture missing at {}: {e}", path.display()));
+        serde_json::from_str(&text)
+            .unwrap_or_else(|e| panic!("shared truth table fixture at {} is not valid: {e}", path.display()))
+    }
+
+    #[test]
+    fn validate_share_port_matches_the_shared_truth_table_numeric_rows() {
+        let table = load_share_port_rows();
+        assert!(!table.share_port_rows.is_empty(), "sharePortRows parsed but empty — likely a shape mismatch");
+        for row in &table.share_port_rows {
+            // Non-numeric ("47a") or out-of-u16-range ("65536") inputs are
+            // rejected earlier, at IPC deserialization — only rows that
+            // parse cleanly as u16 exercise `validate_share_port` itself
+            // (design §3 table note: "문자열 행은 TS/mock만").
+            if let Ok(port) = row.input.parse::<u16>() {
+                assert_eq!(
+                    validate_share_port(port).is_err(),
+                    row.rejected,
+                    "validate_share_port({port}) should have rejected={}",
+                    row.rejected
+                );
+            }
+        }
+    }
+
+    /// The bind-conflict half of B2: a port already held by something else
+    /// must surface as `PORT_IN_USE:` all the way up through `share_start`,
+    /// not just at `remote_host::bind`'s own level.
+    #[tokio::test]
+    async fn share_start_surfaces_a_port_conflict_as_port_in_use() {
+        let dir = tmp_config_dir("port-conflict");
+        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        let vaults = vec![VaultToArm {
+            id: "v1".into(),
+            display_name: "노트".into(),
+            root: std::env::temp_dir().to_string_lossy().into_owned(),
+        }];
+
+        let err = share_start(BindMode::LocalhostOnly, port, vaults, &state).await.unwrap_err();
+        assert!(err.starts_with("PORT_IN_USE:"), "got: {err}");
+        assert!(!share_status(&state).running);
+
+        drop(occupied);
         std::fs::remove_dir_all(&dir).ok();
     }
 }
