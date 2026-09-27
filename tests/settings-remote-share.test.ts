@@ -24,6 +24,7 @@ import {
   type VaultOption,
   type ShareStatus,
 } from "../src/settings/remote-share-panel";
+import { DEFAULT_SHARE_PORT, remoteSharePortSetting } from "../src/settings/remote-share-port";
 import type { WorkspaceState } from "../src/workspace/workspace-state";
 
 function flush(): Promise<void> {
@@ -105,12 +106,12 @@ describe("remote-share-panel — 순수 함수", () => {
 
 const VAULTS: VaultOption[] = [{ id: "v1", displayName: "노트", root: "/Users/x/notes" }];
 
-const OFF_STATUS: ShareStatus = { running: false, bind_mode: "tailscale", port: 8787, vaults: [], devices: [] };
+const OFF_STATUS: ShareStatus = { running: false, bind_mode: "tailscale", port: DEFAULT_SHARE_PORT, vaults: [], devices: [] };
 
 const RUNNING_STATUS: ShareStatus = {
   running: true,
   bind_mode: "tailscale",
-  port: 8787,
+  port: DEFAULT_SHARE_PORT,
   vaults: [{ id: "v1", display_name: "노트" }],
   devices: [],
 };
@@ -125,6 +126,13 @@ describe("remote-share-panel — 설정 패널 통합", () => {
       default: "a",
       ui: { label: "X", group: "테마", control: { kind: "segmented", options: [{ value: "a", label: "A" }] } },
     });
+    // remoteSharePortSetting is a real exported singleton (this module's
+    // SSOT for "공유 포트"), not a per-test-local closure — a test that types
+    // into the port field mutates it for every OTHER test in this file
+    // unless reset here. `localStorage.clear()` above doesn't undo an
+    // already-loaded in-memory value (defineSetting only reads localStorage
+    // at construction), so this explicit reset is the actual guard.
+    remoteSharePortSetting.set(DEFAULT_SHARE_PORT);
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -193,7 +201,7 @@ describe("remote-share-panel — 설정 패널 통합", () => {
     expect(startCall).toBeTruthy();
     expect(startCall![1]).toEqual({
       bindMode: "tailscale",
-      port: 8787,
+      port: DEFAULT_SHARE_PORT,
       vaults: [{ id: "v1", display_name: "노트", root: "/Users/x/notes" }],
     });
   });
@@ -382,5 +390,90 @@ describe("remote-share-panel — 설정 패널 통합", () => {
     openRemoteShareTab(backdrop);
     await flush();
     expect(backdrop.textContent).not.toContain("/Users/x/notes"); // VAULTS[0].root
+  });
+
+  // F2 (_workspace/01_architect_design.md §2.1/§2.3 (a)-(e)) — 47878 포트
+  // 변경, 공유 포트 행. `port` 입력의 SSOT는 remoteSharePortSetting이다;
+  // status.port는 "지금 도는 포트"(표시용)일 뿐이다.
+  describe("공유 포트 (design §2.3 a-e)", () => {
+    const portInput = (backdrop: HTMLElement): HTMLInputElement => backdrop.querySelector<HTMLInputElement>(".remote-share-port-input")!;
+    const portError = (backdrop: HTMLElement): HTMLElement => backdrop.querySelector<HTMLElement>(".remote-share-port-error")!;
+    const portNotice = (backdrop: HTMLElement): HTMLElement => backdrop.querySelector<HTMLElement>(".remote-share-port-notice")!;
+
+    it("(a) 초기 포트 입력값은 설정값이다", async () => {
+      remoteSharePortSetting.set(50000);
+      mockRoutes({});
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+      expect(portInput(backdrop).value).toBe("50000");
+    });
+
+    it("(b) 유효한 입력은 설정에 저장되고, 다음 켜기의 invoke 인자 port로 쓰인다", async () => {
+      mockRoutes({});
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+
+      portInput(backdrop).value = "50000";
+      portInput(backdrop).dispatchEvent(new Event("input", { bubbles: true }));
+      await flush();
+      expect(remoteSharePortSetting.get()).toBe(50000);
+      expect(portError(backdrop).hidden).toBe(true);
+
+      backdrop.querySelector<HTMLInputElement>(".remote-share-checkbox")!.click();
+      await flush();
+      segBtn(backdrop, "켜기").click();
+      await flush();
+
+      const startCall = mockInvoke.mock.calls.find((c) => c[0] === "remote_share_start");
+      expect(startCall![1]).toMatchObject({ port: 50000 });
+    });
+
+    it("(c) 무효한 입력은 인라인 오류를 보이고 설정을 바꾸지 않는다", async () => {
+      mockRoutes({});
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+
+      portInput(backdrop).value = "80";
+      portInput(backdrop).dispatchEvent(new Event("input", { bubbles: true }));
+      await flush();
+
+      expect(portError(backdrop).hidden).toBe(false);
+      expect(portError(backdrop).textContent).toContain("1024");
+      expect(remoteSharePortSetting.get()).toBe(DEFAULT_SHARE_PORT); // 바뀌지 않았다
+    });
+
+    it("(d) 재동기화가 설정 포트를 status.port로 덮어쓰지 않는다 — 실행 중인 포트와 달라도 입력값은 그대로다", async () => {
+      remoteSharePortSetting.set(60000); // 사용자가 저장해 둔 "다음에 켤" 포트
+      const runningOnDifferentPort: ShareStatus = { ...RUNNING_STATUS, port: 12345 }; // 백엔드가 지금 실제로 도는 포트
+      mockRoutes({ remote_share_status: () => Promise.resolve(runningOnDifferentPort) });
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+
+      expect(portInput(backdrop).value).toBe("60000"); // status.port(12345)가 덮어쓰지 않았다
+      expect(remoteSharePortSetting.get()).toBe(60000);
+      expect(portNotice(backdrop).textContent).toContain("12345");
+      expect(portNotice(backdrop).textContent).toContain("60000");
+    });
+
+    it("(e) PORT_IN_USE 거절은 사람이 읽는 안내로 바뀐다(다른 포트를 제안한다)", async () => {
+      mockRoutes({ remote_share_start: () => Promise.reject("PORT_IN_USE: 127.0.0.1:47878 포트를 이미 다른 프로그램이 쓰고 있습니다") });
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+      backdrop.querySelector<HTMLInputElement>(".remote-share-checkbox")!.click();
+      await flush();
+      segBtn(backdrop, "켜기").click();
+      await flush();
+      await flush();
+
+      const errorText = backdrop.querySelector(".remote-share-error")?.textContent ?? "";
+      expect(errorText).toContain(String(DEFAULT_SHARE_PORT));
+      expect(errorText).toContain("공유 포트");
+      expect(errorText).not.toContain("PORT_IN_USE:"); // 원문 그대로가 아니라 안내로 바뀌어야 한다
+    });
   });
 });

@@ -17,6 +17,7 @@
 // 분리된 순수 함수로 뽑아 vitest로 직접 검증한다(mermark-frontend 스킬 §7).
 import { invoke } from "@tauri-apps/api/core";
 import { attachTeardown } from "./panel/controls";
+import { DEFAULT_SHARE_PORT, remoteSharePortSetting, shareStartErrorMessage, sharePortProblem } from "./remote-share-port";
 import type { Vault, WorkspaceState } from "../workspace/workspace-state";
 
 // ── Wire types (Rust 구조체를 그대로 미러링 — task-9a-report.md 시그니처) ──
@@ -180,8 +181,6 @@ function errorText(err: unknown): string {
   return String(err);
 }
 
-const DEFAULT_PORT = 8787;
-
 // ── DOM 빌더 ────────────────────────────────────────────────────────────────
 
 function labeledRow(label: string): { row: HTMLElement; cell: HTMLElement } {
@@ -268,6 +267,26 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
   bindCell.appendChild(bindHint);
   root.appendChild(bindRowEl);
 
+  // ── 3b. 공유 포트 (2026-09-26, _workspace/00_request.md — 8787이 사용자의
+  //    맥미니에서 다른 서비스와 충돌해 공유를 켤 수 없었다) ──────────────────
+  // SSOT는 remoteSharePortSetting(설정)이다 — status.port는 "지금 도는 포트"
+  // (표시용)일 뿐, 이 입력의 진짜 값은 절대 아니다(pitfall 1: syncRunningAndDevices
+  // 참고).
+  const { row: portRowEl, cell: portCell } = labeledRow("공유 포트");
+  const portInput = document.createElement("input");
+  portInput.type = "text";
+  portInput.inputMode = "numeric";
+  portInput.className = "settings-text remote-share-port-input"; // .settings-text = 패널 공용 텍스트 입력 스타일(controls.ts의 renderText와 동일)
+  portCell.appendChild(portInput);
+  const portError = document.createElement("div");
+  portError.className = "remote-share-port-error";
+  portError.hidden = true;
+  portCell.appendChild(portError);
+  const portNotice = document.createElement("div");
+  portNotice.className = "remote-share-hint remote-share-port-notice";
+  portCell.appendChild(portNotice);
+  root.appendChild(portRowEl);
+
   // ── 4. 페어링 코드 ─────────────────────────────────────────────────────
   const { row: codeRowEl, cell: codeCell } = labeledRow("페어링 코드");
   const issueBtn = document.createElement("button");
@@ -277,7 +296,12 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
   const codeDisplay = document.createElement("div");
   codeDisplay.className = "remote-share-code";
   codeDisplay.hidden = true;
-  codeCell.append(issueBtn, codeDisplay);
+  // 공유 포트가 기본(DEFAULT_SHARE_PORT)이 아니면, 클라이언트는 호스트 칸에
+  // `이름:포트`를 적어야 페어링이 된다(remote-vault-dialog.ts) — 코드를 발급받는
+  // 그 순간 같이 알려준다.
+  const codeClientHint = document.createElement("div");
+  codeClientHint.className = "remote-share-hint remote-share-code-client-hint";
+  codeCell.append(issueBtn, codeDisplay, codeClientHint);
   root.appendChild(codeRowEl);
 
   // ── 5. 페어링된 기기 ───────────────────────────────────────────────────
@@ -290,7 +314,10 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
   // ── 로컬 상태(클로저 — 백엔드가 진실이고, 이건 "다음에 보낼 pending 값") ──
   let armedVaultIds: string[] = [];
   let bindMode: BindMode = "tailscale";
-  let port = DEFAULT_PORT;
+  let port = remoteSharePortSetting.get(); // SSOT는 설정이다 — status.port로 절대 덮어쓰지 않는다(pitfall 1)
+  // "지금 도는 포트"(표시용). syncRunningAndDevices에서만 갱신되고, 위 `port`
+  // (설정 SSOT, "다음에 켤 포트")와는 별개다 — 이 둘을 섞으면 pitfall 1이 재발한다.
+  let runningPort: number | null = null;
   let running = false;
   let devices: readonly DeviceInfo[] = [];
   let tailscaleAvailable = true; // refreshTailscaleAvailability의 프로브 결과가 오기 전까지는 낙관
@@ -331,9 +358,14 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
   const renderCode = (): void => {
     if (!issuedCode) {
       codeDisplay.hidden = true;
+      codeClientHint.textContent = "";
       return;
     }
     codeDisplay.hidden = false;
+    // 비기본 포트로 공유 중이면 클라이언트가 호스트 칸에 `이름:포트`를
+    // 적어야 한다 — 코드가 만료됐어도 포트 자체는 안 바뀌므로 이 힌트는
+    // 만료 분기 이전에 항상 채운다.
+    codeClientHint.textContent = runningPort !== null && runningPort !== DEFAULT_SHARE_PORT ? `클라이언트 호스트 칸: <이름>:${runningPort}` : "";
     if (codeExpired(Date.now(), issuedCode.issued_at_ms)) {
       codeDisplay.textContent = `${issuedCode.code} — 만료됨`;
       stopCountdown();
@@ -341,6 +373,14 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     }
     const remaining = codeRemainingMs(Date.now(), issuedCode.issued_at_ms);
     codeDisplay.textContent = `${issuedCode.code} (${formatCountdown(remaining)} 남음)`;
+  };
+
+  /** "공유 포트" 행의 안내: 지금 실제로 도는 포트(`runningPort`, 표시용)와
+   *  사용자가 방금 편집한 SSOT 포트(`port`)가 다르면, 다시 켤 때 뭐가
+   *  바뀌는지 미리 알려준다. 둘 다 순수 표시 상태라 이 함수는 invoke를
+   *  절대 부르지 않는다. */
+  const renderPortNotice = (): void => {
+    portNotice.textContent = running && runningPort !== null && runningPort !== port ? `지금은 ${runningPort}에서 공유 중 — 다시 켜면 ${port}으로 바뀝니다` : "";
   };
 
   const startCountdown = (): void => {
@@ -378,6 +418,8 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     tailscaleBtn.disabled = !tailscaleAvailable;
     bindHint.textContent = tailscaleAvailable ? "" : "Tailscale이 감지되지 않았습니다";
 
+    renderPortNotice();
+
     issueBtn.disabled = !running || busy;
     renderCode();
 
@@ -404,13 +446,19 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     }
   };
 
-  /** running/port/devices만 백엔드 진실로 맞춘다 — armedVaultIds/bindMode
+  /** running/runningPort/devices만 백엔드 진실로 맞춘다 — armedVaultIds/bindMode
    *  ("pending" 편집값)는 건드리지 않는다. 기기 목록만 바뀌는 새로고침
    *  (연결 해제)이 공유가 꺼져 있는 동안 사용자가 아직 적용하지 않은 볼트
-   *  체크박스 선택을 지워버리는 걸 막는다(fix round 1 finding 4). */
+   *  체크박스 선택을 지워버리는 걸 막는다(fix round 1 finding 4).
+   *
+   *  **pitfall 1 (47878 포트 변경 라운드)**: 여기서 `port = status.port`를
+   *  했었다면, 앱을 재시작할 때마다 사용자가 "공유 포트"에 저장해 둔 값이
+   *  백엔드의 마지막 실행값(또는 그 기본값)으로 조용히 지워졌을 것이다.
+   *  `port`(설정 SSOT, "다음에 켤 포트")는 여기서 절대 대입하지 않는다 —
+   *  status는 오직 `runningPort`(표시용, "지금 도는 포트")에만 흐른다. */
   const syncRunningAndDevices = (status: ShareStatus): void => {
     running = status.running;
-    port = status.port;
+    runningPort = status.port;
     devices = status.devices;
   };
 
@@ -482,7 +530,11 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
       if (!wasRunning) notice.hidden = false; // "처음 켤 때" 안내 — off→on 전환마다(이 방화벽 프롬프트는 매번 유효하다)
       await refreshStatus();
     } catch (err) {
-      showError(errorText(err));
+      // shareStartErrorMessage (design §2.1): PORT_IN_USE:/PORT_INVALID:를
+      // 사람이 읽을 안내로 바꾼다(그 외는 기존 errorText와 동일하게
+      // 원문을 그대로 보여준다) — 이 catch만 해당, 다른 실패 경로
+      // (issue/revoke/stop)는 여전히 errorText다.
+      showError(shareStartErrorMessage(err, port));
       await refreshStatus(); // 실패 후에도 항상 백엔드 진실로 재동기화
     } finally {
       busy = false;
@@ -540,6 +592,26 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     bindMode = "localhost-only";
     if (running) void applyStart();
     else render();
+  });
+
+  // 공유 포트 입력: 유효한 값만 SSOT(remoteSharePortSetting)에 저장한다 —
+  // 무효 입력은 인라인 오류만 보이고 설정/`port`는 그대로 남는다(design
+  // §2.3 (c)). 적용은 기존 stop→start 경로를 그대로 쓴다(여기서 새로 켜지
+  // 않는다) — 공유 중이면 `renderPortNotice`가 "다시 켜면 바뀐다"를 안내한다.
+  portInput.value = String(port);
+  portInput.addEventListener("input", () => {
+    const raw = portInput.value;
+    const problem = sharePortProblem(raw);
+    if (problem) {
+      portError.textContent = problem;
+      portError.hidden = false;
+      return;
+    }
+    portError.hidden = true;
+    portError.textContent = "";
+    port = Number(raw.trim());
+    remoteSharePortSetting.set(port);
+    renderPortNotice();
   });
 
   issueBtn.addEventListener("click", () => void onIssueCode());

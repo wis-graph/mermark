@@ -10,7 +10,7 @@ describe("RemoteVault", () => {
       persistenceKind: "remote",
       rootPath: null,
       explorerRoot: "/",
-      host: "wis-macmini:8787",
+      host: "wis-macmini:47878",
       remoteVaultId: "rv-abc",
     };
     expect(v.persistenceKind).toBe("remote");

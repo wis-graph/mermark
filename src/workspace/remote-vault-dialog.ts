@@ -73,13 +73,19 @@ export function createRemoteVaultDialog({ store, call, onRegistered }: RemoteVau
   const pairStep = create("div", "remote-vault-dialog-step");
   const hostInput = create("input", "remote-vault-dialog-input") as HTMLInputElement;
   hostInput.type = "text"; hostInput.placeholder = "호스트 (예: wis-macmini 또는 wis-macmini:9000)"; hostInput.autocomplete = "off";
+  // 47878 포트 변경 (design §2.1): the host isn't always a bare Tailscale
+  // name/name:port pair — an ssh:// target has its OWN share-port grammar
+  // (sshHostSuffixProblem/parse_ssh_host), distinct from the SSH port
+  // itself, which is easy to confuse without a visible hint.
+  const hostHelp = create("div", "remote-vault-dialog-help");
+  hostHelp.textContent = "Tailscale: 이름 또는 이름:포트 · SSH: ssh://사용자@호스트 (공유 포트가 기본이 아니면 ?share-port=포트)";
   const codeInput = create("input", "remote-vault-dialog-input") as HTMLInputElement;
   codeInput.type = "text"; codeInput.inputMode = "numeric"; codeInput.maxLength = 6; codeInput.placeholder = "6자리 코드"; codeInput.autocomplete = "off";
   const pairBtn = create("button", "remote-vault-dialog-submit") as HTMLButtonElement; pairBtn.type = "button"; pairBtn.textContent = "페어링"; pairBtn.disabled = true;
   const syncSubmit = (): void => { pairBtn.disabled = !form.canSubmit(); };
   hostInput.addEventListener("input", () => { form.setHost(hostInput.value); syncSubmit(); });
   codeInput.addEventListener("input", () => { form.setCode(codeInput.value); syncSubmit(); });
-  pairStep.append(hostInput, codeInput, pairBtn);
+  pairStep.append(hostInput, hostHelp, codeInput, pairBtn);
 
   // ── Step 2: pick which of the host's shared vaults to add ───────────────
   const pickStep = create("div", "remote-vault-dialog-step"); pickStep.hidden = true;
@@ -135,8 +141,12 @@ export function createRemoteVaultDialog({ store, call, onRegistered }: RemoteVau
       try {
         // An `ssh://`-typed host has no listener at all until mermark's own
         // `ssh -L` tunnel is up (remote_ssh.rs, Task 12) — `remote_pair`
-        // would otherwise dial `http://127.0.0.1:8787` straight into
-        // "connection refused" for every Tailscale-less user. Idempotent for
+        // would otherwise dial `http://127.0.0.1:47879` (SSH_TUNNEL_LOCAL_PORT
+        // — fixed and separate from the host's own "공유 포트", design §1.2:
+        // this Mac's own localhost-only share, if any, and an SSH tunnel to
+        // a different host can never collide on the same local port)
+        // straight into "connection refused" for every Tailscale-less user.
+        // Idempotent for
         // a host already tunneled (reconnecting to this dialog after a
         // failed pair reuses it, doesn't spawn a second `ssh`), and any
         // failure here (bad target, rejected key, no `ssh` binary, tunnel

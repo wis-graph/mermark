@@ -2785,6 +2785,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .remote-share-issue-btn:hover, .remote-share-revoke-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
 .remote-share-issue-btn:disabled { opacity: .5; cursor: default; }
 .remote-share-code { font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; letter-spacing: .06em; color: var(--fg); }
+/* 공유 포트 행 (47878 포트 변경, 2026-09-26) — 인풋은 .settings-text를 그대로
+   재사용(패널 공용 텍스트 입력 스타일); 인라인 오류만 .remote-share-error와
+   같은 룩을 새 클래스로 갖는다(그 클래스 자체를 재사용하면 항상 보이는
+   .remote-share-pane 최상단 error 배너와 위치·의미가 겹친다). */
+.remote-share-port-input { max-width: 10em; }
+.remote-share-port-error {
+  color: #dc2626; background: color-mix(in srgb, #dc2626 10%, transparent);
+  padding: 6px 8px; border-radius: var(--radius-sm, 6px); font-size: 12px; line-height: 1.4; margin-top: .3em;
+}
 
 /* ── 웰컴 화면 스타일 ──────────────────────────────────────────────────────── */
 .welcome-host {

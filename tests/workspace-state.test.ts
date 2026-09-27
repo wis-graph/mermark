@@ -180,7 +180,7 @@ describe("WorkspaceStore", () => {
   describe("remote vaults", () => {
     it("registers a remote vault, selects it, and survives a reload", () => {
       const firstStore = new WorkspaceStore();
-      const remote = firstStore.registerRemoteVault("wis-macmini:8787", "rv-abc", "맥미니 노트");
+      const remote = firstStore.registerRemoteVault("wis-macmini:47878", "rv-abc", "맥미니 노트");
 
       expect(remote.persistenceKind).toBe("remote");
       expect(remote.rootPath).toBeNull();
@@ -188,7 +188,7 @@ describe("WorkspaceStore", () => {
 
       const restartedStore = new WorkspaceStore();
       const reloaded = restartedStore.getVault(remote.vaultId);
-      expect(reloaded).toMatchObject({ persistenceKind: "remote", host: "wis-macmini:8787", remoteVaultId: "rv-abc", displayName: "맥미니 노트" });
+      expect(reloaded).toMatchObject({ persistenceKind: "remote", host: "wis-macmini:47878", remoteVaultId: "rv-abc", displayName: "맥미니 노트" });
       expect(restartedStore.get().workspaces[0]?.vaultIds).toContain(remote.vaultId);
       expect(restartedStore.get().workspaces[0]?.currentVaultId).toBe(remote.vaultId);
     });
