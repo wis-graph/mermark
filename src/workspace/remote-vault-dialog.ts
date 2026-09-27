@@ -48,6 +48,25 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: strin
   return element;
 };
 
+/** Audit re-review round 2 (`_workspace/04_audit_report.md`): this dialog is
+ *  the ONE place a pairing attempt's failure ever reaches a user, so this is
+ *  where a machine-readable error prefix gets turned into what the user
+ *  should read — not `shareStartErrorMessage` (settings/remote-share-port.ts),
+ *  which only ever sees `remote_share_start` failures and can never actually
+ *  receive `SSH_TUNNEL_PORT_IN_USE:` (that's `remote_ssh_connect`, called
+ *  below, a different command entirely — the branch that used to live there
+ *  was dead code). `SSH_TUNNEL_PORT_IN_USE:` is the only prefix stripped
+ *  here — Rust's own message is already a complete, actionable Korean
+ *  sentence once the prefix is gone. Every other failure (including this
+ *  dialog's own long-standing `SSH_TUNNEL_BUSY:`/`SSH_TUNNEL_MISMATCH:`) is
+ *  shown verbatim, same as before — this doesn't invent a new stripping
+ *  convention for prefixes nothing has asked to humanize yet. */
+const SSH_TUNNEL_PORT_IN_USE_PREFIX = "SSH_TUNNEL_PORT_IN_USE:";
+function pairingErrorMessage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.startsWith(SSH_TUNNEL_PORT_IN_USE_PREFIX) ? msg.slice(SSH_TUNNEL_PORT_IN_USE_PREFIX.length).trim() : msg;
+}
+
 export interface RemoteVaultDialog {
   readonly root: HTMLElement;
   /** `prefillHost` is the reconnect entry point (workspace-sidebar.ts's
@@ -160,7 +179,7 @@ export function createRemoteVaultDialog({ store, call, onRegistered }: RemoteVau
         showPickStep();
         renderVaultList(host, vaults);
       } catch (error) {
-        showError(error instanceof Error ? error.message : String(error));
+        showError(pairingErrorMessage(error));
       } finally {
         syncSubmit();
       }

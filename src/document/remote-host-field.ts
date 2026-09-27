@@ -1,11 +1,19 @@
 // 감사 🟡-2 (`_workspace/04_audit_report.md`, 2026-09-27): the SSH suffix's
 // `?share-port=` range check used to re-implement `1024 <= port <= 65535`
-// inline, duplicating `sharePortProblem` (settings/remote-share-port.ts) —
-// scattered intent across 4 places total (2 Rust, 2 TS) with an already-
-// observed drift risk (fixture coverage was asymmetric between the plain
-// sharePortRows and the SSH suffix rows). Importing sharePortProblem keeps
-// the RANGE RULE itself single-sourced; the SSH-specific wording below stays
-// its own (Rust doesn't collapse the two messages either).
+// inline, duplicating `sharePortProblem` — scattered intent across 4 places
+// total (2 Rust, 2 TS) with an already-observed drift risk (fixture
+// coverage was asymmetric between the plain sharePortRows and the SSH
+// suffix rows). Importing sharePortProblem keeps the RANGE RULE itself
+// single-sourced; the SSH-specific wording below stays its own (Rust
+// doesn't collapse the two messages either).
+//
+// 감사 재검토 2차: `sharePortProblem` was first imported from
+// `settings/remote-share-port.ts`, which quietly broke this module's own
+// "dependency-free" claim two paragraphs down — importing it pulled in
+// `defineSetting`'s localStorage-reading side effect (settings/store.ts) as
+// an unwanted transitive dependency. It now comes from
+// `document/share-port-rules.ts`, a pure module with no settings/DOM/invoke
+// dependency of its own, so the claim below is true again.
 //
 // T2 (0.17.1): pre-flight validation for the "원격 볼트 추가" host field
 // (remote-vault-dialog.ts). Before this existed, typing a Korean host like
@@ -25,7 +33,7 @@
 // different for each). `src/mocks/tauri-core.ts`'s `remoteMockError` mirrors
 // the ASCII half of this same rule so the mock rejects what the real backend
 // rejects (mermark-dev's 3경계 정합 requirement).
-import { sharePortProblem } from "../settings/remote-share-port";
+import { sharePortProblem } from "./share-port-rules";
 
 /** Is every character of `host` plain ASCII — the alphabet `base_url`
  *  requires for a bare `name[:port]`. Named separately so both this

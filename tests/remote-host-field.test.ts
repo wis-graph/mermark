@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hostFieldProblem, sshHostSuffixProblem } from "../src/document/remote-host-field";
-import { sharePortProblem } from "../src/settings/remote-share-port";
+import { sharePortProblem } from "../src/document/share-port-rules";
 
 describe("hostFieldProblem", () => {
   it("한글 호스트명을 페어링 전에 거절하고 무엇을 넣어야 하는지 말한다", () => {

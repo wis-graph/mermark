@@ -125,16 +125,20 @@ describe("shareStartErrorMessage", () => {
     expect(msg).toBe("Tailscale 주소를 찾을 수 없습니다");
   });
 
-  // The 3rd prefix backend confirmed for this round (_workspace/02_backend_changes.md,
-  // remote_ssh.rs's connect_with): the CLIENT's own local SSH tunnel port
-  // (47879), not the host's bind conflict above. This literal is copied
-  // VERBATIM from src-tauri/src/remote_ssh.rs's format! call so a drift in
-  // either wording is caught by this test, not discovered in the UI.
-  it("SSH_TUNNEL_PORT_IN_USE: strips the machine prefix and returns Rust's already-human-readable remainder", () => {
+  // Audit re-review round 2 (`_workspace/04_audit_report.md` item 1): this
+  // function used to ALSO strip SSH_TUNNEL_PORT_IN_USE: — dead code, since
+  // that prefix can only come from remote_ssh_connect (remote_ssh.rs's
+  // connect_with), a different command than this function's only caller
+  // (remote-share-panel.ts's applyStart, which only ever calls
+  // remote_share_start) can ever touch. This confirms the branch is
+  // actually gone: the message now falls through raw, same as any other
+  // prefix this function doesn't own. remote-vault-dialog.ts's
+  // pairingErrorMessage (tests/remote-vault-dialog.test.ts) is where this
+  // prefix is actually stripped — the one place it reaches a user.
+  it("SSH_TUNNEL_PORT_IN_USE: is not this function's concern anymore — falls through raw", () => {
     const rustLiteral = "SSH_TUNNEL_PORT_IN_USE: 이 기기의 127.0.0.1:47879를 다른 프로그램이 쓰고 있습니다 (이전 mermark의 ssh가 남아 있을 수 있습니다 — 종료 후 다시 시도).";
     const msg = shareStartErrorMessage(new Error(rustLiteral), 47878);
-    expect(msg).toBe("이 기기의 127.0.0.1:47879를 다른 프로그램이 쓰고 있습니다 (이전 mermark의 ssh가 남아 있을 수 있습니다 — 종료 후 다시 시도).");
-    expect(msg).not.toContain("SSH_TUNNEL_PORT_IN_USE");
+    expect(msg).toBe(rustLiteral);
   });
 });
 
