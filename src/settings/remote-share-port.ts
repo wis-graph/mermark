@@ -23,6 +23,17 @@ import { defineSetting } from "./store";
  *  three together. */
 export const DEFAULT_SHARE_PORT = 47878;
 
+/** The CLIENT's fixed local SSH tunnel port (`SSH_TUNNEL_LOCAL_PORT`,
+ *  remote_client.rs) — deliberately different from `DEFAULT_SHARE_PORT` so
+ *  this Mac sharing a vault (localhost-only) and simultaneously SSH-tunneling
+ *  into a DIFFERENT host can never collide on the same local port. This
+ *  module needs the value only to keep `suggestAlternativeSharePort` from
+ *  ever recommending it (audit 🟡-1) — it is otherwise a Rust-side-only
+ *  constant. Cross-checked against the shared fixture's `sshTunnelLocalPort`
+ *  field once backend adds it (same SSOT-by-fixture pattern as
+ *  `DEFAULT_SHARE_PORT`⇄`defaultPort`) — see tests/remote-share-port.test.ts. */
+export const SSH_TUNNEL_LOCAL_PORT = 47879;
+
 /** The single human-readable message for "this string isn't a valid share
  *  port" — reused by `sharePortProblem` (bad input) and
  *  `shareStartErrorMessage` (backend's `PORT_INVALID:` rejection) so the two
@@ -56,6 +67,23 @@ export const remoteSharePortSetting = defineSetting<number>({
   parse: (raw) => (raw !== null && sharePortProblem(raw) === null ? Number(raw) : null),
 });
 
+/** A different port to suggest after `port` failed with `PORT_IN_USE:` —
+ *  audit 🟡-1 (`_workspace/04_audit_report.md`): the old inline `port + 1`
+ *  could recommend `SSH_TUNNEL_LOCAL_PORT` (47879, the exact self-collision
+ *  this port-conflict round exists to prevent — `SSH_TUNNEL_PORT_IN_USE:` if
+ *  the user takes the advice and then also SSH-tunnels from this same Mac)
+ *  or walk past 65535 into an invalid port. Steps forward one at a time,
+ *  wrapping 65535 back to 1024 rather than overflowing, and skips over
+ *  `SSH_TUNNEL_LOCAL_PORT` specifically — the loop always terminates because
+ *  only one value in the whole 1024–65535 range is excluded. Pure query. */
+export function suggestAlternativeSharePort(port: number): number {
+  let candidate = port;
+  do {
+    candidate = candidate >= 65535 ? 1024 : candidate + 1;
+  } while (candidate === SSH_TUNNEL_LOCAL_PORT);
+  return candidate;
+}
+
 /** Turn a `remote_share_start` rejection into a sentence the user can act on,
  *  for the specific `port` that was just attempted. Recognizes all 3 error
  *  prefixes backend confirmed for this port-conflict round
@@ -72,7 +100,7 @@ export const remoteSharePortSetting = defineSetting<number>({
 export function shareStartErrorMessage(err: unknown, port: number): string {
   const msg = err instanceof Error ? err.message : String(err);
   if (msg.startsWith("PORT_IN_USE:")) {
-    return `포트 ${port}를 이 Mac의 다른 프로그램이 쓰고 있습니다. 아래 '공유 포트'를 다른 번호(예: ${port + 1})로 바꾼 뒤 다시 켜세요.`;
+    return `포트 ${port}를 이 Mac의 다른 프로그램이 쓰고 있습니다. 아래 '공유 포트'를 다른 번호(예: ${suggestAlternativeSharePort(port)})로 바꾼 뒤 다시 켜세요.`;
   }
   if (msg.startsWith("PORT_INVALID:")) {
     return SHARE_PORT_RANGE_MESSAGE;

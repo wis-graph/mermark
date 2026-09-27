@@ -7,7 +7,7 @@
 // from each other silently.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import truthTable from "./fixtures/remote-host-truth-table.json";
-import { DEFAULT_SHARE_PORT, remoteSharePortSetting, shareStartErrorMessage, sharePortProblem } from "../src/settings/remote-share-port";
+import { DEFAULT_SHARE_PORT, SSH_TUNNEL_LOCAL_PORT, remoteSharePortSetting, shareStartErrorMessage, sharePortProblem, suggestAlternativeSharePort } from "../src/settings/remote-share-port";
 import { defineSetting } from "../src/settings/store";
 
 const STORAGE_KEY = "mermark.remoteShare.port";
@@ -67,11 +67,39 @@ describe("remoteSharePortSetting", () => {
   });
 });
 
+// 감사 🟡-1 (`_workspace/04_audit_report.md`): a suggestion must never equal
+// SSH_TUNNEL_LOCAL_PORT (47879 — the exact self-collision this port-conflict
+// round exists to prevent) and must always stay in 1024–65535. No literal
+// "47879" is pinned here — the invariant is checked against the exported
+// constant, so it can't silently drift back to "correct by coincidence".
+describe("suggestAlternativeSharePort", () => {
+  it("never suggests SSH_TUNNEL_LOCAL_PORT, even from one below it", () => {
+    expect(suggestAlternativeSharePort(SSH_TUNNEL_LOCAL_PORT - 1)).not.toBe(SSH_TUNNEL_LOCAL_PORT);
+  });
+
+  it("wraps 65535 back to 1024 instead of overflowing past the valid range", () => {
+    const suggestion = suggestAlternativeSharePort(65535);
+    expect(suggestion).toBeGreaterThanOrEqual(1024);
+    expect(suggestion).toBeLessThanOrEqual(65535);
+  });
+
+  it("always returns a value inside 1024-65535 and different from the input, for a range of inputs", () => {
+    for (const port of [1024, 47877, 47878, SSH_TUNNEL_LOCAL_PORT - 1, SSH_TUNNEL_LOCAL_PORT, 65534, 65535]) {
+      const suggestion = suggestAlternativeSharePort(port);
+      expect(suggestion).toBeGreaterThanOrEqual(1024);
+      expect(suggestion).toBeLessThanOrEqual(65535);
+      expect(suggestion).not.toBe(SSH_TUNNEL_LOCAL_PORT);
+      expect(suggestion).not.toBe(port);
+    }
+  });
+});
+
 describe("shareStartErrorMessage", () => {
-  it("PORT_IN_USE: names the port and offers a concrete next number", () => {
+  it("PORT_IN_USE: names the port and offers a valid alternative that is not the SSH tunnel's local port", () => {
     const msg = shareStartErrorMessage(new Error("PORT_IN_USE: 127.0.0.1:47878 포트를 이미 다른 프로그램이 쓰고 있습니다"), 47878);
     expect(msg).toContain("47878");
-    expect(msg).toContain("47879");
+    expect(msg).toContain(String(suggestAlternativeSharePort(47878)));
+    expect(msg).not.toContain(String(SSH_TUNNEL_LOCAL_PORT));
     expect(msg).toContain("공유 포트");
   });
 
