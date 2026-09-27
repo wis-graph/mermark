@@ -33,6 +33,18 @@ describe("DEFAULT_SHARE_PORT", () => {
   });
 });
 
+// Deferred in cebda68 (audit 🟡-1) until backend committed the fixture's
+// sshTunnelLocalPort field — backend's 8fadf3f did. Same SSOT-by-fixture
+// pattern as DEFAULT_SHARE_PORT above: this pins the exported constant
+// against Rust's SSH_TUNNEL_LOCAL_PORT (remote_client.rs) so
+// suggestAlternativeSharePort can never silently start recommending the
+// wrong "port to avoid" if either side's constant changes alone.
+describe("SSH_TUNNEL_LOCAL_PORT", () => {
+  it("equals the fixture's sshTunnelLocalPort (the SAME value Rust's SSH_TUNNEL_LOCAL_PORT uses)", () => {
+    expect(SSH_TUNNEL_LOCAL_PORT).toBe(truthTable.sshTunnelLocalPort);
+  });
+});
+
 describe("sharePortProblem — every row of the shared sharePortRows fixture", () => {
   for (const row of truthTable.sharePortRows) {
     it(`"${row.input}" → ${row.rejected ? "rejected" : "accepted"}`, () => {

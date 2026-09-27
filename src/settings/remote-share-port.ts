@@ -30,8 +30,8 @@ export const DEFAULT_SHARE_PORT = 47878;
  *  module needs the value only to keep `suggestAlternativeSharePort` from
  *  ever recommending it (audit 🟡-1) — it is otherwise a Rust-side-only
  *  constant. Cross-checked against the shared fixture's `sshTunnelLocalPort`
- *  field once backend adds it (same SSOT-by-fixture pattern as
- *  `DEFAULT_SHARE_PORT`⇄`defaultPort`) — see tests/remote-share-port.test.ts. */
+ *  field (same SSOT-by-fixture pattern as `DEFAULT_SHARE_PORT`⇄`defaultPort`)
+ *  — see tests/remote-share-port.test.ts. */
 export const SSH_TUNNEL_LOCAL_PORT = 47879;
 
 /** The single human-readable message for "this string isn't a valid share
