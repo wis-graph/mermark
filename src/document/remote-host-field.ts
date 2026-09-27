@@ -52,6 +52,41 @@ function isValidPort(port: string): boolean {
   return n >= 1 && n <= 65535;
 }
 
+/** What's wrong with an `ssh://…` host field value — mermark's remote-share
+ *  port change (2026-09-26, _workspace/01_architect_design.md §1.2). Mirrors
+ *  Rust's `parse_ssh_suffix` rules ②③ exactly (target CHARACTER validation,
+ *  rule ④, stays Rust-only in `tunnel_args` — this function never rejects on
+ *  that basis, matching the shared truth table's `ssh://맥미니` accepted row):
+ *  - ② the optional `?…` suffix must be exactly `share-port=<1024–65535>` —
+ *    an unknown key (`?port=`), a non-numeric value, or an out-of-range
+ *    value are all rejected with the SAME message (Rust doesn't distinguish
+ *    them either).
+ *  - ③ the target (everything before `?`) may never contain `:` — OpenSSH
+ *    URI syntax reads `ssh://user@host:N` as the SSH port, not mermark's
+ *    share port, so this is refused with guidance toward the two distinct
+ *    knobs (`?share-port=` for mermark, `~/.ssh/config` for the SSH port
+ *    itself) instead of silently doing the wrong thing.
+ *  `input` must already start with `"ssh://"` (the caller,
+ *  `hostFieldProblem`, guarantees this). Pure query. */
+export function sshHostSuffixProblem(input: string): string | null {
+  const withoutPrefix = input.slice("ssh://".length);
+  const suffixStart = withoutPrefix.indexOf("?");
+  const target = suffixStart === -1 ? withoutPrefix : withoutPrefix.slice(0, suffixStart);
+  const suffix = suffixStart === -1 ? null : withoutPrefix.slice(suffixStart + 1);
+
+  if (suffix !== null) {
+    const match = /^share-port=(\d+)$/.exec(suffix);
+    const port = match ? Number(match[1]) : NaN;
+    if (!match || port < 1024 || port > 65535) {
+      return "SSH 호스트의 공유 포트는 ?share-port=1024~65535 형식입니다";
+    }
+  }
+  if (target.includes(":")) {
+    return "SSH 대상에 ':포트'를 쓸 수 없습니다 — mermark 공유 포트는 ?share-port=N, SSH 포트는 ~/.ssh/config에서 지정하세요";
+  }
+  return null;
+}
+
 /** What's wrong with this host-field input, in a sentence the user can act
  *  on — or `null` if it's a shape `remote_pair`/`base_url` can actually
  *  reach. Runs BEFORE pairing is attempted (remote-vault-dialog.ts's pairBtn
@@ -65,14 +100,21 @@ export function hostFieldProblem(input: string): string | null {
 
   // `ssh://`-prefixed values are a distinct shape `base_url` handles
   // entirely differently (Task 12's SSH tunnel target) — never a
-  // `host[:port]` pair, so none of the checks below apply to it.
-  if (trimmed.startsWith("ssh://")) return null;
+  // `host[:port]` pair, so none of the checks below apply to it. It has its
+  // OWN suffix grammar instead (mermark share-port 포트 변경, 2026-09-26 —
+  // _workspace/01_architect_design.md §1.2): `sshHostSuffixProblem` mirrors
+  // Rust's `parse_ssh_suffix` rules ②③ only (the `?share-port=` grammar and
+  // the `:port`-on-an-ssh-target rejection) — target CHARACTER validation
+  // (rule ④) stays Rust-side only (`tunnel_args`), so an accepted-but-later-
+  // rejected target like `ssh://맥미니` still passes here, matching the
+  // shared truth table.
+  if (trimmed.startsWith("ssh://")) return sshHostSuffixProblem(trimmed);
 
   if (hasWhitespace(trimmed)) {
     return "호스트 이름에는 영문·숫자·점·하이픈만 쓸 수 있습니다. Tailscale 주소(예: 100.64.1.2)나 영문 호스트 이름(예: mac-mini)을 넣으세요.";
   }
   if (trimmed.includes("://") || trimmed.includes("/")) {
-    return "주소가 아니라 호스트 이름만 적습니다(예: mac-mini:8787).";
+    return "주소가 아니라 호스트 이름만 적습니다(예: mac-mini:47878).";
   }
   if (!isAsciiHost(trimmed)) {
     return "호스트 이름에는 영문·숫자·점·하이픈만 쓸 수 있습니다. Tailscale 주소(예: 100.64.1.2)나 영문 호스트 이름(예: mac-mini)을 넣으세요.";

@@ -3,6 +3,16 @@
 // Lets the frontend run in a plain browser (Vite dev server) with no Rust backend,
 // so CDP / Playwright / DevTools debugging works without WKWebView limits.
 
+// Remote-share port change (2026-09-26, _workspace/00_request.md — 8787
+// collided with another service on the user's Mac mini and blocked
+// sharing). Both modules are dependency-free/DOM-free (see their own file
+// headers), so importing them here doesn't pull anything heavy into this
+// mock's load path — it's the same "share the pure rule, don't re-derive
+// it" reasoning `hostFieldProblem`'s own header already documents for this
+// mock's ASCII-host check.
+import { DEFAULT_SHARE_PORT, sharePortProblem } from "../settings/remote-share-port";
+import { sshHostSuffixProblem } from "../document/remote-host-field";
+
 const SAMPLE = `# Mermark — markdown kitchen sink
 
 Served by the **browser mock**, not the Rust backend. Edit it, hit save (⌘S) — changes round-trip in-memory until reload. This first paragraph is deliberately one long unbroken line with no hard wraps so you can confirm the reading column wraps soft text correctly and that the ~68ch measure holds: lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur excepteur sint occaecat cupidatat non proident sunt in culpa qui officia deserunt mollit anim id est laborum.
@@ -308,10 +318,20 @@ function remoteMockError(host: string): string | null {
   if (host === "") {
     return "호스트가 비어 있습니다";
   }
-  if (!host.startsWith("ssh://") && (host.includes("://") || host.includes("/"))) {
+  // 47878 포트 변경 (2026-09-26): base_url's ssh:// branch short-circuits
+  // BEFORE the host[:port] checks below (same order Rust checks it in) —
+  // reusing sshHostSuffixProblem for rules ②③ (the ?share-port= grammar and
+  // the ':port'-on-an-ssh-target rejection). Rule ④ (target character
+  // validation) intentionally stays out of both base_url and this branch —
+  // it lives only in tunnel_args/remote_ssh_connect — so ssh://맥미니 still
+  // passes here, matching the shared truth table.
+  if (host.startsWith("ssh://")) {
+    return sshHostSuffixProblem(host);
+  }
+  if (host.includes("://") || host.includes("/")) {
     return `호스트에는 이름과 포트만 적습니다: ${host}`;
   }
-  if (!host.startsWith("ssh://") && !/^[\x00-\x7f]*$/.test(host)) {
+  if (!/^[\x00-\x7f]*$/.test(host)) {
     return `호스트 이름에는 영문·숫자·점·하이픈만 쓸 수 있습니다: ${host}`;
   }
   const m = /^mock-error:(auth-expired|sharing-off|unreachable)$/.exec(host);
@@ -436,7 +456,7 @@ const hostShare: {
 } = {
   running: false,
   bindMode: "tailscale",
-  port: 8787,
+  port: DEFAULT_SHARE_PORT,
   vaults: [],
   // Pre-seeded so the "연결 해제" affordance is exercisable in dev:browser
   // without a second real device to pair from — same "exercise every feature
@@ -1233,6 +1253,12 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // `connect_with` returns (via `decide_connect`'s `Busy` case).
       const host = String(a.host ?? "");
       if (!host.startsWith("ssh://")) throw "ssh:// 호스트가 아닙니다";
+      // 47878 포트 변경: same rules ②③ base_url's ssh branch enforces
+      // (remoteMockError above) — a suffix/target rejected at pairing time
+      // must be rejected again here, since Rust's real `connect_with` runs
+      // `parse_ssh_host` independently right before dialing the tunnel.
+      const suffixProblem = sshHostSuffixProblem(host);
+      if (suffixProblem) throw suffixProblem;
       if (sshTunnelHost !== null && sshTunnelHost !== host) {
         throw `SSH_TUNNEL_BUSY: 이미 다른 호스트(${sshTunnelHost})로 SSH 터널이 연결되어 있습니다. 먼저 연결을 해제하세요.`;
       }
@@ -1271,8 +1297,20 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // (snake_case), not `displayName` — same trap the remote_vaults mock's
       // comment above already documents for `RemoteVault`.
       const bindMode = String(a.bindMode ?? "tailscale") as "tailscale" | "localhost-only";
-      const port = Number(a.port ?? 8787);
+      const port = Number(a.port ?? DEFAULT_SHARE_PORT);
       const vaults = (a.vaults ?? []) as Array<{ id: string; display_name: string; root: string }>;
+      // 47878 포트 변경 (design §1.4): `validate_share_port` runs in the
+      // COMMAND ADAPTER only — never inside `share_start` itself, which
+      // existing cargo tests call directly with port 0 (OS-assigned) — so
+      // this check comes first here too, before the vault-emptiness check
+      // below (same order the real command adapter enforces).
+      if (sharePortProblem(String(port)) !== null) throw `PORT_INVALID: 공유 포트는 1024~65535 사이여야 합니다 (받은 값 ${port})`;
+      // Reproduction hook for a bind-time PORT_IN_USE (`remote_host::bind`
+      // classifying `ErrorKind::AddrInUse`) — same magic-VALUE convention as
+      // `hostShareMockError`'s "mock-error:" vault roots below: a browser
+      // mock has no real listening socket to collide with, so port 49999 is
+      // a discoverable trigger for this exact failure mode.
+      if (port === 49999) throw "PORT_IN_USE: 127.0.0.1:49999 포트를 이미 다른 프로그램이 쓰고 있습니다";
       // Wording pinned to `share_start`'s exact string (remote_share.rs:290)
       // — fix round 1 flagged that a paraphrase here quietly drifts from
       // what the real backend says.
