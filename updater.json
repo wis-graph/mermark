@@ -1,15 +1,15 @@
 {
-  "version": "0.19.1",
-  "notes": "### Fixed\n\n- **탭을 빠르게 연달아 닫으면 다른 파일에 내용이 써질 수 있던 문제**: 탭 `[a, b, c]`에서 c를 닫는 도중 곧바로 b를 닫으면, a 파일 자리에 b의 내용이 열리고 다음 자동 저장이 그 내용을 a에 쓸 수 있었다. 이제 닫은 뒤 열 문서의 경로와 내용이 맞는지 확인하고, 어긋나면 열지 않는다.\n- **편집 중인 파일이 밖에서 삭제되면 자동 저장이 되살리던 문제**: 삭제를 감지하기 직전에 자동 저장이 끼면 지운 파일이 아무 안내 없이 다시 생겼다. 이제 자동 저장은 사라진 원본을 다시 만들지 않고, 편집 내용은 그대로 둔 채 \"파일이 삭제되었습니다\" 창에서 어떻게 할지 고르게 한다. 심볼릭 링크로 연 문서도 마찬가지다.\n- **뒤로/앞으로 가기가 늦게 도착한 열기에 덮이던 문제**: 느리게 열리던 문서가 방금 뒤로 가기로 연 문서를 덮어쓸 수 있었다. 이제 마지막으로 누른 동작이 이긴다.\n- **뒤로 가기가 실패하면 자동 저장이 멈춘 채 남던 문제**: 전환이 중간에 실패하면 보던 문서의 자동 저장이 다시 켜진다.",
-  "pub_date": "2026-09-26T05:37:15Z",
+  "version": "0.19.2",
+  "notes": "### Changed\n\n- **원격 공유 기본 포트가 8787에서 47878로 바뀌었다**: 8787은 다른 원격 프로그램과 자주 겹쳐, 그 프로그램이 켜진 맥에서는 공유를 켤 수 없었다. 호스트 칸에 이름만 적어 추가한 원격 볼트는 **두 기기 모두 업데이트하면 다시 페어링하지 않아도 그대로 열린다.** 한쪽만 업데이트된 동안에는 \"연결 안 됨\"으로 보인다. 호스트 칸에 `:8787`을 직접 적어 추가한 볼트는 지우고 다시 추가해야 한다.\n\n### Added\n\n- **공유 포트를 설정에서 바꿀 수 있다**: 설정 › 원격 공유에 \"공유 포트\" 칸이 생겼다. 그 포트를 이미 다른 프로그램이 쓰고 있으면 공유를 켤 때 무엇이 문제인지와 다른 번호를 알려준다. 기본값이 아닌 포트를 쓰면 클라이언트에서는 호스트 칸에 `이름:포트`로, SSH로 붙을 때는 `ssh://사용자@호스트?share-port=포트`로 적는다.\n\n### Fixed\n\n- **SSH 터널이 이 맥의 공유와 부딪히던 문제**: SSH로 다른 맥에 붙는 쪽의 로컬 포트를 공유 포트와 분리했다(47879). 이 맥에서 볼트를 공유하면서 동시에 다른 맥으로 SSH 연결을 해도 서로 충돌하지 않는다.",
+  "pub_date": "2026-09-27T05:32:15Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzVlcVdKQ0FtSXNmRlhYcFBBY1R6NmVyR1hZR3dyeEQxSTNLNEx0emFkVnArOHhiZkRKaTk0SmdteHBCenhHYjdtQVlldmkrMWFHWkxHbTdISVE5T2c4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDAwMDg2CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Cm9xM1VmK0tmVmpHRTRvVStuUkNZZXM3WEl6R3NhU0E5Q2I2Snp1UXQ5TVRzOUY5eGZNMlE0NVJQL0lmSEJLalpEUVRBeVpYSXJhY3o2WlZDSU96Q0NBPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.1/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVytmRTlKbTY2SjJSaHdzRkRQU1NPNG1rdStUK0duakRKNi9nTUpPNytXWVBhYnhDc1ZuSmM4SGQ1Q3VtMzZlVE9SRFBhY1FuNU9DdE85MmpxZFhzK2dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDg2MDk5CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkcrUjZld1FldTNUT1ZlaTZLWGJUTGdadVh1R2c0NHVFbS9oc2l2Nk9vbmRpSXRpQkF1VisrNzN6YWxIZ0lsdzRrWXJkN2dCcDVKU3RSM3ZqaE81N0J3PT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.2/mermark.app.tar.gz"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3l6OExaang5c1N0Vk9tdmdmMWV1K0VrMmpEQmVtVmxwZ1p1cDEvZ1E0RXZ0aEZWTkdSUXR3NkpuUG5kcXVvV3hpRkZNUlh0NFc4MS9UOTl2RXBMZlE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDAwOTQwCWZpbGU6bWVybWFya18wLjE5LjFfeDY0LXNldHVwLmV4ZQppL0FpRU9HUUl6U0RXcUhsdVc1UEkxcnNmQmU5NlZwUEp4WlZrYkI2SHBhWEx5OXJUdWRLQWhGWWk3Q1MxSXp5VFRoOGdhZlQzZjA0NHBYWlZ1di9CZz09Cg==",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.1/mermark_0.19.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzBiT09Fa0x6ZzhibUhJcWVIWFR3Sm5Sak5uZ1lsTTB4VDVuNGUwNEhOM2hPM3hIVWV3dkZxK09SU3FRTWdOajlNQ1hhSFBTM2lob0FtaEZlcVh6bmdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDg3MDUwCWZpbGU6bWVybWFya18wLjE5LjJfeDY0LXNldHVwLmV4ZQozaE9FL2E4MWRFdVdSVlFwUmpMK0dMeU1sU1dpTTlBWGhiMlFzSUxZZWhJc2QrM3BkMCtUVDZYU0k4WjNBTG91Uk41Yit6dElkNW14dFRnazVGR2pBQT09Cg==",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.2/mermark_0.19.2_x64-setup.exe"
     }
   }
 }
