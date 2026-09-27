@@ -620,6 +620,8 @@ mod tests {
         rows: Vec<TruthTableRow>,
         #[serde(rename = "defaultPort")]
         default_port: u16,
+        #[serde(rename = "sshTunnelLocalPort")]
+        ssh_tunnel_local_port: u16,
     }
 
     /// Reads and parses the shared fixture at test time (not hand-copied
@@ -659,6 +661,17 @@ mod tests {
     fn base_url_matches_the_shared_default_port() {
         let table = load_shared_truth_table();
         assert_eq!(DEFAULT_PORT, table.default_port);
+    }
+
+    /// Audit 🟡-1's cross-check: `SSH_TUNNEL_LOCAL_PORT` is the same
+    /// 3-boundary fact the fixture's `sshTunnelLocalPort` pins — if a future
+    /// change moves one without the other, this fails loudly instead of the
+    /// two silently drifting (the TS side has no reader of this value yet,
+    /// but the fixture field is ready for the day one exists).
+    #[test]
+    fn ssh_host_targets_the_shared_ssh_tunnel_local_port() {
+        let table = load_shared_truth_table();
+        assert_eq!(SSH_TUNNEL_LOCAL_PORT, table.ssh_tunnel_local_port);
     }
 
     /// The backstop for the "맥미니" incident: a frontend pre-flight check

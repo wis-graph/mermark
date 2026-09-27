@@ -85,11 +85,12 @@ pub struct SshHost {
     pub share_port: u16,
 }
 
-/// The human-readable guidance for the one mistake this grammar exists to
-/// head off: writing `ssh://host:N` and meaning mermark's share port, when
-/// OpenSSH's own URI syntax reads `:N` as the *SSH* port instead. Named so
-/// both rejection sites below (rule ②'s unknown-key case doesn't need this,
-/// but rule ③ does) quote the identical text rather than two copies drifting.
+/// The human-readable guidance for every rule ② rejection (missing/unknown
+/// query key, non-digit or `+`-prefixed input, out-of-range value) — named so
+/// its three call sites below quote identical text rather than drifting
+/// copies. Rule ③'s `:`-port rejection (a *different* mistake — writing the
+/// SSH port where mermark's share port belongs) has its own, separate
+/// message just below `parse_ssh_suffix`'s suffix-parsing `match`.
 fn ssh_share_port_guidance() -> String {
     "SSH 호스트의 공유 포트는 ?share-port=1024~65535 형식입니다 — SSH 포트는 ~/.ssh/config에서 지정하세요".into()
 }
@@ -114,11 +115,22 @@ pub fn parse_ssh_suffix(host: &str) -> Result<SshHost, String> {
         None => crate::remote_client::DEFAULT_PORT,
         Some(suffix) => {
             let digits = suffix.strip_prefix("share-port=").ok_or_else(ssh_share_port_guidance)?;
-            let port: u32 = digits.parse().map_err(|_| ssh_share_port_guidance())?;
-            if !(1024..=65535).contains(&port) {
+            // Digits only, checked *before* parsing (audit 🟡-2): `u32::parse`
+            // itself accepts a leading `+` (`"+47900"` → `Ok(47900)`), which
+            // the TS side's `^share-port=(\d+)$` regex does not — ruling it
+            // out here is what keeps "same input, same verdict" true across
+            // the 3-boundary fixture.
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
                 return Err(ssh_share_port_guidance());
             }
-            port as u16
+            let port: u32 = digits.parse().map_err(|_| ssh_share_port_guidance())?;
+            let port: u16 = u16::try_from(port).map_err(|_| ssh_share_port_guidance())?;
+            // Single Rust source for the 1024-65535 range (audit 🟡-2): reuse
+            // `validate_share_port` instead of re-deriving the boundary here
+            // — a future change to the valid range now can't drift between
+            // the host-port and SSH-suffix paths.
+            crate::remote_share::validate_share_port(port).map_err(|_| ssh_share_port_guidance())?;
+            port
         }
     };
     if target.contains(':') {
@@ -636,6 +648,15 @@ mod tests {
     #[test]
     fn parse_ssh_host_rejects_a_non_numeric_share_port() {
         assert!(parse_ssh_host("ssh://wis@mac-mini?share-port=abc").is_err());
+    }
+
+    /// Audit 🟡-2: `u32::parse` itself accepts a leading `+` (`"+47900"`
+    /// parses to `47900`), but the TS side's `^share-port=(\d+)$` regex does
+    /// not — a 3-boundary drift the shared fixture is supposed to catch.
+    /// Digits-only, checked *before* parsing, closes it on the Rust side.
+    #[test]
+    fn parse_ssh_host_rejects_a_share_port_with_a_leading_plus_sign() {
+        assert!(parse_ssh_host("ssh://wis@mac-mini?share-port=+47900").is_err());
     }
 
     #[test]
