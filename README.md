@@ -122,7 +122,11 @@ who don't use it.
   non-default port needs `name:port` in the client's host field (`ssh://user@host?share-port=port`
   for SSH); the SSH connection's own port is still set the usual way, in
   `~/.ssh/config`. Keep both sides on the same mermark version — an older client still
-  dials the old default port.
+  dials the old default port. **Two cases need re-pairing**: a vault added with `:8787`
+  spelled out in the client's host field must be removed and re-added by name alone
+  after updating (the token is keyed on that exact string), and if the host later
+  changes its share port, every existing client goes "unreachable" and must remove and
+  re-add that vault as `name:newport` (`?share-port=` for SSH).
 - Markdown, images, PDF, Word, Excel and HTML all open remotely. Broken connections get
   a retry button on the vault row, and badges refresh themselves when the host comes
   back.

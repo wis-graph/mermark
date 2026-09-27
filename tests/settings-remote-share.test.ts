@@ -475,5 +475,88 @@ describe("remote-share-panel — 설정 패널 통합", () => {
       expect(errorText).toContain("공유 포트");
       expect(errorText).not.toContain("PORT_IN_USE:"); // 원문 그대로가 아니라 안내로 바뀌어야 한다
     });
+
+    // 감사 🟢(applyStart catch, 2026-09-27): 입력은 busy 중에도 막히지
+    // 않으므로, 시도가 in-flight인 동안 사용자가 포트를 바꾸면 실패
+    // 메시지가 실제로 시도한 포트가 아니라 그 사이 바뀐 값을 가리킬 수
+    // 있었다(await 뒤에 `port`를 다시 읽었기 때문).
+    it("실패 메시지는 in-flight 동안 바뀐 포트가 아니라 실제로 시도한 포트를 가리킨다", async () => {
+      let rejectStart!: (reason: unknown) => void;
+      const pending = new Promise<void>((_resolve, reject) => { rejectStart = reject; });
+      mockRoutes({ remote_share_start: () => pending });
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+      backdrop.querySelector<HTMLInputElement>(".remote-share-checkbox")!.click();
+      await flush();
+      segBtn(backdrop, "켜기").click();
+      await flush(); // applyStart가 지금 in-flight, DEFAULT_SHARE_PORT로 시도했다
+
+      portInput(backdrop).value = "50000"; // 대기 중 사용자가 포트를 바꾼다
+      portInput(backdrop).dispatchEvent(new Event("input", { bubbles: true }));
+      await flush();
+      expect(remoteSharePortSetting.get()).toBe(50000);
+
+      rejectStart(`PORT_IN_USE: 127.0.0.1:${DEFAULT_SHARE_PORT} 포트를 이미 다른 프로그램이 쓰고 있습니다`);
+      await flush();
+      await flush();
+
+      const errorText = backdrop.querySelector(".remote-share-error")?.textContent ?? "";
+      expect(errorText).toContain(String(DEFAULT_SHARE_PORT)); // 실제로 시도한 포트
+      expect(errorText).not.toContain("50000"); // in-flight 중 바뀐 값이 아니다
+    });
+
+    // 감사 🟡-3 (`_workspace/04_audit_report.md`): 페어링된 기기가 있는데
+    // 포트를 바꾸면 그 기기들은 다음에 켤 때 전부 "연결 안 됨"이 된다
+    // (토큰 키가 호스트 문자열이라 새 포트로 볼트를 다시 추가해야 함).
+    it("페어링된 기기가 있으면 포트 변경 안내에 재추가 경고가 붙는다", async () => {
+      const runningWithDevice: ShareStatus = { ...RUNNING_STATUS, devices: [{ id: "dev-1", label: "맥북", paired_at_ms: 1 }] };
+      mockRoutes({ remote_share_status: () => Promise.resolve(runningWithDevice) });
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+
+      portInput(backdrop).value = "50000";
+      portInput(backdrop).dispatchEvent(new Event("input", { bubbles: true }));
+      await flush();
+
+      expect(portNotice(backdrop).textContent).toContain(String(DEFAULT_SHARE_PORT));
+      expect(portNotice(backdrop).textContent).toContain("50000");
+      expect(portNotice(backdrop).textContent).toContain("다시 추가");
+    });
+
+    it("기기가 없으면 포트 변경 안내에 재추가 경고가 붙지 않는다", async () => {
+      mockRoutes({ remote_share_status: () => Promise.resolve(RUNNING_STATUS) }); // devices: []
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+
+      portInput(backdrop).value = "50000";
+      portInput(backdrop).dispatchEvent(new Event("input", { bubbles: true }));
+      await flush();
+
+      expect(portNotice(backdrop).textContent).not.toContain("다시 추가");
+    });
+
+    // 감사 🟡-3: localhost-only 모드는 Tailscale 주소가 없다 — 클라이언트는
+    // SSH 터널로만 들어올 수 있으므로 페어링 힌트는 `<이름>:포트`가 아니라
+    // `ssh://사용자@호스트?share-port=포트` 형식이어야 한다.
+    it("localhost-only 모드에서 비기본 포트의 클라이언트 힌트는 SSH 형식이다", async () => {
+      const runningLocalhostOnly: ShareStatus = { ...RUNNING_STATUS, bind_mode: "localhost-only", port: 50000 };
+      mockRoutes({
+        remote_share_status: () => Promise.resolve(runningLocalhostOnly),
+        remote_issue_code: () => Promise.resolve({ code: "123456", issued_at_ms: Date.now() }),
+      });
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+      backdrop.querySelector<HTMLButtonElement>(".remote-share-issue-btn")!.click();
+      await flush();
+
+      const hint = backdrop.querySelector(".remote-share-code-client-hint")?.textContent ?? "";
+      expect(hint).toContain("ssh://");
+      expect(hint).toContain("share-port=50000");
+      expect(hint).not.toContain("<이름>:50000");
+    });
   });
 });

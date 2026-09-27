@@ -364,8 +364,17 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     codeDisplay.hidden = false;
     // 비기본 포트로 공유 중이면 클라이언트가 호스트 칸에 `이름:포트`를
     // 적어야 한다 — 코드가 만료됐어도 포트 자체는 안 바뀌므로 이 힌트는
-    // 만료 분기 이전에 항상 채운다.
-    codeClientHint.textContent = runningPort !== null && runningPort !== DEFAULT_SHARE_PORT ? `클라이언트 호스트 칸: <이름>:${runningPort}` : "";
+    // 만료 분기 이전에 항상 채운다. 감사 🟡-3: localhost-only는 Tailscale
+    // 주소가 없어 클라이언트가 SSH 터널로만 들어올 수 있으므로, 그 모드일
+    // 땐 Tailscale 형식(`<이름>:포트`)이 아니라 새 SSH 문법
+    // (`?share-port=`)을 안내해야 한다 — 옛 힌트는 정작 이 라운드가 만든
+    // 문법을 호스트 UI가 안내하지 않는 공백이었다.
+    codeClientHint.textContent =
+      runningPort !== null && runningPort !== DEFAULT_SHARE_PORT
+        ? bindMode === "localhost-only"
+          ? `클라이언트 호스트 칸: ssh://사용자@호스트?share-port=${runningPort}`
+          : `클라이언트 호스트 칸: <이름>:${runningPort}`
+        : "";
     if (codeExpired(Date.now(), issuedCode.issued_at_ms)) {
       codeDisplay.textContent = `${issuedCode.code} — 만료됨`;
       stopCountdown();
@@ -380,7 +389,16 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
    *  바뀌는지 미리 알려준다. 둘 다 순수 표시 상태라 이 함수는 invoke를
    *  절대 부르지 않는다. */
   const renderPortNotice = (): void => {
-    portNotice.textContent = running && runningPort !== null && runningPort !== port ? `지금은 ${runningPort}에서 공유 중 — 다시 켜면 ${port}으로 바뀝니다` : "";
+    if (!(running && runningPort !== null && runningPort !== port)) {
+      portNotice.textContent = "";
+      return;
+    }
+    const base = `지금은 ${runningPort}에서 공유 중 — 다시 켜면 ${port}으로 바뀝니다`;
+    // 감사 🟡-3: 페어링된 기기가 있으면 그 기기들은 지금 runningPort로만
+    // 도달 가능하다 — 다시 켜서 port로 바뀌는 순간 전부 "연결 안 됨"이
+    // 된다(토큰 키가 호스트 문자열이라 클라이언트가 새 포트로 볼트를
+    // 다시 추가해야 함, README 참고). 기기가 없으면 그 위험이 없다.
+    portNotice.textContent = devices.length > 0 ? `${base}. 기존 기기는 이 볼트를 새 포트로 다시 추가해야 합니다.` : base;
   };
 
   const startCountdown = (): void => {
@@ -525,8 +543,13 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
     clearIssuedCode(); // 이번 시도가 성공하든 실패 후 서버가 내려가든, 이전 코드는 죽는다(finding 2)
     const vaults = buildVaultsToArm(getVaultOptions(), armedVaultIds);
     const wasRunning = running;
+    // 감사 🟢(applyStart catch): portInput은 busy 중에도 비활성화되지
+    // 않으므로, await 도중 사용자가 포트를 바꾸면 실패 메시지가 실제로
+    // 시도한 포트가 아니라 그 사이 바뀐 값을 가리킬 수 있었다. await 전에
+    // 캡처해 catch에서는 항상 이 시도의 포트를 쓴다.
+    const attemptedPort = port;
     try {
-      await startShare(bindMode, port, vaults);
+      await startShare(bindMode, attemptedPort, vaults);
       if (!wasRunning) notice.hidden = false; // "처음 켤 때" 안내 — off→on 전환마다(이 방화벽 프롬프트는 매번 유효하다)
       await refreshStatus();
     } catch (err) {
@@ -534,7 +557,7 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
       // 사람이 읽을 안내로 바꾼다(그 외는 기존 errorText와 동일하게
       // 원문을 그대로 보여준다) — 이 catch만 해당, 다른 실패 경로
       // (issue/revoke/stop)는 여전히 errorText다.
-      showError(shareStartErrorMessage(err, port));
+      showError(shareStartErrorMessage(err, attemptedPort));
       await refreshStatus(); // 실패 후에도 항상 백엔드 진실로 재동기화
     } finally {
       busy = false;
