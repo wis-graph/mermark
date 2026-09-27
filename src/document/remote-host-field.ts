@@ -1,3 +1,12 @@
+// 감사 🟡-2 (`_workspace/04_audit_report.md`, 2026-09-27): the SSH suffix's
+// `?share-port=` range check used to re-implement `1024 <= port <= 65535`
+// inline, duplicating `sharePortProblem` (settings/remote-share-port.ts) —
+// scattered intent across 4 places total (2 Rust, 2 TS) with an already-
+// observed drift risk (fixture coverage was asymmetric between the plain
+// sharePortRows and the SSH suffix rows). Importing sharePortProblem keeps
+// the RANGE RULE itself single-sourced; the SSH-specific wording below stays
+// its own (Rust doesn't collapse the two messages either).
+//
 // T2 (0.17.1): pre-flight validation for the "원격 볼트 추가" host field
 // (remote-vault-dialog.ts). Before this existed, typing a Korean host like
 // "맥미니" silently went out IDNA/punycode-encoded (`xn--9i1bx8ksvb`),
@@ -16,6 +25,7 @@
 // different for each). `src/mocks/tauri-core.ts`'s `remoteMockError` mirrors
 // the ASCII half of this same rule so the mock rejects what the real backend
 // rejects (mermark-dev's 3경계 정합 requirement).
+import { sharePortProblem } from "../settings/remote-share-port";
 
 /** Is every character of `host` plain ASCII — the alphabet `base_url`
  *  requires for a bare `name[:port]`. Named separately so both this
@@ -76,8 +86,7 @@ export function sshHostSuffixProblem(input: string): string | null {
 
   if (suffix !== null) {
     const match = /^share-port=(\d+)$/.exec(suffix);
-    const port = match ? Number(match[1]) : NaN;
-    if (!match || port < 1024 || port > 65535) {
+    if (!match || sharePortProblem(match[1]) !== null) {
       return "SSH 호스트의 공유 포트는 ?share-port=1024~65535 형식입니다";
     }
   }

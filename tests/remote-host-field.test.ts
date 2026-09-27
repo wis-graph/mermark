@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hostFieldProblem, sshHostSuffixProblem } from "../src/document/remote-host-field";
+import { sharePortProblem } from "../src/settings/remote-share-port";
 
 describe("hostFieldProblem", () => {
   it("한글 호스트명을 페어링 전에 거절하고 무엇을 넣어야 하는지 말한다", () => {
@@ -45,6 +46,20 @@ describe("hostFieldProblem", () => {
 // are additionally unit-testing the exported function directly and its exact
 // message text.
 describe("sshHostSuffixProblem", () => {
+  // 감사 🟡-2: the ?share-port= range check must reuse sharePortProblem's
+  // range rule rather than re-implementing 1024<=n<=65535 inline — every
+  // numeric value sharePortProblem rejects/accepts must agree here too, for
+  // any digits string, not just the one row the shared fixture happens to
+  // cover (that asymmetry was the audit's actual concern: SSH suffix rows
+  // were thinner than the plain sharePortRows table).
+  it("agrees with sharePortProblem's range rule for every numeric share-port value", () => {
+    for (const n of [0, 1, 1023, 1024, 1025, 47878, 65534, 65535, 65536, 100000]) {
+      const ssh = sshHostSuffixProblem(`ssh://h?share-port=${n}`);
+      const plain = sharePortProblem(String(n));
+      expect(ssh !== null).toBe(plain !== null);
+    }
+  });
+
   it("accepts a bare ssh target with no suffix", () => {
     expect(sshHostSuffixProblem("ssh://mac-mini")).toBeNull();
     expect(sshHostSuffixProblem("ssh://wis@mac-mini")).toBeNull();
