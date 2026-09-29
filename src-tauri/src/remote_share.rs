@@ -255,6 +255,14 @@ fn tailscale_ipv4() -> Option<IpAddr> {
 /// **last**: a `PATH` lookup can only help (never hurt) once every known
 /// absolute location has already come up empty, so trying it first would
 /// just be redundant in the terminal case and never fire in the GUI case.
+///
+/// Candidate 2 (the App Store bundle's own binary) only ever answers as a
+/// CLI at all because `tailscale_ipv4_via` sets `TAILSCALE_BE_CLI=1` on it —
+/// see that env var's doc comment. A machine that never enabled Tailscale
+/// Settings' "Install CLI" has no candidate 1 shim, so it depends entirely
+/// on candidate 2 plus that env var; without it, such a machine always
+/// reported "Tailscale not found" even while Tailscale was installed,
+/// running, and logged in (the bug this env var fixes).
 fn tailscale_program_candidates() -> &'static [&'static str] {
     &[
         "/usr/local/bin/tailscale", // Homebrew (Intel) / the app's own shim script
@@ -274,6 +282,28 @@ fn tailscale_ipv4_from(candidates: &[&str]) -> Option<IpAddr> {
     candidates.iter().find_map(|c| tailscale_ipv4_via(c))
 }
 
+/// **Do not remove.** Forces the Tailscale **app bundle**'s own binary
+/// (`tailscale_program_candidates`'s candidate 2,
+/// `/Applications/Tailscale.app/Contents/MacOS/tailscale`) to answer as a
+/// plain CLI instead of deciding to launch as the GUI app.
+///
+/// Without this, running that binary directly (no shell, no TTY — exactly
+/// how `std::process::Command` spawns it) fails outright with something
+/// like `The Tailscale GUI failed to start … (Tailscale.CLIError error 3.)`
+/// — confirmed on a real machine, `env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin
+/// /Applications/Tailscale.app/Contents/MacOS/tailscale ip -4`, the same
+/// minimal `PATH` a Finder-launched GUI app inherits. A user who never
+/// enabled Tailscale Settings' "Install CLI" has no
+/// `/usr/local/bin/tailscale` shim (candidate 1), so `tailscale_ipv4_from`
+/// falls straight through to this binary — and without this env var, every
+/// such machine reports "Tailscale not found" even while Tailscale is
+/// installed, running, and logged in (the owner-reported bug this fixes).
+/// Harmless for every *other* candidate (the shim script, a Homebrew build,
+/// a `PATH` lookup) — none of them read this variable at all, so it's set
+/// unconditionally for every candidate rather than only for the one that
+/// needs it.
+const TAILSCALE_BE_CLI_ENV: (&str, &str) = ("TAILSCALE_BE_CLI", "1");
+
 /// `tailscale_ipv4`'s body, with the program name pulled out as a parameter
 /// so a test can point it at a harmless local stand-in instead of the real
 /// `tailscale` binary — whether this machine actually has Tailscale
@@ -283,7 +313,8 @@ fn tailscale_ipv4_from(candidates: &[&str]) -> Option<IpAddr> {
 /// true by construction and never exercises this parsing/spawn logic
 /// against a controlled input).
 fn tailscale_ipv4_via(program: &str) -> Option<IpAddr> {
-    let output = std::process::Command::new(program).args(["ip", "-4"]).output().ok()?;
+    let (key, value) = TAILSCALE_BE_CLI_ENV;
+    let output = std::process::Command::new(program).args(["ip", "-4"]).env(key, value).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -499,6 +530,46 @@ mod tests {
         // Stands in for "tailscale not on PATH" — this exact name should
         // never collide with a real binary on a test runner's machine.
         assert_eq!(tailscale_ipv4_via("mermark-nonexistent-tailscale-stand-in"), None);
+    }
+
+    /// A stand-in for the Tailscale **app bundle**'s own binary (candidate 2,
+    /// `/Applications/Tailscale.app/Contents/MacOS/tailscale`), which — unlike
+    /// the optional `/usr/local/bin/tailscale` CLI shim — refuses to act as a
+    /// CLI at all unless `TAILSCALE_BE_CLI=1` is set in its environment:
+    /// without it, it decides to launch as the GUI app instead and fails with
+    /// a CLIError-3-shaped message; with it, it answers `ip -4` like a normal
+    /// CLI. Exits non-zero and prints nothing to stdout in the "acting as
+    /// GUI" case, exactly like the real binary.
+    #[cfg(unix)]
+    fn fake_tailscale_bundle_script(dir: &std::path::Path, stdout: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("fake_tailscale_bundle.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nif [ \"$TAILSCALE_BE_CLI\" = \"1\" ]; then\n  printf '%s' \"{stdout}\"\n  exit 0\nfi\necho 'The Tailscale GUI failed to start ... (Tailscale.CLIError error 3.)' 1>&2\nexit 1\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script.to_string_lossy().into_owned()
+    }
+
+    /// Reproduces the owner's Mac mini bug: no CLI shim installed (Tailscale
+    /// Settings' "Install CLI" never enabled, so `/usr/local/bin/tailscale`
+    /// doesn't exist), so `tailscale_ipv4` falls through candidate 1 straight
+    /// to the app bundle's own binary — which must be told `TAILSCALE_BE_CLI=1`
+    /// or it always answers as the GUI (see `fake_tailscale_bundle_script`'s
+    /// doc comment). Must fail against the pre-fix code, which spawns every
+    /// candidate with no environment override at all.
+    #[cfg(unix)]
+    #[test]
+    fn tailscale_ipv4_via_sets_be_cli_so_the_bundle_binary_answers_as_a_cli() {
+        let dir = tmp_config_dir("tailscale-be-cli");
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = fake_tailscale_bundle_script(&dir, "100.64.1.2\n");
+        assert_eq!(tailscale_ipv4_via(&program), Some("100.64.1.2".parse().unwrap()));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// PATH lookup is the fallback, never the first thing tried — a GUI
