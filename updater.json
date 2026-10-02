@@ -1,15 +1,11 @@
 {
-  "version": "0.19.2",
-  "notes": "### Changed\n\n- **원격 공유 기본 포트가 8787에서 47878로 바뀌었다**: 8787은 다른 원격 프로그램과 자주 겹쳐, 그 프로그램이 켜진 맥에서는 공유를 켤 수 없었다. 호스트 칸에 이름만 적어 추가한 원격 볼트는 **두 기기 모두 업데이트하면 다시 페어링하지 않아도 그대로 열린다.** 한쪽만 업데이트된 동안에는 \"연결 안 됨\"으로 보인다. 호스트 칸에 `:8787`을 직접 적어 추가한 볼트는 지우고 다시 추가해야 한다.\n\n### Added\n\n- **공유 포트를 설정에서 바꿀 수 있다**: 설정 › 원격 공유에 \"공유 포트\" 칸이 생겼다. 그 포트를 이미 다른 프로그램이 쓰고 있으면 공유를 켤 때 무엇이 문제인지와 다른 번호를 알려준다. 기본값이 아닌 포트를 쓰면 클라이언트에서는 호스트 칸에 `이름:포트`로, SSH로 붙을 때는 `ssh://사용자@호스트?share-port=포트`로 적는다.\n\n### Fixed\n\n- **SSH 터널이 이 맥의 공유와 부딪히던 문제**: SSH로 다른 맥에 붙는 쪽의 로컬 포트를 공유 포트와 분리했다(47879). 이 맥에서 볼트를 공유하면서 동시에 다른 맥으로 SSH 연결을 해도 서로 충돌하지 않는다.",
-  "pub_date": "2026-09-27T05:32:15Z",
+  "version": "0.20.0",
+  "notes": "### Added\n\n- **원격 볼트에서 이미지·EPUB·한글 문서를 열 수 있다**: 원격 공유로 연결한 볼트에서도 사진을 탐색기나 본문에서 클릭하면 이미지 뷰어가 열리고, `.epub`과 `.hwp`/`.hwpx`도 로컬과 똑같이 열린다. 데이터베이스(`.db`/`.sqlite`)만 원격에서 지원하지 않는다.\n- **원격 볼트의 첨부 이미지가 보인다**: 이미지 첨부 명령으로 넣어 `.attachments` 폴더에 들어간 사진이 원격 문서에서도 표시된다. 본문의 `![[사진.png]]`처럼 이름만 적힌 이미지는 원격 볼트 전체에서 찾아 연다. **공유하는 쪽(호스트) 기기도 이 버전으로 업데이트해야** 첨부 이미지가 열린다. `.git`, `.obsidian` 같은 다른 숨김 폴더는 여전히 공유되지 않는다.\n\n### Fixed\n\n- **워크스페이스에서 볼트를 접어도 하위 폴더가 그대로 보이던 문제**: 볼트 안의 폴더를 따로 볼트로 등록해 둔 경우, 부모 볼트를 접으면 열린 파일만 숨고 하위 볼트는 남아 있었다. 이제 하위 볼트까지 함께 접힌다.",
+  "pub_date": "2026-10-02T10:53:47Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVytmRTlKbTY2SjJSaHdzRkRQU1NPNG1rdStUK0duakRKNi9nTUpPNytXWVBhYnhDc1ZuSmM4SGQ1Q3VtMzZlVE9SRFBhY1FuNU9DdE85MmpxZFhzK2dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDg2MDk5CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkcrUjZld1FldTNUT1ZlaTZLWGJUTGdadVh1R2c0NHVFbS9oc2l2Nk9vbmRpSXRpQkF1VisrNzN6YWxIZ0lsdzRrWXJkN2dCcDVKU3RSM3ZqaE81N0J3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.2/mermark.app.tar.gz"
-    },
-    "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzBiT09Fa0x6ZzhibUhJcWVIWFR3Sm5Sak5uZ1lsTTB4VDVuNGUwNEhOM2hPM3hIVWV3dkZxK09SU3FRTWdOajlNQ1hhSFBTM2lob0FtaEZlcVh6bmdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDg3MDUwCWZpbGU6bWVybWFya18wLjE5LjJfeDY0LXNldHVwLmV4ZQozaE9FL2E4MWRFdVdSVlFwUmpMK0dMeU1sU1dpTTlBWGhiMlFzSUxZZWhJc2QrM3BkMCtUVDZYU0k4WjNBTG91Uk41Yit6dElkNW14dFRnazVGR2pBQT09Cg==",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.19.2/mermark_0.19.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzJnMUc4VEVSdUJReStUM2h6UHRBdnlTRllpdjZ3UEh3YTEvTnliOXh3YTMzS2ZBREkySEZnVXJ4REJJTVFBa2JoVGo5YU52ZWV5U2IwODhJa0Z0S1E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTM4NDA4CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnlXU0F6eEFQLzB1clVmYzV1RXgzWFA2Y1BjSmFrTGI3d2N0VDZWeC9JZFNMQmtrdXAvMU1maWc5N3FGMUFPN2dRWTFOdzVzNThxZUhuak9TT1l2YUJnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.20.0/mermark.app.tar.gz"
     }
   }
 }
