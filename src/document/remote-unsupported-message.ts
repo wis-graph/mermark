@@ -19,15 +19,12 @@
 import { extensionOf } from "../sidebar/explorer/file-icons";
 
 const SQLITE_EXTENSIONS = new Set(["sqlite", "sqlite3", "db", "db3"]);
-const HWP_EXTENSIONS = new Set(["hwp", "hwpx"]);
 
 /** The refusal shown in place of a broken/empty viewer when a registered
  *  viewer has no `openRemote` (design §4.3). Distinct wording PER KIND — a
  *  user needs to tell "this can never work over a network" (sqlite: the
  *  viewer's whole design is reading only the pages it needs, and shipping
- *  the entire database defeats that) apart from "not built yet, might
- *  arrive later" (epub: needs Range support; hwp: needs a temp-file
- *  lifetime story) apart from "an unrecognized/future viewer type" (the
+ *  the entire database defeats that) apart from "an unrecognized/future viewer type" (the
  *  fail-closed default — a viewer registered with no entry here still gets
  *  a real refusal message, never a silently-broken open). Pure query. */
 export function remoteUnsupportedMessage(fileName: string): string {
@@ -37,12 +34,6 @@ export function remoteUnsupportedMessage(fileName: string): string {
     // DB 대부분을 어차피 거절하고, 무엇보다 "필요한 페이지만 디스크에서 읽는다"는
     // 이 뷰어의 존재 이유를 전체 바이트 전송이 정면으로 깬다.
     return "원격 볼트의 데이터베이스는 열 수 없습니다 — 데이터베이스는 필요한 부분만 디스크에서 읽어야 해서 원격으로는 지원하지 않습니다.";
-  }
-  if (ext === "epub") {
-    return "원격 볼트의 EPUB은 아직 지원하지 않습니다.";
-  }
-  if (HWP_EXTENSIONS.has(ext)) {
-    return "원격 볼트의 한글 문서는 아직 지원하지 않습니다.";
   }
   // Fail-closed default (unchanged wording — a future viewer that forgets to
   // implement `openRemote` gets THIS message, not a broken open).

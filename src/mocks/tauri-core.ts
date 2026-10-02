@@ -352,7 +352,7 @@ function remoteMockError(host: string): string | null {
  *  every non-empty path — `resolve_within`'s lexical gate, which rejects
  *  any path component that is not `Component::Normal` (an absolute leading
  *  `/`, a `..`, or a leading `./`), and `safe_path`'s hidden/artifact gate
- *  (`has_a_hidden_or_artifact_component`, reusing `is_hidden_entry`/
+ *  (`has_a_peer_withheld_component`, reusing `is_hidden_entry`/
  *  `is_mermark_artifact` — same policy the local `list_dir` mock above
  *  already applies via `e.name.startsWith(".")`). Both fold into
  *  `REMOTE:SharingOff` on the wire (a rejected path 404s, which
@@ -361,6 +361,15 @@ function remoteMockError(host: string): string | null {
  *  `path`/`baseDir`/`dir` argument, the same order `safe_path` runs in — so
  *  a future case added here reuses this rule instead of re-deriving (and
  *  drifting from) it. */
+/** Mirrors the host's `is_withheld_from_peers(component)` (remote_host.rs): a
+ *  hidden (dot) segment is withheld EXCEPT exactly `.attachments` (the one
+ *  dot-folder peers may read — `ATTACHMENTS_DIR_NAME`), and a mermark scratch
+ *  artifact is always withheld. Exact match: `.attachmentsX` stays hidden. */
+function isMockPeerWithheldSegment(segment: string): boolean {
+  const hidden = segment.startsWith(".") && segment !== "." && segment !== ".attachments";
+  return hidden || segment.includes(".mermark-tmp.") || segment.includes(".mermark-recovered");
+}
+
 function refusesEscapingRemotePath(path: unknown): void {
   if (typeof path !== "string" || path === "") return; // "" = vault root, safe_path's carve-out
   if (path.startsWith("/")) throw "REMOTE:SharingOff"; // RootDir component
@@ -368,8 +377,8 @@ function refusesEscapingRemotePath(path: unknown): void {
   segments.forEach((segment, i) => {
     if (segment === "..") throw "REMOTE:SharingOff"; // ParentDir component
     if (i === 0 && segment === ".") throw "REMOTE:SharingOff"; // leading CurDir component
-    if (segment !== "." && (segment.startsWith(".") || segment.includes(".mermark-tmp.") || segment.includes(".mermark-recovered"))) {
-      throw "REMOTE:SharingOff"; // hidden/artifact gate
+    if (segment !== "." && isMockPeerWithheldSegment(segment)) {
+      throw "REMOTE:SharingOff"; // withheld (hidden/artifact) gate
     }
   });
 }
@@ -651,6 +660,20 @@ function mockSqliteRow(table: string, i: number): (string | null)[] {
 // assertion (G10) is deterministic.
 const HWP_MOCK_PAGE_COUNT = 3;
 
+/** Shared fixture dispatch for `hwp_open` and `hwp_open_remote` (by file
+ *  name): normal (page count) / corrupted (Err) / oversized (Err, the same
+ *  cap-message shape `assert_hwp_file_within_cap` produces). */
+function mockHwpOpenResult(path: string): { pages: number } {
+  const basename = path.split(/[/\\]/).pop() ?? path;
+  if (basename === "corrupt.hwp") {
+    throw "HWP 파일 파싱 오류: 유효하지 않은 파일: mock corrupt fixture";
+  }
+  if (basename === "huge.hwp") {
+    throw "파일이 너무 큽니다: 104857601 bytes (상한 104857600 bytes)";
+  }
+  return { pages: HWP_MOCK_PAGE_COUNT };
+}
+
 /** One deterministic SVG per page: a fixed A4-ish rect plus a `HWP-PAGE-{n}`
  *  marker <text>, so a golden script can prove page 1 was actually the page
  *  lazily rendered — not just "some SVG rendered". Page 1 additionally
@@ -836,15 +859,23 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // (§3.4): normal (page count) / corrupted (Err) / oversized (Err, the
       // same cap-message shape `assert_hwp_file_within_cap` produces).
       const path = String(a.path ?? "");
-      const basename = path.split(/[/\\]/).pop() ?? path;
       console.info("[mock] hwp_open", path);
-      if (basename === "corrupt.hwp") {
-        throw "HWP 파일 파싱 오류: 유효하지 않은 파일: mock corrupt fixture";
-      }
-      if (basename === "huge.hwp") {
-        throw "파일이 너무 큽니다: 104857601 bytes (상한 104857600 bytes)";
-      }
-      return { pages: HWP_MOCK_PAGE_COUNT } as T;
+      return mockHwpOpenResult(path) as T;
+    }
+    case "hwp_open_remote": {
+      // Mirrors `hwp_open_remote(host, vault, path) -> Result<HwpOpenInfo, String>`:
+      // the extension gate runs first (lexical, like the real command), then
+      // the four remote guards, then the SAME fixture dispatch as `hwp_open`.
+      const host = String(a.host ?? "");
+      const path = String(a.path ?? "");
+      if (!/\.hwpx?$/i.test(path)) throw `지원하지 않는 확장자입니다: ${path}`;
+      const err = remoteMockError(host);
+      if (err) throw err;
+      refusesStaleSshTunnel(host);
+      refusesEscapingRemotePath(path);
+      refusesRemoteAssetOverCap(path);
+      console.info("[mock] hwp_open_remote", host, a.vault, path);
+      return mockHwpOpenResult(path) as T;
     }
     case "hwp_render_page": {
       // Mirrors the real `hwp_render_page(page) -> Result<String, String>`
@@ -959,6 +990,20 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // flow look like it works under CDP/DevTools when it structurally
       // cannot (design plan §알려진 한계).
       console.info("[mock] arm_epub_view", a.path, "-> rejected (no epub:// scheme in browser dev)");
+      throw "EPUB 뷰어는 브라우저 dev에서 지원되지 않습니다 (epub:// 스킴 없음)";
+    }
+    case "arm_remote_epub_view": {
+      // Mirrors `arm_remote_epub_view(host, vault, path) -> Result<String, String>`.
+      // The four remote guards run first (same order as the real fetch), then
+      // the same rejection as `arm_epub_view`: no `epub://` scheme in a plain
+      // browser, so a token would only ever 404.
+      const host = String(a.host ?? "");
+      const err = remoteMockError(host);
+      if (err) throw err;
+      refusesStaleSshTunnel(host);
+      refusesEscapingRemotePath(a.path);
+      refusesRemoteAssetOverCap(String(a.path ?? ""));
+      console.info("[mock] arm_remote_epub_view", host, a.vault, a.path, "-> rejected (no epub:// scheme in browser dev)");
       throw "EPUB 뷰어는 브라우저 dev에서 지원되지 않습니다 (epub:// 스킴 없음)";
     }
     case "read_epub_entry": {
@@ -1220,15 +1265,17 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // on the JS side, same snake→camel rule as the local `resolve_image`
       // mock's `maxDepth`). Checked against remote_host.rs's
       // `resolve_image_handler`, which rewrites a hit to vault-relative before
-      // sending — this mock always misses (`null`), deterministic and cheap
-      // since the browser has no remote tree to scan.
+      // sending — this mock hits a fixed FOUND map and misses (`null`) otherwise.
       const host = String(a.host ?? "");
       const err = remoteMockError(host);
       if (err) throw err;
       refusesStaleSshTunnel(host);
       refusesEscapingRemotePath(a.path);
       console.info("[mock] remote_resolve_image", host, a.vault, a.path, a.name, a.maxDepth);
-      return null as T;
+      // Vault-relative hit, like the real host's `resolve_image_handler`; the
+      // attachment lives under `.attachments/` (readable via the exemption).
+      const FOUND: Record<string, string> = { "pic.png": ".attachments/pic.png" };
+      return (FOUND[String(a.name ?? "").toLowerCase()] ?? null) as T;
     }
     case "remote_list_link_targets": {
       // Mirrors `remote_list_link_targets(host, vault, path) ->

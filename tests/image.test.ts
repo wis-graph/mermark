@@ -16,15 +16,15 @@ import {
   isRemoteSrc,
   clearImageSearchCache,
   clearVaultDowngradeReports,
-  clearRemoteImageCache,
 } from "../src/markdown/image";
+import { clearRemoteImageCache, clearRemoteImageFailureReports } from "../src/markdown/remote-image";
 import { setImageSearchRoot, owningVaultRoot, VAULT_IMAGE_SCAN_DEPTH } from "../src/markdown/image-search-root";
 import { recursiveImageSearchSetting } from "../src/settings/app";
 import { setImageOpenHandler } from "../src/markdown/image-open";
 import { EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { documentVault } from "../src/document/document-vault";
-import type { RemoteVault } from "../src/workspace/workspace-state";
+import type { RemoteVault, Vault } from "../src/workspace/workspace-state";
 
 // The click handler's `attachAltClickEdit` only ever touches `view` when a
 // MOUSEDOWN carries Alt (not exercised by these click-only tests), so a stub
@@ -399,10 +399,10 @@ describe("ImageWidget vault-scope search root", () => {
 
 describe("ImageWidget click → open viewer (_workspace/01_architect_design_imgclick.md)", () => {
   const baseDir = "/home/u/notes";
-  let openSpy: Mock<(source: string) => void>;
+  let openSpy: Mock<(source: string, vault: Vault | undefined) => void>;
 
   beforeEach(() => {
-    openSpy = vi.fn<(source: string) => void>();
+    openSpy = vi.fn<(source: string, vault: Vault | undefined) => void>();
     setImageOpenHandler(openSpy);
   });
 
@@ -420,13 +420,13 @@ describe("ImageWidget click → open viewer (_workspace/01_architect_design_imgc
     const img = mountImg("cat.png");
     clickAt(img, 10, 10);
     expect(openSpy).toHaveBeenCalledTimes(1);
-    expect(openSpy).toHaveBeenCalledWith(`${baseDir}/cat.png`);
+    expect(openSpy).toHaveBeenCalledWith(`${baseDir}/cat.png`, undefined);
   });
 
   it("a remote rawSrc is handed to the viewer untouched (no baseDir join)", () => {
     const img = mountImg("https://ex.com/c.png");
     clickAt(img, 10, 10);
-    expect(openSpy).toHaveBeenCalledWith("https://ex.com/c.png");
+    expect(openSpy).toHaveBeenCalledWith("https://ex.com/c.png", undefined);
   });
 
   it("Alt+click does not open the viewer (falls through to source-edit instead)", () => {
@@ -457,7 +457,7 @@ describe("ImageWidget click → open viewer (_workspace/01_architect_design_imgc
     img.onerror?.(new Event("error"));
     await new Promise((r) => setTimeout(r, 0));
     clickAt(img, 10, 10);
-    expect(openSpy).toHaveBeenCalledWith("/mock/found/pic.png");
+    expect(openSpy).toHaveBeenCalledWith("/mock/found/pic.png", undefined);
   });
 });
 
@@ -484,6 +484,7 @@ describe("ImageWidget remote-vault loading (Ruling 7)", () => {
   beforeEach(() => {
     invokeSpy.mockReset();
     clearRemoteImageCache();
+    clearRemoteImageFailureReports();
   });
 
   it("fetches bytes via remote_read_image and swaps in the returned data: URL, never convertFileSrc", async () => {
@@ -519,5 +520,56 @@ describe("ImageWidget remote-vault loading (Ruling 7)", () => {
     const img = widget.toDOM(fakeView) as HTMLImageElement;
     expect(img.src).toContain(`${baseDir}/cat.png`); // convertFileSrc mock echoes input (jsdom resolves img.src to an absolute URL)
     expect(invokeSpy).not.toHaveBeenCalledWith("remote_read_image", expect.any(Object));
+  });
+  it("a remote ![[pic.png]] (vault scope) whose literal path 404s renders the name-search hit", async () => {
+    invokeSpy.mockImplementation((cmd: string, a: { path: string }) => {
+      if (cmd === "remote_read_image") {
+        return a.path === ".attachments/pic.png" ? Promise.resolve("data:image/png;base64,ATT") : Promise.reject(new Error("REMOTE:NotFound"));
+      }
+      if (cmd === "remote_resolve_image") return Promise.resolve(".attachments/pic.png");
+      return Promise.reject(new Error(`unexpected ${cmd}`));
+    });
+    const widget = new ImageWidget(`${baseDir}/pic.png`, "alt", "pic.png", baseDir, "vault");
+    const img = widget.toDOM(remoteView) as HTMLImageElement;
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(img.src).toBe("data:image/png;base64,ATT");
+  });
+
+  it("a click after a remote name-search hit hands the resolved vault-relative path and the document's RemoteVault", async () => {
+    invokeSpy.mockImplementation((cmd: string, a: { path: string }) => {
+      if (cmd === "remote_read_image") {
+        return a.path === ".attachments/pic.png" ? Promise.resolve("data:ok") : Promise.reject(new Error("REMOTE:NotFound"));
+      }
+      return Promise.resolve(".attachments/pic.png");
+    });
+    const openSpy = vi.fn();
+    setImageOpenHandler(openSpy);
+    const img = new ImageWidget(`${baseDir}/pic.png`, "alt", "pic.png", baseDir, "vault").toDOM(remoteView) as HTMLImageElement;
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    img.dispatchEvent(new MouseEvent("mousedown", { clientX: 1, clientY: 1, bubbles: true }));
+    img.dispatchEvent(new MouseEvent("click", { clientX: 1, clientY: 1, bubbles: true }));
+    expect(openSpy).toHaveBeenCalledWith(".attachments/pic.png", remoteVault);
+  });
+
+  it("a remote image failure is no longer swallowed silently (console.warn fires)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    invokeSpy.mockImplementation((cmd: string) =>
+      cmd === "remote_resolve_image" ? Promise.resolve(null) : Promise.reject(new Error("REMOTE:NotFound")));
+    new ImageWidget(`${baseDir}/ghost.png`, "alt", "ghost.png", baseDir, "vault").toDOM(remoteView);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("onerror never invokes local resolve_image for a remote document", async () => {
+    invokeSpy.mockResolvedValue("data:image/png;base64,AAAA");
+    const img = new ImageWidget(`${baseDir}/cat.png`, "alt", "cat.png", baseDir).toDOM(remoteView) as HTMLImageElement;
+    await new Promise((r) => setTimeout(r, 0));
+    img.onerror?.(new Event("error"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(invokeSpy).not.toHaveBeenCalledWith("resolve_image", expect.anything());
   });
 });

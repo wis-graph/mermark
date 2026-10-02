@@ -68,7 +68,7 @@ import { openConflictModal } from "./document/conflict/conflict-modal";
 import { createConflictRecovery, sameConflictIdentity, type ConflictIdentity } from "./document/conflict/conflict-recovery";
 import { openRecoveryModal, type RecoveryModalHandle } from "./document/recovery-modal";
 import { createRecoveryState, type RecoveryActionId, type RecoveryActionOutcome, type RecoveryKind } from "./document/recovery-contract";
-import { openImageViewer } from "./chrome/viewer/image-viewer";
+import { openImageViewer, registerImageViewer } from "./chrome/viewer/image-viewer";
 import { isRemoteSrc } from "./markdown/image";
 import { setImageOpenHandler } from "./markdown/image-open";
 import { setDocumentOpenHandler } from "./markdown/document-open";
@@ -112,7 +112,7 @@ import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
 import { registerSqliteViewer } from "./chrome/viewer/sqlite-viewer";
 import { registerEpubViewer } from "./chrome/viewer/epub-viewer";
-import { registerViewer, viewerFor, viewerSupportsRemote, type Viewer } from "./chrome/viewer/registry";
+import { viewerFor, viewerSupportsRemote, type Viewer } from "./chrome/viewer/registry";
 import { createDontStackSlot } from "./chrome/viewer/dont-stack-slot";
 import { IMAGE_EXTENSIONS, extensionOf } from "./sidebar/explorer/file-icons";
 import { el } from "./chrome/dom";
@@ -547,7 +547,7 @@ async function boot() {
   // ONLY other consumer (open-gating moved to the registry). Must run before
   // createExplorerPanel below, so the explorer's first render already sees it
   // (design §4's registration-order guarantee).
-  registerViewer({ id: "image", extensions: [...IMAGE_EXTENSIONS], label: "이미지", open: openImageViewer });
+  registerImageViewer([...IMAGE_EXTENSIONS]);
   // The built-in HWP/HWPX viewer (_workspace/01_hwp_viewer.md §5) — built-in
   // rather than an extension because it needs 3 new Tauri commands, and R11's
   // extension contract is "frontend only, zero new IPC" (design §5).
@@ -705,18 +705,19 @@ async function boot() {
    *  `openWithViewer`'s breadcrumb rewrite, since there is no on-disk folder
    *  to point the breadcrumb at. A local absolute path reuses `openWithViewer`
    *  as-is (breadcrumb included), the same path the explorer already takes.
-   *  A local `source` belongs to the CURRENTLY MOUNTED document, not to
-   *  whatever the sidebar happens to have selected — `currentVault()` is
-   *  correct here (no ambiguity: this fires from a click inside the document
-   *  that IS the open one, so it can't be mid-vault-crossing-switch the way
-   *  a fresh open can). Command (void). */
-  function openImageFromEditor(source: string): void {
+   *  `docVault` is the CLICKED DOCUMENT's own vault (image-open.ts, from the
+   *  widget's documentVault facet) and wins over `currentVault()` (the sidebar
+   *  selection): a remote document's vault-relative path must reach
+   *  `openWithViewer` WITH its remote vault, or it would leak into a local
+   *  `open()` (L1 leak class). `currentVault()` is only the fallback for a
+   *  widget mounted with no vault context. Command (void). */
+  function openImageFromEditor(source: string, docVault: Vault | undefined): void {
     if (!isViewerEnabled(disabledViewersSetting.get(), "image")) return;
     if (isRemoteSrc(source)) {
       viewerSlot.open(() => openImageViewer(source));
       return;
     }
-    openWithViewer(source, currentVault() ?? workspaceStore.getGlobalVault());
+    openWithViewer(source, docVault ?? currentVault() ?? workspaceStore.getGlobalVault());
   }
   setImageOpenHandler(openImageFromEditor);
 

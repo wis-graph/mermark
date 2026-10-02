@@ -48,7 +48,64 @@ struct HwpSession {
 /// pattern: the viewer shell never stacks more than one open HWP document, so
 /// `hwp_open` always *replaces* whatever was here (dropping the old session).
 #[derive(Default)]
-pub struct HwpState(Mutex<Option<HwpSession>>);
+pub struct HwpState(Mutex<HwpSlot>);
+
+/// The slot behind `HwpState`: the live session plus a generation counter
+/// that makes "latest open/close wins" a rule instead of a race. A remote
+/// open can take seconds to fetch; without the counter, a slow open A could
+/// finish after the user opened B (or closed the viewer) and overwrite it.
+/// Generic over the session type so the rule is testable without a parser.
+pub(crate) struct HwpSlot<S = HwpSession> {
+    generation: u64,
+    session: Option<S>,
+}
+
+impl<S> Default for HwpSlot<S> {
+    fn default() -> Self {
+        Self { generation: 0, session: None }
+    }
+}
+
+impl<S> HwpSlot<S> {
+    /// Start an open: invalidates every earlier in-flight open/render and
+    /// returns the ticket this open must present to install its result.
+    fn begin_open(&mut self) -> u64 {
+        self.generation += 1;
+        self.generation
+    }
+
+    /// Install `session` only if `ticket` is still the latest; a superseded
+    /// open is discarded with `Err("superseded")`.
+    fn install_if_latest(&mut self, ticket: u64, session: S) -> Result<(), String> {
+        if ticket != self.generation {
+            return Err("superseded".to_string());
+        }
+        self.session = Some(session);
+        Ok(())
+    }
+
+    /// Close: drops the session and invalidates in-flight opens/renders.
+    fn close(&mut self) {
+        self.generation += 1;
+        self.session = None;
+    }
+
+    /// Take the session out for a render, with the ticket to put it back.
+    fn take(&mut self) -> Option<(u64, S)> {
+        let session = self.session.take()?;
+        Some((self.generation, session))
+    }
+
+    /// Put a rendered-from session back unless an open/close happened
+    /// meanwhile. Returns whether it was restored.
+    fn put_if_latest(&mut self, ticket: u64, session: S) -> bool {
+        if ticket != self.generation {
+            return false;
+        }
+        self.session = Some(session);
+        true
+    }
+}
 
 /// `hwp_open`'s success shape: just the page count the frontend needs to
 /// pre-create placeholder divs. Everything else is fetched lazily per page.
@@ -133,31 +190,37 @@ fn render_page_guarded(doc: &rhwp::wasm_api::HwpDocument, page: u32) -> Result<S
         .and_then(|r| r.map_err(|e| format!("페이지 렌더링 오류: {e}")))
 }
 
-fn take_session(state: &State<'_, HwpState>) -> Option<HwpSession> {
+fn take_session(state: &State<'_, HwpState>) -> Option<(u64, HwpSession)> {
     state.0.lock().unwrap().take()
 }
 
-fn put_session(state: &State<'_, HwpState>, session: HwpSession) {
-    *state.0.lock().unwrap() = Some(session);
+fn put_session_if_latest(state: &State<'_, HwpState>, ticket: u64, session: HwpSession) {
+    state.0.lock().unwrap().put_if_latest(ticket, session);
 }
 
-/// Open an HWP/HWPX file: validate it, parse it once (guarded + timed out),
-/// and store the parsed document as the single live session — replacing
-/// whatever session was open before. Returns just the page count; page
-/// content is fetched lazily via `hwp_render_page`.
-#[tauri::command]
-pub async fn hwp_open(path: String, state: State<'_, HwpState>) -> Result<HwpOpenInfo, String> {
-    let normalized = expand_home(&path);
-    if !is_hwp_ext(&normalized) {
-        return Err(format!("지원하지 않는 확장자입니다: {}", normalized.display()));
-    }
-    let normalized_str = normalized.to_string_lossy().into_owned();
-    if !normalized.is_file() {
-        return Err(format!("파일을 찾을 수 없습니다: {normalized_str}"));
-    }
-    assert_hwp_file_within_cap(&normalized_str)?;
-    let bytes = std::fs::read(&normalized_str).map_err(|e| format!("read {normalized_str}: {e}"))?;
+fn begin_open(state: &State<'_, HwpState>) -> u64 {
+    state.0.lock().unwrap().begin_open()
+}
 
+/// Lexical gate for a remote vault-relative path: extension only, no
+/// filesystem access (the bytes come from the host, never from this disk).
+fn check_remote_hwp_path(path: &str) -> Result<(), String> {
+    if is_hwp_ext(Path::new(path)) {
+        Ok(())
+    } else {
+        Err(format!("지원하지 않는 확장자입니다: {path}"))
+    }
+}
+
+/// Shared tail of `hwp_open`/`hwp_open_remote`: parse `bytes` (guarded +
+/// timed out), then install the session only if `ticket` is still the
+/// latest open. `label` is diagnostic only.
+async fn open_session_from_bytes(
+    bytes: Vec<u8>,
+    label: String,
+    ticket: u64,
+    state: &State<'_, HwpState>,
+) -> Result<HwpOpenInfo, String> {
     let parsed = tokio::time::timeout(
         PARSE_TIMEOUT,
         tauri::async_runtime::spawn_blocking(move || parse_hwp_guarded(bytes)),
@@ -176,11 +239,54 @@ pub async fn hwp_open(path: String, state: State<'_, HwpState>) -> Result<HwpOpe
     doc.set_fallback_font(platform_fallback_font());
     let pages = doc.page_count();
 
-    put_session(
-        &state,
-        HwpSession { path: normalized_str, doc },
-    );
+    state
+        .0
+        .lock()
+        .unwrap()
+        .install_if_latest(ticket, HwpSession { path: label, doc })?;
     Ok(HwpOpenInfo { pages })
+}
+
+/// Open an HWP/HWPX file: validate it, parse it once (guarded + timed out),
+/// and store the parsed document as the single live session — replacing
+/// whatever session was open before. Returns just the page count; page
+/// content is fetched lazily via `hwp_render_page`.
+#[tauri::command]
+pub async fn hwp_open(path: String, state: State<'_, HwpState>) -> Result<HwpOpenInfo, String> {
+    let normalized = expand_home(&path);
+    if !is_hwp_ext(&normalized) {
+        return Err(format!("지원하지 않는 확장자입니다: {}", normalized.display()));
+    }
+    let normalized_str = normalized.to_string_lossy().into_owned();
+    if !normalized.is_file() {
+        return Err(format!("파일을 찾을 수 없습니다: {normalized_str}"));
+    }
+    assert_hwp_file_within_cap(&normalized_str)?;
+    let ticket = begin_open(&state);
+    let bytes = std::fs::read(&normalized_str).map_err(|e| format!("read {normalized_str}: {e}"))?;
+
+    open_session_from_bytes(bytes, normalized_str, ticket, &state).await
+}
+
+/// Open an HWP/HWPX file from a remote vault. The bytes come from the one
+/// remote byte source (`fetch_vault_asset`: token lookup, tunnel guard,
+/// 20 MiB host ceiling), are parsed in memory, and no local file or temp
+/// file is involved. Errors from the fetch (`REMOTE:*`,
+/// `REMOTE_ASSET_TOO_LARGE:`) pass through verbatim; `"superseded"` means a
+/// newer open/close won while this one was fetching.
+#[tauri::command]
+pub async fn hwp_open_remote(
+    host: String,
+    vault: String,
+    path: String,
+    state: State<'_, HwpState>,
+    store: State<'_, crate::remote_token::ClientTokens>,
+    tunnels: State<'_, crate::remote_ssh::SshTunnels>,
+) -> Result<HwpOpenInfo, String> {
+    check_remote_hwp_path(&path)?;
+    let ticket = begin_open(&state);
+    let (_, bytes) = crate::remote_client::fetch_vault_asset(&host, &vault, &path, &store, &tunnels).await?;
+    open_session_from_bytes(bytes, format!("remote:{host}|{vault}|{path}"), ticket, &state).await
 }
 
 /// Render a single page of the currently open session to an SVG string.
@@ -190,12 +296,12 @@ pub async fn hwp_open(path: String, state: State<'_, HwpState>) -> Result<HwpOpe
 /// (further renders fail until the viewer is reopened — see `RENDER_TIMEOUT`).
 #[tauri::command]
 pub async fn hwp_render_page(page: u32, state: State<'_, HwpState>) -> Result<String, String> {
-    let session = take_session(&state)
+    let (ticket, session) = take_session(&state)
         .ok_or_else(|| "HWP 세션이 없습니다: 먼저 파일을 여세요".to_string())?;
 
     let pages = session.doc.page_count();
     if page >= pages {
-        put_session(&state, session);
+        put_session_if_latest(&state, ticket, session);
         return Err(format!("페이지 범위 초과: {page} (전체 {pages}페이지)"));
     }
 
@@ -210,11 +316,11 @@ pub async fn hwp_render_page(page: u32, state: State<'_, HwpState>) -> Result<St
 
     match rendered {
         Ok(Ok((session, Ok(svg)))) => {
-            put_session(&state, session);
+            put_session_if_latest(&state, ticket, session);
             Ok(svg)
         }
         Ok(Ok((session, Err(e)))) => {
-            put_session(&state, session);
+            put_session_if_latest(&state, ticket, session);
             Err(e)
         }
         Ok(Err(join_err)) => Err(format!("렌더링 작업 실패: {join_err}")),
@@ -230,7 +336,7 @@ pub async fn hwp_render_page(page: u32, state: State<'_, HwpState>) -> Result<St
 /// teardown contract.
 #[tauri::command]
 pub fn hwp_close(state: State<'_, HwpState>) {
-    *state.0.lock().unwrap() = None;
+    state.0.lock().unwrap().close();
 }
 
 #[cfg(test)]
@@ -333,5 +439,54 @@ mod tests {
             std::panic::catch_unwind(AssertUnwindSafe(|| -> () { panic!("boom") }))
                 .map_err(|_| "guarded".to_string());
         assert_eq!(result, Err("guarded".to_string()));
+    }
+
+    // --- generation guard (slot semantics, independent of rhwp) ---
+
+    #[test]
+    fn a_later_open_wins_over_an_earlier_slower_open() {
+        let mut slot: HwpSlot<&str> = HwpSlot::default();
+        let a = slot.begin_open();
+        let b = slot.begin_open();
+        assert!(slot.install_if_latest(b, "B").is_ok());
+        assert_eq!(slot.install_if_latest(a, "A").unwrap_err(), "superseded");
+        assert_eq!(slot.session, Some("B"));
+    }
+
+    #[test]
+    fn close_supersedes_an_in_flight_open() {
+        let mut slot: HwpSlot<&str> = HwpSlot::default();
+        let a = slot.begin_open();
+        slot.close();
+        assert_eq!(slot.install_if_latest(a, "A").unwrap_err(), "superseded");
+        assert_eq!(slot.session, None);
+    }
+
+    #[test]
+    fn render_put_back_is_dropped_after_a_newer_open() {
+        let mut slot: HwpSlot<&str> = HwpSlot::default();
+        let g = slot.begin_open();
+        slot.install_if_latest(g, "A").unwrap();
+        let (taken_gen, taken) = slot.take().unwrap();
+        let newer = slot.begin_open();
+        assert!(!slot.put_if_latest(taken_gen, taken), "stale put-back must be dropped");
+        slot.install_if_latest(newer, "B").unwrap();
+        assert_eq!(slot.session, Some("B"));
+    }
+
+    #[test]
+    fn render_put_back_restores_when_nothing_intervened() {
+        let mut slot: HwpSlot<&str> = HwpSlot::default();
+        let g = slot.begin_open();
+        slot.install_if_latest(g, "A").unwrap();
+        let (taken_gen, taken) = slot.take().unwrap();
+        assert!(slot.put_if_latest(taken_gen, taken));
+        assert_eq!(slot.session, Some("A"));
+    }
+
+    #[test]
+    fn remote_open_rejects_a_non_hwp_path_lexically() {
+        assert!(check_remote_hwp_path("notes/a.md").unwrap_err().contains("지원하지 않는 확장자입니다"));
+        assert!(check_remote_hwp_path("docs/a.HWPX").is_ok());
     }
 }

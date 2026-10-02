@@ -1,13 +1,13 @@
 import { EditorView, WidgetType } from "@codemirror/view";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { localFileHost } from "../document/file-host";
 import { recursiveImageSearchSetting } from "../settings/app";
 import { attachAltClickEdit } from "./wikilink";
 import { requestImageOpen } from "./image-open";
 import { boundedCache } from "./bounded-cache";
-import { imageSearchRoot, VAULT_IMAGE_SCAN_DEPTH } from "./image-search-root";
+import { imageSearchRoot, searchPlanFor } from "./image-search-root";
+import { loadRemoteEmbed } from "./remote-image";
 import { documentVault, isRemoteVault } from "../document/document-vault";
-import type { RemoteVault } from "../workspace/workspace-state";
 
 /** A literal target is a remote/data URL — it never gets the recursive-search
  *  fallback (the scan is a filesystem walk under baseDir; only local files can be
@@ -82,30 +82,6 @@ export function viewerSourceFor(
   return resolveImageSrc(rawSrc, baseDir);
 }
 
-/** How the recursive-search fallback should run for one onerror firing — the
- *  ONE place that decides base directory / depth / whether the setting gates
- *  it, so `onerror` doesn't carry the branch inline (mermark-frontend §7).
- *
- *  `"vault"` scope (a `![[name]]` embed — wikilink.ts) with a resolved owning
- *  vault root (image-search-root.ts's `owningVaultRoot`, NOT the active
- *  vault) searches the whole vault: depth `VAULT_IMAGE_SCAN_DEPTH`, ungated —
- *  the setting only ever governed the OLD document-folder convenience
- *  fallback, and vault-wide name search is now `![[…]]`'s CONTRACTED
- *  meaning, not an opt-in nicety a setting should be able to silently break
- *  (design §분기1's SSOT-gate judgment). Every other case — `"folder"` scope
- *  (a standard `![](name)`), or `"vault"` scope with no owning root (global
- *  vault, or a document outside every registered vault) — keeps the
- *  pre-existing document-folder behavior: depth 3, gated by the setting.
- *  Pure query. */
-function searchPlanFor(
-  scope: "vault" | "folder",
-  root: string | null,
-  baseDir: string,
-): { readonly baseDir: string; readonly maxDepth: number; readonly gated: boolean } {
-  if (scope === "vault" && root !== null) return { baseDir: root, maxDepth: VAULT_IMAGE_SCAN_DEPTH, gated: false };
-  return { baseDir, maxDepth: 3, gated: true };
-}
-
 /** Reports a `![[name]]` (vault-scope) embed's whole-vault search silently
  *  downgrading to the document-folder fallback because the document isn't
  *  inside any REGISTERED permanent vault (`imageSearchRoot()` returned
@@ -165,20 +141,6 @@ export function clearImageSearchCache(): void {
   searchCache.clear();
 }
 
-/** Caches `remote_read_image` results by (host, remote vault id, path) — the
- *  same "don't refetch on every reveal/unreveal cycle" concern boundedCache
- *  already solves for mermaid/math renders, just for a network round-trip
- *  instead of a CPU render. A remote vault's images never change out from
- *  under an open document in v1 (read-only, no push updates), so there is no
- *  invalidation rule to get wrong. */
-const remoteImageCache = boundedCache<string, Promise<string>>(64);
-const remoteImageCacheKey = (vault: RemoteVault, path: string): string => `${vault.host} ${vault.remoteVaultId} ${path}`;
-
-/** Test-only escape hatch, mirrors clearImageSearchCache above. */
-export function clearRemoteImageCache(): void {
-  remoteImageCache.clear();
-}
-
 export class ImageWidget extends WidgetType {
   /** `url` is the literal-resolved asset URL (the cheap, no-cost path that
    *  preserves current behavior). `rawSrc`/`baseDir` are kept so a load failure
@@ -221,19 +183,20 @@ export class ImageWidget extends WidgetType {
     // remote/data rawSrc (an external image pasted into a remote document)
     // needs none of this — resolveImageUrl already passed it through as-is.
     const vault = view.state.facet(documentVault);
+    // Recorded when a name search finds the file — so a click opens the viewer
+    // on the SAME file the widget ends up displaying, not the literal target
+    // that failed (viewerSourceFor's first priority). Shared by the local
+    // onerror fallback and the remote embed loader below.
+    let resolvedPath: string | null = null;
     if (isRemoteVault(vault) && this.rawSrc && !isRemoteSrc(this.rawSrc)) {
-      // `isRemoteVault` is a type guard — `vault` is narrowed to `RemoteVault`
-      // here, no cast needed.
-      const path = resolveImageSrc(this.rawSrc, this.baseDir);
-      const key = remoteImageCacheKey(vault, path);
-      let pending = remoteImageCache.get(key);
-      if (!pending) {
-        pending = invoke<string>("remote_read_image", { host: vault.host, vault: vault.remoteVaultId, path });
-        remoteImageCache.put(key, pending);
-      }
-      pending
-        .then((dataUrl) => { img.src = dataUrl; })
-        .catch(() => { remoteImageCache.delete(key); }); // best-effort: leave the broken-image state, allow a retry later
+      // `isRemoteVault` is a type guard — `vault` is narrowed to `RemoteVault`.
+      // loadRemoteEmbed: literal path first, then `remote_resolve_image` name
+      // search; a final failure is console.warn'd inside (never swallowed).
+      void loadRemoteEmbed(vault, this.rawSrc, this.baseDir, this.searchScope).then((hit) => {
+        if (!hit) return;
+        resolvedPath = hit.path;
+        img.src = hit.dataUrl;
+      });
     } else {
       img.src = this.url;
     }
@@ -245,10 +208,6 @@ export class ImageWidget extends WidgetType {
     // `triedFallback` is a domain rule, not an optimization: onerror fires again
     // when the resolved src ALSO fails, so without this guard the fallback loops.
     let triedFallback = false;
-    // Recorded when the fallback above actually finds the file — so a click
-    // opens the viewer on the SAME file the widget ends up displaying, not
-    // the literal target that failed (viewerSourceFor's first priority).
-    let resolvedPath: string | null = null;
     img.onerror = () => {
       if (triedFallback) return;
       triedFallback = true;
@@ -259,7 +218,7 @@ export class ImageWidget extends WidgetType {
       // to walk, so skip it rather than fire a pointless (and disk-scanning-looking)
       // IPC call while viewing remote content. The primary remote_read_image swap
       // above already covers the real "find this file" job for a remote vault.
-      if (isRemoteVault(vault)) return;
+      if (isRemoteVault(vault)) return; // loadRemoteEmbed above owns remote name search
       const root = imageSearchRoot();
       const plan = searchPlanFor(this.searchScope, root, this.baseDir);
       if (this.searchScope === "vault" && root === null) {
@@ -302,7 +261,7 @@ export class ImageWidget extends WidgetType {
       if (dragExceededClickSlop(downX, downY, e)) return; // drag release, not a click
       e.preventDefault();
       const source = viewerSourceFor(this.rawSrc, this.baseDir, resolvedPath);
-      if (source) requestImageOpen(source);
+      if (source) requestImageOpen(source, vault);
     });
     attachAltClickEdit(img, view);
 

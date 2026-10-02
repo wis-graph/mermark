@@ -74,8 +74,8 @@ export interface Viewer {
    *  hand-kept "which extensions are remote-capable" list to drift out of
    *  sync (the exact drift `remote-unsupported-message.ts`'s old
    *  `REMOTE_UNSUPPORTED_EXTENSIONS` Set was retired for — design §4.4). A
-   *  viewer that reads through local-disk-only Tauri commands (sqlite/hwp/
-   *  epub) simply never implements this. */
+   *  viewer that reads through local-disk-only Tauri commands (sqlite)
+   *  simply never implements this. */
   openRemote?(source: RemoteViewerSource): ViewerHandle;
 }
 

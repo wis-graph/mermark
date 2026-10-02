@@ -73,6 +73,14 @@ export function isRemoteAssetTooLarge(e: unknown): boolean {
  *  wording lives, so a caller never hand-writes its own paraphrase. */
 export const REMOTE_ASSET_TOO_LARGE_MESSAGE = "원격 파일이 너무 큽니다(20MB 초과). 호스트 기기에서 직접 열어 주세요.";
 
+/** User-facing text for any rejection from a remote byte fetch: a size refusal
+ *  becomes `REMOTE_ASSET_TOO_LARGE_MESSAGE`, everything else keeps its raw
+ *  text (Error.message, or the string Tauri rejects with). Pure query. */
+export function remoteFetchErrorMessage(e: unknown): string {
+  if (isRemoteAssetTooLarge(e)) return REMOTE_ASSET_TOO_LARGE_MESSAGE;
+  return e instanceof Error ? e.message : String(e);
+}
+
 /** Assert `invoke("remote_read_asset", …)`'s response is the `ArrayBuffer`
  *  Tauri's `tauri::ipc::Response` contract promises — CONFIRMED against this
  *  Tauri version's actual `scripts/ipc-protocol.js` (be-0180, §8-B: a Raw

@@ -6,7 +6,7 @@
 // resolves against. That's the exact bug this whole change reverts
 // (src/main.ts:703-706's old `setVaultImageContext` read `currentVault()`).
 import { describe, it, expect } from "vitest";
-import { owningVaultRoot } from "../src/markdown/image-search-root";
+import { owningVaultRoot, searchPlanFor, VAULT_IMAGE_SCAN_DEPTH } from "../src/markdown/image-search-root";
 
 describe("owningVaultRoot", () => {
   it("picks the deepest (most specific) owning root when vaults nest", () => {
@@ -63,5 +63,19 @@ describe("owningVaultRoot", () => {
     expect(owningVaultRoot(doc, rootsAsIfProjActive)).toBe("/proj/sub");
     expect(owningVaultRoot(doc, rootsAsIfSubActive)).toBe("/proj/sub");
     expect(owningVaultRoot(doc, rootsAsIfProjActive)).toBe(owningVaultRoot(doc, rootsAsIfSubActive));
+  });
+});
+
+describe("searchPlanFor (moved from image.ts, shared by local + remote)", () => {
+  it('vault scope with the remote wire root "" plans base "" depth 12 ungated', () => {
+    expect(searchPlanFor("vault", "", "notes")).toEqual({ baseDir: "", maxDepth: VAULT_IMAGE_SCAN_DEPTH, gated: false });
+  });
+
+  it("folder scope plans the document folder, depth 3, gated", () => {
+    expect(searchPlanFor("folder", "/v", "/v/notes")).toEqual({ baseDir: "/v/notes", maxDepth: 3, gated: true });
+  });
+
+  it("vault scope with null root falls back to the folder plan", () => {
+    expect(searchPlanFor("vault", null, "/d")).toEqual({ baseDir: "/d", maxDepth: 3, gated: true });
   });
 });

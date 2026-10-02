@@ -28,7 +28,8 @@
 // re-requested (`shouldRenderPage` below) — the observer can fire more than
 // once for the same element (scroll jitter, re-entering rootMargin).
 import { invoke } from "@tauri-apps/api/core";
-import { registerViewer, type Viewer, type ViewerHandle } from "./registry";
+import { registerViewer, type RemoteViewerSource, type Viewer, type ViewerHandle } from "./registry";
+import { remoteFetchErrorMessage } from "./file-bytes";
 import { openViewerShell } from "./shell";
 import { pagePlaceholder, svgToDataUrl, pageAspectFrom, isNearViewport } from "./hwp-pages";
 
@@ -186,16 +187,31 @@ function makeApplyAspectOnce(placeholders: readonly HTMLElement[]): (svg: string
   };
 }
 
-/** Open `absPath` in the HWP viewer: shell up immediately with a loading
- *  status, `hwp_open` in the background, then swap in the placeholder grid
- *  (or an error status) once the page count is known. Mirrors excel/html
- *  viewer's openXxxViewer shape (design §7 step 4/F-3). Command. */
+/** Open a LOCAL file in the HWP viewer (`hwp_open`). Command. */
 function openHwpViewer(absPath: string): ViewerHandle {
+  return openHwpViewerFrom(absPath, () => invoke<{ pages: number }>("hwp_open", { path: absPath }));
+}
+
+/** Open a REMOTE vault's HWP/HWPX (`hwp_open_remote`, bytes fetched and parsed
+ *  in Rust — no temp file, no local path). Rendering/close reuse the session
+ *  commands unchanged. Command. */
+function openHwpViewerRemote(source: RemoteViewerSource): ViewerHandle {
+  return openHwpViewerFrom(source.path, () =>
+    invoke<{ pages: number }>("hwp_open_remote", { host: source.host, vault: source.remoteVaultId, path: source.path }),
+  );
+}
+
+/** The viewer body shared by local and remote opens: shell up immediately
+ *  with a loading status, `openSession` in the background, then swap in the
+ *  placeholder grid (or an error status) once the page count is known.
+ *  `captionPath` only feeds the caption (basename) — no IO happens on it.
+ *  Mirrors excel/html viewer's openXxxViewer shape (design §7 step 4/F-3). */
+function openHwpViewerFrom(captionPath: string, openSession: () => Promise<{ pages: number }>): ViewerHandle {
   const content = document.createElement("div");
   content.className = "hwp-viewer-status";
   content.textContent = "문서 불러오는 중…";
 
-  const shell = openViewerShell({ absPath, paneClass: "hwp-viewer", content });
+  const shell = openViewerShell({ absPath: captionPath, paneClass: "hwp-viewer", content });
 
   // Shell-owned viewer-local zoom (design §B) — a plain closed-over variable,
   // not a second SSOT: `shell.zoom` is the single source, this just caches
@@ -234,7 +250,7 @@ function openHwpViewer(absPath: string): ViewerHandle {
   });
 
   (async () => {
-    const info = await invoke<{ pages: number }>("hwp_open", { path: absPath });
+    const info = await openSession();
 
     const pending = new Set<number>();
     const rendered = new Set<number>();
@@ -264,7 +280,7 @@ function openHwpViewer(absPath: string): ViewerHandle {
   })().catch((err: unknown) => {
     content.replaceChildren();
     content.className = "hwp-viewer-status";
-    content.textContent = `문서를 열 수 없습니다: ${err instanceof Error ? err.message : String(err)}`;
+    content.textContent = `문서를 열 수 없습니다: ${remoteFetchErrorMessage(err)}`;
   });
 
   // onClose forwards the shell teardown so the OPENER learns about closes
@@ -277,6 +293,7 @@ const HWP_VIEWER: Viewer = {
   extensions: ["hwp", "hwpx"],
   label: "HWP 문서",
   open: openHwpViewer,
+  openRemote: openHwpViewerRemote,
 };
 
 /** Register the HWP viewer. Called once from main.ts's boot registration

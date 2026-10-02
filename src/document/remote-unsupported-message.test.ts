@@ -15,13 +15,10 @@ describe("remoteUnsupportedMessage", () => {
     }
   });
 
-  it("epub은 EPUB을 명시한 문구를 낸다", () => {
-    expect(remoteUnsupportedMessage("book.epub")).toContain("EPUB");
-  });
-
-  it("hwp/hwpx는 한글 문서 문구를 낸다", () => {
-    expect(remoteUnsupportedMessage("doc.hwp")).toContain("한글");
-    expect(remoteUnsupportedMessage("doc.hwpx")).toContain("한글");
+  it("epub/hwp는 이제 원격을 지원하므로 전용 문구가 없다 — 기본 문구로 fail-closed", () => {
+    for (const f of ["book.epub", "doc.hwp", "doc.hwpx"]) {
+      expect(remoteUnsupportedMessage(f)).toBe("원격 볼트에서는 아직 지원하지 않습니다");
+    }
   });
 
   it("그 외(미래의 새 뷰어 포함)는 기본 문구로 fail-closed된다", () => {

@@ -492,8 +492,9 @@ fn armed_vault(state: &HostState, id: &str) -> Result<ArmedVault, StatusCode> {
 /// The full containment gate for one request: length-bounds `rel` (Ruling
 /// 12's third gate — an absurd path must never reach a syscall), then the
 /// lexical gate (`resolve_within`), then the canonical gate
-/// (`canonicalize_within`), then the hidden/artifact gate
-/// (`has_a_hidden_or_artifact_component`) — checked against the *canonical*
+/// (`canonicalize_within`), then the withheld gate (hidden entries except the
+/// `.attachments` folder, plus mermark artifacts)
+/// (`has_a_peer_withheld_component`) — checked against the *canonical*
 /// resolved path's vault-relative form, not the raw `rel` a client sent, so a
 /// non-hidden-looking symlink that resolves inside a hidden directory (or a
 /// hidden artifact) is caught the same as a request that names the hidden
@@ -540,7 +541,7 @@ fn safe_path(armed: &ArmedVault, rel: &str) -> Result<std::path::PathBuf, Status
         let candidate = resolve_within(armed, rel).ok_or(StatusCode::NOT_FOUND)?;
         canonicalize_within(armed, &candidate).ok_or(StatusCode::NOT_FOUND)?
     };
-    if has_a_hidden_or_artifact_component(&vault_relative(&root, &resolved.to_string_lossy())) {
+    if has_a_peer_withheld_component(&vault_relative(&root, &resolved.to_string_lossy())) {
         return Err(StatusCode::NOT_FOUND);
     }
     Ok(resolved)
@@ -824,22 +825,32 @@ fn asset_content_type(path: &std::path::Path) -> &'static str {
 /// defense, sized up because photos routinely run larger than a zip entry.
 const MAX_ASSET_BYTES: u64 = 20 * 1024 * 1024;
 
+/// Whether ONE path component is withheld from peers: any hidden (dot)
+/// entry EXCEPT the attachments folder, or any mermark scratch artifact.
+/// The attachments folder is the single dot-folder peers may address —
+/// `/resolve_image` already hands out `.attachments/<name>` paths, and the
+/// local resolver (`fs::image_resolve`) never excludes it. Exact match only
+/// (`is_attachments_dir_name`); every other component of the path is still
+/// judged on its own, so `.attachments/.DS_Store` stays withheld.
+fn is_withheld_from_peers(component: &str) -> bool {
+    (crate::fs::listing::is_hidden_entry(component) && !crate::attachments::is_attachments_dir_name(component))
+        || crate::fs::listing::is_mermark_artifact(component)
+}
+
 /// Whether any component of a vault-relative path (not just the final file
-/// name) is a hidden dotfile/dir or a mermark scratch artifact. The final
+/// name) is withheld from peers (`is_withheld_from_peers`). The final
 /// component alone is not enough: `.git/config`'s last component is
 /// `"config"` (not hidden), but the file is inside a hidden `.git`
 /// directory and must be excluded just the same — `.git/config` routinely
 /// carries credential-bearing remote URLs, which must never leave the host.
 /// Reuses `fs::listing::is_hidden_entry`/`is_mermark_artifact` (the SSOT
-/// `list_dir` itself applies) rather than re-deriving the rule, just applied
-/// to every path segment instead of one. This is `safe_path`'s hidden/
-/// artifact gate — see its doc comment for why every file route goes
-/// through it there rather than each route re-checking on its own.
-fn has_a_hidden_or_artifact_component(vault_relative_path: &str) -> bool {
-    Path::new(vault_relative_path).components().any(|c| {
-        let name = c.as_os_str().to_string_lossy();
-        crate::fs::listing::is_hidden_entry(&name) || crate::fs::listing::is_mermark_artifact(&name)
-    })
+/// `list_dir` itself applies), applied to every path segment. This is
+/// `safe_path`'s withheld gate — see its doc comment for why every file
+/// route goes through it there rather than each route re-checking.
+fn has_a_peer_withheld_component(vault_relative_path: &str) -> bool {
+    Path::new(vault_relative_path)
+        .components()
+        .any(|c| is_withheld_from_peers(&c.as_os_str().to_string_lossy()))
 }
 
 /// Serves the raw bytes of a file inside an armed vault (images, mainly) —
@@ -1990,6 +2001,179 @@ mod tests {
         std::fs::write(dir.join("at_cap.md"), &exactly_at_cap).unwrap();
         let app = router(state);
         let res = call_get(&app, "/read_file?vault=rv1&path=at_cap.md").await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    // --- `.attachments` exception (the one dot-folder peers may read) ----
+
+    /// Plants `rel` (vault-relative, parents created) with `bytes` under `dir`.
+    fn plant(dir: &std::path::Path, rel: &str, bytes: &[u8]) {
+        let p = dir.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, bytes).unwrap();
+    }
+
+    #[tokio::test]
+    async fn read_asset_serves_a_file_in_the_attachments_dir() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".attachments/pic.png", b"\x89PNG\r\n\x1a\n");
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=.attachments/pic.png").await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&bytes[..], b"\x89PNG\r\n\x1a\n");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn read_file_serves_a_file_in_the_attachments_dir() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".attachments/note.md", b"attached");
+        let app = router(state);
+        let res = call_get(&app, "/read_file?vault=rv1&path=.attachments/note.md").await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// The 00_request measurement, as a regression guard: `/resolve_image`
+    /// hands out `.attachments/pic.png` and the very next `/read_asset` for
+    /// that path must succeed (it used to 404).
+    #[tokio::test]
+    async fn resolve_image_hit_in_attachments_is_readable_end_to_end() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".attachments/pic.png", b"pixels");
+        let app = router(state);
+        let res = call_get(&app, "/resolve_image?vault=rv1&path=&name=pic.png&max_depth=12").await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        let hit: Option<String> = json_body(res).await;
+        let hit = hit.expect("name search must find the attachment");
+        assert_eq!(hit, ".attachments/pic.png");
+        let res = call_get(&app, &format!("/read_asset?vault=rv1&path={hit}")).await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn nested_vault_attachments_dir_is_served() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, "sub/.attachments/pic.png", b"pixels");
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=sub/.attachments/pic.png").await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn attachments_exception_does_not_unhide_inner_dot_components() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".attachments/.DS_Store", b"x");
+        plant(&dir, ".attachments/x/.secret.png", b"x");
+        let app = router(state);
+        for p in [".attachments/.DS_Store", ".attachments/x/.secret.png"] {
+            let res = call_get(&app, &format!("/read_asset?vault=rv1&path={p}")).await;
+            assert_eq!(res.status(), http::StatusCode::NOT_FOUND, "{p}");
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn attachments_exception_does_not_unhide_mermark_artifacts() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".attachments/pic.png.mermark-tmp.3", b"x");
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=.attachments/pic.png.mermark-tmp.3").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn attachments_exception_is_exact_match_only() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".attachmentsX/pic.png", b"x");
+        plant(&dir, ".attachments-old/pic.png", b"x");
+        let app = router(state);
+        for p in [".attachmentsX/pic.png", ".attachments-old/pic.png"] {
+            let res = call_get(&app, &format!("/read_asset?vault=rv1&path={p}")).await;
+            assert_eq!(res.status(), http::StatusCode::NOT_FOUND, "{p}");
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn git_dir_stays_withheld_even_with_an_attachments_child() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".git/.attachments/x", b"x");
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=.git/.attachments/x").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Design 6.4: the attachments folder is reachable by explicit address
+    /// but is NOT advertised in the vault-root listing.
+    #[tokio::test]
+    async fn list_dir_root_still_hides_the_attachments_dir() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".attachments/pic.png", b"x");
+        let app = router(state);
+        let res = call_get(&app, "/list_dir?vault=rv1&path=&show_hidden=true").await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        let entries: Vec<crate::fs::listing::DirEntry> = json_body(res).await;
+        assert!(!entries.iter().any(|e| e.name == ".attachments"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    // Symlink bypasses: the gate judges the canonical target, not the
+    // request string, so the exception can't be used as a stepping stone.
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_inside_attachments_pointing_at_git_config_is_refused() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".git/config", b"[remote]");
+        std::fs::create_dir_all(dir.join(".attachments")).unwrap();
+        std::os::unix::fs::symlink(dir.join(".git/config"), dir.join(".attachments/evil")).unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=.attachments/evil").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn attachments_dir_symlinked_to_a_hidden_dir_is_refused() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".obsidian/x.json", b"{}");
+        std::os::unix::fs::symlink(dir.join(".obsidian"), dir.join(".attachments")).unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=.attachments/x.json").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_inside_attachments_pointing_outside_the_vault_is_refused() {
+        let (state, tmp) = state_with_escape_target(("note.md", "x"), ("outside.png", "SECRET"));
+        let root = tmp.join("vault");
+        std::fs::create_dir_all(root.join(".attachments")).unwrap();
+        std::os::unix::fs::symlink(tmp.join("outside.png"), root.join(".attachments/out.png")).unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=.attachments/out.png").await;
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(tmp).ok();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn non_hidden_symlink_into_attachments_is_served() {
+        let (state, dir) = state_with_file("note.md", "x");
+        plant(&dir, ".attachments/real.png", b"pixels");
+        std::fs::create_dir_all(dir.join("notes")).unwrap();
+        std::os::unix::fs::symlink(dir.join(".attachments/real.png"), dir.join("notes/pic.png")).unwrap();
+        let app = router(state);
+        let res = call_get(&app, "/read_asset?vault=rv1&path=notes/pic.png").await;
         assert_eq!(res.status(), http::StatusCode::OK);
         std::fs::remove_dir_all(dir).ok();
     }

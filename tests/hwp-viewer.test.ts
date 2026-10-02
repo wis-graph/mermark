@@ -15,6 +15,11 @@ const invokeMock = vi.fn((cmd: string, args?: Record<string, unknown>) => {
     if (path.endsWith("corrupt.hwp")) return Promise.reject(new Error("HWP 파일 파싱 오류: mock corrupt fixture"));
     return Promise.resolve({ pages: 3 });
   }
+  if (cmd === "hwp_open_remote") {
+    const path = String(args?.path ?? "");
+    if (path.endsWith("big.hwp")) return Promise.reject("REMOTE_ASSET_TOO_LARGE: big.hwp");
+    return Promise.resolve({ pages: 3 });
+  }
   if (cmd === "hwp_render_page") {
     const page = Number(args?.page ?? 0);
     // Page 1 carries the SAME adversarial payload the real browser mock's
@@ -40,6 +45,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { registerHwpViewer } from "../src/chrome/viewer/hwp-viewer";
 import { viewerFor } from "../src/chrome/viewer/registry";
 import { fontScaleSetting } from "../src/settings/app";
+import { REMOTE_ASSET_TOO_LARGE_MESSAGE } from "../src/chrome/viewer/file-bytes";
 
 // Registered ONCE for the whole file (registerViewer throws on a duplicate
 // id) — every test looks the already-registered viewer up via viewerFor,
@@ -115,6 +121,45 @@ describe("openHwpViewer: placeholder count + img-only security contract (T1/T3 �
     expect((window as unknown as Record<string, unknown>).__HWP_TEST_PWNED_ONLOAD).toBeUndefined();
 
     handle.close();
+  });
+});
+
+describe("openHwpViewer: openRemote (원격 볼트 HWP)", () => {
+  const REMOTE = { host: "mini", remoteVaultId: "rv1", path: "docs/sample.hwp" };
+
+  it("registerHwpViewer declares openRemote", () => {
+    expect(viewerFor("hwp")?.openRemote).toBeTypeOf("function");
+  });
+
+  it("opens via hwp_open_remote {host, vault, path} and never calls hwp_open", async () => {
+    const handle = viewerFor("hwp")!.openRemote!(REMOTE);
+    await flush();
+    expect(invokeMock).toHaveBeenCalledWith("hwp_open_remote", { host: "mini", vault: "rv1", path: "docs/sample.hwp" });
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain("hwp_open");
+    handle.close();
+  });
+
+  it("renders pages through the same hwp_render_page chain (placeholder count == pages)", async () => {
+    const handle = viewerFor("hwp")!.openRemote!(REMOTE);
+    await flush();
+    expect(document.querySelectorAll(".hwp-viewer-page")).toHaveLength(3);
+    await flush();
+    expect(document.querySelectorAll("img.hwp-viewer-page-img")).toHaveLength(3);
+    handle.close();
+  });
+
+  it("a REMOTE_ASSET_TOO_LARGE rejection shows REMOTE_ASSET_TOO_LARGE_MESSAGE in the status line", async () => {
+    const handle = viewerFor("hwp")!.openRemote!({ ...REMOTE, path: "docs/big.hwp" });
+    await flush();
+    expect(document.querySelector(".hwp-viewer-status")?.textContent).toContain(REMOTE_ASSET_TOO_LARGE_MESSAGE);
+    handle.close();
+  });
+
+  it("close after a remote open still invokes hwp_close", async () => {
+    const handle = viewerFor("hwp")!.openRemote!(REMOTE);
+    await flush();
+    handle.close();
+    expect(invokeMock).toHaveBeenCalledWith("hwp_close", undefined);
   });
 });
 

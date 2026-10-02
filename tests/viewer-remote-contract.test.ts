@@ -26,6 +26,8 @@ import { CODE_VIEWER_EXTENSIONS } from "../src/extensions/code-viewer/language-m
 import { registerSqliteViewer } from "../src/chrome/viewer/sqlite-viewer";
 import { registerHwpViewer } from "../src/chrome/viewer/hwp-viewer";
 import { registerEpubViewer } from "../src/chrome/viewer/epub-viewer";
+import { registerImageViewer } from "../src/chrome/viewer/image-viewer";
+import { IMAGE_EXTENSIONS } from "../src/sidebar/explorer/file-icons";
 import { listViewers, viewerFor, viewerSupportsRemote } from "../src/chrome/viewer/registry";
 import { readRemoteFileBytes, isRemoteAssetTooLarge } from "../src/chrome/viewer/file-bytes";
 import { htmlScriptsSetting } from "../src/settings/app";
@@ -38,6 +40,7 @@ registerCodeViewer();
 registerSqliteViewer();
 registerHwpViewer();
 registerEpubViewer({ setTocOverride: () => {} });
+registerImageViewer([...IMAGE_EXTENSIONS]);
 
 let editorHost: HTMLElement;
 
@@ -72,12 +75,12 @@ describe("remote support is declared by the viewer, not a hand-kept extension li
       .flatMap((v) => v.extensions)
       .sort();
     expect(remoteCapable).toEqual(
-      ["csv", "docx", "htm", "html", "pdf", "xls", "xlsx", ...CODE_VIEWER_EXTENSIONS].sort(),
+      ["csv", "docx", "epub", "htm", "html", "hwp", "hwpx", "pdf", "xls", "xlsx", ...IMAGE_EXTENSIONS, ...CODE_VIEWER_EXTENSIONS].sort(),
     );
   });
 
   it("로컬 디스크를 직접 읽는 뷰어는 openRemote를 선언하지 않는다", () => {
-    for (const id of ["sqlite", "hwp", "epub"]) {
+    for (const id of ["sqlite"]) {
       const v = listViewers().find((x) => x.id === id);
       expect(v, `viewer "${id}" not registered`).toBeTruthy();
       expect(viewerSupportsRemote(v!)).toBe(false);

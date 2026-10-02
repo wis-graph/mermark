@@ -15,8 +15,10 @@
 import { attachPanZoom } from "../../pan-zoom";
 import { resolveImageUrl, isRemoteSrc } from "../../markdown/image";
 import { basename, dirOf } from "../../document/path";
+import { readRemoteImage } from "../../markdown/remote-image";
 import { openViewerShell } from "./shell";
-import type { ViewerHandle } from "./registry";
+import { isRemoteAssetTooLarge, REMOTE_ASSET_TOO_LARGE_MESSAGE } from "./file-bytes";
+import { registerViewer, type RemoteViewerSource, type ViewerHandle } from "./registry";
 
 export type ImageViewerHandle = ViewerHandle;
 
@@ -178,14 +180,44 @@ function writeIndicatorGeometry(
   bar.style[startProp] = `${geo.startRatio * 100}%`;
 }
 
+/** The caption for a remote image whose fetch rejected — a size refusal reads
+ *  as such (not as a broken connection); everything else keeps the generic
+ *  failure caption. Pure query. */
+export function remoteImageFailureCaption(err: unknown): string {
+  return isRemoteAssetTooLarge(err) ? REMOTE_ASSET_TOO_LARGE_MESSAGE : "이미지를 불러올 수 없습니다";
+}
+
 /** Open the lightbox for `source` — a local absolute filesystem path (the
- *  explorer's call shape, unchanged) OR a remote/data URL (an editor image
- *  click on `![](https://…)`, added by _workspace/01_architect_design_imgclick.md).
- *  `imageDisplayName`/`imageViewerUrl` own the branch between the two; this
- *  function stays param-name-only "renamed" from the local-only `absPath` it
- *  used to take. Returns a handle whose close() restores the page. */
+ *  explorer's call shape) OR a remote/data URL (an editor image click on
+ *  `![](https://…)`). `imageDisplayName`/`imageViewerUrl` own the branch
+ *  between the two. Returns a handle whose close() restores the page. */
 export function openImageViewer(source: string): ImageViewerHandle {
-  const name = imageDisplayName(source);
+  return openImageViewerFrom(imageDisplayName(source), () => imageViewerUrl(source));
+}
+
+/** Open the viewer on a REMOTE vault's image (`Viewer.openRemote`). The bytes
+ *  come over `remote_read_image` (a data: URL; cache shared with the inline
+ *  widget) — never through the asset protocol, so a vault-relative path can't
+ *  leak into a local open. */
+export function openImageViewerRemote(source: RemoteViewerSource): ImageViewerHandle {
+  return openImageViewerFrom(basename(source.path), () => readRemoteImage(source, source.path));
+}
+
+/** Register the built-in image viewer. `extensions` comes from the caller
+ *  (main.ts passes IMAGE_EXTENSIONS) because chrome/ must not import sidebar/. */
+export function registerImageViewer(extensions: readonly string[]): void {
+  registerViewer({
+    id: "image",
+    extensions: [...extensions],
+    label: "이미지",
+    open: openImageViewer,
+    openRemote: openImageViewerRemote,
+  });
+}
+
+/** The viewer body shared by local and remote opens: `loadSrc` yields the
+ *  `<img>` src synchronously (local) or asynchronously (remote). */
+function openImageViewerFrom(name: string, loadSrc: () => string | Promise<string>): ImageViewerHandle {
 
   // The checkerboard stage doubles as the pan/zoom host (attachPanZoom reuse —
   // mermaid-widget's handler only ever touches host/element geometry + CSS
@@ -272,9 +304,23 @@ export function openImageViewer(source: string): ImageViewerHandle {
     // The viewer stays open on a load failure — closing is the user's call,
     // not ours (same "best-effort, never auto-dismiss" stance as ImageWidget's
     // recursive-search fallback).
-    shell.caption.textContent = "이미지를 불러올 수 없습니다";
+    shell.caption.textContent = remoteImageFailureCaption(undefined);
   };
-  img.src = imageViewerUrl(source);
+  // A late response must not touch a viewer that was already closed.
+  let closed = false;
+  shell.onTeardown(() => { closed = true; });
+  const src = loadSrc();
+  if (typeof src === "string") {
+    img.src = src;
+  } else {
+    src.then(
+      (url) => { if (!closed) img.src = url; },
+      (err: unknown) => {
+        console.warn(`[mermark] image viewer: could not load "${name}" — ${err instanceof Error ? err.message : String(err)}`);
+        if (!closed) shell.caption.textContent = remoteImageFailureCaption(err);
+      },
+    );
+  }
 
   // `force: true` for the same reason the mermaid fullscreen lightbox passes
   // it: `panZoomSetting` is a MERMAID setting (설정 › Mermaid › 팬/줌 — it

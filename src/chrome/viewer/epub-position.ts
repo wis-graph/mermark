@@ -48,16 +48,27 @@ export interface EpubChapterGeom {
   readonly anchors: Readonly<Record<string, number>>;
 }
 
-/** The single place the "identifier vs. path" key rule lives (design §2) —
- *  a non-blank `identifier` (OPF `dc:identifier`, already trimmed) wins so a
- *  book's position survives a file move/rename and is shared across copies;
- *  otherwise the absolute path is the fallback key. The `"id:"`/`"path:"`
- *  prefixes keep the two namespaces from ever colliding (an identifier that
- *  happens to equal some other book's path string, however unlikely, cannot
- *  alias). Pure query. */
-export function epubPositionKey(identifier: string | null, absPath: string): string {
+/** WHERE a book lives — a discriminated union so a remote vault's
+ *  vault-relative path can never be mistaken for a local absolute path (the
+ *  L1/L2/L3 leak class, registry.ts's `RemoteViewerSource`). */
+export type EpubLocator =
+  | { readonly kind: "local"; readonly absPath: string }
+  | { readonly kind: "remote"; readonly host: string; readonly remoteVaultId: string; readonly path: string };
+
+/** The single place the "identifier vs. location" key rule lives (design §2,
+ *  §4.3) — a non-blank `identifier` (OPF `dc:identifier`, already trimmed)
+ *  wins so a book's position survives a file move/rename, is shared across
+ *  copies (and between a local and a remote copy of the same book — intended);
+ *  otherwise the location is the fallback key: `path:<absPath>` for local
+ *  (byte-identical to the pre-remote stored keys) and
+ *  `remote:<host>|<remoteVaultId>|<path>` for remote. The prefixes keep the
+ *  namespaces from ever colliding. Pure query. */
+export function epubPositionKey(identifier: string | null, locator: EpubLocator): string {
   const trimmed = identifier?.trim();
-  return trimmed ? `id:${trimmed}` : `path:${absPath}`;
+  if (trimmed) return `id:${trimmed}`;
+  return locator.kind === "local"
+    ? `path:${locator.absPath}`
+    : `remote:${locator.host}|${locator.remoteVaultId}|${locator.path}`;
 }
 
 /** The `id` (from `anchors`) whose UNSCALED offset is the LARGEST one at or

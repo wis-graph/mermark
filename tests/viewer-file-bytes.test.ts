@@ -40,3 +40,17 @@ describe("readLocalFileBytes (R11 §1)", () => {
     await expect(readLocalFileBytes("/tmp/x.xlsx")).rejects.toThrow(/Failed to fetch/);
   });
 });
+
+describe("remoteFetchErrorMessage", () => {
+  it("turns a size refusal into REMOTE_ASSET_TOO_LARGE_MESSAGE (Error or bare string)", async () => {
+    const { remoteFetchErrorMessage, REMOTE_ASSET_TOO_LARGE_MESSAGE } = await import("../src/chrome/viewer/file-bytes");
+    expect(remoteFetchErrorMessage("REMOTE_ASSET_TOO_LARGE: a.hwp")).toBe(REMOTE_ASSET_TOO_LARGE_MESSAGE);
+    expect(remoteFetchErrorMessage(new Error("REMOTE_ASSET_TOO_LARGE: a.hwp"))).toBe(REMOTE_ASSET_TOO_LARGE_MESSAGE);
+  });
+
+  it("keeps any other rejection's raw text", async () => {
+    const { remoteFetchErrorMessage } = await import("../src/chrome/viewer/file-bytes");
+    expect(remoteFetchErrorMessage(new Error("REMOTE:Unreachable"))).toBe("REMOTE:Unreachable");
+    expect(remoteFetchErrorMessage("boom")).toBe("boom");
+  });
+});

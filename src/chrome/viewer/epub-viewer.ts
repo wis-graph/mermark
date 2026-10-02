@@ -57,8 +57,11 @@ import {
   upsertPosition,
   shouldRestorePosition,
   type EpubChapterGeom,
+  type EpubLocator,
   type EpubReadingPosition,
 } from "./epub-position";
+import { isRemoteAssetTooLarge, REMOTE_ASSET_TOO_LARGE_MESSAGE } from "./file-bytes";
+import { basename } from "../../document/path";
 import { epubPositionsSetting } from "../../settings/app";
 
 const EPUB_SCHEME = "epub";
@@ -230,8 +233,25 @@ function observeChapters(
  *  `"arm {path}: {e}"` string from the backend and is shown as-is. Pure
  *  query. */
 function armErrorMessage(err: unknown): string {
+  if (isRemoteAssetTooLarge(err)) return REMOTE_ASSET_TOO_LARGE_MESSAGE;
   const raw = err instanceof Error ? err.message : String(err);
   return raw === "not-zip" ? epubOpenErrorMessage("not-zip") : raw;
+}
+
+/** Arm the book for the `epub://` scheme and return its token. Local and
+ *  remote use DIFFERENT commands (never one command with a polymorphic path —
+ *  design §2 rule 2); everything after the token is source-agnostic. Command
+ *  (async IO). */
+function armEpub(locator: EpubLocator): Promise<string> {
+  return locator.kind === "local"
+    ? invoke<string>("arm_epub_view", { path: locator.absPath })
+    : invoke<string>("arm_remote_epub_view", { host: locator.host, vault: locator.remoteVaultId, path: locator.path });
+}
+
+/** The path only the shell's caption reads (basename) — no IO happens on it,
+ *  so a remote vault-relative path is safe here. Pure query. */
+function captionPathOf(locator: EpubLocator): string {
+  return locator.kind === "local" ? locator.absPath : locator.path;
 }
 
 /** Read `META-INF/encryption.xml` and decide whether this book is DRM-gated
@@ -284,16 +304,16 @@ function isEpubSizeMessage(data: unknown): data is EpubSizeMessage {
   );
 }
 
-/** Open `absPath` in the EPUB viewer: shell up immediately with a loading
+/** Open `locator`'s book in the EPUB viewer: shell up immediately with a loading
  *  status, then arm → parse container/OPF → DRM gate → toc → chapter
  *  placeholders → lazy observe, all in the background. Mirrors hwp-viewer's
  *  openHwpViewer shape (plan Stage F3). Command. */
-function openEpubViewer(absPath: string, deps: EpubViewerDeps): ViewerHandle {
+function openEpubViewerAt(locator: EpubLocator, deps: EpubViewerDeps): ViewerHandle {
   const content = document.createElement("div");
   content.className = "epub-viewer-status";
   content.textContent = "책을 불러오는 중…";
 
-  const shell = openViewerShell({ absPath, paneClass: "epub-viewer", content });
+  const shell = openViewerShell({ caption: basename(captionPathOf(locator)), paneClass: "epub-viewer", content });
 
   // Set the instant close() runs, even mid-flight — the async work below
   // checks this before ever touching `content`/dispatching a late toc again
@@ -409,7 +429,7 @@ function openEpubViewer(absPath: string, deps: EpubViewerDeps): ViewerHandle {
   (async () => {
     let token: string;
     try {
-      token = await invoke<string>("arm_epub_view", { path: absPath });
+      token = await armEpub(locator);
     } catch (err) {
       throw new Error(armErrorMessage(err));
     }
@@ -458,7 +478,7 @@ function openEpubViewer(absPath: string, deps: EpubViewerDeps): ViewerHandle {
     // exist, regardless of whether there's a saved position to restore),
     // then the restore attempt itself (design §5 — a no-op when there's
     // nothing to restore or `shouldRestorePosition` says not to).
-    key = epubPositionKey(pkg.identifier, absPath);
+    key = epubPositionKey(pkg.identifier, locator);
     content.addEventListener("scroll", scheduleSave, { passive: true });
 
     const savedPos = epubPositionsSetting.get()[key] ?? null;
@@ -573,7 +593,9 @@ export function registerEpubViewer(deps: EpubViewerDeps): void {
     id: "epub",
     extensions: [...EPUB_VIEWER_EXTENSIONS],
     label: "EPUB",
-    open: (absPath) => openEpubViewer(absPath, deps),
+    open: (absPath) => openEpubViewerAt({ kind: "local", absPath }, deps),
+    openRemote: (s) =>
+      openEpubViewerAt({ kind: "remote", host: s.host, remoteVaultId: s.remoteVaultId, path: s.path }, deps),
   };
   registerViewer(viewer);
 }

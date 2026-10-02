@@ -6,25 +6,44 @@ import {
   upsertPosition,
   shouldRestorePosition,
   type EpubChapterGeom,
+  type EpubLocator,
   type EpubReadingPosition,
 } from "../src/chrome/viewer/epub-position";
 
 // Stage P1 (_workspace/01_architect_plan_epub_position.md) — pure geometry/
 // key/LRU arithmetic, no DOM/storage. Fixtures are inline objects.
 
+const local = (absPath: string): EpubLocator => ({ kind: "local", absPath });
+const remote = (path: string): EpubLocator => ({ kind: "remote", host: "mini", remoteVaultId: "rv1", path });
+
 describe("epubPositionKey", () => {
+  it('keeps the exact legacy "path:" key for a local locator', () => {
+    expect(epubPositionKey(null, local("/vault/book.epub"))).toBe("path:/vault/book.epub");
+  });
+
+  it('namespaces a remote locator under "remote:" and never "path:"', () => {
+    const key = epubPositionKey(null, remote("books/a.epub"));
+    expect(key).toBe("remote:mini|rv1|books/a.epub");
+    expect(key.startsWith("path:")).toBe(false);
+  });
+
+  it("identifier wins for both local and remote locators (same book shares its position)", () => {
+    expect(epubPositionKey("urn:x", remote("a.epub"))).toBe("id:urn:x");
+    expect(epubPositionKey("urn:x", local("/a.epub"))).toBe(epubPositionKey("urn:x", remote("b.epub")));
+  });
+
   it("prefers a non-blank identifier, prefixed 'id:'", () => {
-    expect(epubPositionKey("urn:isbn:0-306-40615-2", "/vault/book.epub")).toBe("id:urn:isbn:0-306-40615-2");
+    expect(epubPositionKey("urn:isbn:0-306-40615-2", local("/vault/book.epub"))).toBe("id:urn:isbn:0-306-40615-2");
   });
 
   it("falls back to the absolute path, prefixed 'path:', when identifier is null or blank", () => {
-    expect(epubPositionKey(null, "/vault/book.epub")).toBe("path:/vault/book.epub");
-    expect(epubPositionKey("   ", "/vault/book.epub")).toBe("path:/vault/book.epub");
+    expect(epubPositionKey(null, local("/vault/book.epub"))).toBe("path:/vault/book.epub");
+    expect(epubPositionKey("   ", local("/vault/book.epub"))).toBe("path:/vault/book.epub");
   });
 
   it("the same identifier at a different path yields the SAME key (copy-sharing rule)", () => {
-    const a = epubPositionKey("urn:isbn:xyz", "/vault/copy-a.epub");
-    const b = epubPositionKey("urn:isbn:xyz", "/other/copy-b.epub");
+    const a = epubPositionKey("urn:isbn:xyz", local("/vault/copy-a.epub"));
+    const b = epubPositionKey("urn:isbn:xyz", local("/other/copy-b.epub"));
     expect(a).toBe(b);
   });
 });

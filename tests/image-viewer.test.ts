@@ -3,19 +3,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Stub the Tauri core the same way tests/image.test.ts does: convertFileSrc
 // is a pure prefix so the asset URL is observable in the DOM; invoke is a spy
 // (unused here — the viewer never calls resolve_image, only resolveImageUrl).
+const invokeSpy = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (p: string) => "asset://" + p,
-  invoke: vi.fn(),
+  invoke: (...args: unknown[]) => invokeSpy(...args),
 }));
 
 import {
   openImageViewer,
+  openImageViewerRemote,
+  registerImageViewer,
   wheelDeltaToPixels,
   panIndicatorFor,
   imageDisplayName,
   imageViewerUrl,
 } from "../src/chrome/viewer/image-viewer";
 import { panZoomSetting } from "../src/settings/app";
+import { clearRemoteImageCache, clearRemoteImageFailureReports } from "../src/markdown/remote-image";
+import { REMOTE_ASSET_TOO_LARGE_MESSAGE } from "../src/chrome/viewer/file-bytes";
+import { viewerFor } from "../src/chrome/viewer/registry";
 
 // ---------------------------------------------------------------------------
 // Image viewer — an in-content pane (full-pane rewrite,
@@ -693,5 +699,73 @@ describe("openImageViewer: pan position indicators", () => {
     expect(vBar.style.top).not.toBe(before);
 
     handle.close();
+  });
+});
+
+describe("openImageViewerRemote (원격 볼트 이미지 뷰어)", () => {
+  const src = { host: "h1", remoteVaultId: "rv1", path: ".attachments/pic.png" };
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    invokeSpy.mockReset();
+    clearRemoteImageCache();
+    clearRemoteImageFailureReports();
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => warn.mockRestore());
+
+  it("fetches via remote_read_image {host, vault, path} and sets img.src to the returned data: URL", async () => {
+    invokeSpy.mockResolvedValue("data:image/png;base64,AAAA");
+    const handle = openImageViewerRemote(src);
+    await flush();
+    expect(invokeSpy).toHaveBeenCalledWith("remote_read_image", { host: "h1", vault: "rv1", path: ".attachments/pic.png" });
+    const img = document.querySelector(".image-viewer-img") as HTMLImageElement;
+    expect(img.src).toBe("data:image/png;base64,AAAA");
+    handle.close();
+  });
+
+  it("caption is the remote path's basename", async () => {
+    invokeSpy.mockResolvedValue("data:image/png;base64,AAAA");
+    const handle = openImageViewerRemote(src);
+    expect(document.body.textContent).toContain("pic.png");
+    await flush();
+    handle.close();
+  });
+
+  it("a rejected fetch keeps the viewer open with the failure caption and warns", async () => {
+    invokeSpy.mockRejectedValue(new Error("REMOTE:NotFound"));
+    const handle = openImageViewerRemote(src);
+    await flush();
+    expect(document.querySelector(".image-viewer")).not.toBeNull();
+    expect(document.body.textContent).toContain("이미지를 불러올 수 없습니다");
+    expect(warn).toHaveBeenCalled();
+    handle.close();
+  });
+
+  it("a REMOTE_ASSET_TOO_LARGE rejection captions REMOTE_ASSET_TOO_LARGE_MESSAGE", async () => {
+    invokeSpy.mockRejectedValue("REMOTE_ASSET_TOO_LARGE: x");
+    const handle = openImageViewerRemote(src);
+    await flush();
+    expect(document.body.textContent).toContain(REMOTE_ASSET_TOO_LARGE_MESSAGE);
+    handle.close();
+  });
+
+  it("a fetch that resolves after close() does not touch the detached img", async () => {
+    let resolve!: (v: string) => void;
+    invokeSpy.mockReturnValue(new Promise<string>((r) => (resolve = r)));
+    const handle = openImageViewerRemote(src);
+    const img = document.querySelector(".image-viewer-img") as HTMLImageElement;
+    handle.close();
+    resolve("data:image/png;base64,LATE");
+    await flush();
+    expect(img.getAttribute("src")).toBeNull();
+  });
+
+  it("registerImageViewer registers id image with both open and openRemote", () => {
+    registerImageViewer(["png", "jpg"]);
+    const v = viewerFor("png");
+    expect(v?.id).toBe("image");
+    expect(v?.open).toBeTypeOf("function");
+    expect(v?.openRemote).toBeTypeOf("function");
   });
 });

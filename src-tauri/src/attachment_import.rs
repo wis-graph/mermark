@@ -49,6 +49,7 @@ use crate::attachments::{
     AttachmentReceipts, FileIdentity, ReceiptRecord,
 };
 use crate::attachments::validate_attachment_basename;
+use crate::attachments::ATTACHMENTS_DIR_NAME;
 use crate::fs::link_targets::is_image_ext;
 use crate::qa_trace::qa_trace;
 use std::fs::{self, File, OpenOptions};
@@ -121,7 +122,7 @@ impl Drop for TempGuard {
 /// regardless of what it points at, so this one check rejects both "not a
 /// directory" and "directory reached only via a symlink" in one gate.
 fn ensure_real_attachments_dir(vault_root: &Path) -> Result<PathBuf, String> {
-    let dir = vault_root.join(".attachments");
+    let dir = vault_root.join(ATTACHMENTS_DIR_NAME);
     match fs::symlink_metadata(&dir) {
         Ok(meta) if meta.is_dir() => Ok(dir),
         Ok(_) => Err(format!(
@@ -273,7 +274,7 @@ pub(crate) fn import_attachment_from(
                     .insert(token, ReceiptRecord { dest, identity });
                 return Ok(AttachmentReceipt {
                     token,
-                    rel_path: format!(".attachments/{candidate_name}"),
+                    rel_path: format!("{ATTACHMENTS_DIR_NAME}/{candidate_name}"),
                     file_name: candidate_name,
                 });
             }

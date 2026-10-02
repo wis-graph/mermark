@@ -40,10 +40,10 @@
 //! CSP somehow bypassed) still can't read another open book's or the app's
 //! resources.
 
-use std::collections::HashMap;
-use std::io::Read;
+use std::collections::{HashMap, VecDeque};
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::http::{header, HeaderValue, Method, Request, Response, StatusCode};
 use tauri::Manager;
@@ -92,13 +92,46 @@ const MAX_EPUB_ENTRY_BYTES: usize = 8 * 1024 * 1024;
 /// failure three steps later inside `ZipArchive::new`.
 const ZIP_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x03, 0x04];
 
-/// Per-open state: which armed `.epub` file (canonical path) a minted token
-/// resolves to. Same accumulation policy as `htmlview::HtmlViewRoots` (no
-/// disarm command, bounded by documents opened in the session) and the same
-/// "arming the same file twice mints two distinct tokens" behavior — see
-/// that module's doc for the shared rationale.
+/// Where an armed token's zip bytes come from: a local file (canonical
+/// path) or a remote book already fetched into memory. Past `resolve`, no
+/// code needs to know which — the token is the only handle.
+enum EpubSource {
+    File(PathBuf),
+    Memory(Arc<[u8]>),
+}
+
+/// How many remote (in-memory) books stay armed at once. 2 because the
+/// viewer slot is single: only the switch moment overlaps the previous book
+/// and the new one. Bounds memory at 2 x the host's 20 MiB asset ceiling
+/// without a separate disarm IPC.
+const MAX_IN_MEMORY_EPUBS: usize = 2;
+
+/// token -> source, plus the arm order of the Memory entries (FIFO eviction).
+/// File sources are path strings only, so they accumulate as before.
 #[derive(Default)]
-pub struct EpubViewRoots(Mutex<HashMap<String, PathBuf>>);
+struct EpubArmTable {
+    by_token: HashMap<String, EpubSource>,
+    memory_order: VecDeque<String>,
+}
+
+/// Drops the oldest Memory-armed books until at most `MAX_IN_MEMORY_EPUBS`
+/// remain. File sources are never touched.
+fn evict_oldest_memory_books(table: &mut EpubArmTable) {
+    while table.memory_order.len() > MAX_IN_MEMORY_EPUBS {
+        if let Some(oldest) = table.memory_order.pop_front() {
+            table.by_token.remove(&oldest);
+        }
+    }
+}
+
+/// Per-open state: which armed `.epub` source a minted token resolves to.
+/// File sources use the same accumulation policy as
+/// `htmlview::HtmlViewRoots` (no disarm command, bounded by documents opened
+/// in the session) and the same "arming the same file twice mints two
+/// distinct tokens" behavior — see that module's doc for the shared
+/// rationale. Memory sources (remote books) are FIFO-capped instead.
+#[derive(Default)]
+pub struct EpubViewRoots(Mutex<EpubArmTable>);
 
 impl EpubViewRoots {
     /// Mint a token and bind `epub_path` (already canonicalized by the
@@ -108,14 +141,38 @@ impl EpubViewRoots {
         self.0
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(token.clone(), epub_path);
+            .by_token
+            .insert(token.clone(), EpubSource::File(epub_path));
         token
     }
 
-    /// The `.epub` path a token was armed with, or `None` for an
-    /// unminted/unknown token.
-    fn epub_path(&self, token: &str) -> Option<PathBuf> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).get(token).cloned()
+    /// Mint a token bound to a book held in memory (a remote fetch), then
+    /// evict the oldest in-memory books beyond `MAX_IN_MEMORY_EPUBS`.
+    fn arm_bytes(&self, bytes: Arc<[u8]>) -> String {
+        let token = mint_token();
+        let mut table = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        table.by_token.insert(token.clone(), EpubSource::Memory(bytes));
+        table.memory_order.push_back(token.clone());
+        evict_oldest_memory_books(&mut table);
+        token
+    }
+
+    /// Read `entry` from the source `token` was armed with, or `None` for an
+    /// unminted/evicted token or a missing entry. The lock is released
+    /// before any zip IO (a Memory clone is just an `Arc` bump).
+    fn read_entry_bytes(&self, token: &str, entry: &str) -> Option<Vec<u8>> {
+        enum Handle {
+            File(PathBuf),
+            Memory(Arc<[u8]>),
+        }
+        let handle = match self.0.lock().unwrap_or_else(|e| e.into_inner()).by_token.get(token)? {
+            EpubSource::File(p) => Handle::File(p.clone()),
+            EpubSource::Memory(b) => Handle::Memory(b.clone()),
+        };
+        match handle {
+            Handle::File(p) => read_zip_entry(&p, entry),
+            Handle::Memory(b) => read_zip_entry_from(std::io::Cursor::new(&b[..]), entry),
+        }
     }
 
     /// Read one zip entry's raw bytes for `token`'s armed `.epub` file, or
@@ -131,8 +188,7 @@ impl EpubViewRoots {
     /// one-slot-mutex contention, and a central-directory read is a
     /// millisecond-scale cost in practice.
     fn resolve(&self, token: &str, entry: &str) -> Option<Vec<u8>> {
-        let path = self.epub_path(token)?;
-        let bytes = read_zip_entry(&path, entry)?;
+        let bytes = self.read_entry_bytes(token, entry)?;
         entry_within_cap(bytes.len(), MAX_EPUB_ENTRY_BYTES).ok()?;
         Some(bytes)
     }
@@ -163,7 +219,14 @@ impl EpubViewRoots {
 /// `entry_within_cap` gate every other size decision in this module uses.
 fn read_zip_entry(epub_path: &Path, entry: &str) -> Option<Vec<u8>> {
     let file = std::fs::File::open(epub_path).ok()?;
-    let mut archive = zip::ZipArchive::new(file).ok()?;
+    read_zip_entry_from(file, entry)
+}
+
+/// `read_zip_entry`'s body over any seekable source (a `File` for a local
+/// book, a `Cursor` over bytes for a remote one) — same advisory pre-check,
+/// same bounded `read_at_most`, one zip-bomb defense for both sources.
+fn read_zip_entry_from<R: Read + Seek>(reader: R, entry: &str) -> Option<Vec<u8>> {
+    let mut archive = zip::ZipArchive::new(reader).ok()?;
     let mut zip_file = archive.by_name(entry).ok()?;
     // Advisory fast path only, NOT the security boundary: if the zip
     // header's own declared uncompressed size already exceeds the cap, skip
@@ -211,6 +274,12 @@ fn entry_within_cap(byte_len: usize, cap: usize) -> Result<(), String> {
     Ok(())
 }
 
+/// The one zip-signature rule: bytes start with the local-file-header
+/// signature. Short or empty input is never "looks like a zip".
+fn bytes_look_like_zip(bytes: &[u8]) -> bool {
+    bytes.starts_with(&ZIP_SIGNATURE)
+}
+
 /// True when `path`'s first four bytes are the zip local-file-header
 /// signature. Fails closed (`false`) on any I/O error (missing file,
 /// permission denied, file shorter than four bytes) — an unreadable path is
@@ -223,7 +292,7 @@ fn looks_like_zip(path: &Path) -> bool {
     if file.read_exact(&mut sig).is_err() {
         return false;
     }
-    sig == ZIP_SIGNATURE
+    bytes_look_like_zip(&sig)
 }
 
 /// `arm_epub_view`'s core: canonicalize `path` and classify it, separately
@@ -250,6 +319,36 @@ fn armable_epub_path(path: &str) -> Result<PathBuf, String> {
 pub fn arm_epub_view(path: String, roots: tauri::State<'_, EpubViewRoots>) -> Result<String, String> {
     let canonical = armable_epub_path(&path)?;
     Ok(roots.arm(canonical))
+}
+
+/// `arm_remote_epub_view`'s core: classify already-fetched remote bytes and
+/// arm them in memory. Takes bytes only — never a path — so a remote
+/// vault-relative path cannot become a local filesystem lookup. Same
+/// `"not-zip"` kind string as the local arm.
+fn arm_remote_bytes(roots: &EpubViewRoots, bytes: Vec<u8>) -> Result<String, String> {
+    if !bytes_look_like_zip(&bytes) {
+        return Err("not-zip".to_string());
+    }
+    Ok(roots.arm_bytes(bytes.into()))
+}
+
+/// Arm a remote vault's `.epub` (fetched via the one remote byte source,
+/// `fetch_vault_asset`: token lookup, tunnel guard, 20 MiB ceiling) as an
+/// in-memory book. Returns the same kind of token as `arm_epub_view`, so
+/// `read_epub_entry` and the `epub://` scheme work unchanged. Remote errors
+/// (`REMOTE:*`, `REMOTE_ASSET_TOO_LARGE:`) pass through verbatim. Touches no
+/// local file and writes no temp file.
+#[tauri::command]
+pub async fn arm_remote_epub_view(
+    host: String,
+    vault: String,
+    path: String,
+    roots: tauri::State<'_, EpubViewRoots>,
+    store: tauri::State<'_, crate::remote_token::ClientTokens>,
+    tunnels: tauri::State<'_, crate::remote_ssh::SshTunnels>,
+) -> Result<String, String> {
+    let (_, bytes) = crate::remote_client::fetch_vault_asset(&host, &vault, &path, &store, &tunnels).await?;
+    arm_remote_bytes(&roots, bytes)
 }
 
 /// The app's (parent-origin) sole channel to a book's small XML metadata —
@@ -1137,5 +1236,80 @@ mod tests {
         let (token, entry) = token_and_entry_path(&req).unwrap();
         assert_eq!(token, "abc123");
         assert_eq!(entry, "OEBPS/ch1.xhtml");
+    }
+
+    // --- in-memory (remote) books: Memory-armed sources ---
+
+    #[test]
+    fn bytes_look_like_zip_matches_the_signature_and_rejects_short_or_other_input() {
+        assert!(bytes_look_like_zip(&[0x50, 0x4b, 0x03, 0x04, 0x00]));
+        assert!(!bytes_look_like_zip(&[0x50, 0x4b, 0x03]));
+        assert!(!bytes_look_like_zip(b"not a zip at all"));
+        assert!(!bytes_look_like_zip(&[]));
+    }
+
+    #[test]
+    fn memory_armed_book_serves_entries_like_a_file_armed_one() {
+        let dir = scratch_dir("mem_vs_file");
+        let epub = make_fixture_epub(&dir, "book.epub");
+        let roots = EpubViewRoots::default();
+        let file_token = roots.arm(armable_epub_path(epub.to_str().unwrap()).unwrap());
+        let mem_token = roots.arm_bytes(std::fs::read(&epub).unwrap().into());
+        assert_eq!(
+            roots.read_text_entry(&file_token, "META-INF/container.xml"),
+            roots.read_text_entry(&mem_token, "META-INF/container.xml"),
+        );
+        assert!(roots.resolve(&mem_token, "OEBPS/img/pic.png").is_some());
+        assert!(roots.resolve(&mem_token, "nope.xhtml").is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn memory_armed_book_still_enforces_the_entry_cap() {
+        let dir = scratch_dir("mem_cap");
+        let epub = make_fixture_epub_with_one_entry(&dir, "big.epub", "OEBPS/huge.xhtml", MAX_EPUB_ENTRY_BYTES + 1);
+        let roots = EpubViewRoots::default();
+        let token = roots.arm_bytes(std::fs::read(&epub).unwrap().into());
+        assert!(roots.resolve(&token, "OEBPS/huge.xhtml").is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn in_memory_books_are_capped_fifo_and_file_books_are_untouched() {
+        let dir = scratch_dir("mem_fifo");
+        let epub = make_fixture_epub(&dir, "book.epub");
+        let bytes: std::sync::Arc<[u8]> = std::fs::read(&epub).unwrap().into();
+        let roots = EpubViewRoots::default();
+        let first = roots.arm_bytes(bytes.clone());
+        let file_token = roots.arm(armable_epub_path(epub.to_str().unwrap()).unwrap());
+        let mut later = Vec::new();
+        for _ in 0..MAX_IN_MEMORY_EPUBS {
+            later.push(roots.arm_bytes(bytes.clone()));
+        }
+        assert!(roots.resolve(&first, "OEBPS/ch1.xhtml").is_none(), "oldest memory book evicted");
+        for t in &later {
+            assert!(roots.resolve(t, "OEBPS/ch1.xhtml").is_some());
+        }
+        assert!(roots.resolve(&file_token, "OEBPS/ch1.xhtml").is_some(), "file books never evicted");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn arm_remote_bytes_rejects_non_zip_bytes_with_not_zip() {
+        let roots = EpubViewRoots::default();
+        assert_eq!(arm_remote_bytes(&roots, b"<html>login page</html>".to_vec()).unwrap_err(), "not-zip");
+    }
+
+    /// The core takes bytes only — no path parameter exists, so a remote
+    /// vault-relative path can never become a local filesystem lookup.
+    #[test]
+    fn arm_remote_bytes_arms_from_bytes_alone_without_touching_the_filesystem() {
+        let dir = scratch_dir("remote_core");
+        let epub = make_fixture_epub(&dir, "book.epub");
+        let bytes = std::fs::read(&epub).unwrap();
+        std::fs::remove_dir_all(&dir).ok(); // gone from disk — bytes must suffice
+        let roots = EpubViewRoots::default();
+        let token = arm_remote_bytes(&roots, bytes).unwrap();
+        assert!(roots.resolve(&token, "OEBPS/ch1.xhtml").is_some());
     }
 }

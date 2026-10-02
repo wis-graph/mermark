@@ -58,6 +58,12 @@ function fixtureInvoke(bookId: string) {
       if (path.endsWith("notzip.epub")) return Promise.reject("not-zip");
       return Promise.resolve(`token-${bookId}`);
     }
+    if (cmd === "arm_remote_epub_view") {
+      const path = String(args?.path ?? "");
+      if (path.endsWith("notzip.epub")) return Promise.reject("not-zip");
+      if (path.endsWith("big.epub")) return Promise.reject("REMOTE_ASSET_TOO_LARGE: big.epub");
+      return Promise.resolve(`token-${bookId}`);
+    }
     if (cmd === "read_epub_entry") {
       const entry = String(args?.entry ?? "");
       if (entry === "META-INF/container.xml") {
@@ -87,8 +93,10 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { registerEpubViewer, epubViewUrl } from "../src/chrome/viewer/epub-viewer";
 import { viewerFor } from "../src/chrome/viewer/registry";
+import { epubOpenErrorMessage } from "../src/chrome/viewer/epub-parse";
 import { epubPositionsSetting } from "../src/settings/app";
 import type { EpubReadingPosition } from "../src/chrome/viewer/epub-position";
+import { REMOTE_ASSET_TOO_LARGE_MESSAGE } from "../src/chrome/viewer/file-bytes";
 
 // jsdom has no Element.scrollTo — a real implementation (not a no-op stub)
 // so the reading-position restore tests can assert on the RESULTING
@@ -159,6 +167,68 @@ describe("registerEpubViewer registry shape", () => {
     const v = viewerFor("epub");
     expect(v?.id).toBe("epub");
     expect(v?.extensions).toEqual(["epub"]);
+  });
+});
+
+describe("openEpubViewer: openRemote (원격 볼트 EPUB)", () => {
+  const REMOTE = { host: "mini", remoteVaultId: "rv1", path: "books/sample.epub" };
+
+  it("arms via arm_remote_epub_view with {host, vault, path} and never calls arm_epub_view", async () => {
+    invokeMock.mockImplementation(fixtureInvoke("normal"));
+    const handle = viewerFor("epub")!.openRemote!(REMOTE);
+    await flush();
+    expect(invokeMock).toHaveBeenCalledWith("arm_remote_epub_view", { host: "mini", vault: "rv1", path: "books/sample.epub" });
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain("arm_epub_view");
+    handle.close();
+  });
+
+  it("reads entries with the returned token exactly like a local open", async () => {
+    invokeMock.mockImplementation(fixtureInvoke("normal"));
+    const handle = viewerFor("epub")!.openRemote!(REMOTE);
+    await flush();
+    const iframes = document.querySelectorAll("iframe.epub-viewer-chapter-frame");
+    expect(iframes).toHaveLength(2);
+    expect((iframes[0] as HTMLIFrameElement).src).toContain(epubViewUrl("token-normal", "OEBPS/text/ch1.xhtml"));
+    handle.close();
+  });
+
+  it("a REMOTE_ASSET_TOO_LARGE rejection shows REMOTE_ASSET_TOO_LARGE_MESSAGE", async () => {
+    invokeMock.mockImplementation(fixtureInvoke("normal"));
+    const handle = viewerFor("epub")!.openRemote!({ ...REMOTE, path: "books/big.epub" });
+    await flush();
+    expect(document.querySelector(".epub-viewer-status")?.textContent).toContain(REMOTE_ASSET_TOO_LARGE_MESSAGE);
+    handle.close();
+  });
+
+  it('a "not-zip" rejection from the remote arm maps to epubOpenErrorMessage("not-zip")', async () => {
+    invokeMock.mockImplementation(fixtureInvoke("normal"));
+    const handle = viewerFor("epub")!.openRemote!({ ...REMOTE, path: "books/notzip.epub" });
+    await flush();
+    expect(document.querySelector(".epub-viewer-status")?.textContent).toContain(epubOpenErrorMessage("not-zip"));
+    handle.close();
+  });
+
+  it("caption shows the remote file's basename", async () => {
+    invokeMock.mockImplementation(fixtureInvoke("normal"));
+    const handle = viewerFor("epub")!.openRemote!(REMOTE);
+    expect(document.body.textContent).toContain("sample.epub");
+    await flush();
+    handle.close();
+  });
+
+  it("saves the reading position under the remote: key (never path:)", async () => {
+    invokeMock.mockImplementation(fixtureInvoke("normal"));
+    const handle = viewerFor("epub")!.openRemote!(REMOTE);
+    await flush();
+    const chaptersEl = document.querySelector(".epub-viewer-chapters") as HTMLElement;
+    const placeholders = chaptersEl.querySelectorAll<HTMLElement>(".epub-viewer-chapter");
+    stubGeom(placeholders[0], 0, 1000);
+    stubGeom(placeholders[1], 1000, 2000);
+    chaptersEl.scrollTop = 1500;
+    chaptersEl.dispatchEvent(new Event("scroll"));
+    handle.close();
+    const saved = epubPositionsSetting.get();
+    expect(Object.keys(saved)).toEqual(["remote:mini|rv1|books/sample.epub"]);
   });
 });
 

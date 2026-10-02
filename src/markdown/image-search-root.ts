@@ -46,6 +46,30 @@ export function owningVaultRoot(documentDir: string, vaultRoots: readonly string
   return best;
 }
 
+/** How the recursive-search fallback should run for one onerror firing — the
+ *  ONE place that decides base directory / depth / whether the setting gates
+ *  it, so `onerror` doesn't carry the branch inline (mermark-frontend §7).
+ *
+ *  `"vault"` scope (a `![[name]]` embed — wikilink.ts) with a resolved owning
+ *  vault root (image-search-root.ts's `owningVaultRoot`, NOT the active
+ *  vault) searches the whole vault: depth `VAULT_IMAGE_SCAN_DEPTH`, ungated —
+ *  the setting only ever governed the OLD document-folder convenience
+ *  fallback, and vault-wide name search is now `![[…]]`'s CONTRACTED
+ *  meaning, not an opt-in nicety a setting should be able to silently break
+ *  (design §분기1's SSOT-gate judgment). Every other case — `"folder"` scope
+ *  (a standard `![](name)`), or `"vault"` scope with no owning root (global
+ *  vault, or a document outside every registered vault) — keeps the
+ *  pre-existing document-folder behavior: depth 3, gated by the setting.
+ *  Pure query. */
+export function searchPlanFor(
+  scope: "vault" | "folder",
+  root: string | null,
+  baseDir: string,
+): { readonly baseDir: string; readonly maxDepth: number; readonly gated: boolean } {
+  if (scope === "vault" && root !== null) return { baseDir: root, maxDepth: VAULT_IMAGE_SCAN_DEPTH, gated: false };
+  return { baseDir, maxDepth: 3, gated: true };
+}
+
 // ---------------------------------------------------------------------------
 // Plain-module slot (image-open.ts/document-open.ts pattern): lets ImageWidget
 // (markdown layer) ask "what vault root should `![[name]]` search under for

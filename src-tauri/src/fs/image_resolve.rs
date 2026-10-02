@@ -76,7 +76,7 @@ const MAX_IMAGE_SCAN_DEPTH: u8 = 12;
 /// descended into — they aren't where attachments live and would otherwise burn the
 /// entry budget. Dot-directories are *not* filtered as a class (unlike
 /// `list_files_recursive`'s `show_hidden` gate): a vault's own attachment folder
-/// (`.attachments/`) is itself a dot-directory and must stay reachable.
+/// (`ATTACHMENTS_DIR_NAME`) is itself a dot-directory and must stay reachable.
 /// `max_entries` is a caller-supplied visited-entry ceiling (`resolve_image` always
 /// passes `MAX_ENTRIES`; tests pass smaller budgets to exercise the cutoff).
 fn scan_match(base: &Path, target_basename: &str, max_depth: u8, max_entries: u32) -> Option<PathBuf> {
@@ -517,6 +517,13 @@ mod tests {
             "node_modules must never be descended into, even though it sorts first"
         );
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The local scan and the remote host's `safe_path` share one fact: the
+    /// attachments folder is never excluded (host side: `is_withheld_from_peers`).
+    #[test]
+    fn attachments_dir_is_never_an_excluded_scan_dir() {
+        assert!(!crate::fs::listing::is_excluded_scan_dir(crate::attachments::ATTACHMENTS_DIR_NAME));
     }
 
     #[test]

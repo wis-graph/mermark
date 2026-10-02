@@ -80,16 +80,16 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
     // "/" for the root (the exact C1 bug) sees this rejection here too,
     // instead of the mock silently answering as if "/" worked.
     if (remotePath.startsWith("/")) return Promise.reject(new Error("REMOTE:SharingOff"));
-    // "책.epub" (task 11): a remote vault CAN list a non-viewable file — the
+    // "데이터.sqlite" (task 11): a remote vault CAN list a non-viewable file — the
     // listing itself is just names/paths — but opening it must be refused
-    // (T6, 0.18.0: the epub viewer never implements `openRemote` —
+    // (the sqlite viewer never implements `openRemote` —
     // registry.ts's `viewerSupportsRemote` — so main.ts's openWithViewer
     // refuses it via remote-unsupported-message.ts's remoteUnsupportedMessage),
     // not silently mis-rendered.
     if (remotePath === REMOTE_VAULT_WIRE_ROOT) {
       return Promise.resolve([
         { name: "노트.md", path: "노트.md", is_dir: false },
-        { name: "책.epub", path: "책.epub", is_dir: false },
+        { name: "데이터.sqlite", path: "데이터.sqlite", is_dir: false },
       ]);
     }
     return Promise.resolve([]);
@@ -1716,15 +1716,14 @@ describe("main workspace wiring", () => {
       expect(modeToggle?.dataset.remote).toBe("true");
       expect(modeToggle?.textContent).toContain("읽기 전용 (원격)");
 
-      // Clicking the EPUB row must not open a (broken/empty) viewer overlay —
-      // it must report an explicit refusal instead. T6 (0.18.0) gave EPUB its
-      // own per-kind wording (design §4.3) rather than the old generic
-      // "아직 지원하지 않습니다" every unsupported type used to share — see
+      // Clicking the sqlite row (the one viewer that stays structurally
+      // local-only) must not open a (broken/empty) viewer overlay — it must
+      // report an explicit refusal instead, with its per-kind wording — see
       // src/document/remote-unsupported-message.test.ts for the full per-kind matrix.
-      const epubRow = document.querySelector<HTMLElement>('.explorer-file[data-path="책.epub"]');
+      const epubRow = document.querySelector<HTMLElement>('.explorer-file[data-path="데이터.sqlite"]');
       expect(epubRow).not.toBeNull();
       epubRow?.click();
-      await vi.waitFor(() => expect(document.querySelector(".save-status")?.textContent).toContain("원격 볼트의 EPUB은 아직 지원하지 않습니다"));
+      await vi.waitFor(() => expect(document.querySelector(".save-status")?.textContent).toContain("원격 볼트의 데이터베이스는 열 수 없습니다"));
       expect(document.querySelector(".viewer-panel")).toBeNull();
     });
 
@@ -1945,5 +1944,18 @@ describe("main workspace wiring", () => {
       expect(document.querySelector(".cm-content")?.textContent).toBe("start");
       expect(document.querySelector(".recovery-backdrop")).toBeNull();
     });
+  });
+});
+
+describe("image viewer wiring (원격 볼트 이미지)", () => {
+  it("main.ts registers the image viewer through registerImageViewer (open + openRemote)", () => {
+    expect(mainSource).toContain("registerImageViewer([...IMAGE_EXTENSIONS])");
+    expect(mainSource).not.toContain('registerViewer({ id: "image"');
+  });
+
+  it("openImageFromEditor prefers the clicked document's own vault over the sidebar selection", () => {
+    const body = mainSource.slice(mainSource.indexOf("function openImageFromEditor("));
+    expect(body.indexOf("docVault ??")).toBeGreaterThan(-1);
+    expect(body.indexOf("docVault ??")).toBeLessThan(body.indexOf("currentVault()"));
   });
 });

@@ -19,6 +19,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+/// The one folder name mermark imports attachments into (per vault root; a
+/// nested vault owns its own). Every module that needs to know "is this the
+/// attachments folder" asks `is_attachments_dir_name` — never the literal.
+pub(crate) const ATTACHMENTS_DIR_NAME: &str = ".attachments";
+
+/// Whether ONE path component names the attachments folder. Exact match
+/// only: `.attachmentsX` and `.attachments-old` are ordinary hidden entries.
+pub(crate) fn is_attachments_dir_name(name: &str) -> bool {
+    name == ATTACHMENTS_DIR_NAME
+}
+
 /// Deterministic collision-avoidance name for a `.attachments` entry:
 /// candidate `n = 0` keeps the original basename, `n >= 1` inserts `-{n}`
 /// before the extension. Same inputs always produce the same output (no
@@ -168,6 +179,15 @@ pub struct AttachmentReceipt {
 #[cfg(test)]
 mod attachment_contract_tests {
     use super::*;
+
+    #[test]
+    fn is_attachments_dir_name_is_exact_match() {
+        assert!(is_attachments_dir_name(".attachments"));
+        assert!(!is_attachments_dir_name(".attachmentsX"));
+        assert!(!is_attachments_dir_name(".attachments-old"));
+        assert!(!is_attachments_dir_name("attachments"));
+        assert!(!is_attachments_dir_name(""));
+    }
     use crate::fs::link_targets::is_image_ext;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
