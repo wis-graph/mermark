@@ -168,14 +168,15 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: strin
  *  tab strip's visibility — in one command so the picture and the state can
  *  never drift apart. Same discipline as the explorer's
  *  renderFolderGlyph/expandFolder/collapseFolder (explorer-panel.ts).
- *  `hasTabs` drives the "찬 폴더" fill (design_tabbar_visual.md §2.4): a
- *  collapsed vault that still has tabs inside gets its closed-folder glyph
+ *  `hasHiddenContent` (`collapsedRowHasHiddenContent`) drives the "찬 폴더"
+ *  fill (design_tabbar_visual.md §2.4): a collapsed vault that still hides
+ *  something (own tabs OR child vault rows) gets its closed-folder glyph
  *  filled (`.has-tabs`, styles.css) so "there's something in here" survives
  *  the collapse — an empty collapsed vault stays a bare outline. No new
- *  stored state: the caller already has the tab list in hand for this render. */
-function renderVaultCollapse(toggle: HTMLButtonElement, glyph: HTMLElement, tabList: HTMLElement, displayName: string, collapsed: boolean, hasTabs: boolean): void {
+ *  stored state: the caller already has both facts in hand for this render. */
+function renderVaultCollapse(toggle: HTMLButtonElement, glyph: HTMLElement, tabList: HTMLElement, displayName: string, collapsed: boolean, hasHiddenContent: boolean): void {
   glyph.replaceChildren(icon(collapsed ? "folder" : "folder-open"));
-  glyph.classList.toggle("has-tabs", collapsed && hasTabs);
+  glyph.classList.toggle("has-tabs", collapsed && hasHiddenContent);
   toggle.setAttribute("aria-expanded", String(!collapsed));
   const label = `${displayName} 탭 ${collapsed ? "펼치기" : "접기"}`;
   toggle.title = label;
@@ -209,7 +210,40 @@ function folderPrefixFor(path: string, vaultRoot: string | null): string | null 
 
 /** One rendered vault row's nesting depth (1-based, matching the explorer
  *  tree's `aria-level` convention). */
-interface VaultRow { readonly vault: Vault; readonly level: number }
+interface VaultRow {
+  readonly vault: Vault;
+  readonly level: number;
+  /** vaultIds of every ancestor row, outermost first (empty for a top-level
+   *  row). Lets "is a collapsed ancestor hiding me" be answered from the row
+   *  alone (`isHiddenByCollapsedAncestor`). */
+  readonly ancestorIds: readonly string[];
+}
+
+/** Whether a collapsed ANCESTOR hides this row — any ancestor, so a grandchild
+ *  is hidden by a collapsed grandparent even when its own parent is expanded.
+ *  The row's own collapse state is irrelevant (that only hides its tab strip).
+ *  Pure query. */
+function isHiddenByCollapsedAncestor(row: VaultRow, isCollapsed: (vaultId: string) => boolean): boolean {
+  return row.ancestorIds.some(isCollapsed);
+}
+
+/** Whether collapsing `vaultId` hides anything beyond an empty strip: its own
+ *  tabs, or any child vault row among `rows`. Drives the filled-folder glyph
+ *  so a collapsed vault that now hides sub-folders doesn't claim to be empty.
+ *  Pure query. */
+function collapsedRowHasHiddenContent(vaultId: string, ownTabCount: number, rows: readonly VaultRow[]): boolean {
+  return ownTabCount > 0 || rows.some((row) => row.ancestorIds.includes(vaultId));
+}
+
+/** Re-derive every row's `hidden` from the stored collapse states — the one
+ *  writer of vault-row visibility. In-place (rows are never re-created), so
+ *  the clicked toggle keeps focus. Command (void). */
+function syncDescendantRowVisibility(rowEls: ReadonlyMap<string, HTMLElement>, rows: readonly VaultRow[]): void {
+  for (const row of rows) {
+    const el = rowEls.get(row.vault.vaultId);
+    if (el) el.hidden = isHiddenByCollapsedAncestor(row, isVaultCollapsed);
+  }
+}
 
 /** The nearest registered ancestor of `vault` among `all` — the registered
  *  vault whose root STRICTLY contains `vault`'s root (via `isPathWithin`,
@@ -242,10 +276,12 @@ function compareVaultDisplayOrder(left: Vault, right: Vault): number {
  *  each parent's direct children sort by `displayName`, then `vaultId`; only
  *  function-local arrays are sorted, preserving stored registration order. A
  *  child's collapse state is its own (vault-collapse.ts) — this function only
- *  decides ORDER/LEVEL, never visibility, so a collapsed parent can never hide
- *  a child row (the request's "부모를 접어도 자식은 숨지 않는다" invariant lives
- *  structurally here: children are sibling rows in the DOM, never nested
- *  inside the parent's tab strip). Pure query. */
+ *  decides ORDER/LEVEL/ancestry, never visibility (`syncDescendantRowVisibility`
+ *  does, from `ancestorIds`). Children stay sibling rows in the DOM, never
+ *  nested inside the parent's tab strip. NOTE: the older "a collapsed parent
+ *  never hides its child row" decision was SUPERSEDED on user request
+ *  (design §1.1) — the parent row and its toggle stay reachable, so the
+ *  children can always be brought back. Pure query. */
 function arrangeVaultHierarchy(vaults: readonly Vault[]): VaultRow[] {
   const childrenByParentId = new Map<string, Vault[]>();
   const roots: Vault[] = [];
@@ -259,11 +295,11 @@ function arrangeVaultHierarchy(vaults: readonly Vault[]): VaultRow[] {
   roots.sort(compareVaultDisplayOrder);
   for (const siblings of childrenByParentId.values()) siblings.sort(compareVaultDisplayOrder);
   const rows: VaultRow[] = [];
-  const visit = (vault: Vault, level: number): void => {
-    rows.push({ vault, level });
-    for (const child of childrenByParentId.get(vault.vaultId) ?? []) visit(child, level + 1);
+  const visit = (vault: Vault, level: number, ancestorIds: readonly string[]): void => {
+    rows.push({ vault, level, ancestorIds });
+    for (const child of childrenByParentId.get(vault.vaultId) ?? []) visit(child, level + 1, [...ancestorIds, vault.vaultId]);
   };
-  for (const vault of roots) visit(vault, 1);
+  for (const vault of roots) visit(vault, 1, []);
   return rows;
 }
 
@@ -356,6 +392,7 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
         group.setAttribute("aria-labelledby", heading.id);
         group.append(heading);
       }
+      const rowEls = new Map<string, HTMLElement>();
       for (const { vault, level } of rows) {
         const row = create("div", "workspace-vault-row"); row.setAttribute("role", "listitem"); row.dataset.vaultId = vault.vaultId;
         row.style.setProperty("--level", String(level));
@@ -456,14 +493,16 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
         // rather than through a full `render()`, so a keyboard user's focus
         // stays on the toggle after activating it.
         let collapsed = isVaultCollapsed(vault.vaultId);
-        const hasTabs = tabs.tabs.length > 0;
-        renderVaultCollapse(toggle, glyph, tabList, vault.displayName, collapsed, hasTabs);
+        const hasHiddenContent = collapsedRowHasHiddenContent(vault.vaultId, tabs.tabs.length, rows);
+        renderVaultCollapse(toggle, glyph, tabList, vault.displayName, collapsed, hasHiddenContent);
         toggle.addEventListener("click", (event) => {
           event.stopPropagation();
           collapsed = !collapsed;
           setVaultCollapsed(vault.vaultId, collapsed);
-          renderVaultCollapse(toggle, glyph, tabList, vault.displayName, collapsed, hasTabs);
+          renderVaultCollapse(toggle, glyph, tabList, vault.displayName, collapsed, hasHiddenContent);
+          syncDescendantRowVisibility(rowEls, rows);
         });
+        rowEls.set(vault.vaultId, row);
         row.append(toggle, select);
         if (pathLabel) row.append(pathLabel);
         row.append(tabList);
@@ -539,10 +578,11 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
         }
         group.append(row);
       }
+      syncDescendantRowVisibility(rowEls, rows);
       if (emptyState) group.append(emptyState);
       list.append(group);
     };
-    renderGroup("workspace-vault-group--global", [{ vault: store.getGlobalVault(), level: 1 }]);
+    renderGroup("workspace-vault-group--global", [{ vault: store.getGlobalVault(), level: 1, ancestorIds: [] }]);
     renderGroup("workspace-vault-group--permanent", arrangeVaultHierarchy(permanentVaults), "영구 볼트", empty);
     // Remote vaults have no rootPath, so arrangeVaultHierarchy's parent/child
     // nesting (which keys off rootPath containment) never applies to them —
@@ -550,7 +590,7 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
     // doesn't render when there are none, unlike permanent's "no rows yet"
     // guidance, since there's no registration entry point to point at here
     // other than the + button already in the header).
-    if (remoteVaults.length > 0) renderGroup("workspace-vault-group--remote", remoteVaults.map((vault) => ({ vault, level: 1 })), "원격 볼트");
+    if (remoteVaults.length > 0) renderGroup("workspace-vault-group--remote", remoteVaults.map((vault) => ({ vault, level: 1, ancestorIds: [] })), "원격 볼트");
   };
   store.subscribe(render); render(store.get());
 

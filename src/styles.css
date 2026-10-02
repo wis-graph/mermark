@@ -1712,6 +1712,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    regardless of matching specificity) — same trap, same fix, as
    .workspace-error[hidden] above. */
 .workspace-vault-tabs[hidden] { display: none; }
+/* A vault row whose ANCESTOR vault is collapsed (workspace-sidebar.ts's
+   syncDescendantRowVisibility sets `.hidden`). .workspace-vault-row is
+   display:flex, so [hidden] needs its own override — same trap as above. */
+.workspace-vault-row[hidden] { display: none; }
 .workspace-vault-tab-row { display: flex; align-items: center; min-width: 0; gap: .2em; }
 /* Tab row grows 21px → ~24px and 10px → 12px font (§2.3): the filename is
    this panel's body copy, not a caption — it was smaller than the vault name

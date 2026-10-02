@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createWorkspaceSidebar } from "../src/workspace/workspace-sidebar";
+import { isVaultCollapsed, setVaultCollapsed } from "../src/workspace/vault-collapse";
 import { GLOBAL_VAULT_ID, WorkspaceStateError, WorkspaceStore, workspaceStorageKey } from "../src/workspace/workspace-state";
 import { ensureSshTunnel } from "../src/document/file-host";
 import type { VaultTabs } from "../src/workspace/vault-tabs";
@@ -369,6 +370,12 @@ describe("workspace sidebar", () => {
     expect(css).toMatch(/\.workspace-vault-tabs\[hidden\]\s*\{\s*display:\s*none;?\s*\}/);
   });
 
+  it("locks the [hidden] override that actually hides a vault row", () => {
+    const cssPath = resolve(dirname(fileURLToPath(import.meta.url)), "../src/styles.css");
+    const css = readFileSync(cssPath, "utf8");
+    expect(css).toMatch(/\.workspace-vault-row\[hidden\]\s*\{\s*display:\s*none;?\s*\}/);
+  });
+
   // D5/D6/D7 (design_tabbar_visual.md §2.3, .omo/plans/workspace-tab-bar.md):
   // file icon, extension-stripped label with a full-path tooltip, one-level
   // folder prefix that only appears on a folder change, and path-order
@@ -623,20 +630,98 @@ describe("workspace sidebar", () => {
       expect(rowFor(second.vaultId)?.style.getPropertyValue("--level")).toBe("1");
     });
 
-    it("never lets a collapsed parent hide its child vault's row (child is an independent registration, not nested content)", () => {
+    // design §1.1 SUPERSEDE: this used to assert the OPPOSITE ("never lets a
+    // collapsed parent hide its child vault's row"). The user asked that
+    // collapsing a vault also collapse its sub-folder (child vault) rows.
+    it("collapsing a parent hides its child vault rows (design §1.1 supersede), expanding restores them", () => {
       const store = new WorkspaceStore();
       const parent = store.registerVault("/notes", "Notes");
       const child = store.registerVault("/notes/project", "Project");
       const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
       document.body.append(sidebar.aside);
+      const toggle = sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${parent.vaultId}"] .workspace-vault-toggle`);
+      const childRow = () => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${child.vaultId}"]`);
 
+      toggle?.click();
+      expect(childRow()?.hidden).toBe(true);
+      // The parent's own row (and its toggle) stays reachable.
+      expect(sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${parent.vaultId}"]`)?.hidden).toBe(false);
+
+      toggle?.click();
+      expect(childRow()?.hidden).toBe(false);
+    });
+
+    it("collapsing a grandparent hides grandchildren too, even when the middle vault is expanded", () => {
+      const store = new WorkspaceStore();
+      const grand = store.registerVault("/a", "A");
+      const mid = store.registerVault("/a/b", "B");
+      const leaf = store.registerVault("/a/b/c", "C");
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+      const row = (id: string) => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${id}"]`)!;
+
+      row(grand.vaultId).querySelector<HTMLButtonElement>(".workspace-vault-toggle")?.click();
+      expect(row(mid.vaultId).hidden).toBe(true);
+      expect(row(leaf.vaultId).hidden).toBe(true); // mid itself is NOT collapsed
+      expect(isVaultCollapsed(mid.vaultId)).toBe(false);
+    });
+
+    it("a child's own collapsed state survives the parent's collapse/expand cycle", () => {
+      const store = new WorkspaceStore();
+      const parent = store.registerVault("/a", "A");
+      const child = store.registerVault("/a/b", "B");
+      const leaf = store.registerVault("/a/b/c", "C");
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+      const row = (id: string) => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${id}"]`)!;
+      const toggleOf = (id: string) => row(id).querySelector<HTMLButtonElement>(".workspace-vault-toggle")!;
+
+      toggleOf(child.vaultId).click(); // child collapsed itself
+      toggleOf(parent.vaultId).click(); // parent collapse
+      toggleOf(parent.vaultId).click(); // parent expand
+
+      expect(row(child.vaultId).hidden).toBe(false);
+      expect(row(child.vaultId).querySelector<HTMLElement>(".workspace-vault-tabs")?.hidden).toBe(true);
+      expect(isVaultCollapsed(child.vaultId)).toBe(true);
+      expect(row(leaf.vaultId).hidden).toBe(true); // still under the collapsed child
+    });
+
+    it("a hidden-by-ancestor state is restored from storage on a fresh sidebar instance", () => {
+      const store = new WorkspaceStore();
+      const parent = store.registerVault("/a", "A");
+      const child = store.registerVault("/a/b", "B");
+      setVaultCollapsed(parent.vaultId, true);
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+      expect(sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${child.vaultId}"]`)?.hidden).toBe(true);
+    });
+
+    it("toggling keeps focus on the clicked toggle (no full re-render)", () => {
+      const store = new WorkspaceStore();
+      const parent = store.registerVault("/a", "A");
+      store.registerVault("/a/b", "B");
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+      const rowEl = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${parent.vaultId}"]`)!;
+      const toggle = rowEl.querySelector<HTMLButtonElement>(".workspace-vault-toggle")!;
+      toggle.focus();
+      toggle.click();
+      expect(sidebar.aside.querySelector(`[data-vault-id="${parent.vaultId}"]`)).toBe(rowEl);
+      expect(document.activeElement).toBe(toggle);
+    });
+
+    it("a collapsed parent with zero own tabs but child vaults gets the filled (has-tabs) glyph", () => {
+      const store = new WorkspaceStore();
+      const parent = store.registerVault("/a", "A");
+      const lonely = store.registerVault("/z", "Z");
+      store.registerVault("/a/b", "B");
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn() });
+      document.body.append(sidebar.aside);
+      const glyph = (id: string) => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${id}"] .workspace-vault-glyph`);
       sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${parent.vaultId}"] .workspace-vault-toggle`)?.click();
-
-      const childRow = sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${child.vaultId}"]`);
-      expect(childRow).toBeTruthy();
-      expect(childRow?.hidden).toBe(false);
-      // Only the parent's own tab strip collapses — the child row/select stays reachable.
-      expect(childRow?.querySelector<HTMLButtonElement>(".workspace-vault-select")).toBeTruthy();
+      sidebar.aside.querySelector<HTMLButtonElement>(`[data-vault-id="${lonely.vaultId}"] .workspace-vault-toggle`)?.click();
+      expect(glyph(parent.vaultId)?.classList.contains("has-tabs")).toBe(true);
+      expect(glyph(lonely.vaultId)?.classList.contains("has-tabs")).toBe(false);
     });
 
     it("sorts top-level and direct-child siblings by displayName while preserving DFS levels and stored registration order", () => {
