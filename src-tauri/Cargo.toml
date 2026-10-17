@@ -153,6 +153,16 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 # the graph.
 base64 = "0.22"
 
+# macOS-only app resolution for `external_open.rs` (Preview.app bundle id,
+# https default-handler browser). Not a new dependency in spirit:
+# tauri-plugin-opener 2.5.x already compiles objc2-app-kit 0.3.2 (NSWorkspace)
+# and objc2-foundation 0.3.2 (NSURL/NSString) with these same features, so
+# this adds zero crates to Cargo.lock, only names already-compiled ones.
+# Target-gated, so Windows/Linux builds never touch objc2.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSURL", "NSString"] }
+
 [dev-dependencies]
 # `tower::ServiceExt::oneshot` drives `remote_host::router`'s axum `Router`
 # directly in tests without binding a real socket. Dev-only: never ships in

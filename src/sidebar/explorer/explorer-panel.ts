@@ -4,8 +4,9 @@ import { basename, dirOf, isFilesystemRoot, isPathWithin, normalizePath } from "
 import type { DirEntry, DriveEntry } from "../../document/types";
 import { renderSidebarButton } from "../toggle";
 import { isImeComposing } from "../../shortcuts/keys";
-import { openContextMenu, type ContextMenuItem } from "../../chrome/context-menu";
-import { nativeOpenLabel } from "./native-open-label";
+import { openContextMenu } from "../../chrome/context-menu";
+import type { FileAction } from "../../chrome/file-actions/registry";
+import { fileRowMenuEntries } from "./file-row-menu";
 
 /** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
 const EXPLORER_ASIDE_ID = "explorer-aside";
@@ -225,8 +226,13 @@ export interface ExplorerHandlers {
    *  강등 금지"), just with no `onSelect` effect; in practice main.ts always
    *  wires all four together. */
   hasLocalPath?(): boolean;
-  /** "기본 앱에서 열기"/"기본 브라우저에서 열기"/"미리보기에서 열기"
-   *  (label from `nativeOpenLabel`) — the opener plugin's `openPath`. */
+  /** "○○로 열기" registry actions for a file name (menu-open time lookup, so
+   *  late-registered extension actions still appear). Injected like
+   *  `canOpenWithViewer` so the explorer never imports the registry's state;
+   *  omitted → none. Receives the row's file name (basename). */
+  openWithActionsFor?(fileName: string): readonly FileAction[];
+  /** "기본 앱에서 열기" (fixed label) — the `open_in_external_app` command with
+   *  target "default". */
   onOpenInNativeApp?(absPath: string): void;
   /** "새 창에서 열기" — mermark's own `open_path` command (a NEW mermark
    *  window loading this file), the same call `onOpenFileNewWindow` already
@@ -279,6 +285,7 @@ export function createExplorerPanel({
   isRootLocked,
   canBookmarkFolders,
   hasLocalPath,
+  openWithActionsFor,
   onOpenInNativeApp,
   onOpenInNewWindow,
   onRevealInFinder,
@@ -1110,7 +1117,7 @@ export function createExplorerPanel({
    *  looking broken. */
   const NO_LOCAL_PATH_REASON = "원격 볼트 파일에는 로컬 경로가 없습니다";
 
-  /** T4 (0.17.1): the four-item context menu for a FILE row (`.explorer-file`
+  /** T4 (0.17.1): the context menu for a FILE row (`.explorer-file`
    *  only — folders and `..` don't get one; mermark's own `open_path`
    *  command rejects a directory outright, and a folder is already one
    *  click away from expanding). Gated as a WHOLE by `hasLocalPath` (design
@@ -1123,14 +1130,12 @@ export function createExplorerPanel({
     const absPath = item.dataset.path;
     if (!absPath) return;
     const localOk = hasLocalPath?.() ?? true;
-    const disabled = !localOk;
-    const disabledReason = disabled ? NO_LOCAL_PATH_REASON : undefined;
-    const items: ContextMenuItem[] = [
-      { label: nativeOpenLabel(basename(absPath)), disabled, disabledReason, onSelect: () => onOpenInNativeApp?.(absPath) },
-      { label: "새 창에서 열기", disabled, disabledReason, onSelect: () => onOpenInNewWindow?.(absPath) },
-      { label: "Finder에서 보기", disabled, disabledReason, onSelect: () => onRevealInFinder?.(absPath) },
-      { label: "경로 복사", disabled, disabledReason, onSelect: () => onCopyPath?.(absPath) },
-    ];
+    const items = fileRowMenuEntries({
+      absPath,
+      openWithActions: openWithActionsFor?.(basename(absPath)) ?? [],
+      disabledReason: localOk ? undefined : NO_LOCAL_PATH_REASON,
+      handlers: { onOpenInNativeApp, onOpenInNewWindow, onRevealInFinder, onCopyPath },
+    });
     openContextMenu({ x, y, items, returnFocusTo: item });
   };
 

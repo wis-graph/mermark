@@ -2700,6 +2700,8 @@ dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
  "notify",
+ "objc2-app-kit",
+ "objc2-foundation",
  "reqwest",
  "rhwp",
  "rusqlite",

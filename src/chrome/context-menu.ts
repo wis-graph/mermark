@@ -23,10 +23,23 @@ export interface ContextMenuItem {
   onSelect(): void;
 }
 
+/** A non-interactive divider between item groups. Not focusable and not part
+ *  of keyboard navigation. */
+export interface ContextMenuSeparator {
+  readonly separator: true;
+}
+export const MENU_SEPARATOR: ContextMenuSeparator = Object.freeze({ separator: true });
+export type ContextMenuEntry = ContextMenuItem | ContextMenuSeparator;
+
+/** Pure query. */
+export function isMenuSeparator(e: ContextMenuEntry): e is ContextMenuSeparator {
+  return "separator" in e;
+}
+
 export interface OpenContextMenuOptions {
   readonly x: number;
   readonly y: number;
-  readonly items: readonly ContextMenuItem[];
+  readonly items: readonly ContextMenuEntry[];
   /** Focus returns here when the menu closes for ANY reason (Esc, outside
    *  click, an item being chosen, a second menu superseding this one). */
   readonly returnFocusTo: HTMLElement;
@@ -74,8 +87,17 @@ export function openContextMenu(opts: OpenContextMenuOptions): void {
   menu.style.left = "0px";
   menu.style.top = "0px";
 
+  // `actionItems[i]` pairs with `itemEls[i]` — separators are in NEITHER, so
+  // every index-based rule below (focus, Enter) stays aligned.
+  const actionItems: ContextMenuItem[] = [];
   const itemEls: HTMLElement[] = [];
   for (const item of items) {
+    if (isMenuSeparator(item)) {
+      const sep = create("div", "context-menu-separator");
+      sep.setAttribute("role", "separator");
+      menu.append(sep);
+      continue;
+    }
     const el = create("div", "context-menu-item");
     el.setAttribute("role", "menuitem");
     el.tabIndex = -1;
@@ -90,6 +112,7 @@ export function openContextMenu(opts: OpenContextMenuOptions): void {
       });
     }
     menu.append(el);
+    actionItems.push(item);
     itemEls.push(el);
   }
 
@@ -103,7 +126,7 @@ export function openContextMenu(opts: OpenContextMenuOptions): void {
 
   let focusIndex = 0;
   const focusFirstEnabled = (): void => {
-    focusIndex = itemEls.findIndex((_, i) => !items[i]?.disabled);
+    focusIndex = itemEls.findIndex((_, i) => !actionItems[i]?.disabled);
     if (focusIndex === -1) focusIndex = 0;
     itemEls[focusIndex]?.focus();
   };
@@ -152,7 +175,7 @@ export function openContextMenu(opts: OpenContextMenuOptions): void {
       case "Enter":
       case " ": {
         e.preventDefault();
-        const item = items[focusIndex];
+        const item = actionItems[focusIndex];
         if (item && !item.disabled) {
           item.onSelect();
           close();

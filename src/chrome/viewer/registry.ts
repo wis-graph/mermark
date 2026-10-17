@@ -11,6 +11,8 @@
 // claims an extension; opening it and tearing down a previous one is the
 // caller's job.
 
+import { isCanonicalExtension } from "../extension-format";
+
 export interface ViewerHandle {
   /** Idempotent teardown — image-viewer.ts's existing ImageViewerHandle
    *  contract, generalized. Safe to call more than once. */
@@ -112,7 +114,7 @@ function assertNewViewerId(id: string): void {
  *  exactly the class of bug this session's "test a guard both ways" lesson
  *  (_workspace/00_request.md) targets. Pure query (raises). */
 function assertViewerExtensionFormat(ext: string): void {
-  if (ext === "" || ext !== ext.toLowerCase() || ext.startsWith(".")) {
+  if (!isCanonicalExtension(ext)) {
     throw new Error(`registerViewer: extension "${ext}" must be lowercase with no leading dot`);
   }
 }

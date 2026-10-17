@@ -43,6 +43,11 @@
 //    as #1/#4. ViewerHandle.close() MUST BE IDEMPOTENT (the shell/don't-stack
 //    slot may call it more than once). Viewer.extensions entries MUST be
 //    lowercase with no leading dot (registerViewer throws otherwise).
+// 7. FILE ACTION ID UNIQUE (registerFileAction throws on a duplicate); use
+//    "ext.<name>.<action>". extensions must be non-empty, lowercase, no
+//    leading dot. `run` receives a LOCAL absolute path only (remote-vault rows
+//    are disabled and never call it). The host catches run's throw/reject and
+//    logs it; user-facing feedback is the action's own job.
 //
 // CM6/Lezer packages are DELIBERATELY NOT re-exported here — an extension
 // imports `@codemirror/view`'s Decoration/WidgetType and `@lezer/common`'s
@@ -89,6 +94,9 @@ export { renderSidebarButton } from "../sidebar/toggle";
 // "which viewer opens this file"; an extension registers its own viewer and
 // has no legitimate reason to query another's.
 export { registerViewer, type Viewer, type ViewerHandle, type RemoteViewerSource } from "../chrome/viewer/registry";
+// File-action registry (explorer right-click "○○로 열기" entries). Only
+// registration is exposed; lookup/run belong to the composition root.
+export { registerFileAction, type FileAction } from "../chrome/file-actions/registry";
 export { openViewerShell, type ViewerShell } from "../chrome/viewer/shell";
 export {
   readLocalFileBytes,

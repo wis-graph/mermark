@@ -1781,6 +1781,53 @@ describe("explorer: right-click context menu on a file row (T4)", () => {
     document.querySelectorAll('[role="menu"]').forEach((n) => n.remove());
   });
 
+  it("openWithActionsFor 항목이 맨 위에, 구분선 1개, 클릭 시 run(absPath)", async () => {
+    const fakePreview = { id: "preview", label: "미리보기로 열기", extensions: ["md"], run: vi.fn() };
+    const fakeBrowser = { id: "browser", label: "브라우저로 열기", extensions: ["md"], run: vi.fn() };
+    const openWithActionsFor = vi.fn(() => [fakePreview, fakeBrowser]);
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      openWithActionsFor,
+      onOpenInNativeApp: vi.fn(),
+      onOpenInNewWindow: vi.fn(),
+      onRevealInFinder: vi.fn(),
+      onCopyPath: vi.fn(),
+    });
+    const row = panel.aside.querySelector('.explorer-file[data-path="/root/a.md"]') as HTMLElement;
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent);
+    expect(labels).toEqual(["미리보기로 열기", "브라우저로 열기", "기본 앱에서 열기", "새 창에서 열기", "Finder에서 보기", "경로 복사"]);
+    expect(document.querySelectorAll('[role="separator"]')).toHaveLength(1);
+    expect(openWithActionsFor).toHaveBeenCalledWith("a.md");
+    (document.querySelector('[role="menuitem"]') as HTMLElement).click();
+    expect(fakePreview.run).toHaveBeenCalledWith("/root/a.md");
+    document.querySelectorAll('[role="menu"]').forEach((n) => n.remove());
+  });
+
+  it("원격 행: openWithActionsFor 항목 포함 전부 비활성, 클릭해도 run 미호출", async () => {
+    const fakePreview = { id: "preview", label: "미리보기로 열기", extensions: ["md"], run: vi.fn() };
+    const fakeBrowser = { id: "browser", label: "브라우저로 열기", extensions: ["md"], run: vi.fn() };
+    const panel = await openPanel({
+      listDir: vi.fn(fakeTree()),
+      getBaseDir: () => "/root",
+      onOpenFile: vi.fn(),
+      hasLocalPath: () => false,
+      openWithActionsFor: () => [fakePreview, fakeBrowser],
+      onOpenInNativeApp: vi.fn(),
+    });
+    const row = panel.aside.querySelector('.explorer-file[data-path="/root/a.md"]') as HTMLElement;
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    const items = [...document.querySelectorAll('[role="menuitem"]')] as HTMLElement[];
+    expect(items).toHaveLength(6);
+    expect(items.every((e) => e.getAttribute("aria-disabled") === "true")).toBe(true);
+    for (const el of items) el.click();
+    expect(fakePreview.run).not.toHaveBeenCalled();
+    expect(fakeBrowser.run).not.toHaveBeenCalled();
+    document.querySelectorAll('[role="menu"]').forEach((n) => n.remove());
+  });
+
   it("폴더 행이나 `..` 행에는 컨텍스트 메뉴가 뜨지 않는다", async () => {
     const panel = await openPanel({
       listDir: vi.fn(fakeTree()),

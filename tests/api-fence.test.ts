@@ -49,6 +49,8 @@ const WHITELIST_ABS = [
   join(SRC, "chrome", "viewer", "registry"),
   join(SRC, "chrome", "viewer", "shell"),
   join(SRC, "chrome", "viewer", "file-bytes"),
+  // File-action registry (right-click "open with" entries).
+  join(SRC, "chrome", "file-actions", "registry"),
   // R11 2단계 (_workspace/01_html_viewer.md §6): fontScaleSetting re-export
   // for the HTML viewer's zoom sink.
   join(SRC, "settings", "app"),
@@ -193,6 +195,8 @@ describe("api fence (design §2.3 / plan Stage C-1)", () => {
     // T6 (0.18.0): the remote bytes fetch + its size-cap helpers.
     expect(api.readRemoteFileBytes).toBe(fileBytes.readRemoteFileBytes);
     expect(api.isRemoteAssetTooLarge).toBe(fileBytes.isRemoteAssetTooLarge);
+    const fileActionRegistry = await import("../src/chrome/file-actions/registry");
+    expect(api.registerFileAction).toBe(fileActionRegistry.registerFileAction);
     // Report-style table auto-align (2026-07-20): looksNumeric re-export.
     const numericCell = await import("../src/text/numeric-cell");
     expect(api.looksNumeric).toBe(numericCell.looksNumeric);

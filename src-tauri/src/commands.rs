@@ -207,3 +207,16 @@ mod tests {
         assert_eq!(got, "mermark-clipboard-roundtrip");
     }
 }
+
+/// IPC adapter for [`crate::external_open::open_in_external_app`] (contract documented there).
+#[tauri::command]
+pub async fn open_in_external_app(
+    path: String,
+    target: crate::external_open::ExternalApp,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::external_open::open_in_external_app(&path, target)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

@@ -149,12 +149,11 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     expect(mockInvoke).not.toHaveBeenCalledWith("open_path", expect.any(Object));
   });
 
-  it("checks existence and opens non-markdown asset via openAsset if existing", async () => {
+  it("checks existence and opens non-markdown asset via open_in_external_app(default) if existing", async () => {
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === "path_exists") return Promise.resolve(true);
       return Promise.resolve();
     });
-    mockOpenAsset.mockResolvedValue(undefined);
 
     const widget = new WikilinkWidget("alias", "existing.pdf");
     const dom = widget.toDOM(localView);
@@ -164,7 +163,8 @@ describe("WikilinkWidget toDOM click behaviors", () => {
     expect(dom.className).toContain("cm-wikilink-active");
 
     dom.click();
-    expect(mockOpenAsset).toHaveBeenCalledWith("existing.pdf");
+    expect(mockInvoke).toHaveBeenCalledWith("open_in_external_app", { path: "existing.pdf", target: "default" });
+    expect(mockOpenAsset).not.toHaveBeenCalled();
     expect(mockInvoke).not.toHaveBeenCalledWith("open_path", expect.any(Object));
   });
 

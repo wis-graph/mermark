@@ -44,7 +44,7 @@ import type { CliShareRequestPayload } from "./settings/remote-share-ipc";
 import { copyBundleToClipboard } from "./document/bundle";
 import { copyTextToClipboard } from "./clipboard";
 import { registerHandler, installDispatcher, bindKeybindings, effectiveBinding } from "./shortcuts/registry";
-import { displayChord } from "./shortcuts/keys";
+import { displayChord, isMac } from "./shortcuts/keys";
 import { arrangeStatusBar } from "./chrome/status-bar";
 import { makeWidthSlider } from "./chrome/status-bar/width";
 import { makeUpdateButton } from "./chrome/status-bar/update";
@@ -76,7 +76,10 @@ import { setImageOpenHandler } from "./markdown/image-open";
 import { setDocumentOpenHandler } from "./markdown/document-open";
 import { openStandardLocalLink, markLocalLinkFailure, REMOTE_VAULT_LOCAL_LINK_MESSAGE } from "./markdown/local-doc-link";
 import { isRemoteVault, rowHasLocalPath } from "./document/document-vault";
-import { openPath as openInNativeAppPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openInExternalApp } from "./chrome/file-actions/external-app";
+import { registerBuiltinFileActions } from "./chrome/file-actions/builtin";
+import { fileActionsFor } from "./chrome/file-actions/registry";
 import { remoteUnsupportedMessage } from "./document/remote-unsupported-message";
 import { setImageSearchRoot, owningVaultRoot } from "./markdown/image-search-root";
 import { attachImageToVault } from "./markdown/attach-image";
@@ -550,6 +553,7 @@ async function boot() {
   // createExplorerPanel below, so the explorer's first render already sees it
   // (design §4's registration-order guarantee).
   registerImageViewer([...IMAGE_EXTENSIONS]);
+  registerBuiltinFileActions(isMac() ? "mac" : "other", openInExternalApp);
   // The built-in HWP/HWPX viewer (_workspace/01_hwp_viewer.md §5) — built-in
   // rather than an extension because it needs 3 new Tauri commands, and R11's
   // extension contract is "frontend only, zero new IPC" (design §5).
@@ -836,9 +840,10 @@ async function boot() {
     // stay disabled there (rowHasLocalPath, document-vault.ts §T4 doc
     // comment; this repo has hit that exact leak class 6 times already).
     hasLocalPath: () => rowHasLocalPath(currentVault()),
+    openWithActionsFor: (name) => fileActionsFor(extensionOf(name)),
     onOpenInNativeApp: (absPath) => {
-      void openInNativeAppPath(absPath).catch((err) => {
-        console.error("Failed to open in the native app", err);
+      void openInExternalApp(absPath, "default").catch((err) => {
+        console.error("Failed to open in the default app", err);
       });
     },
     // Mermark's own "spawn a fresh window for this file" command — the SAME

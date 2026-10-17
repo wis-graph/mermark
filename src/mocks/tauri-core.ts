@@ -1090,7 +1090,23 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       if (raw === "~") return "/mock/vault" as T;
       return normalizeMockPath(raw) as T;
     }
+    case "open_in_external_app": {
+      // Mirrors `open_in_external_app(path, target) -> Result<(), String>`.
+      // Logs only: spawning a window/tab is `open_path`'s meaning, never this.
+      // A non-enum target is rejected like the real serde deserializer does.
+      if (a.target !== "default" && a.target !== "preview" && a.target !== "browser") {
+        throw new Error(`unknown variant \`${String(a.target)}\``);
+      }
+      console.info("[mock] open_in_external_app", a.target, a.path);
+      return undefined as T;
+    }
     case "open_path": {
+      // The opener PLUGIN's `plugin:opener|open_path` also strips down to this
+      // name; it is not the new-window command, so never spawn a tab for it.
+      if (cmd.includes("|")) {
+        console.info("[mock] plugin open_path (no-op) ->", a.path);
+        return undefined as T;
+      }
       // Mirrors the real `open_path(path) -> Result<(), String>`: spawns the
       // file in a brand-new window. Only the EXPLICIT new-window gesture still
       // reaches this command — explorer/search ⌘/Ctrl+click and ⌘+Enter

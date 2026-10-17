@@ -2074,6 +2074,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   box-shadow: 0 8px 24px color-mix(in srgb, #000 28%, transparent);
   z-index: 60;
 }
+.context-menu-separator { height: 1px; margin: 4px 6px; background: var(--border); }
 .context-menu-item {
   padding: 6px 10px; border-radius: var(--radius-sm, 6px); cursor: pointer;
   font-size: .92em; outline: none;

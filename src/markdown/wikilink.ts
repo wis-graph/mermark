@@ -1,7 +1,7 @@
 import { EditorView, WidgetType } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
 import { localFileHost, fileHostFor } from "../document/file-host";
-import { openPath as openAsset } from "@tauri-apps/plugin-opener";
+import { openInExternalApp } from "../chrome/file-actions/external-app";
 import { findHeadingByText } from "./outline";
 import { jumpTo } from "./footnote-nav";
 import { openExternal } from "./open-external";
@@ -181,7 +181,8 @@ export class WikilinkWidget extends WidgetType {
           // so no local `.catch` here.
           requestDocumentOpen({ kind: "resolved-document", path: this.path });
         } else {
-          openAsset(this.path).catch((err: any) => {
+          openInExternalApp(this.path, "default").catch((err: any) => {
+            console.error("Failed to open asset", err);
             a.classList.add("cm-wikilink-error");
             a.title = `Failed to open asset: ${String(err)}`;
           });

@@ -10,6 +10,7 @@ mod cli_control;
 mod commands;
 mod crypto_token;
 mod epubview;
+mod external_open;
 mod fs;
 mod htmlview;
 mod hwp;
@@ -434,6 +435,7 @@ pub fn run() {
             commands::read_file,
             commands::write_file,
             commands::open_path,
+            commands::open_in_external_app,
             commands::path_exists,
             commands::directory_exists,
             commands::canonicalize_path,
