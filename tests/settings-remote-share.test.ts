@@ -292,6 +292,8 @@ describe("remote-share-panel — 설정 패널 통합", () => {
     await flush();
 
     const issueBtn = backdrop.querySelector<HTMLButtonElement>(".remote-share-issue-btn")!;
+    expect(issueBtn.classList.contains("btn-sm")).toBe(true);
+    expect(issueBtn.classList.contains("btn-secondary")).toBe(true);
     expect(issueBtn.disabled).toBe(false);
     issueBtn.click();
     await flush();

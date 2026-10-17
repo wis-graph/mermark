@@ -268,11 +268,11 @@
      286~298px로 여전히 넘침). */
   box-sizing: border-box;
   max-width: 280px;
-  background: var(--surface);
+  background: var(--elev-1-bg);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg, 12px);
+  border-radius: var(--elev-1-radius);
   padding: .8em 1em;
-  box-shadow: 0 12px 48px color-mix(in srgb, #000 24%, transparent);
+  box-shadow: var(--elev-1-shadow);
 }
 
 .theme-inspector-head { display: flex; align-items: center; gap: .5em; margin-bottom: .7em; }

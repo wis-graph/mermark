@@ -56,7 +56,7 @@ export function openRecoveryModal(options: RecoveryModalOptions): RecoveryModalH
   actions.className = "recovery-actions";
   const cancel = document.createElement("button");
   cancel.type = "button";
-  cancel.className = "recovery-cancel";
+  cancel.className = "recovery-cancel btn btn-ghost";
   cancel.textContent = "계속 편집";
   modal.append(title, body, detail, actions, cancel);
   backdrop.append(modal);
@@ -80,7 +80,7 @@ export function openRecoveryModal(options: RecoveryModalOptions): RecoveryModalH
     for (const action of state.allowedActions) {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = `recovery-action recovery-action-${action.id}`;
+      button.className = `recovery-action recovery-action-${action.id} btn btn-secondary${action.id === "close-discard" ? " btn-danger" : ""}`;
       button.textContent = confirmingDiscard && action.id === "close-discard" ? "정말 닫기/버리기" : action.label;
       button.addEventListener("click", () => {
         if (action.id === "close-discard" && !confirmingDiscard) {

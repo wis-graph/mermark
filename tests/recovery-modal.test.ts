@@ -20,6 +20,8 @@ describe("recovery modal", () => {
     await Promise.resolve();
 
     expect(onAction).toHaveBeenCalledWith("retry");
+    expect(document.querySelector(".recovery-action-retry")!.classList.contains("btn-secondary")).toBe(true);
+    expect(document.querySelector(".recovery-cancel")!.classList.contains("btn-ghost")).toBe(true);
     expect(document.querySelector(".recovery-backdrop")).toBeTruthy();
     expect(document.activeElement?.className).toContain("recovery-action-retry");
     expect(host.hasAttribute("inert")).toBe(true);

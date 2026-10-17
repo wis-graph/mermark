@@ -58,7 +58,7 @@ export function renderVersionPane(): HTMLElement {
 
   const checkBtn = document.createElement("button");
   checkBtn.type = "button";
-  checkBtn.className = "version-check-btn";
+  checkBtn.className = "version-check-btn btn btn-primary";
   checkBtn.append(icon("refresh-cw"), " 업데이트 확인");
   root.appendChild(checkBtn);
 
@@ -231,11 +231,11 @@ function showAvailable(status: HTMLElement, update: FoundUpdate, checkBtn: HTMLB
   actions.className = "version-update-actions";
   const install = document.createElement("button");
   install.type = "button";
-  install.className = "version-install-btn";
+  install.className = "version-install-btn btn btn-primary";
   install.textContent = "지금 설치하고 재시작";
   const later = document.createElement("button");
   later.type = "button";
-  later.className = "version-later-btn";
+  later.className = "version-later-btn btn btn-ghost";
   later.textContent = "나중에";
   later.addEventListener("click", () => status.replaceChildren());
   actions.append(install, later);

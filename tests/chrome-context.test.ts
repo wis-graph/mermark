@@ -57,3 +57,16 @@ describe("status bar context (welcome / viewer)", () => {
     expect(ruleBlock(`.editor-host.welcome-host ~ .status-bar .status-pos:not([data-flash])`)).toMatch(/display:\s*none/);
   });
 });
+
+// D2a Y8: Korean chrome text breaks at word boundaries (keep-all); the
+// document body stays on normal breaking until D2b decides its rule.
+describe("chrome keep-all (D2 Y8)", () => {
+  it("body: word-break keep-all + overflow-wrap break-word", () => {
+    const body = ruleBlock("body");
+    expect(body).toMatch(/word-break:\s*keep-all/);
+    expect(body).toMatch(/overflow-wrap:\s*break-word/);
+  });
+  it(".cm-editor .cm-content stays word-break: normal (D2b decides)", () => {
+    expect(ruleBlock(".cm-editor .cm-content")).toMatch(/word-break:\s*normal/);
+  });
+});

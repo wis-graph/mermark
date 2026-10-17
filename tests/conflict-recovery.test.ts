@@ -93,6 +93,17 @@ describe("conflict recovery", () => {
     handle.close();
   });
 
+  it("conflict buttons use the button grammar", () => {
+    const handle = openConflictModal({ local: "mine", external: "disk", onKeepLocal: vi.fn(), onUseExternal: vi.fn(), onMerge: vi.fn() });
+    const btns = Array.from(document.querySelectorAll<HTMLElement>(".conflict-btn"));
+    expect(btns.length).toBeGreaterThan(0);
+    for (const b of btns) {
+      expect(b.classList.contains("btn")).toBe(true);
+      expect(b.classList.contains("btn-secondary")).toBe(true);
+    }
+    handle.close();
+  });
+
   it("allows native Tab movement and only traps when focus would leave the modal", () => {
     const handle = openConflictModal({
       local: "mine",

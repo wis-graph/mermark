@@ -140,6 +140,36 @@ for (let guard = 0; seen.size < 3 && guard < 6; guard++) {
     const t = { callouts, statusPos: probes.statusPos ? contrastOver(probes.statusPos, probes.bg) : null };
     if (theme === "claude" && probes.inlineCode) t.inlineCode = contrastOver(probes.inlineCode, probes.inlineCodeBg, probes.bg);
 
+    // D2a scenario 4 "status & elevation": real computed values of the derived
+    // status tokens (probe elements), the rail variants, and the elev-1 context menu vs the rail.
+    const st = await page.evaluate(() => {
+      const probe = (css, cls) => {
+        const e = document.createElement("div");
+        if (cls) e.className = cls;
+        e.style.cssText = css;
+        document.body.append(e);
+        const cs = getComputedStyle(e);
+        const r = { color: cs.color, bg: cs.backgroundColor };
+        e.remove();
+        return r;
+      };
+      const out = { bg: getComputedStyle(document.body).backgroundColor, ink: {}, rail: {} };
+      for (const n of ["danger", "warning", "success"]) out.ink[n] = probe(`color: var(--${n})`).color;
+      const rail = probe("", "sidebar-aside").bg;
+      out.railBg = rail;
+      for (const n of ["danger", "warning", "success"]) out.rail[n] = probe(`color: var(--sidebar-${n})`).color;
+      out.menuBg = probe("", "context-menu").bg;
+      out.surface = probe("background: var(--surface)").bg;
+      return out;
+    });
+    for (const n of ["danger", "warning", "success"]) {
+      t[`status-${n}-on-bg`] = contrastOver(st.ink[n], st.bg);
+      t[`status-${n}-on-surface`] = contrastOver(st.ink[n], st.surface);
+      t[`rail-${n}`] = contrastOver(st.rail[n], st.railBg);
+    }
+    t.menuLum = lum(parseColor(st.menuBg).slice(0, 3));
+    t.railLum = lum(parseColor(st.railBg).slice(0, 3));
+
     // Settings: active / inactive segment + help text, on the modal surface.
     await page.click(".settings-btn");
     await page.waitForTimeout(250);
@@ -237,6 +267,12 @@ for (const [theme, t] of Object.entries(result.themes)) {
   ok(`${theme} active segment`, t.activeSegment);
   ok(`${theme} inactive segment`, t.inactiveSegment);
   ok(`${theme} settings help`, t.settingsHelp);
+  for (const n of ["danger", "warning", "success"]) {
+    ok(`${theme} --${n} on bg`, t[`status-${n}-on-bg`]);
+    ok(`${theme} --${n} on surface`, t[`status-${n}-on-surface`]);
+    ok(`${theme} --sidebar-${n} on rail`, t[`rail-${n}`]);
+  }
+  if (theme === "dark") checks.push({ name: "dark context menu lighter than rail", value: `${t.menuLum.toFixed(3)} > ${t.railLum.toFixed(3)}`, pass: t.menuLum > t.railLum });
 }
 checks.push({ name: "themes visited", value: Object.keys(result.themes).join(","), pass: Object.keys(result.themes).length === 3 });
 checks.push({ name: "old light preset snaps to #6f6a63", value: result.snap.oldPresetMuted, pass: result.snap.oldPresetMuted.toLowerCase() === "#6f6a63" });

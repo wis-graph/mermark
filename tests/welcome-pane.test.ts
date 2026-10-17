@@ -42,6 +42,8 @@ describe("createWelcomePane", () => {
 
     const button = host.querySelector<HTMLButtonElement>(".welcome-cta-btn");
     expect(button?.textContent).toBe("폴더 열기");
+    expect(button?.classList.contains("btn")).toBe(true);
+    expect(button?.classList.contains("btn-primary")).toBe(true);
     button?.click();
     expect(onOpenFolder).toHaveBeenCalledOnce();
     expect(host.querySelector(".welcome-cta-hint")?.textContent).toContain("⌘B");

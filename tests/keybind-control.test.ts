@@ -51,6 +51,16 @@ describe("keybind control", () => {
     expect(chordText(row, "vim.toggle")).toBe("미지정"); // null default
   });
 
+  it("uses the sm button grammar (reset-all, capture, reset)", () => {
+    const s = keybindSetting("kbc.btn");
+    bindKeybindings(s);
+    const row = RENDER.keybind(s, { kind: "keybind" });
+    for (const el of [row.querySelector(".keybind-reset-all")!, captureBtn(row, "vim.toggle"), row.querySelector(".keybind-reset")!]) {
+      expect(el.classList.contains("btn-secondary")).toBe(true);
+      expect(el.classList.contains("btn-sm")).toBe(true);
+    }
+  });
+
   it("capture writes the pressed chord into the setting and reflects it", () => {
     const s = keybindSetting("kbc.b");
     bindKeybindings(s);

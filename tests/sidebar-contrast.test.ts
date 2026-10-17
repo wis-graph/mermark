@@ -117,7 +117,7 @@ describe("sidebar strong-contrast palette (style contract)", () => {
     return evaluateColorMix(weight, hexToRgb(themeBgHex), pole);
   }
 
-  const BARE_GLOBAL_VAR = /var\(--(fg|muted|accent|border|caret)[,)]/;
+  const BARE_GLOBAL_VAR = /var\(--(fg|muted|accent|border|caret|danger|warning|success)[,)]/;
 
   const THEME_BLOCKS = [
     { name: "dark", selector: ":root" },
@@ -135,6 +135,11 @@ describe("sidebar strong-contrast palette (style contract)", () => {
   // (un-inverted) palette against the inverted sidebar bg.
   const SIDEBAR_SCOPED_SELECTORS = [
     ".sidebar-aside",
+    ".search-error",
+    ".remote-vault-dialog-error",
+    ".workspace-vault-badge--ok",
+    ".workspace-vault-badge--warn",
+    ".workspace-vault-badge--error",
     ".sidebar-header",
     ".outline-empty",
     ".outline-item",
@@ -227,10 +232,11 @@ describe("sidebar strong-contrast palette (style contract)", () => {
   });
 
   it.each([".settings-modal"])(
-    "%s keeps its existing background: var(--surface) (--surface consumers untouched)",
+    "%s paints background: var(--elev-2-bg), which :root defines as var(--surface)",
     (selector) => {
       const block = ruleBlock(selector);
-      expect(block).toMatch(/background:\s*var\(--surface\)/);
+      expect(block).toMatch(/background:\s*var\(--elev-2-bg\)/);
+      expect(ruleBlock(":root")).toMatch(/--elev-2-bg:\s*var\(--surface\)/);
     },
   );
 

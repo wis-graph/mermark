@@ -237,7 +237,7 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
   const { row: codeRowEl, cell: codeCell } = labeledRow("페어링 코드");
   const issueBtn = document.createElement("button");
   issueBtn.type = "button";
-  issueBtn.className = "remote-share-issue-btn";
+  issueBtn.className = "remote-share-issue-btn btn btn-secondary btn-sm";
   issueBtn.textContent = "페어링 코드 만들기";
   const codeDisplay = document.createElement("div");
   codeDisplay.className = "remote-share-code";
@@ -402,7 +402,7 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
       label.textContent = d.label;
       const revoke = document.createElement("button");
       revoke.type = "button";
-      revoke.className = "remote-share-revoke-btn";
+      revoke.className = "remote-share-revoke-btn btn btn-secondary btn-sm";
       revoke.textContent = "연결 해제";
       revoke.addEventListener("click", () => void onRevokeDevice(d.id));
       item.append(label, revoke);

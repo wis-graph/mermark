@@ -442,7 +442,7 @@ function renderJson(setting: Setting<Theme>): HTMLElement {
 function button(label: string, act: string): HTMLButtonElement {
   const b = document.createElement("button");
   b.type = "button";
-  b.className = "settings-json-btn";
+  b.className = act === "apply" ? "settings-json-btn btn btn-primary" : "settings-json-btn btn btn-secondary";
   b.dataset.act = act;
   b.textContent = label;
   return b;
@@ -485,7 +485,7 @@ function renderKeybind(setting: Setting<Record<string, string>>): HTMLElement {
   toolbar.className = "keybind-toolbar";
   const resetAll = document.createElement("button");
   resetAll.type = "button";
-  resetAll.className = "keybind-reset-all";
+  resetAll.className = "keybind-reset-all btn btn-secondary btn-sm";
   resetAll.textContent = "전체 리셋";
   resetAll.addEventListener("click", () => setting.set({}));
   toolbar.appendChild(resetAll);
@@ -529,12 +529,12 @@ function renderKeybind(setting: Setting<Record<string, string>>): HTMLElement {
 
     const capture = document.createElement("button");
     capture.type = "button";
-    capture.className = "keybind-capture";
+    capture.className = "keybind-capture btn btn-secondary btn-sm";
     capture.textContent = "재정의";
 
     const reset = document.createElement("button");
     reset.type = "button";
-    reset.className = "keybind-reset";
+    reset.className = "keybind-reset btn btn-secondary btn-sm";
     reset.textContent = "기본값";
     reset.addEventListener("click", () => {
       const next = { ...setting.get() };

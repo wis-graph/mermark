@@ -38,6 +38,16 @@ describe("sidebar font-size zoom integration (style contract)", () => {
   const ROOT_SELECTOR = ".sidebar-aside";
   const ROOT_FONT_SIZE_RE = /font-size:\s*calc\(\s*13px\s*\*\s*var\(--font-scale,\s*1\)\s*\)/;
 
+  it("D2 Y3: .sidebar-header is a fixed 36px band (em, rides zoom) with a 24px action slot", () => {
+    const block = ruleBlock(".sidebar-header");
+    expect(block).toMatch(/height:\s*calc\(36em \/ 11\)/);
+    expect(block).toMatch(/display:\s*flex/);
+    expect(block).toMatch(/align-items:\s*center/);
+    expect(block).toMatch(/box-sizing:\s*border-box/);
+    expect(block).toMatch(/font-size:\s*calc\(11em \/ 13\)/);
+    expect(ruleBlock(".sidebar-header .chrome-btn.icon-only")).toMatch(/height:\s*24px/);
+  });
+
   it("T1: .sidebar-aside root is the sole --font-scale multiplication point", () => {
     const block = ruleBlock(ROOT_SELECTOR);
     expect(block).toMatch(ROOT_FONT_SIZE_RE);

@@ -64,7 +64,7 @@ export function createWelcomePane({
   // 0. CTA — the empty-state action (design review tour-11): open a folder
   // via the existing explorer flow, with a keyboard-shortcut hint beside it.
   const cta = el("div", "welcome-cta");
-  const ctaBtn = el("button", "welcome-cta-btn") as HTMLButtonElement;
+  const ctaBtn = el("button", "welcome-cta-btn btn btn-primary") as HTMLButtonElement;
   ctaBtn.type = "button";
   ctaBtn.textContent = "폴더 열기";
   ctaBtn.addEventListener("click", onOpenFolder);

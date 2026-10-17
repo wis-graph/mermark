@@ -167,6 +167,14 @@ describe("json control (theme import/export)", () => {
     expect(ta.value).toBe(serializeTheme(s.get()));
   });
 
+  it("buttons use the button grammar: apply = primary, others = secondary", () => {
+    const row = RENDER.json(jsonSetting(), { kind: "json" });
+    expect((row.querySelector("[data-act=apply]") as HTMLElement).classList.contains("btn-primary")).toBe(true);
+    for (const b of Array.from(row.querySelectorAll<HTMLElement>(".settings-json-btn:not([data-act=apply])"))) {
+      expect(b.classList.contains("btn-secondary")).toBe(true);
+    }
+  });
+
   it("valid paste + 적용 → setting.set(parsed) and no error", () => {
     const s = jsonSetting();
     const row = RENDER.json(s, { kind: "json" });

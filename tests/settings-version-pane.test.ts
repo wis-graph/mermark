@@ -69,6 +69,7 @@ describe("settings modal — 버전 category", () => {
     expect(versionBtn.classList.contains("active")).toBe(true);
     expect(backdrop.querySelector(".version-pane-heading")?.textContent).toBe("mermark");
     expect(backdrop.querySelector(".version-check-btn")).not.toBeNull();
+    expect(backdrop.querySelector(".version-check-btn")!.classList.contains("btn-primary")).toBe(true);
     // switching away from 테마 tears down its pane — no leftover settings-row
     expect(backdrop.querySelector(".settings-pane .settings-row")).toBeNull();
   });
@@ -110,6 +111,8 @@ describe("settings modal — 버전 category", () => {
     expect(backdrop.querySelector(".version-update-title")?.textContent).toBe("v9.9.9 업데이트가 있습니다");
     expect(backdrop.querySelector(".version-install-btn")).not.toBeNull();
     expect(backdrop.querySelector(".version-later-btn")).not.toBeNull();
+    expect(backdrop.querySelector(".version-install-btn")!.classList.contains("btn-primary")).toBe(true);
+    expect(backdrop.querySelector(".version-later-btn")!.classList.contains("btn-ghost")).toBe(true);
   });
 
   it("mounting the pane with an already-found update (e.g. the boot auto-check) renders the install card without a click", async () => {

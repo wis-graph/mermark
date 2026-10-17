@@ -37,6 +37,25 @@
   --radius-lg: 12px;            /* rounded.lg — compact cards */
   --radius-xl: 16px;            /* rounded.xl — feature cards / dialogs */
   --radius-pill: 9999px;        /* rounded.pill — CTAs, badges, segmented */
+  /* SPACING / CHROME TYPE / CONTROL HEIGHT scales (D2 G8). Theme-invariant
+     metrics. Introduced, not swept: NEW chrome rules and every rule D2 touches
+     use these; untouched legacy literals migrate when next edited.
+     SIDEBAR exception: rail text sizes stay em (calc(Nem / 13), SIDEBAR ZOOM
+     RULE) — never --text-* (px) inside .sidebar-aside. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --control-h-sm: 24px;
+  --control-h-md: 32px;
+  /* Visible-on-any-surface control border (secondary buttons). --border is a
+     hairline tuned for dividers and nearly vanishes on light's #fff card. */
+  --border-strong: color-mix(in srgb, var(--fg) 18%, transparent);
   /* Caret colour. A theme-invariant affordance (like the radius/tracking tokens
      above): the editing caret must read against BOTH canvases (light #f5f5f5 /
      dark #131110), so it sits once in :root, not in the per-theme blocks. iOS
@@ -163,6 +182,35 @@
   --seg-active-bg: var(--accent);
   --seg-active-fg: var(--on-accent);
   --seg-active-ring: none;
+  /* STATUS INK RULE (D2 Y1): semantic status colours = a fixed hue pulled 40%
+     toward --fg (the CALLOUT HEAD RULE technique). --fg is white on dark
+     (-> light tint) and ink on light/claude/custom-light (-> deep shade), so ONE
+     rule holds AA on --bg, --surface and the 10% tint box in every preset and
+     follows any custom JSON theme. Never write a status hex in a component rule. */
+  --danger-hue: #dc2626;
+  --warning-hue: #d97706;
+  --success-hue: #16a34a;
+  --danger: color-mix(in srgb, var(--danger-hue) 60%, var(--fg));
+  --warning: color-mix(in srgb, var(--warning-hue) 60%, var(--fg));
+  --success: color-mix(in srgb, var(--success-hue) 60%, var(--fg));
+  /* Error TINT BOX background (the one boxed error form; inline errors are text only). */
+  --danger-tint: color-mix(in srgb, var(--danger) 10%, transparent);
+  /* Rail variants: the rail is a fixed dark pole (SIDEBAR CONTRAST RULE), so the
+     same rule mixes toward --sidebar-fg. Rail rules use ONLY these. */
+  --sidebar-danger: color-mix(in srgb, var(--danger-hue) 60%, var(--sidebar-fg));
+  --sidebar-warning: color-mix(in srgb, var(--warning-hue) 60%, var(--sidebar-fg));
+  --sidebar-success: color-mix(in srgb, var(--success-hue) 60%, var(--sidebar-fg));
+  /* ELEVATION RULE (D2 Y7): two levels only. elev-1 = popovers/menus/tooltips
+     (no backdrop), elev-2 = modals (over a backdrop). Depth reads as a LIGHTER
+     surface on dark (elev-1 sits one step above the rail: #2a2725 > #201c19 —
+     the context menu used to be darker than the rail it opened over) and as the
+     card surface on light/claude. */
+  --elev-1-bg: color-mix(in srgb, var(--fg) 6%, var(--surface));
+  --elev-1-shadow: 0 4px 16px color-mix(in srgb, #000 18%, transparent);
+  --elev-1-radius: var(--radius-md);
+  --elev-2-bg: var(--surface);
+  --elev-2-shadow: 0 12px 40px color-mix(in srgb, #000 24%, transparent);
+  --elev-2-radius: var(--radius-xl);
 }
 :root[data-theme="light"] {
   /* light = brand editorial default */
@@ -189,6 +237,7 @@
   /* BLOCK EDGE RULE (see :root's --block-edge comment) — light needs 16% (2x
      fill) since --border (#e7e5e4) sits only ~5/channel from fill (#e2e2e2). */
   --block-edge: color-mix(in srgb, var(--fg) 16%, var(--bg));
+  --elev-1-bg: var(--surface);
 }
 /* claude = the Anthropic editorial palette: tinted-cream canvas + warm-ink text,
    coral reserved for action/link/code (coral is scarce). These 18 color values are
@@ -258,8 +307,9 @@
   --seg-active-bg: color-mix(in srgb, var(--bg) 60%, #fff);
   --seg-active-fg: var(--fg);
   --seg-active-ring: 0 0 0 1px color-mix(in srgb, var(--fg) 55%, var(--bg)), 0 1px 2px rgb(20 20 19 / .08);
+  --elev-1-bg: var(--surface);
 }
-body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); margin: 0; word-break: keep-all; overflow-wrap: break-word; }
 
 /* The shell owns the viewport: body itself NEVER scrolls (every scroll lives in
    an inner component — .cm-scroller, .sidebar-aside, modal panes). overflow:
@@ -309,6 +359,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-editor .cm-content {
   max-width: var(--measure, 68%);
   padding: 2rem 1rem;
+  word-break: normal; /* body rule decided in D2b; chrome keep-all (body) must not leak in */
   font-family: var(--reading-font, var(--font-sans));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -614,7 +665,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    drawing inside the box and out of neighbouring lines. The svg itself needs no
    `overflow` — clipping is the host's job. */
 .cm-mermaid svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
-.cm-mermaid-error { color: #dc2626; white-space: pre-wrap; padding: .75em; }
+.cm-mermaid-error { color: var(--danger); white-space: pre-wrap; padding: .75em; }
 .cm-mermaid svg { cursor: grab; }
 .cm-mermaid svg:active { cursor: grabbing; }
 /* GPU-promote the svg to a compositor layer ONLY while panning/zooming, so the
@@ -728,7 +779,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-video-remote-load:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .cm-video-remote-load:disabled { opacity: .6; cursor: default; }
 .cm-video-remote-caption { opacity: .75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cm-video-remote-caption.is-error { color: var(--danger, #e28080); opacity: 1; white-space: normal; }
+.cm-video-remote-caption.is-error { color: var(--danger); opacity: 1; white-space: normal; }
 .cm-youtube-facade {
   position: relative; display: block; width: 100%; max-width: 560px; aspect-ratio: 16 / 9;
   margin: .5em auto; cursor: pointer; border-radius: var(--radius-md, 8px); overflow: hidden;
@@ -760,7 +811,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-wikilink-active:hover { text-decoration: underline; }
 .cm-wikilink-missing { color: var(--muted); text-decoration: line-through dotted; cursor: default; }
 .cm-wikilink-pending { color: var(--muted); }
-.cm-wikilink-error { color: #dc2626; text-decoration: underline wavy; }
+.cm-wikilink-error { color: var(--danger); text-decoration: underline wavy; }
 .cm-wikilink-external::after { content: "↗"; font-size: .8em; margin-left: .1em; opacity: .7; }
 
 .cm-link {
@@ -775,11 +826,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Shared external-open failure feedback (openExternal, open-external.ts) —
    same tone as .cm-wikilink-error, applied to any anchor that failed to open
    (main-body link, wikilink, autolink, or a table-cell/changelog anchor). */
-.cm-external-link-error { color: #dc2626; text-decoration: underline wavy; }
+.cm-external-link-error { color: var(--danger); text-decoration: underline wavy; }
 /* Same tone as .cm-external-link-error, applied to a standard local Markdown
    link (single-window-opening Todo 3) rejected by local-doc-link.ts — e.g. a
    traversal attempt or a missing target. */
-.cm-local-link-error { color: #dc2626; text-decoration: underline wavy; }
+.cm-local-link-error { color: var(--danger); text-decoration: underline wavy; }
 
 /* Links rendered inside a table cell or the settings version pane's
    changelog list (both via renderInlineMarkdown/inline-render.ts) share the
@@ -945,7 +996,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .status-update { display: inline-flex; align-items: center; gap: .4em; padding: 0 .4em; }
 .status-update-btn {
   appearance: none; border: none; background: transparent; cursor: pointer;
-  font: inherit; font-size: 12px; padding: .2em .5em; border-radius: var(--radius-sm, 4px);
+  font: inherit; font-size: 12px; padding: .2em .5em; border-radius: var(--radius-sm);
   color: var(--muted);
 }
 .status-update[data-state="found"] .status-update-btn,
@@ -1027,15 +1078,37 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .chrome-btn[aria-expanded="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .chrome-btn[aria-expanded="true"]:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 
+/* BUTTON GRAMMAR (D2 Y6): tier = what it does, size = where it sits.
+   primary   — the pane/dialog's main action (accent fill, --on-accent text)
+   secondary — an ordinary action (visible border, transparent fill)
+   ghost     — a quiet / dismiss action (no border, muted text)
+   md (32px) — pane & dialog actions; sm (24px) — in-row actions.
+   Out of scope by design: .chrome-btn (icon chrome, 28px) and every rail
+   button (--sidebar-* palette, em-sized under the SIDEBAR ZOOM RULE). */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  box-sizing: border-box; height: var(--control-h-md); padding: 0 var(--space-4);
+  border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--fg);
+  font: inherit; font-size: var(--text-md); font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease, color .12s ease; }
+.btn-sm { height: var(--control-h-sm); padding: 0 var(--space-2); border-radius: var(--radius-sm); font-size: var(--text-sm); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--bg)); }
+.btn-secondary { border-color: var(--border-strong); }
+.btn-secondary:hover:not(:disabled), .btn-ghost:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
+.btn-ghost { color: var(--muted); }
+.btn-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, transparent); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+
 /* Save status: icon + label, color states preserved from the old emoji version
    (saved/saving muted, error red, conflict amber). The status word lives in
    .save-label (an inline-flex icon+text); the conflict actions follow it. */
 .save-status { display: inline-flex; align-items: center; gap: .25em; font-size: 13px; color: var(--muted); }
 .save-label { display: inline-flex; align-items: center; gap: 6px; padding: 0 .25em; white-space: nowrap; }
 .save-label .icon { flex: none; width: 16px; height: 16px; }
-.save-status[data-state="error"] { color: #dc2626; }
-.save-status[data-state="conflict"] { color: #d97706; }
-.save-status[data-state="recovery"] { color: #dc2626; }
+.save-status[data-state="error"] { color: var(--danger); }
+.save-status[data-state="conflict"] { color: var(--warning); }
+.save-status[data-state="recovery"] { color: var(--danger); }
 /* Spinner: the loader-circle icon rotates while a write is in flight. */
 .save-status[data-state="saving"] .save-label .icon { animation: status-spin .8s linear infinite; }
 @keyframes status-spin { to { transform: rotate(360deg); } }
@@ -1043,20 +1116,18 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Mode toggle's persistent remote-read-only state (Task 11): same amber the
    save-status conflict state already uses, so "you can't write here" reads
    consistently across the two indicators rather than inventing a new tone. */
-.mode-toggle[data-remote="true"] { color: #d97706; }
-.mode-toggle[data-remote="true"]:hover { background: color-mix(in srgb, #d97706 12%, transparent); }
+.mode-toggle[data-remote="true"] { color: var(--warning); }
+.mode-toggle[data-remote="true"]:hover { background: color-mix(in srgb, var(--warning) 12%, transparent); }
 
 .recovery-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, #000 45%, transparent); }
-.recovery-modal { display: flex; flex-direction: column; gap: 14px; width: min(520px, 92vw); padding: 20px; border-radius: var(--radius-lg, 12px); background: var(--bg); color: var(--fg); border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent); box-shadow: 0 16px 48px color-mix(in srgb, #000 35%, transparent); }
+.recovery-modal { display: flex; flex-direction: column; gap: 14px; width: min(520px, 92vw); padding: 20px; border-radius: var(--elev-2-radius); background: var(--elev-2-bg); color: var(--fg); border: 1px solid var(--border); box-shadow: var(--elev-2-shadow); }
 .recovery-title { margin: 0; font-size: 16px; }
 .recovery-body { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .recovery-modal details { color: var(--muted); font-size: 12px; }
 .recovery-modal code { display: block; overflow: auto; max-height: 7em; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
 .recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
-.recovery-action, .recovery-cancel { min-height: 34px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); border-radius: var(--radius-md, 8px); background: transparent; color: var(--fg); font: inherit; font-size: 13px; cursor: pointer; }
-.recovery-action:hover, .recovery-cancel:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.recovery-action-close-discard { color: #dc2626; border-color: color-mix(in srgb, #dc2626 55%, transparent); }
-.recovery-cancel { align-self: flex-start; color: var(--muted); }
+/* Buttons: .btn grammar (.recovery-action = secondary, -close-discard adds btn-danger, .recovery-cancel = ghost). */
+.recovery-cancel { align-self: flex-start; }
 
 /* Conflict modal: a body-level overlay (sibling of .editor-host, outside the CM
    measure tree → ZOOM GUARD holds). Shown only when the file changed on disk AND
@@ -1070,10 +1141,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .conflict-modal {
   display: flex; flex-direction: column; gap: 14px;
   width: min(720px, 92vw); max-height: 84vh;
-  padding: 20px; border-radius: var(--radius-lg, 12px);
-  background: var(--bg); color: var(--fg);
-  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
-  box-shadow: 0 16px 48px color-mix(in srgb, #000 35%, transparent);
+  padding: 20px; border-radius: var(--elev-2-radius);
+  background: var(--elev-2-bg); color: var(--fg);
+  border: 1px solid var(--border);
+  box-shadow: var(--elev-2-shadow);
 }
 .conflict-header { display: flex; flex-direction: column; gap: 4px; }
 .conflict-title { font-size: 15px; font-weight: 600; }
@@ -1087,22 +1158,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .conflict-row { display: flex; gap: 8px; padding: 0 12px; white-space: pre-wrap; word-break: break-word; }
 .conflict-sign { flex: none; width: 1ch; color: var(--muted); user-select: none; }
 .conflict-line { flex: 1 1 auto; }
-.conflict-added { background: color-mix(in srgb, #16a34a 16%, transparent); }
-.conflict-added .conflict-sign { color: #16a34a; }
-.conflict-removed { background: color-mix(in srgb, #dc2626 16%, transparent); }
-.conflict-removed .conflict-sign { color: #dc2626; }
+.conflict-added { background: color-mix(in srgb, var(--success) 16%, transparent); }
+.conflict-added .conflict-sign { color: var(--success); }
+.conflict-removed { background: color-mix(in srgb, var(--danger) 16%, transparent); }
+.conflict-removed .conflict-sign { color: var(--danger); }
 .conflict-actions { display: flex; gap: 10px; justify-content: flex-end; }
-.conflict-btn {
-  height: 34px; padding: 0 16px; border-radius: var(--radius-md, 8px);
-  font-size: 13px; font-weight: 500; cursor: pointer;
-  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
-  background: transparent; color: var(--fg);
-}
-.conflict-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.conflict-use-external { color: #d97706; border-color: color-mix(in srgb, #d97706 55%, transparent); }
-.conflict-use-external:hover { background: #d97706; color: #fff; border-color: #d97706; }
+/* .conflict-btn is a .btn.btn-secondary (button grammar); only the per-action tints live here. */
+.conflict-use-external { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 55%, transparent); }
+.conflict-btn.conflict-use-external:hover:not(:disabled) { background: var(--warning); color: var(--bg); border-color: var(--warning); }
 .conflict-merge { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
-.conflict-merge:hover { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.conflict-btn.conflict-merge:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 
 /* Viewer shell chrome (full-pane rewrite, _workspace/01_architect_design.md,
    2026-07-18 — supersedes R11's body-level backdrop/modal): the IN-CONTENT
@@ -1441,7 +1506,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    살짝 구분... 과하지 않게") — smaller than the tab's own label, never a loud
    color, so it reads as metadata rather than a warning. */
 .sqlite-viewer-badge {
-  font-size: 0.8em; padding: 0 4px; border-radius: var(--radius-sm, 4px);
+  font-size: 0.8em; padding: 0 4px; border-radius: var(--radius-sm);
   color: var(--muted); background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
 /* This viewer's OWN scroll boundary inside the shell's .viewer-panel-body
@@ -1571,7 +1636,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   outline: none; border-color: color-mix(in srgb, var(--accent) 70%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
 }
-.title-bar.path-editing > .open-path-error { display: block; flex: none; color: #dc2626; white-space: nowrap; }
+.title-bar.path-editing > .open-path-error { display: block; flex: none; color: var(--danger); white-space: nowrap; }
 .title-bar.path-editing > .open-path-error[hidden] { display: none; }
 /* win/linux: re-expose the window-controls cluster during path-editing (the `> *`
    blanket hide above would otherwise strand the user without minimize/maximize/
@@ -1651,9 +1716,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    (renderRemoteBadge, workspace-sidebar.ts), shown before the first result. */
 .workspace-vault-badge { display: inline-flex; align-items: center; align-self: center; padding: .1em .55em; margin: 0 .3em; border-radius: 999px; font-size: .82em; white-space: nowrap; }
 .workspace-vault-badge--checking { color: var(--sidebar-muted); background: color-mix(in srgb, var(--sidebar-fg) 6%, transparent); }
-.workspace-vault-badge--ok { color: #7cc48f; background: color-mix(in srgb, #7cc48f 16%, transparent); }
-.workspace-vault-badge--warn { color: #e0b25c; background: color-mix(in srgb, #e0b25c 16%, transparent); }
-.workspace-vault-badge--error { color: #e28080; background: color-mix(in srgb, #e28080 16%, transparent); }
+.workspace-vault-badge--ok { color: var(--sidebar-success); background: color-mix(in srgb, var(--sidebar-success) 16%, transparent); }
+.workspace-vault-badge--warn { color: var(--sidebar-warning); background: color-mix(in srgb, var(--sidebar-warning) 16%, transparent); }
+.workspace-vault-badge--error { color: var(--sidebar-danger); background: color-mix(in srgb, var(--sidebar-danger) 16%, transparent); }
 
 /* Reconnect action (paintRecoveryButton, workspace-sidebar.ts) — text label
    ("다시 시도" / "다시 페어링"), not an icon square, so it does NOT reuse
@@ -1676,7 +1741,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .remote-vault-dialog-title { flex: 1; font-weight: 600; }
 .remote-vault-dialog-close { display: inline-flex; align-items: center; justify-content: center; width: 1.8em; height: 1.8em; border: 0; background: transparent; color: var(--sidebar-muted); cursor: pointer; border-radius: var(--radius-sm, 6px); }
 .remote-vault-dialog-close:hover { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); color: var(--sidebar-fg); }
-.remote-vault-dialog-error { color: var(--danger, #e28080); font-size: .9em; word-break: keep-all; overflow-wrap: anywhere; }
+.remote-vault-dialog-error { color: var(--sidebar-danger); font-size: .9em; word-break: keep-all; overflow-wrap: anywhere; }
 .remote-vault-dialog-step { display: flex; flex-direction: column; gap: .5em; }
 .remote-vault-dialog-input { padding: .4em .55em; border: 1px solid color-mix(in srgb, var(--sidebar-fg) 20%, transparent); border-radius: var(--radius-sm, 6px); background: transparent; color: var(--sidebar-fg); font: inherit; }
 .remote-vault-dialog-submit { padding: .4em .7em; border: 0; border-radius: var(--radius-sm, 6px); background: color-mix(in srgb, var(--sidebar-fg) 14%, transparent); color: var(--sidebar-fg); cursor: pointer; }
@@ -1952,10 +2017,17 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   background: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 .sidebar-header {
-  flex: none; padding: 10px 12px 6px;
+  flex: none; box-sizing: border-box;
+  /* 36px at zoom 1 in the header's own 11px base — same band as .sidebar-top-strip,
+     so switching rails never shifts the first row (D2 Y3). em, not px: rides --font-scale. */
+  height: calc(36em / 11);
+  display: flex; align-items: center; gap: .4em;
+  padding: 0 calc(12em / 11);
   font-size: calc(11em / 13); font-weight: 600; letter-spacing: .02em;
   color: var(--sidebar-muted);
 }
+/* Header action slot: one 24px square, whatever button family it comes from. */
+.sidebar-header .chrome-btn.icon-only, .sidebar-header .workspace-add-remote-btn { flex: none; width: 24px; height: 24px; }
 
 /* Outline (table of contents) LEFT SIDEBAR — the outline shares the sidebar
    shell above; only its heading list styling is bespoke. */
@@ -2112,9 +2184,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    the sidebar or the editor, so it stays theme-neutral rather than borrowing
    --sidebar-* tokens that only make sense inside the aside. */
 .context-menu {
-  min-width: 180px; padding: 4px; border-radius: var(--radius-md, 8px);
-  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 28%, transparent);
+  /* elev-1 (D2 Y7): theme-neutral (not --sidebar-*), lighter than the rail on dark. */
+  min-width: 180px; padding: 4px; border-radius: var(--elev-1-radius);
+  background: var(--elev-1-bg); color: var(--fg); border: 1px solid var(--border);
+  box-shadow: var(--elev-1-shadow);
   z-index: 60;
 }
 .context-menu-separator { height: 1px; margin: 4px 6px; background: var(--border); }
@@ -2354,10 +2427,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    touches the ZOOM GUARD — no font-size on .cm-content/.cm-line here. The
    `.cm-editor` prefix raises specificity above CM's runtime-injected base theme. */
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete {
-  background: var(--surface);
+  background: var(--elev-1-bg);
   border: 1px solid var(--border);                 /* hairline */
-  border-radius: var(--radius-md);                 /* rounded.md form-surface */
-  box-shadow: 0 4px 16px color-mix(in srgb, #000 18%, transparent); /* soft drop */
+  border-radius: var(--elev-1-radius);
+  box-shadow: var(--elev-1-shadow);
   font-family: var(--font-sans);
   overflow: hidden;
 }
@@ -2377,7 +2450,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Selected row: a quiet accent tint, NOT a hard fill — ink stays --fg so it's
    legible in both modes (light ink #292524 tint, dark sky tint). */
 .cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected] {
-  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  background: color-mix(in srgb, var(--accent) 16%, var(--elev-1-bg));
   color: var(--fg);
 }
 .cm-editor .cm-completionLabel { flex: 1; min-width: 0; }
@@ -2396,10 +2469,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   display: none;
   max-width: 320px;
   padding: .4em .7em;
-  background: var(--surface);
+  background: var(--elev-1-bg);
   border: 1px solid var(--border);                 /* hairline */
-  border-radius: var(--radius-sm);                 /* compact, chip-adjacent */
-  box-shadow: 0 4px 16px color-mix(in srgb, #000 18%, transparent); /* soft drop */
+  border-radius: var(--elev-1-radius);
+  box-shadow: var(--elev-1-shadow);
   color: var(--fg);
   font-family: var(--font-sans);
   font-size: 13px;
@@ -2460,7 +2533,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    that just doesn't get that big. The cap moved from 720×560 to 880×680
    (team-lead: "상한 유지, 다만 넉넉하게") — still bounded, just no longer
    cramped on an ordinary laptop screen either. */
-.settings-modal { display: flex; flex-direction: column; width: min(880px, 92vw); height: min(680px, 88vh); background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-xl); overflow: hidden; box-shadow: 0 12px 48px color-mix(in srgb, #000 24%, transparent); }
+.settings-modal { display: flex; flex-direction: column; width: min(880px, 92vw); height: min(680px, 88vh); background: var(--elev-2-bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--elev-2-radius); overflow: hidden; box-shadow: var(--elev-2-shadow); }
 
 /* Header: a caption-uppercase title (12px/600, +0.96px tracking) + a quiet close
    glyph, separated from the body by a hairline-soft rule. */
@@ -2493,26 +2566,20 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .version-pane { display: flex; flex-direction: column; gap: 1.2em; max-width: 420px; }
 .version-pane-heading { font-size: 16px; font-weight: 600; color: var(--fg); }
 .version-pane-number { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fg); }
-.version-check-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: .5em; height: 40px; padding: 0 20px; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius-md, 8px); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: opacity .12s ease; }
-.version-check-btn:hover { opacity: .9; }
-.version-check-btn:disabled { opacity: .6; cursor: default; }
+.version-check-btn { align-self: flex-start; }
 .version-status { min-height: 2.4em; } /* reserves space so the check/available/error swap doesn't jump the layout */
 .version-status-row { display: flex; align-items: center; gap: .5em; font-size: 15px; color: var(--fg); }
 .version-status-row .icon { width: 16px; height: 16px; }
 .version-status-row.is-ok .icon { color: var(--accent); }
 .version-spin { animation: version-spin-rotate 0.8s linear infinite; }
 @keyframes version-spin-rotate { to { transform: rotate(360deg); } }
-.version-status-error { color: #dc2626; background: color-mix(in srgb, #dc2626 10%, transparent); padding: 8px 10px; border-radius: var(--radius-md, 8px); font-size: 13px; line-height: 1.5; }
+/* ERROR TINT BOX (D2 Y1): the one boxed error form. Inline errors are text-only (color: var(--danger)). */
+.version-status-error, .remote-share-error, .remote-share-port-error { color: var(--danger); background: var(--danger-tint); }
+.version-status-error { padding: var(--space-2) 10px; border-radius: var(--radius-md); font-size: var(--text-md); line-height: 1.5; }
 .version-update-card { display: flex; flex-direction: column; gap: .7em; padding: 1em 1.2em; border-radius: var(--radius-md, 8px); background: color-mix(in srgb, var(--fg) 5%, transparent); }
 .version-update-title { font-size: 16px; font-weight: 600; color: var(--fg); }
 .version-update-date { font-size: 12px; color: var(--muted); }
 .version-update-actions { display: flex; gap: .6em; }
-.version-install-btn { display: inline-flex; align-items: center; height: 40px; padding: 0 20px; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius-md, 8px); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: opacity .12s ease; }
-.version-install-btn:hover { opacity: .9; }
-.version-install-btn:disabled { opacity: .6; cursor: default; }
-.version-later-btn { display: inline-flex; align-items: center; height: 40px; padding: 0 16px; background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-md, 8px); font: inherit; font-size: 14px; cursor: pointer; }
-.version-later-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
-.version-later-btn:disabled { opacity: .6; cursor: default; }
 .version-progress { display: flex; flex-direction: column; gap: .5em; }
 .version-progress[hidden] { display: none; }
 .version-progress-caption { font-size: 13px; color: var(--muted); }
@@ -2626,14 +2693,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .settings-slider:focus-visible { box-shadow: 0 0 0 2px var(--focus-ring); }
 .settings-slider-value { flex: none; width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
 
-.settings-json-error { min-height: 1.2em; color: #dc2626; font-size: 12px; margin: .4em 0; }
+.settings-json-error { min-height: 1.2em; color: var(--danger); font-size: 12px; margin: .4em 0; }
 .settings-json-actions { display: flex; gap: .5em; }
 /* Default JSON button = outline pill (button-outline: transparent + hairline + ink). */
-.settings-json-btn { background: transparent; color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: .45em 1.1em; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color .12s ease, border-color .12s ease, color .12s ease; }
-.settings-json-btn:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); border-color: var(--muted); }
-/* Apply = ink pill (button-primary: --accent fill, --bg ink). */
-.settings-json-btn[data-act="apply"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
-.settings-json-btn[data-act="apply"]:hover { background: color-mix(in srgb, var(--accent) 88%, var(--fg)); border-color: transparent; }
+/* JSON buttons: .btn grammar (apply = btn-primary, copy/download = btn-secondary). */
 
 /* Theme Visual Editor */
 .theme-editor {
@@ -2761,17 +2824,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .settings-row-keybind .settings-row-control { width: 100%; }
 .keybind-editor { display: flex; flex-direction: column; gap: .5em; width: 100%; }
 .keybind-toolbar { display: flex; justify-content: flex-end; }
-.keybind-reset-all,
-.keybind-capture,
-.keybind-reset {
-  background: transparent; color: var(--fg); border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 6px); font: inherit; font-size: 12px;
-  padding: 3px 8px; cursor: pointer; transition: background-color .12s ease, border-color .12s ease;
-}
-.keybind-reset-all:hover,
-.keybind-capture:hover,
-.keybind-reset:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.keybind-capture.is-capturing { border-color: var(--accent); color: var(--accent); }
+/* reset-all / capture / reset are .btn.btn-secondary.btn-sm (button grammar). */
+.keybind-capture.is-capturing { border-color: var(--accent-ui); color: var(--accent-ui); }
 .keybind-list { display: flex; flex-direction: column; }
 .keybind-item {
   display: grid; grid-template-columns: 1fr auto auto auto auto; align-items: center;
@@ -2787,7 +2841,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
  * so the editable primary (.keybind-chord) stays the visual focus; empty
  * when an action has no aliases (no extra layout ceremony). */
 .keybind-alias { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
-.keybind-warning { grid-column: 1 / -1; color: #dc2626; font-size: 12px; }
+.keybind-warning { grid-column: 1 / -1; color: var(--danger); font-size: 12px; }
 .keybind-warning[hidden] { display: none; }
 
 .settings-vtoggle-list { display: flex; flex-direction: column; width: 100%; }
@@ -2813,7 +2867,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .remote-share-pane { display: flex; flex-direction: column; gap: .4em; max-width: 480px; }
 .remote-share-heading { font-size: 16px; font-weight: 600; color: var(--fg); margin-bottom: .4em; }
 .remote-share-error {
-  color: #dc2626; background: color-mix(in srgb, #dc2626 10%, transparent);
   padding: 8px 10px; border-radius: var(--radius-md, 8px); font-size: 13px; line-height: 1.5;
 }
 .remote-share-notice {
@@ -2825,13 +2878,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .remote-share-vault-item { cursor: pointer; gap: .6em; justify-content: flex-start; }
 .remote-share-checkbox { accent-color: var(--accent); width: 15px; height: 15px; flex: none; }
 .remote-share-empty { color: var(--muted); font-size: 13px; padding: 5px 0; }
-.remote-share-issue-btn, .remote-share-revoke-btn {
-  background: transparent; color: var(--fg); border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 6px); font: inherit; font-size: 12px;
-  padding: 4px 10px; cursor: pointer; transition: background-color .12s ease, border-color .12s ease;
-}
-.remote-share-issue-btn:hover, .remote-share-revoke-btn:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.remote-share-issue-btn:disabled { opacity: .5; cursor: default; }
+/* issue / revoke buttons are .btn.btn-secondary.btn-sm (button grammar). */
 .remote-share-code { font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; letter-spacing: .06em; color: var(--fg); }
 /* 공유 포트 행 (47878 포트 변경, 2026-09-26) — 인풋은 .settings-text를 그대로
    재사용(패널 공용 텍스트 입력 스타일); 인라인 오류만 .remote-share-error와
@@ -2839,7 +2886,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    .remote-share-pane 최상단 error 배너와 위치·의미가 겹친다). */
 .remote-share-port-input { max-width: 10em; }
 .remote-share-port-error {
-  color: #dc2626; background: color-mix(in srgb, #dc2626 10%, transparent);
   padding: 6px 8px; border-radius: var(--radius-sm, 6px); font-size: 12px; line-height: 1.4; margin-top: .3em;
 }
 
@@ -2954,22 +3000,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   gap: 0.6rem;
   width: 100%;
 }
-.welcome-cta-btn {
-  display: inline-flex;
-  align-items: center;
-  height: 40px;
-  padding: 0 24px;
-  background: var(--accent);
-  color: var(--on-accent);
-  border: none;
-  border-radius: var(--radius-md, 8px);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: opacity 0.12s ease;
-}
-.welcome-cta-btn:hover { opacity: 0.9; }
+.welcome-cta-btn { padding: 0 var(--space-5); } /* .btn.btn-primary; hero button = wider only */
 .welcome-cta-hint {
   font-size: 13px;
   color: var(--muted);
@@ -3094,11 +3125,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .search-item-glyph .icon { width: 100%; height: 100%; }
 .search-item-label { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .search-hit-mark {
-  background: color-mix(in srgb, var(--sidebar-accent) 35%, transparent);
-  color: inherit; border-radius: 2px; padding: 0 1px;
+  background: none; color: var(--sidebar-accent); font-weight: 600; border-radius: 0; padding: 0;
 }
 .search-empty, .search-error { padding: .5em 8px; color: var(--sidebar-muted); }
-.search-error { color: var(--danger, #d33); }
+.search-error { color: var(--sidebar-danger); }
 .search-truncated-banner {
   padding: 4px 8px; font-size: calc(11em / 13); color: var(--sidebar-muted); word-break: keep-all; overflow-wrap: anywhere;
   border-bottom: 1px solid var(--sidebar-border); margin-bottom: 2px;

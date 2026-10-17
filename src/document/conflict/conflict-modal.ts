@@ -102,15 +102,15 @@ export function openConflictModal(opts: ConflictModalOptions): ConflictModalHand
   actions.className = "conflict-actions";
   const useExternal = document.createElement("button");
   useExternal.type = "button";
-  useExternal.className = "conflict-btn conflict-use-external";
+  useExternal.className = "conflict-btn btn btn-secondary conflict-use-external";
   useExternal.textContent = "외부 채택 (디스크 내용으로 다시 읽기)";
   const keepLocal = document.createElement("button");
   keepLocal.type = "button";
-  keepLocal.className = "conflict-btn conflict-keep-local";
+  keepLocal.className = "conflict-btn btn btn-secondary conflict-keep-local";
   keepLocal.textContent = "로컬 유지 (내 편집으로 덮어쓰기)";
   const merge = document.createElement("button");
   merge.type = "button";
-  merge.className = "conflict-btn conflict-merge";
+  merge.className = "conflict-btn btn btn-secondary conflict-merge";
   merge.textContent = "병합 (두 버전 표시)";
   actions.append(useExternal, keepLocal, merge);
 

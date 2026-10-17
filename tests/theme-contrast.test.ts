@@ -249,3 +249,84 @@ describe("accent-fill text always goes through --on-accent; focus rings through 
     expect(offenders.map((r) => r.sel)).toEqual([]);
   });
 });
+
+// ---------- D2a: status ink (Y1), elevation (Y7), literal ban, token scales (G8) ----------
+const lum = ([r, g, b]: Rgba): number => {
+  const f = (c: number) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+};
+const STATUS = ["danger", "warning", "success"] as const;
+
+describe("status ink (D2 Y1) — ONE derived rule, AA on bg / surface / tint box / rail", () => {
+  for (const theme of THEMES) {
+    for (const s of STATUS) {
+      it(`${theme}: --${s} >= 4.5 on --bg, --surface and its 10% tint box`, () => {
+        const ink = tok(s, theme);
+        expect(ratio(ink, tok("bg", theme))).toBeGreaterThanOrEqual(4.5);
+        expect(ratio(ink, tok("surface", theme))).toBeGreaterThanOrEqual(4.5);
+        const tint = resolveColor(`color-mix(in srgb, var(--${s}) 10%, transparent)`, theme);
+        expect(ratio(ink, over(tint, tok("surface", theme)))).toBeGreaterThanOrEqual(4.5);
+      });
+      it(`${theme}: --sidebar-${s} >= 4.5 on --sidebar-bg`, () => {
+        expect(ratio(tok(`sidebar-${s}`, theme), tok("sidebar-bg", theme))).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+  }
+  it("--danger-tint is declared (the one boxed error form)", () => {
+    expect(declIn(ruleBlock(":root"), "--danger-tint")).not.toBeNull();
+  });
+  it("themes never re-declare status tokens (one derived rule follows custom JSON)", () => {
+    for (const theme of ["light", "claude"] as const) {
+      for (const s of STATUS) {
+        expect(declIn(themeBlock(theme), `--${s}`), `${theme} --${s}`).toBeNull();
+      }
+    }
+  });
+});
+
+describe("elevation (D2 Y7) — popovers lighter than the rail on dark; two levels", () => {
+  it("dark: --elev-1-bg is lighter than the rail (no elevation inversion)", () => {
+    expect(lum(tok("elev-1-bg", "dark"))).toBeGreaterThan(lum(tok("sidebar-bg", "dark")));
+  });
+  it("light/claude: --elev-1-bg is the card surface; all themes: --elev-2-bg is the surface", () => {
+    for (const theme of ["light", "claude"] as const) {
+      expect(toHex(tok("elev-1-bg", theme))).toBe(toHex(tok("surface", theme)));
+    }
+    for (const theme of THEMES) expect(toHex(tok("elev-2-bg", theme))).toBe(toHex(tok("surface", theme)));
+  });
+  it.each([
+    [".context-menu", 1, css],
+    [".cm-editor .cm-tooltip.cm-tooltip-autocomplete", 1, css],
+    [".cm-footnote-preview", 1, css],
+    [".theme-inspector", 1, themePanelCss],
+    [".settings-modal", 2, css],
+    [".recovery-modal", 2, css],
+    [".conflict-modal", 2, css],
+  ] as const)("%s consumes --elev-%i bg/shadow/radius", (sel, n, src) => {
+    const m = src.match(new RegExp("(?:^|\\})\\s*" + esc(sel) + "\\s*\\{([^}]*)\\}", "m"));
+    expect(m, sel).not.toBeNull();
+    for (const p of ["bg", "shadow", "radius"]) expect(m![1], `${sel} ${p}`).toContain(`var(--elev-${n}-${p})`);
+  });
+});
+
+describe("STATUS LITERAL BAN (D2 Y1)", () => {
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/--[\w-]*hue:\s*#[0-9a-f]{3,8};/gi, "");
+  for (const [name, src] of [["styles.css", css], ["theme-panel.css", themePanelCss]] as const) {
+    it(`${name}: no status hex literal and no var(--danger, fallback)`, () => {
+      expect(strip(src).match(/#(dc2626|d97706|16a34a|e28080|ef4444|fca5a5|7cc48f|e0b25c)\b|#d33\b|var\(--danger,/gi)).toBeNull();
+    });
+  }
+});
+
+describe("chrome scale tokens exist (D2 G8)", () => {
+  it(":root declares spacing / type / control-height / border-strong scales", () => {
+    const root = ruleBlock(":root");
+    const want: Record<string, string> = {
+      "--space-1": "4px", "--space-2": "8px", "--space-3": "12px", "--space-4": "16px", "--space-5": "24px", "--space-6": "32px",
+      "--text-xs": "11px", "--text-sm": "12px", "--text-md": "13px",
+      "--control-h-sm": "24px", "--control-h-md": "32px",
+    };
+    for (const [k, v] of Object.entries(want)) expect(declIn(root, k), k).toBe(v);
+    expect(declIn(root, "--border-strong")).toContain("color-mix(in srgb, var(--fg) 18%, transparent)");
+  });
+});
