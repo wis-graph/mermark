@@ -1,11 +1,11 @@
 {
-  "version": "0.20.0",
-  "notes": "### Added\n\n- **원격 볼트에서 이미지·EPUB·한글 문서를 열 수 있다**: 원격 공유로 연결한 볼트에서도 사진을 탐색기나 본문에서 클릭하면 이미지 뷰어가 열리고, `.epub`과 `.hwp`/`.hwpx`도 로컬과 똑같이 열린다. 데이터베이스(`.db`/`.sqlite`)만 원격에서 지원하지 않는다.\n- **원격 볼트의 첨부 이미지가 보인다**: 이미지 첨부 명령으로 넣어 `.attachments` 폴더에 들어간 사진이 원격 문서에서도 표시된다. 본문의 `![[사진.png]]`처럼 이름만 적힌 이미지는 원격 볼트 전체에서 찾아 연다. **공유하는 쪽(호스트) 기기도 이 버전으로 업데이트해야** 첨부 이미지가 열린다. `.git`, `.obsidian` 같은 다른 숨김 폴더는 여전히 공유되지 않는다.\n\n### Fixed\n\n- **워크스페이스에서 볼트를 접어도 하위 폴더가 그대로 보이던 문제**: 볼트 안의 폴더를 따로 볼트로 등록해 둔 경우, 부모 볼트를 접으면 열린 파일만 숨고 하위 볼트는 남아 있었다. 이제 하위 볼트까지 함께 접힌다.",
-  "pub_date": "2026-10-02T10:53:47Z",
+  "version": "0.21.0",
+  "notes": "### Added\n\n- **터미널에서 원격 공유를 켜고 끌 수 있다**: `mermark share on 노트 업무`처럼 볼트 이름을 적으면 그 볼트들을 공유하고, 이름 없이 `mermark share on`이면 마지막으로 공유했던 볼트와 연결 방식으로 다시 켠다. `mermark share off`로 끄고 `mermark share status`로 상태를 본다. 결과는 터미널에 바로 나온다. 앱이 꺼져 있으면 `share on`이 앱을 띄운 뒤 공유를 켠다. 설정 패널에서 켜도 같은 \"마지막 선택\"이 기억되고, 터미널에서 켜면 열려 있는 설정 패널에도 바로 반영된다.\n- **파일 우클릭 메뉴에 확장자별 \"○○로 열기\"**: 이미지와 PDF는 \"미리보기로 열기\", HTML·SVG·PDF·이미지는 \"브라우저로 열기\"가 생겼다. 기본 앱이 다른 앱으로 지정돼 있어도 미리보기·기본 브라우저로 연다. \"기본 앱에서 열기\"는 그대로 있다.\n\n### Fixed\n\n- **\"기본 앱에서 열기\"와 위키링크 첨부 열기가 아무 반응이 없던 문제**: 열기 권한 설정 때문에 모든 경로가 거부되고 있었는데 오류가 조용히 묻혀 있었다. 이제 제대로 열린다. 이전 메뉴에서 PDF 항목은 \"미리보기에서 열기\"라고 쓰여 있었지만 실제로는 기본 앱으로 열려고 했다 — 이름과 동작을 맞췄다.\n- **공유 켜기가 동시에 두 번 들어오면 한쪽이 \"포트 사용 중\"으로 실패하던 문제**.\n\n### Security\n\n- 기본 앱으로 여는 경로가 실행 파일(`.command`, `.app` 안쪽 파일, `.webloc` 등)을 거부한다. 심볼릭 링크로 이름을 위장해도 실제 파일을 기준으로 판단한다.",
+  "pub_date": "2026-10-17T19:16:51Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzJnMUc4VEVSdUJReStUM2h6UHRBdnlTRllpdjZ3UEh3YTEvTnliOXh3YTMzS2ZBREkySEZnVXJ4REJJTVFBa2JoVGo5YU52ZWV5U2IwODhJa0Z0S1E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTM4NDA4CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnlXU0F6eEFQLzB1clVmYzV1RXgzWFA2Y1BjSmFrTGI3d2N0VDZWeC9JZFNMQmtrdXAvMU1maWc5N3FGMUFPN2dRWTFOdzVzNThxZUhuak9TT1l2YUJnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.20.0/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzJoVlFJQ3NDaVZZWnRSeUpSeUdteGNpbHZMaUFZTTRaaHE3elN2cTBCVDRoNTlWdFkrVGoyeTVKdFdzaVh2TDJneDNleHAzNFo2RjZRemY5L01wR1FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjY0NTk0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkNNdWpFSEpqdUEzU2d1SEI2VGhJWjlhdC9wSlpuNElwWEgxMElJeTkyNHpFa3BiSi8xTzNLZGM0NzFJN3ZrOEV5VkRmYnNJcVBnTUlLWjZZVnVTVERBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.21.0/mermark.app.tar.gz"
     }
   }
 }
