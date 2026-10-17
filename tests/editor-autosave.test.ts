@@ -17,18 +17,11 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }));
 
-import { mountEditor, shouldOverwriteOnConflict } from "../src/editor";
+import { mountEditor } from "../src/editor";
 import { createRecoveryState } from "../src/document/recovery-contract";
 
 const writes = () =>
   invokeMock.mock.calls.filter((c) => c[0] === "write_file") as [string, { path: string; text: string; baseline: number }][];
-
-describe("shouldOverwriteOnConflict (conflict policy rule)", () => {
-  it("is true only for overwrite", () => {
-    expect(shouldOverwriteOnConflict("pause")).toBe(false);
-    expect(shouldOverwriteOnConflict("overwrite")).toBe(true);
-  });
-});
 
 describe("filesystem recovery contract for save failures", () => {
   it("keeps the buffer and tab while offering non-overwriting save recovery", () => {
@@ -86,7 +79,7 @@ describe("autosaveDelay thread", () => {
   });
 });
 
-describe("conflictPolicy branch", () => {
+describe("refused write (CONFLICT)", () => {
   let host: HTMLElement;
   beforeEach(() => {
     vi.useFakeTimers();
@@ -97,12 +90,11 @@ describe("conflictPolicy branch", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("pause (default): a refused write halts autosave; no further writes, no overwrite", async () => {
+  it("a refused write halts autosave — no further writes, no baseline:0 overwrite", async () => {
     writeHandler = () => Promise.reject("CONFLICT: file changed on disk");
     const ed = mountEditor(host, "a", "/tmp", "/tmp/doc.md", {
       initialMode: "edit",
       autosaveDelay: 100,
-      conflictPolicy: "pause",
       baseMtime: 1, // non-zero so a normal write ≠ a baseline:0 overwrite
     });
     ed.view.dispatch({ changes: { from: 1, insert: "b" } });
@@ -117,20 +109,12 @@ describe("conflictPolicy branch", () => {
     ed.view.destroy();
   });
 
-  it("overwrite policy still pauses a refused write until an explicit force-save", async () => {
-    writeHandler = () => Promise.reject("CONFLICT: file changed on disk");
-    const ed = mountEditor(host, "a", "/tmp", "/tmp/doc.md", {
-      initialMode: "edit",
-      autosaveDelay: 100,
-      conflictPolicy: "overwrite",
-      baseMtime: 1, // first write carries this baseline; the overwrite retry drops to 0
-    });
-    ed.view.dispatch({ changes: { from: 1, insert: "b" } });
-    await vi.advanceTimersByTimeAsync(150);
-    expect(writes()).toHaveLength(1);
-    expect(writes().every((c) => c[1].baseline !== 0)).toBe(true);
+  it("the controller exposes no conflict-policy setter (option withdrawn)", () => {
+    const ed = mountEditor(host, "a", "/tmp", "/tmp/doc.md", { initialMode: "edit" });
+    expect("setConflictPolicy" in ed).toBe(false);
     ed.view.destroy();
   });
+
 });
 
 describe("reloadFromFile branch", () => {
@@ -150,7 +134,6 @@ describe("reloadFromFile branch", () => {
     const ed = mountEditor(host, "a", "/tmp", "/tmp/doc.md", {
       initialMode: "edit",
       autosaveDelay: 100,
-      conflictPolicy: "pause",
       baseMtime: 1,
       onStatus: (s) => {
         status = s;
@@ -377,5 +360,37 @@ describe("remote vault read-only guard (Task 10 fix round 1, Critical)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("edits typed while closing (confirmed-then-relaunching window)", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    invokeMock.mockClear();
+    readHandler = () => Promise.resolve({ text: "", mtime: 1 });
+    writeHandler = () => Promise.resolve(2);
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("an edit after beginClose is tracked as unsaved but not auto-written", async () => {
+    const ed = mountEditor(host, "a", "/tmp", "/tmp/doc.md", { initialMode: "edit", autosaveDelay: 100 });
+    ed.beginClose();
+    ed.view.dispatch({ changes: { from: 1, insert: "b" } });
+    expect(ed.hasUnsaved()).toBe(true);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(writes().length).toBe(0); // timer stays stopped while closing
+    ed.view.destroy();
+  });
+
+  it("after resumeWrites the closing-time edit is still unsaved (so a later close saves it)", () => {
+    const ed = mountEditor(host, "a", "/tmp", "/tmp/doc.md", { initialMode: "edit", autosaveDelay: 100 });
+    ed.beginClose();
+    ed.view.dispatch({ changes: { from: 1, insert: "b" } });
+    ed.resumeWrites();
+    expect(ed.hasUnsaved()).toBe(true);
+    ed.view.destroy();
   });
 });

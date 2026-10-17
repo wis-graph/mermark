@@ -52,7 +52,6 @@ function makeFakeEditor() {
     beginClose: vi.fn(() => { log.push("beginClose"); }),
     saveOnClose: vi.fn(async () => { log.push("saveOnClose"); return saveOnCloseResult; }),
     setAutosaveDelay: vi.fn(),
-    setConflictPolicy: vi.fn(),
     setVimMode: vi.fn(),
     reloadFromFile: vi.fn(),
     flushSave: vi.fn(),

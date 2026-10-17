@@ -6,6 +6,14 @@
 // only its serializable metadata (FoundUpdate) is exposed via queries — so no
 // caller can hold or leak the rid-bearing resource itself.
 //
+// Relaunch invariant: installAndRelaunch never relaunches without passing the
+// RelaunchGuard's confirmDurable (the live buffer is durably on disk) both
+// before install() and again right before relaunch() (covers edits typed while
+// installing). The
+// guard is injected once by main (update-flow stays editor-agnostic), so every
+// caller — auto-install, footer, settings 버전 pane — gets the confirmation
+// and none can skip it. No guard registered => refuse to relaunch (fail-closed).
+//
 // Cold-load invariant: `@tauri-apps/plugin-updater` and `@tauri-apps/plugin-process`
 // are dynamic-imported only at check/relaunch time (`import type` for the
 // static type references below), so they never enter the boot bundle.
@@ -18,6 +26,19 @@ export interface FoundUpdate {
   body?: string;
 }
 
+/** What a relaunch needs from the (editor-aware) app: confirm the live buffer
+ *  is durably on disk, and undo that confirmation's write pause if the
+ *  install/relaunch then fails. update-flow stays editor-agnostic. */
+export interface RelaunchGuard {
+  /** Resolves true only once the live buffer is durably persisted (or there is
+   *  nothing to persist). false => do NOT relaunch (its own failure path already
+   *  surfaced recovery UI and resumed autosave). */
+  confirmDurable(): Promise<boolean>;
+  /** confirmDurable() resolved true but install()/relaunch() then failed —
+   *  resume the writes it paused so the user's further edits keep autosaving. */
+  resumeAfterAbort(): void;
+}
+
 // ── module-private state (the SSOT cell) ───────────────────────────────────
 let phase: UpdatePhase = "idle";
 let pendingUpdate: Update | null = null;
@@ -25,6 +46,8 @@ let found: FoundUpdate | null = null;
 let lastResult: "found" | "none" | "error" | null = null;
 let hasCheckedOnce = false;
 let inFlightCheck: Promise<void> | null = null;
+let inFlightInstall: Promise<void> | null = null;
+let relaunchGuard: RelaunchGuard | null = null;
 const listeners = new Set<() => void>();
 
 function setPhase(next: UpdatePhase): void {
@@ -50,6 +73,12 @@ export function canStartDownload(p: UpdatePhase): boolean {
 /** phase === "downloaded" — mirrors canStartDownload for the install step. */
 export function canInstall(p: UpdatePhase): boolean {
   return p === "downloaded";
+}
+/** phase === "found" after a startDownload attempt — the download failed and
+ *  startDownload reverted. (A phase already past "found", e.g. an auto-install
+ *  that has begun "installing", is NOT a failed download.) */
+export function downloadReverted(p: UpdatePhase): boolean {
+  return p === "found";
 }
 /** idle or found — the only phases a check may start from. Guards against the
  *  "footer download in progress, settings panel re-checks" interleaving:
@@ -150,18 +179,59 @@ export async function startDownload(onEvent?: (ev: DownloadEvent) => void): Prom
   }
 }
 
-/** downloaded -> installing -> install() + relaunch(). No-op outside
- *  "downloaded" (canInstall guards it). Errors revert to "downloaded" so the
- *  UI can offer retry; relaunch() is only reached after a successful install,
- *  and its promise not resolving (the process exits) is the expected end. */
-export async function installAndRelaunch(): Promise<void> {
-  if (!canInstall(phase) || !pendingUpdate) return;
-  setPhase("installing");
+/** Register the guard every relaunch must pass (command, void). Called once by
+ *  main; a later call replaces the earlier guard. */
+export function setRelaunchGuard(guard: RelaunchGuard): void {
+  relaunchGuard = guard;
+}
+
+/** Whether the guard's confirmDurable succeeded; a rejection counts as "no"
+ *  (never leaves the phase stuck on "installing"). */
+async function confirmed(guard: RelaunchGuard): Promise<boolean> {
   try {
-    await pendingUpdate.install();
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-    await relaunch();
+    return await guard.confirmDurable();
   } catch {
-    setPhase("downloaded");
+    return false;
   }
+}
+
+/** downloaded -> installing -> confirmDurable -> install() -> confirmDurable again -> relaunch(). No-op
+ *  outside "downloaded" (canInstall guards it). Single-flight: a concurrent call
+ *  (e.g. the 버전 pane while auto-install already started) joins the running
+ *  attempt. "installing" is claimed synchronously so nobody else can start one.
+ *  With no RelaunchGuard, or a guard answering false, it does not install and
+ *  reverts to "downloaded" (retryable). install()/relaunch() errors revert too,
+ *  after resumeAfterAbort() undoes the confirmation's write pause. relaunch()
+ *  not resolving (the process exits) is the expected end. */
+export function installAndRelaunch(): Promise<void> {
+  if (inFlightInstall) return inFlightInstall;
+  if (!canInstall(phase) || !pendingUpdate) return Promise.resolve();
+  const update = pendingUpdate;
+  setPhase("installing");
+  inFlightInstall = (async () => {
+    const guard = relaunchGuard;
+    if (!guard || !(await confirmed(guard))) {
+      setPhase("downloaded");
+      return;
+    }
+    try {
+      await update.install();
+      // Edits typed while installing arrived after the first confirmation: make
+      // them durable too. Refused => stay running (the install already landed, so
+      // the next launch is the new version) and resume writes like a failure.
+      if (!(await confirmed(guard))) {
+        guard.resumeAfterAbort();
+        setPhase("downloaded");
+        return;
+      }
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    } catch {
+      guard.resumeAfterAbort();
+      setPhase("downloaded");
+    }
+  })().finally(() => {
+    inFlightInstall = null;
+  });
+  return inFlightInstall;
 }

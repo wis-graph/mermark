@@ -34,7 +34,6 @@ import {
   recentDocsSetting,
   modeSetting,
   autosaveDelaySetting,
-  conflictPolicySetting,
   vimModeSetting,
 } from "../settings/app";
 import type { Vault, WorkspaceStore } from "../workspace/workspace-state";
@@ -449,7 +448,6 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
       },
       baseMtime: mtime,
       autosaveDelay: autosaveDelaySetting.get(),
-      conflictPolicy: conflictPolicySetting.get(),
       vimMode: vimModeSetting.get(),
       vault: selectedVault,
       // Outline panel's docChanged listener — re-attaches per mount, so the

@@ -706,6 +706,20 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    thumbnail and the iframe (after click) both fill the box. Widget-owned sizes —
    never touch .cm-content/.cm-line font-size (measure root). */
 .cm-video { display: block; max-width: 100%; height: auto; padding: .5em 0; margin: 0 auto; border-radius: var(--radius-md, 8px); }
+/* Remote-vault video: click-to-load facade (same box tone as .cm-video). */
+.cm-video-remote {
+  display: flex; align-items: center; gap: .75em; max-width: 100%; margin: .5em auto; padding: .75em 1em;
+  border: 1px solid var(--border, currentColor); border-radius: var(--radius-md, 8px);
+  background: var(--surface, transparent);
+}
+.cm-video-remote-load {
+  cursor: pointer; padding: .3em .8em; border: 1px solid var(--border, currentColor); border-radius: var(--radius-md, 8px);
+  background: transparent; color: inherit; font: inherit;
+}
+.cm-video-remote-load:hover:not(:disabled) { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.cm-video-remote-load:disabled { opacity: .6; cursor: default; }
+.cm-video-remote-caption { opacity: .75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-video-remote-caption.is-error { color: var(--danger, #e28080); opacity: 1; white-space: normal; }
 .cm-youtube-facade {
   position: relative; display: block; width: 100%; max-width: 560px; aspect-ratio: 16 / 9;
   margin: .5em auto; cursor: pointer; border-radius: var(--radius-md, 8px); overflow: hidden;

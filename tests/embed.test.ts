@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
-import { youtubeId, isVideoTarget, embedWidgetFor, YoutubeFacadeWidget, VideoWidget } from "../src/markdown/embed";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: (p: string) => `asset://localhost/${p}` }));
+import { youtubeId, isVideoTarget, videoMimeFor, embedWidgetFor, YoutubeFacadeWidget, VideoWidget } from "../src/markdown/embed";
 
 describe("youtubeId", () => {
   it("extracts the id from a watch url", () => {
@@ -49,5 +51,40 @@ describe("embedWidgetFor (youtube → video → null priority)", () => {
   });
   it("returns null for an image (caller falls back)", () => {
     expect(embedWidgetFor("image.png", "alt", "/base")).toBeNull();
+  });
+});
+
+describe("videoMimeFor", () => {
+  it("maps each video extension to its MIME (case-insensitive)", () => {
+    const table: Record<string, string> = {
+      mp4: "video/mp4", m4v: "video/mp4", webm: "video/webm",
+      ogg: "video/ogg", ogv: "video/ogg", mov: "video/quicktime",
+    };
+    for (const [ext, mime] of Object.entries(table)) {
+      expect(videoMimeFor(`clip.${ext}`)).toBe(mime);
+      expect(videoMimeFor(`clip.${ext.toUpperCase()}`)).toBe(mime);
+    }
+  });
+  it("strips a #fragment; null for non-video targets", () => {
+    expect(videoMimeFor("clip.mp4#t=10")).toBe("video/mp4");
+    expect(videoMimeFor("a.png")).toBeNull();
+  });
+});
+
+describe("embedWidgetFor video carries its raw target for remote loading", () => {
+  it("VideoWidget keeps rawSrc and baseDir", () => {
+    const w = embedWidgetFor("clip.mp4", "alt", "/base") as VideoWidget;
+    expect(w).toBeInstanceOf(VideoWidget);
+    expect(w.rawSrc).toBe("clip.mp4");
+    expect(w.baseDir).toBe("/base");
+  });
+});
+
+describe("video-mime leaf module", () => {
+  it("is the source of embed's videoMimeFor and remote-video no longer imports embed", async () => {
+    const leaf = await import("../src/markdown/video-mime");
+    expect(leaf.videoMimeFor).toBe(videoMimeFor);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("src/markdown/remote-video.ts", "utf8")).not.toMatch(/from "\.\/embed"/);
   });
 });

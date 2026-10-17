@@ -14,6 +14,8 @@ vi.mock("@tauri-apps/plugin-process", () => ({ relaunch }));
 
 type Flow = typeof import("../src/update/update-flow");
 
+const PASS_GUARD = { confirmDurable: async () => true, resumeAfterAbort: () => {} };
+
 /** Fresh module instance per test — the flow's state lives in module scope,
  *  so vi.resetModules() + a fresh dynamic import gives every test a clean
  *  idle machine (mirrors settings-app.test.ts's per-test re-import pattern). */
@@ -223,6 +225,7 @@ describe("update-flow", () => {
       await flow.ensureCheckedOnce();
       await flow.startDownload();
       expect(flow.updatePhase()).toBe("downloaded");
+      flow.setRelaunchGuard(PASS_GUARD);
 
       const order: string[] = [];
       update.install.mockImplementation(() => {
@@ -252,9 +255,137 @@ describe("update-flow", () => {
       const flow = await freshFlow();
       await flow.ensureCheckedOnce();
       await flow.startDownload();
+      flow.setRelaunchGuard(PASS_GUARD);
       await flow.installAndRelaunch();
       expect(flow.updatePhase()).toBe("downloaded");
       expect(relaunch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("installAndRelaunch — RelaunchGuard", () => {
+    async function downloadedFlow() {
+      const update = mkUpdate();
+      check.mockResolvedValue(update);
+      const flow = await freshFlow();
+      await flow.ensureCheckedOnce();
+      await flow.startDownload();
+      return { flow, update };
+    }
+
+    it("without a registered guard it refuses to install (fail-closed)", async () => {
+      const { flow, update } = await downloadedFlow();
+      await flow.installAndRelaunch();
+      expect(update.install).not.toHaveBeenCalled();
+      expect(relaunch).not.toHaveBeenCalled();
+      expect(flow.updatePhase()).toBe("downloaded");
+    });
+
+    it("confirmDurable=false: no install, phase back to downloaded, resumeAfterAbort not called", async () => {
+      const { flow, update } = await downloadedFlow();
+      const resumeAfterAbort = vi.fn();
+      flow.setRelaunchGuard({ confirmDurable: async () => false, resumeAfterAbort });
+      await flow.installAndRelaunch();
+      expect(update.install).not.toHaveBeenCalled();
+      expect(relaunch).not.toHaveBeenCalled();
+      expect(flow.updatePhase()).toBe("downloaded");
+      expect(resumeAfterAbort).not.toHaveBeenCalled();
+    });
+
+    it("confirmDurable=true: confirms before install and again before relaunch", async () => {
+      const { flow, update } = await downloadedFlow();
+      const order: string[] = [];
+      update.install.mockImplementation(() => {
+        order.push("install");
+        return Promise.resolve();
+      });
+      relaunch.mockImplementation(() => {
+        order.push("relaunch");
+        return Promise.resolve();
+      });
+      flow.setRelaunchGuard({
+        confirmDurable: async () => {
+          order.push("confirm");
+          return true;
+        },
+        resumeAfterAbort: () => {},
+      });
+      await flow.installAndRelaunch();
+      expect(order).toEqual(["confirm", "install", "confirm", "relaunch"]);
+    });
+
+    it("concurrent calls collapse: one install, one confirm pair (single-flight)", async () => {
+      const { flow, update } = await downloadedFlow();
+      const confirmDurable = vi.fn(async () => true);
+      flow.setRelaunchGuard({ confirmDurable, resumeAfterAbort: () => {} });
+      await Promise.all([flow.installAndRelaunch(), flow.installAndRelaunch()]);
+      expect(confirmDurable).toHaveBeenCalledTimes(2); // pre-install + pre-relaunch, once each
+      expect(update.install).toHaveBeenCalledTimes(1);
+    });
+
+    it("install rejects after a true confirm: resumeAfterAbort once, phase downloaded, no relaunch", async () => {
+      const { flow, update } = await downloadedFlow();
+      update.install.mockImplementation(() => Promise.reject(new Error("boom")));
+      const resumeAfterAbort = vi.fn();
+      flow.setRelaunchGuard({ confirmDurable: async () => true, resumeAfterAbort });
+      await flow.installAndRelaunch();
+      expect(resumeAfterAbort).toHaveBeenCalledTimes(1);
+      expect(flow.updatePhase()).toBe("downloaded");
+      expect(relaunch).not.toHaveBeenCalled();
+    });
+
+    it("claims 'installing' synchronously while the guard is still pending", async () => {
+      const { flow } = await downloadedFlow();
+      let resolve!: (v: boolean) => void;
+      flow.setRelaunchGuard({
+        confirmDurable: () => new Promise<boolean>((r) => (resolve = r)),
+        resumeAfterAbort: () => {},
+      });
+      const p = flow.installAndRelaunch();
+      expect(flow.updatePhase()).toBe("installing");
+      resolve(false);
+      await p;
+      expect(flow.updatePhase()).toBe("downloaded");
+    });
+
+    it("confirmDurable rejects: treated as false (phase back to downloaded, no install, no unhandled rejection)", async () => {
+      const { flow, update } = await downloadedFlow();
+      flow.setRelaunchGuard({ confirmDurable: () => Promise.reject(new Error("x")), resumeAfterAbort: () => {} });
+      await flow.installAndRelaunch();
+      expect(update.install).not.toHaveBeenCalled();
+      expect(flow.updatePhase()).toBe("downloaded");
+    });
+
+    it("re-confirms after install, before relaunch: order confirm -> install -> confirm -> relaunch", async () => {
+      const { flow, update } = await downloadedFlow();
+      const order: string[] = [];
+      update.install.mockImplementation(() => { order.push("install"); return Promise.resolve(); });
+      relaunch.mockImplementation(() => { order.push("relaunch"); return Promise.resolve(); });
+      flow.setRelaunchGuard({
+        confirmDurable: async () => { order.push("confirm"); return true; },
+        resumeAfterAbort: () => {},
+      });
+      await flow.installAndRelaunch();
+      expect(order).toEqual(["confirm", "install", "confirm", "relaunch"]);
+    });
+
+    it("second confirm false: no relaunch, writes resumed, phase downloaded", async () => {
+      const { flow, update } = await downloadedFlow();
+      let n = 0;
+      const resumeAfterAbort = vi.fn();
+      relaunch.mockClear();
+      flow.setRelaunchGuard({ confirmDurable: async () => ++n === 1, resumeAfterAbort });
+      await flow.installAndRelaunch();
+      expect(update.install).toHaveBeenCalledTimes(1);
+      expect(relaunch).not.toHaveBeenCalled();
+      expect(resumeAfterAbort).toHaveBeenCalledTimes(1);
+      expect(flow.updatePhase()).toBe("downloaded");
+    });
+
+    it("downloadReverted: only 'found' means the download reverted", async () => {
+      const flow = await freshFlow();
+      expect(flow.downloadReverted("found")).toBe(true);
+      expect(flow.downloadReverted("installing")).toBe(false);
+      expect(flow.downloadReverted("downloaded")).toBe(false);
     });
   });
 

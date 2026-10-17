@@ -1434,6 +1434,11 @@ describe("main workspace wiring", () => {
       expect(sessionSource.split("=== lifecycleRequest").length - 1).toBe(1);
     });
 
+    it("main.ts injects the relaunch guard once; auto-install no longer takes commitBeforeSwitch", () => {
+      expect(mainSource).toContain("setRelaunchGuard(");
+      expect(mainSource).not.toContain("installAutoRestartOnUpdate(session.commitBeforeSwitch)");
+    });
+
     it("onSelectVault/onSelectTab pass their own already-known target vault through, not the sidebar's currentVault()", () => {
       expect(mainSource).toContain("openDocumentSafely(selection.tab.path, commitSelection, selectedVault)");
       expect(mainSource).toContain("}, selectedVault);");

@@ -16,7 +16,7 @@ import { markdownLang } from "./markdown/parser";
 import { wikilinkCompletionSource } from "./markdown/wikilink-complete";
 import { markupWrap } from "./markdown/markup-wrap";
 import { pasteLinkWrap } from "./markdown/paste-link";
-import type { ConflictPolicy, VimMode } from "./settings/app";
+import type { VimMode } from "./settings/app";
 import { documentVault, isRemoteVault } from "./document/document-vault";
 import type { Vault } from "./workspace/workspace-state";
 
@@ -41,14 +41,6 @@ const DEFAULT_AUTOSAVE_DELAY_MS = 800;
  *  overwrite, an unrelated local file. Every write entry point below checks
  *  `readOnly` and reports this instead of ever reaching `invoke`. */
 const REMOTE_READONLY_MESSAGE = "원격 볼트는 읽기 전용입니다";
-
-/** The conflict-resolution rule in one named place: should a refused write
- *  (the file changed on disk) clobber the external change with the user's
- *  buffer? `overwrite` says yes (data-loss risk, opt-in); `pause` (default)
- *  says no — keep the buffer, halt autosave, rescue on close. Pure (CQS). */
-export function shouldOverwriteOnConflict(policy: ConflictPolicy): boolean {
-  return policy === "overwrite";
-}
 
 export interface EditorController {
   view: EditorView;
@@ -95,10 +87,6 @@ export interface EditorController {
   /** Live autosave-debounce sink: the new delay applies from the NEXT debounce
    *  (already-scheduled timers keep their delay, so no keystroke is lost). */
   setAutosaveDelay(ms: number): void;
-  /** Live conflict-policy sink: pause (keep buffer) vs overwrite (clobber the
-   *  external change). Read at conflict time, so a change applies to the next
-   *  refused write. */
-  setConflictPolicy(p: ConflictPolicy): void;
   setVimMode(enabled: boolean): void;
   reloadFromFile(text: string, mtime: number): void;
   /** Save the buffered edit now (the save.flush shortcut). No-op while
@@ -131,8 +119,7 @@ function makeAutosave(
   const currentDelay = (): number => getDelay();
 
   /** Overwrite the file with `text` at baseline 0 (discard the external change),
-   *  re-arming autosave. Shared by the conflict `overwrite` policy and the
-   *  manual force-save button so the clobber-and-rebaseline rule lives once. */
+   *  re-arming autosave. Used by the manual force-save button (and the conflict modal's keep-local) so the clobber-and-rebaseline rule lives once. */
   const overwriteOnDisk = (text: string): Promise<void> => {
     if (readOnly) { onStatus("error", REMOTE_READONLY_MESSAGE); return Promise.resolve(); }
     if (suspended) return Promise.resolve();
@@ -150,9 +137,9 @@ function makeAutosave(
     return p;
   };
 
-  /** Persist `text` to the file, honoring the conflict guard. On a refused
-   *  write the conflict policy decides: `overwrite` clobbers the external
-   *  change immediately; `pause` (default) halts autosave and waits. */
+  /** Persist `text` to the file, honoring the conflict guard. A refused
+   *  write (CONFLICT) halts autosave until resolved (conflict modal / forceSave /
+   *  rescue on close). */
   const save = (text: string): Promise<void> => {
     if (readOnly) { onStatus("error", REMOTE_READONLY_MESSAGE); return Promise.resolve(); }
     if (suspended) {
@@ -187,8 +174,9 @@ function makeAutosave(
 
   return {
     extension: EditorView.updateListener.of((u) => {
-      if (!u.docChanged || closing || readOnly) return;
-      pending = u.state.doc.toString(); // always track the latest buffer
+      if (!u.docChanged || readOnly) return;
+      pending = u.state.doc.toString(); // always track the latest buffer (even while closing: an aborted close must still see it as unsaved)
+      if (closing) return; // closing: no new autosave work is scheduled
       if (conflicted || suspended) return; // don't keep hitting an unavailable path
       onStatus("saving");
       clearTimeout(timer);
@@ -357,8 +345,6 @@ export function mountEditor(
     baseMtime?: number;
     /** Initial autosave debounce in ms (live value flows via setAutosaveDelay). */
     autosaveDelay?: number;
-    /** Initial conflict policy (live value flows via setConflictPolicy). */
-    conflictPolicy?: ConflictPolicy;
     vimMode?: VimMode;
     /** The vault THIS document belongs to — injected as a CodeMirror facet
      *  (document-vault.ts) rather than read from app state, so markdown-layer
@@ -386,12 +372,10 @@ export function mountEditor(
     onCursor = () => {},
     baseMtime = 0,
     autosaveDelay = DEFAULT_AUTOSAVE_DELAY_MS,
-    conflictPolicy = "pause",
     extraExtensions = [],
     findReplaceHint,
     vault,
   } = opts;
-  void conflictPolicy;
   // v1 remote vaults are read-only end to end (Task 10 fix round 1,
   // Critical) — computed ONCE from the vault this mount was given (a
   // document's vault doesn't change out from under an open editor, same
@@ -457,7 +441,6 @@ export function mountEditor(
     setAutosaveDelay(ms: number) {
       delay = ms;
     },
-    setConflictPolicy(_p: ConflictPolicy) {},
     setVimMode(enabled: boolean) {
       controller.view.dispatch({ effects: vimCompartment.reconfigure(vimExtensions(enabled)) });
     },

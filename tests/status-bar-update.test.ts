@@ -17,6 +17,8 @@ type FlowModule = typeof import("../src/update/update-flow");
 async function freshModules(): Promise<{ statusBarUpdate: StatusBarUpdateModule; flow: FlowModule }> {
   vi.resetModules();
   const flow = await import("../src/update/update-flow");
+  // installAndRelaunch refuses without a RelaunchGuard (main injects it in the app).
+  flow.setRelaunchGuard({ confirmDurable: async () => true, resumeAfterAbort: () => {} });
   const statusBarUpdate = await import("../src/chrome/status-bar/update");
   return { statusBarUpdate, flow };
 }

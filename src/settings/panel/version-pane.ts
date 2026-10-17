@@ -18,7 +18,7 @@ import {
   lastCheckResult,
   updatePhase,
   canStartDownload,
-  canInstall,
+  downloadReverted,
   startDownload,
   installAndRelaunch,
   type FoundUpdate,
@@ -266,6 +266,11 @@ function showAvailable(status: HTMLElement, update: FoundUpdate, checkBtn: HTMLB
  *  accumulates, Finished announces the impending relaunch). Locks 나중에/업데이트
  *  확인 for the duration so the flow can't be abandoned or restarted mid-install.
  *
+ *  auto-install.ts may already have started the install the instant the
+ *  download finished (phase "installing"); installAndRelaunch is single-flight,
+ *  so this pane's call joins that attempt instead of racing it — and a phase
+ *  past "found" is therefore never a failed download (downloadReverted).
+ *
  *  Neither startDownload nor installAndRelaunch throws — update-flow swallows
  *  failures internally and reverts its phase (found/downloaded) so the footer
  *  button stays retryable. This pane surfaces the same outcome by re-querying
@@ -304,15 +309,16 @@ async function startInstall(els: {
       caption.textContent = "설치 중... 곧 재시작됩니다";
     }
   });
-  if (!canInstall(updatePhase())) {
+  if (downloadReverted(updatePhase())) {
     checkBtn.disabled = false;
     showError(status, "설치 실패: 다운로드에 실패했습니다");
     return;
   }
   await installAndRelaunch();
   if (updatePhase() === "downloaded") {
-    // Reverted — install() or relaunch() failed; a success never reaches
-    // here (the process relaunches instead).
+    // Reverted — the relaunch guard refused (its own recovery UI is up) or
+    // install()/relaunch() failed; a success never reaches here (the process
+    // relaunches instead).
     checkBtn.disabled = false;
     showError(status, "설치 실패: 다시 시도해주세요");
   }

@@ -14,6 +14,7 @@ import {
   ImageWidget,
   viewerSourceFor,
   isRemoteSrc,
+  isHostFetchedEmbed,
   clearImageSearchCache,
   clearVaultDowngradeReports,
 } from "../src/markdown/image";
@@ -571,5 +572,20 @@ describe("ImageWidget remote-vault loading (Ruling 7)", () => {
     img.onerror?.(new Event("error"));
     await new Promise((r) => setTimeout(r, 0));
     expect(invokeSpy).not.toHaveBeenCalledWith("resolve_image", expect.anything());
+  });
+});
+
+describe("isHostFetchedEmbed (shared by image and video embeds)", () => {
+  const remote: RemoteVault = {
+    vaultId: "v-r", workspaceId: "w", displayName: "r", rootPath: null, persistenceKind: "remote",
+    explorerRoot: "remote://h/", host: "h", remoteVaultId: "rv",
+  };
+  const local = { ...remote, persistenceKind: "local", rootPath: "/v" } as unknown as Vault;
+  it("is true only for a remote vault + vault-relative (non-URL, non-empty) target", () => {
+    expect(isHostFetchedEmbed(remote, "a.png")).toBe(true);
+    expect(isHostFetchedEmbed(remote, "https://x/a.png")).toBe(false);
+    expect(isHostFetchedEmbed(remote, "")).toBe(false);
+    expect(isHostFetchedEmbed(undefined, "a.png")).toBe(false);
+    expect(isHostFetchedEmbed(local, "a.png")).toBe(false);
   });
 });

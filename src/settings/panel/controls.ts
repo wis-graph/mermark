@@ -1,8 +1,9 @@
 // The RENDER dispatch table: one renderer per control kind, keyed by `kind` so
 // the panel never branches on an inline if/switch. Each renderer (a) builds the
 // input reflecting setting.get(), (b) wires input → setting.set, and (c)
-// setting.subscribe(reflect) so an external change updates the control live
-// (the bind round-trip). Returns a labeled row element ready to append.
+// bindRow(row, setting, reflect) — subscribe + teardown registration in ONE
+// place — so an external change updates the control live (the bind round-trip)
+// and the modal's runTeardown releases it. Returns a labeled row element ready to append.
 import type { Setting, Control } from "../store";
 import type { Theme } from "../theme-schema";
 import { parseTheme, serializeTheme, type GeometryKey } from "../theme-schema";
@@ -23,9 +24,17 @@ import { buildColorInspector } from "./color-inspector";
 const teardowns = new WeakMap<HTMLElement, Array<() => void>>();
 
 /** Record a control element's unsubscribe fns so the modal can clean them up
- *  later. Named so the leak rule isn't an inline expando assignment. */
+ *  later. Accumulates: a second registration on the same element adds to the
+ *  first instead of replacing (and thereby leaking) it. Named so the leak rule isn't an inline expando assignment. */
 export function attachTeardown(el: HTMLElement, unsubs: Array<() => void>): void {
-  teardowns.set(el, unsubs);
+  teardowns.set(el, [...(teardowns.get(el) ?? []), ...unsubs]);
+}
+
+/** Reflect `setting` into a row now and on every change, and register the
+ *  unsubscribe on the row so the modal's runTeardown releases it. The one
+ *  place a registry control subscribes — a renderer can't forget teardown. */
+function bindRow<T>(row: HTMLElement, setting: Setting<T>, reflect: (v: T) => void): void {
+  attachTeardown(row, [setting.bind(reflect)]);
 }
 
 /** Run and clear a control element's unsubscribe fns. Idempotent: after running
@@ -69,8 +78,7 @@ function renderSegmented<T>(setting: Setting<T>, control: Extract<Control<T>, { 
   const reflect = (v: T) => {
     for (const { b, value } of buttons) b.setAttribute("aria-pressed", String(Object.is(value, v)));
   };
-  reflect(setting.get());
-  setting.subscribe(reflect);
+  bindRow(r, setting, reflect);
   // Same optional-hint shape as renderSelect/renderText's `help`: a muted
   // line below the control, not squeezed beside it.
   if (control.help) {
@@ -104,8 +112,7 @@ function renderSelect<T>(setting: Setting<T>, control: Extract<Control<T>, { kin
     if (opt) setting.set(opt.value);
   });
   const reflect = (v: T) => (select.value = String(v));
-  reflect(setting.get());
-  setting.subscribe(reflect);
+  bindRow(r, setting, reflect);
   wrap.appendChild(select);
   cell.appendChild(wrap);
   // Same optional-hint shape as renderText's `help` (2026-07-14, headingFont):
@@ -140,8 +147,7 @@ function renderSlider<T>(setting: Setting<T>, control: Extract<Control<T>, { kin
     range.value = String(v);
     show(Number(v));
   };
-  reflect(setting.get());
-  setting.subscribe(reflect);
+  bindRow(r, setting, reflect);
   cell.append(range, out);
   return r;
 }
@@ -150,7 +156,7 @@ function renderSlider<T>(setting: Setting<T>, control: Extract<Control<T>, { kin
  *  validation/sanitization is NOT this renderer's job; it lives downstream in
  *  googleFontHref (the single URL builder) so the textbox round-trips exactly
  *  what the user typed. (a) value = setting.get(), (b) input → setting.set(raw),
- *  (c) subscribe(reflect) for external changes. `help`, if given, renders a
+ *  (c) bindRow(reflect) for external changes (released on teardown). `help`, if given, renders a
  *  muted hint node below the input. */
 function renderText(setting: Setting<string>, control: Extract<Control<string>, { kind: "text" }>): HTMLElement {
   const { row: r, cell } = row("");
@@ -160,8 +166,7 @@ function renderText(setting: Setting<string>, control: Extract<Control<string>, 
   if (control.placeholder) input.placeholder = control.placeholder;
   input.addEventListener("input", () => setting.set(input.value)); // raw; sanitized downstream
   const reflect = (v: string) => (input.value = v);
-  reflect(setting.get());
-  setting.subscribe(reflect);
+  bindRow(r, setting, reflect);
   cell.appendChild(input);
   if (control.help) {
     // .settings-row-has-help (styles.css) wraps the control row so the hint

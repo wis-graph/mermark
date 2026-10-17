@@ -289,7 +289,6 @@ describe("app settings", () => {
   it("declares editor + mermaid settings with defaults", async () => {
     const app = await import("../src/settings/app");
     expect(app.defaultModeSetting.get()).toBe("read");
-    expect(app.conflictPolicySetting.get()).toBe("pause");
     expect(app.panZoomSetting.get()).toBe("on");
     expect(app.themeForceSetting.get()).toBe("follow");
   });
@@ -634,6 +633,27 @@ describe("app settings", () => {
         if (opt.value.trim() === "") continue; // "" is the defer-to-theme sentinel, not a stack
         expect(opt.value).toMatch(generic);
       }
+    });
+  });
+  describe("conflict policy option withdrawn", () => {
+    async function editorRows() {
+      await import("../src/settings/app");
+      const { groups } = await import("../src/settings/registry");
+      return groups().find((g) => g.name === "에디터")!.entries.map((e) => e.ui.label);
+    }
+
+    it("no conflictPolicySetting is exported and no 충돌 정책 row is rendered", async () => {
+      const app = await import("../src/settings/app");
+      expect("conflictPolicySetting" in app).toBe(false);
+      expect(await editorRows()).not.toContain("충돌 정책");
+    });
+
+    it("a leftover saved mermark.conflictPolicy key is harmless", async () => {
+      localStorage.setItem("mermark.conflictPolicy", "overwrite");
+      const rows = await editorRows();
+      expect(rows).not.toContain("충돌 정책");
+      expect(rows).toContain("자동 저장 지연");
+      expect(rows).toContain("Vim 모드");
     });
   });
 });

@@ -24,7 +24,6 @@ import {
   nextPreset,
   themeJsonSetting,
   autosaveDelaySetting,
-  conflictPolicySetting,
   panZoomSetting,
   themeForceSetting,
   seedSessionMode,
@@ -48,7 +47,7 @@ import { displayChord, isMac } from "./shortcuts/keys";
 import { arrangeStatusBar } from "./chrome/status-bar";
 import { makeWidthSlider } from "./chrome/status-bar/width";
 import { makeUpdateButton } from "./chrome/status-bar/update";
-import { ensureCheckedOnce } from "./update/update-flow";
+import { ensureCheckedOnce, setRelaunchGuard } from "./update/update-flow";
 import { installAutoRestartOnUpdate } from "./update/auto-install";
 import {
   createTitleBar,
@@ -1451,10 +1450,9 @@ async function boot() {
     session.current?.refresh();
   });
   // Editor-behavior sinks: the settings are the writers, the live editor is the
-  // single sink for each (no hand fan-out). autosaveDelay/conflictPolicy were
+  // single sink for each (no hand fan-out). autosaveDelay was
   // seeded via mountEditor opts; these keep them live across re-mounts.
   autosaveDelaySetting.subscribe((ms) => session.current?.setAutosaveDelay(ms));
-  conflictPolicySetting.subscribe((p) => session.current?.setConflictPolicy(p));
   vimModeSetting.subscribe((mode) => session.current?.setVimMode(mode === "on"));
   // Feature registry SSOT sink: a late registerInlineFeature/registerBlockFeature
   // call (an extension that finishes async init after boot, or a test) reaches
@@ -1471,10 +1469,15 @@ async function boot() {
   // in eq) re-creates and attachPanZoom re-runs with the new value.
   panZoomSetting.subscribe(() => session.current?.refresh());
 
-  // Auto-restart on a finished update download: installAutoRestartOnUpdate
-  // owns the subscription (src/update/auto-install.ts); commitBeforeSwitch
-  // is the only editor-specific bit it needs, injected here.
-  installAutoRestartOnUpdate(session.commitBeforeSwitch);
+  // Every restart (auto, footer, settings 버전 pane) goes through update-flow's
+  // installAndRelaunch, which requires this guard: the editor-specific part
+  // (confirm the buffer is durable; resume autosave if the install then fails)
+  // is injected here once. Auto-restart's subscription lives in auto-install.ts.
+  setRelaunchGuard({
+    confirmDurable: session.commitBeforeSwitch,
+    resumeAfterAbort: () => session.current?.resumeWrites(),
+  });
+  installAutoRestartOnUpdate();
 
   mode.btn.addEventListener("click", toggleMode);
 

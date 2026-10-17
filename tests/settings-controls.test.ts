@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { defineSetting } from "../src/settings/store";
-import { RENDER } from "../src/settings/panel/controls";
+import { RENDER, runTeardown, attachTeardown } from "../src/settings/panel/controls";
 import { serializeTheme, parseTheme, builtInTheme } from "../src/settings/theme-schema";
 
 beforeEach(() => localStorage.clear());
@@ -265,5 +265,71 @@ describe("text control (P0 web-font name input)", () => {
     const s = defineSetting<string>({ key: "c.txt6", default: "" });
     const row = RENDER.text(s, { kind: "text" });
     expect(row.classList.contains("settings-row-has-help")).toBe(false);
+  });
+});
+
+describe("registry controls release their subscription on runTeardown", () => {
+  it("segmented stops reflecting after teardown", () => {
+    const s = defineSetting<string>({ key: "td.seg", default: "a" });
+    const row = RENDER.segmented(s, {
+      kind: "segmented",
+      options: [
+        { value: "a", label: "A" },
+        { value: "b", label: "B" },
+      ],
+    });
+    runTeardown(row);
+    s.set("b");
+    const btnB = row.querySelectorAll("button")[1] as HTMLButtonElement;
+    expect(btnB.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("select stops reflecting after teardown", () => {
+    const s = defineSetting<string>({ key: "td.sel", default: "a" });
+    const row = RENDER.select(s, {
+      kind: "select",
+      options: [
+        { value: "a", label: "A" },
+        { value: "b", label: "B" },
+      ],
+    });
+    const select = row.querySelector("select") as HTMLSelectElement;
+    runTeardown(row);
+    s.set("b");
+    expect(select.value).toBe("a");
+  });
+
+  it("slider stops reflecting after teardown", () => {
+    const s = defineSetting<number>({ key: "td.sld", default: 5, parse: (r) => (r == null ? null : Number(r)) });
+    const row = RENDER.slider(s, { kind: "slider", min: 0, max: 10, step: 1, unit: "ms" });
+    const range = row.querySelector("input") as HTMLInputElement;
+    const out = row.querySelector(".settings-slider-value") as HTMLElement;
+    runTeardown(row);
+    s.set(9);
+    expect(range.value).toBe("5");
+    expect(out.textContent).toBe("5ms");
+  });
+
+  it("text stops reflecting after teardown", () => {
+    const s = defineSetting<string>({ key: "td.txt", default: "a" });
+    const row = RENDER.text(s, { kind: "text" });
+    const input = row.querySelector("input") as HTMLInputElement;
+    runTeardown(row);
+    s.set("zzz");
+    expect(input.value).toBe("a");
+  });
+
+  it("attachTeardown accumulates (a second registration does not drop the first) and runTeardown is idempotent", () => {
+    const el = document.createElement("div");
+    const u1 = vi.fn();
+    const u2 = vi.fn();
+    attachTeardown(el, [u1]);
+    attachTeardown(el, [u2]);
+    runTeardown(el);
+    expect(u1).toHaveBeenCalledTimes(1);
+    expect(u2).toHaveBeenCalledTimes(1);
+    runTeardown(el);
+    expect(u1).toHaveBeenCalledTimes(1);
+    expect(u2).toHaveBeenCalledTimes(1);
   });
 });

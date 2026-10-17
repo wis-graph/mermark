@@ -8,6 +8,7 @@ import { boundedCache } from "./bounded-cache";
 import { imageSearchRoot, searchPlanFor } from "./image-search-root";
 import { loadRemoteEmbed } from "./remote-image";
 import { documentVault, isRemoteVault } from "../document/document-vault";
+import type { RemoteVault, Vault } from "../workspace/workspace-state";
 
 /** A literal target is a remote/data URL — it never gets the recursive-search
  *  fallback (the scan is a filesystem walk under baseDir; only local files can be
@@ -22,6 +23,14 @@ import { documentVault, isRemoteVault } from "../document/document-vault";
  *  still matches). Pure query. */
 export function isRemoteSrc(rawSrc: string): boolean {
   return /^https?:\/\//i.test(rawSrc) || rawSrc.startsWith("data:");
+}
+
+/** A remote vault's document embedding a vault-relative (non-URL) target: its
+ *  bytes live on the host, so convertFileSrc can never load it. The one rule
+ *  shared by image and video embeds, so neither is fixed without the other.
+ *  Pure; narrows `vault` to RemoteVault. */
+export function isHostFetchedEmbed(vault: Vault | undefined, rawSrc: string): vault is RemoteVault {
+  return isRemoteVault(vault) && rawSrc !== "" && !isRemoteSrc(rawSrc);
 }
 
 /** Resolve a markdown image target to an absolute filesystem path (or pass through URLs). */
@@ -188,8 +197,8 @@ export class ImageWidget extends WidgetType {
     // that failed (viewerSourceFor's first priority). Shared by the local
     // onerror fallback and the remote embed loader below.
     let resolvedPath: string | null = null;
-    if (isRemoteVault(vault) && this.rawSrc && !isRemoteSrc(this.rawSrc)) {
-      // `isRemoteVault` is a type guard — `vault` is narrowed to `RemoteVault`.
+    if (isHostFetchedEmbed(vault, this.rawSrc)) {
+      // `isHostFetchedEmbed` is a type guard — `vault` is narrowed to `RemoteVault`.
       // loadRemoteEmbed: literal path first, then `remote_resolve_image` name
       // search; a final failure is console.warn'd inside (never swallowed).
       void loadRemoteEmbed(vault, this.rawSrc, this.baseDir, this.searchScope).then((hit) => {

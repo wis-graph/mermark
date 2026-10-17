@@ -1,5 +1,18 @@
-import { WidgetType } from "@codemirror/view";
-import { resolveImageUrl } from "./image";
+// Remote-vault videos (relative targets in a remote document) can't use the local
+// asset URL: they load on click via loadRemoteVideo (remote_read_asset -> Blob ->
+// object URL), capped by the host's 20 MiB per-asset limit. Larger files show the
+// "너무 큽니다" message; true streaming (host Range support) is a follow-up that
+// would also require reinstalling the host.
+import { WidgetType, type EditorView } from "@codemirror/view";
+import { isHostFetchedEmbed, resolveImageSrc, resolveImageUrl } from "./image";
+import { documentVault } from "../document/document-vault";
+import { loadRemoteVideo } from "./remote-video";
+import { stripFragment, videoMimeFor } from "./video-mime";
+
+export { videoMimeFor };
+import { remoteFetchErrorMessage } from "../chrome/viewer/file-bytes";
+import { basename } from "../document/path";
+import type { RemoteVault } from "../workspace/workspace-state";
 
 /** Extract the 11-char YouTube video id from a watch/youtu.be/embed/shorts URL,
  *  or null when the url isn't a recognizable YouTube link (→ caller falls back to
@@ -24,7 +37,7 @@ export function youtubeId(url: string): string | null {
 /** Whether an embed target is a video file we can inline as <video>. Pure query.
  *  Mirrors isImageTarget: strips a `#…` suffix, matches known video extensions. */
 export function isVideoTarget(target: string): boolean {
-  return /\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(target.split("#")[0].trim());
+  return videoMimeFor(target) !== null;
 }
 
 /** Swap a facade container's contents for an autoplaying youtube-nocookie iframe.
@@ -78,26 +91,94 @@ export class YoutubeFacadeWidget extends WidgetType {
 export function embedWidgetFor(target: string, alt: string, baseDir: string): WidgetType | null {
   const yt = youtubeId(target);
   if (yt) return new YoutubeFacadeWidget(yt, alt);
-  if (isVideoTarget(target)) return new VideoWidget(resolveImageUrl(target, baseDir), alt);
+  if (isVideoTarget(target)) return new VideoWidget(resolveImageUrl(target, baseDir), alt, target, baseDir);
   return null;
 }
 
+/** The plain inline <video controls> (local files, and https passthrough). */
+function buildPlainVideo(url: string, alt: string): HTMLVideoElement {
+  const video = document.createElement("video");
+  video.className = "cm-video";
+  video.controls = true;
+  video.src = url;
+  if (alt) video.title = alt;
+  return video;
+}
+
+/** object URL minted per loaded remote-video DOM -> revoked in destroy(). */
+const objectUrlOf = new WeakMap<HTMLElement, string>();
+/** Facades whose widget was destroyed — a late load must not mint a URL for them. */
+const destroyedBoxes = new WeakSet<HTMLElement>();
+
+/** Remote-video facade: a load button + caption. Click -> loadRemoteVideo ->
+ *  swap in a <video> on a Blob object URL (recorded for revoke). Command-shaped
+ *  builder (returns the DOM it wires). */
+function buildRemoteVideoFacade(vault: RemoteVault, remotePath: string, fragment: string, alt: string): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "cm-video-remote";
+  if (alt) box.title = alt;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "cm-video-remote-load";
+  button.textContent = "▶ 원격 동영상 불러오기";
+  const caption = document.createElement("span");
+  caption.className = "cm-video-remote-caption";
+  caption.textContent = basename(remotePath);
+  box.append(button, caption);
+  button.addEventListener("click", () => {
+    button.disabled = true;
+    caption.textContent = "불러오는 중…";
+    loadRemoteVideo(vault, remotePath).then(
+      (blob) => {
+        if (destroyedBoxes.has(box) || !box.isConnected) return; // widget gone (destroyed or its DOM torn down without destroy) before the bytes arrived: mint nothing
+        const url = URL.createObjectURL(blob);
+        objectUrlOf.set(box, url);
+        const video = buildPlainVideo(url + fragment, alt);
+        video.autoplay = true;
+        box.replaceChildren(video);
+      },
+      (e) => {
+        button.hidden = true;
+        caption.textContent = remoteFetchErrorMessage(e);
+        caption.classList.add("is-error");
+      },
+    );
+  });
+  return box;
+}
+
 /** Inline <video controls>. The caller resolves local paths to asset URLs
- *  (image.ts resolveImageUrl); remote https is passed through. */
+ *  (image.ts resolveImageUrl); remote https is passed through. In a remote vault a
+ *  vault-relative target is host-fetched instead: click-to-load via
+ *  loadRemoteVideo (Blob/object URL). The branch lives in toDOM(view) so
+ *  embedWidgetFor stays pure. */
 export class VideoWidget extends WidgetType {
-  constructor(readonly url: string, readonly alt: string) {
+  constructor(
+    readonly url: string,
+    readonly alt: string,
+    readonly rawSrc = "",
+    readonly baseDir = "",
+  ) {
     super();
   }
   eq(o: VideoWidget) {
-    return o.url === this.url;
+    return o.url === this.url && o.rawSrc === this.rawSrc && o.baseDir === this.baseDir;
   }
-  toDOM() {
-    const video = document.createElement("video");
-    video.className = "cm-video";
-    video.controls = true;
-    video.src = this.url;
-    if (this.alt) video.title = this.alt;
-    return video;
+  toDOM(view?: EditorView) {
+    const vault = view?.state.facet(documentVault);
+    if (!isHostFetchedEmbed(vault, this.rawSrc)) return buildPlainVideo(this.url, this.alt);
+    const fragmentAt = this.rawSrc.indexOf("#");
+    const fragment = fragmentAt >= 0 ? this.rawSrc.slice(fragmentAt).trim() : "";
+    const remotePath = resolveImageSrc(stripFragment(this.rawSrc), this.baseDir);
+    return buildRemoteVideoFacade(vault, remotePath, fragment, this.alt);
+  }
+  destroy(dom: HTMLElement) {
+    destroyedBoxes.add(dom);
+    const url = objectUrlOf.get(dom);
+    if (url !== undefined) {
+      URL.revokeObjectURL(url);
+      objectUrlOf.delete(dom);
+    }
   }
   ignoreEvent() {
     return true; // control clicks must not move the caret

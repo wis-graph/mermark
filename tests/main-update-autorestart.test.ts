@@ -185,4 +185,70 @@ describe("main: auto-restart once an update download finishes", () => {
     expect(install).toHaveBeenCalledTimes(2);
     expect(relaunch).toHaveBeenCalledTimes(1);
   });
+  /** Boots main, consumes the one auto-install attempt (install rejects once),
+   *  then leaves the update in "downloaded" with a dirty buffer — the state in
+   *  which the MANUAL buttons are the only way to restart. */
+  async function bootWithSpentAutoAttempt() {
+    check.mockResolvedValue(mkFoundUpdate());
+    install.mockImplementationOnce(() => Promise.reject(new Error("install failed")));
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toContain("doc"));
+    const flow = await import("../src/update/update-flow");
+    await flow.checkNow();
+    await flow.startDownload();
+    await flush();
+    expect(install).toHaveBeenCalledTimes(1);
+    expect(flow.updatePhase()).toBe("downloaded");
+    const liveEditor = (window as Window & { readonly __mermark?: { readonly view: EditorView } }).__mermark;
+    liveEditor?.view.dispatch({ changes: { from: 0, to: 0, insert: "y" } });
+    return flow;
+  }
+
+  it("footer manual restart confirms the buffer first — a failed save blocks the install", async () => {
+    await bootWithSpentAutoAttempt();
+    rejectWrites = true;
+    document.querySelector<HTMLButtonElement>(".status-update-btn")!.click();
+    await flush();
+    expect(install).toHaveBeenCalledTimes(1); // still only the spent auto attempt
+    expect(relaunch).not.toHaveBeenCalled();
+  });
+
+  it("footer manual restart writes the dirty buffer BEFORE install, then relaunches", async () => {
+    await bootWithSpentAutoAttempt();
+    let writesBeforeInstall = -1;
+    install.mockImplementation(() => {
+      writesBeforeInstall = invokeMock.mock.calls.filter(([cmd]) => cmd === "write_file").length;
+      return Promise.resolve();
+    });
+    invokeMock.mockClear();
+    document.querySelector<HTMLButtonElement>(".status-update-btn")!.click();
+    await flush();
+    expect(install).toHaveBeenCalledTimes(2);
+    expect(writesBeforeInstall).toBeGreaterThan(0);
+    expect(relaunch).toHaveBeenCalledTimes(1);
+  });
+
+  it("settings 버전 pane install confirms first, and a blocked confirm is not misreported as a download failure", async () => {
+    check.mockResolvedValue(mkFoundUpdate());
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toContain("doc"));
+    const flow = await import("../src/update/update-flow");
+    const { renderVersionPane } = await import("../src/settings/panel/version-pane");
+    document.body.append(renderVersionPane());
+    await flow.checkNow();
+    expect(flow.updatePhase()).toBe("found");
+    document.querySelector<HTMLButtonElement>(".version-check-btn")!.click();
+    await vi.waitFor(() => expect(document.querySelector(".version-install-btn")).not.toBeNull());
+
+    const liveEditor = (window as Window & { readonly __mermark?: { readonly view: EditorView } }).__mermark;
+    liveEditor?.view.dispatch({ changes: { from: 0, to: 0, insert: "y" } });
+    rejectWrites = true;
+    document.querySelector<HTMLButtonElement>(".version-install-btn")!.click();
+    await flush();
+    await flush();
+
+    expect(install).not.toHaveBeenCalled();
+    expect(relaunch).not.toHaveBeenCalled();
+    expect(document.querySelector(".version-status")?.textContent ?? "").not.toContain("다운로드에 실패");
+  });
 });

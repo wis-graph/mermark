@@ -330,26 +330,6 @@ export const autosaveDelaySetting = registerSetting<number>({
   ui: { label: "자동 저장 지연", group: "에디터", control: { kind: "slider", min: 200, max: 3000, step: 100, unit: "ms" } },
 });
 
-export type ConflictPolicy = "pause" | "overwrite";
-/** On an external-change conflict: pause autosave (current behavior) or
- *  overwrite. Round 1: declared + rendered; sink deferred. */
-export const conflictPolicySetting = registerSetting<ConflictPolicy>({
-  key: "mermark.conflictPolicy",
-  default: "pause",
-  parse: (raw) => (raw === "pause" || raw === "overwrite" ? raw : null),
-  ui: {
-    label: "충돌 정책",
-    group: "에디터",
-    control: {
-      kind: "segmented",
-      options: [
-        { value: "pause", label: "중단" },
-        { value: "overwrite", label: "덮어쓰기" },
-      ],
-    },
-  },
-});
-
 export type VimMode = "on" | "off";
 /** Enable or disable Vim emulation mode. */
 export const vimModeSetting = registerSetting<VimMode>({
