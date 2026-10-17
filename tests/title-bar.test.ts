@@ -13,6 +13,8 @@ import {
   createLeftCommandGroup,
   rehomeLeftCommandGroup,
   createTitleSlot,
+  createDocName,
+  renderDocName,
 } from "../src/chrome/title-bar";
 
 describe("title-bar", () => {
@@ -119,10 +121,6 @@ describe("left-command-group rehoming", () => {
     return e;
   }
 
-  function leftGroupParts() {
-    return { openPath: mk("openPath") };
-  }
-
   /** A title-bar with a real `.title-spacer`-classed anchor, the same anchor
    *  rehomeLeftCommandGroup's title-bar branch inserts before. Doesn't need
    *  the real createDragSpacer (private to title-bar.ts) — only its class
@@ -138,7 +136,7 @@ describe("left-command-group rehoming", () => {
   describe("rehomeLeftCommandGroup", () => {
     it("strip given: the group's parent becomes the strip", () => {
       const bar = barWithSpacerAnchor();
-      const group = createLeftCommandGroup(leftGroupParts());
+      const group = createLeftCommandGroup();
       const strip = createSidebarTopStrip();
       rehomeLeftCommandGroup(group, bar, strip);
       expect(group.parentElement).toBe(strip);
@@ -146,7 +144,7 @@ describe("left-command-group rehoming", () => {
 
     it("strip null: the group returns to the bar, just before .title-spacer", () => {
       const bar = barWithSpacerAnchor();
-      const group = createLeftCommandGroup(leftGroupParts());
+      const group = createLeftCommandGroup();
       const strip = createSidebarTopStrip();
       strip.append(group); // starts homed in a strip
       rehomeLeftCommandGroup(group, bar, null);
@@ -165,7 +163,7 @@ describe("left-command-group rehoming", () => {
       const spacer = bar.querySelector(".title-spacer")!;
       const titleSlot = createTitleSlot();
       bar.insertBefore(titleSlot, spacer); // arrangeTitleBar's order: group · title · spacer
-      const group = createLeftCommandGroup(leftGroupParts());
+      const group = createLeftCommandGroup();
       const strip = createSidebarTopStrip();
       strip.append(group); // starts homed in a strip, as after closing a sidebar
       rehomeLeftCommandGroup(group, bar, null);
@@ -176,10 +174,30 @@ describe("left-command-group rehoming", () => {
       expect(group.nextElementSibling).toBe(titleSlot);
     });
 
+    // D1: openPath now lives in the bar right after the group, so the old
+    // "anchor on titleSlot/spacer" rule would re-insert the group AFTER openPath.
+    it("D1: the group returns to the very START of the bar's flow, before openPath", () => {
+      const { el: bar } = createTitleBar({ platform: "mac" });
+      const openPath = mk("openPath");
+      const titleSlot = createTitleSlot();
+      const spacer = document.createElement("span");
+      spacer.className = "title-spacer";
+      bar.append(openPath, titleSlot, spacer);
+      const group = createLeftCommandGroup();
+      const strip = createSidebarTopStrip();
+      strip.append(group);
+      rehomeLeftCommandGroup(group, bar, null);
+      expect(bar.firstElementChild).toBe(group);
+      expect(group.nextElementSibling).toBe(openPath);
+      rehomeLeftCommandGroup(group, bar, null); // idempotent
+      expect(bar.firstElementChild).toBe(group);
+    });
+
     it("re-focuses a button that had focus before the move", () => {
       const bar = barWithSpacerAnchor();
-      const parts = leftGroupParts();
-      const group = createLeftCommandGroup(parts);
+      const group = createLeftCommandGroup();
+      const parts = { openPath: mk("openPath") };
+      group.append(parts.openPath);
       const strip = createSidebarTopStrip();
       document.body.append(bar, group, strip);
       parts.openPath.focus();
@@ -193,7 +211,7 @@ describe("left-command-group rehoming", () => {
 
     it("is idempotent: re-calling with the same (bar, null) leaves parent/position unchanged", () => {
       const bar = barWithSpacerAnchor();
-      const group = createLeftCommandGroup(leftGroupParts());
+      const group = createLeftCommandGroup();
       rehomeLeftCommandGroup(group, bar, null);
       const parentBefore = group.parentElement;
       const nextBefore = group.nextElementSibling;
@@ -204,8 +222,9 @@ describe("left-command-group rehoming", () => {
 
     it("is idempotent: re-calling with the same (bar, strip) leaves parent unchanged", () => {
       const bar = barWithSpacerAnchor();
-      const group = createLeftCommandGroup(leftGroupParts());
+      const group = createLeftCommandGroup();
       const strip = createSidebarTopStrip();
+      group.append(mk("toggle"));
       rehomeLeftCommandGroup(group, bar, strip);
       rehomeLeftCommandGroup(group, bar, strip);
       expect(group.parentElement).toBe(strip);
@@ -217,4 +236,39 @@ describe("left-command-group rehoming", () => {
   // placement / open / switch / close / late registration) moved to
   // tests/sidebar-panels.test.ts's installSidebarPanels describe block — R9
   // replaced the fixed asides[] array with the dynamic panel registry.
+});
+
+// D1 🔴5: the document-name label. No dirty/unsaved marker by user decision —
+// the app autosaves, so a marker would be noise (memory: no-unsaved-indicator).
+describe("document name label", () => {
+  it("createDocName: span.title-bar-doc-name carrying the drag-region (no dead zone)", () => {
+    const el = createDocName();
+    expect(el.tagName).toBe("SPAN");
+    expect(el.className).toBe("title-bar-doc-name");
+    expect(el.hasAttribute("data-tauri-drag-region")).toBe(true);
+    expect(el.textContent).toBe("");
+  });
+
+  it("renderDocName shows the basename and the full path as tooltip", () => {
+    const el = createDocName();
+    renderDocName(el, "/a/b/demo.md");
+    expect(el.textContent).toBe("demo.md");
+    expect(el.title).toBe("/a/b/demo.md");
+  });
+
+  it("renderDocName with an empty file (welcome) clears label and tooltip", () => {
+    const el = createDocName();
+    renderDocName(el, "/a/b/demo.md");
+    renderDocName(el, "");
+    expect(el.textContent).toBe("");
+    expect(el.title).toBe("");
+  });
+
+  it("no unsaved/dirty marker exists in the title-bar chrome source", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/chrome/title-bar.ts"), "utf8");
+    expect(src).not.toMatch(/unsaved|dirty|미저장/i);
+  });
 });

@@ -174,8 +174,8 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
   // ── Read-only view (design §3.6) — a frozen snapshot + subscribe/bind, no
   //    editor handle, no transaction, no setter. Notified from exactly two
   //    points: the end of openInWindow (a document mounted) and the end of
-  //    renderWelcomeForVault (no document open). No subscriber exists inside
-  //    the app today, so this changes zero observable behavior on its own.
+  //    renderWelcomeForVault (no document open). The one in-app subscriber is
+  //    main.ts's title-bar filename label (renderDocName, D1 🔴5).
   const snapshotListeners = new Set<(snapshot: DocumentSnapshot) => void>();
   /** `currentIsRemote`/`currentOpenVaultId` stay put internally on welcome
    *  (only `currentFile` is cleared — see `renderWelcomeForVault`, unchanged:

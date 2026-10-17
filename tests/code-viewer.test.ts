@@ -160,6 +160,20 @@ describe("openCodeViewer: highlighted open (mapped language, within caps)", () =
 
     expect(document.querySelectorAll(".code-viewer-banner").length).toBe(0);
 
+    // D1 🔴1: each row has exactly ONE flex item besides the ::before gutter —
+    // the .code-viewer-text wrapper — so whitespace-only text runs between
+    // hljs spans are not dropped as anonymous flex items.
+    for (const row of Array.from(lines)) {
+      expect(row.children.length).toBe(1);
+      expect(row.children[0].classList.contains("code-viewer-text")).toBe(true);
+    }
+    // Indentation lives INSIDE the wrapper (line 9: "  return `...`").
+    expect(lines[8].firstElementChild!.textContent).toBe(
+      "  return `${greeting}, ${name}!`;",
+    );
+    expect(lines[12].firstElementChild!.textContent).toBe("  return 42;");
+    expect(lines[6].firstElementChild!.textContent).toBe("export function greet(name: string): string {");
+
     handle.close();
   });
 });
@@ -175,6 +189,14 @@ describe("openCodeViewer: plain-text open (unmapped language, e.g. .gradle)", ()
     expect(document.querySelectorAll(".code-viewer-line").length).toBe(3);
     expect(document.querySelectorAll("[class*=hljs-]").length).toBe(0);
     expect(document.querySelectorAll(".code-viewer-banner").length).toBe(0);
+    // D1 🔴1: plain rows use the same single-wrapper shape.
+    const plainRows = Array.from(document.querySelectorAll(".code-viewer-line"));
+    for (const row of plainRows) {
+      expect(row.children.length).toBe(1);
+      expect(row.children[0].classList.contains("code-viewer-text")).toBe(true);
+    }
+    expect(plainRows[1].firstElementChild!.textContent).toBe("  id 'java'");
+    expect(document.querySelector(".code-viewer-code")!.textContent).toBe("plugins {\n  id 'java'\n}");
 
     handle.close();
   });
@@ -277,6 +299,17 @@ describe(".ext-code-viewer-style CSS contract", () => {
     expect(src).toMatch(/counter\(/);
     expect(src).toMatch(/user-select:\s*none/);
     expect(src).toMatch(/white-space:\s*pre/);
+  });
+
+  it("D1: whitespace preserved by the .code-viewer-text wrapper, not the flex row; real --font-mono token", () => {
+    const text = /\.code-viewer-text\s*\{([^}]*)\}/.exec(src);
+    expect(text).toBeTruthy();
+    expect(text![1]).toMatch(/white-space:\s*pre/);
+    const line = /\.code-viewer-line\s*\{([^}]*)\}/.exec(src);
+    expect(line).toBeTruthy();
+    expect(line![1]).not.toMatch(/white-space/);
+    expect(src).toMatch(/var\(--font-mono\)/);
+    expect(src).not.toMatch(/var\(--mono/);
   });
 
   it("consumes --viewer-zoom for content font-size", () => {

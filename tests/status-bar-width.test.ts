@@ -51,4 +51,15 @@ describe("makeWidthSlider (footer reading-width control)", () => {
     const input = el.querySelector("input") as HTMLInputElement;
     expect(input.getAttribute("aria-label")).toBe("본문 너비");
   });
+
+  // D1 Y15: a bare slider says nothing about what it controls or its value.
+  it("labels the slider with the live value: tooltip + aria-valuetext", () => {
+    const { el } = makeWidthSlider();
+    const input = el.querySelector("input") as HTMLInputElement;
+    expect(el.title).toBe("본문 너비 68%");
+    expect(input.getAttribute("aria-valuetext")).toBe("68%");
+    readingWidthSetting.set(80);
+    expect(el.title).toBe("본문 너비 80%");
+    expect(input.getAttribute("aria-valuetext")).toBe("80%");
+  });
 });

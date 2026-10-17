@@ -336,14 +336,14 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
       link: "#1d6fb8",
       surface: "#ffffff",
       border: "#e7e5e4",
-      muted: "#777169",
+      muted: "#6f6a63",
       highlightBg: "#fff3a3",
       h1: "#0c0a09",
       h2: "#0c0a09",
       h3: "#0c0a09",
       h4: "#0c0a09",
       h5: "#0c0a09",
-      h6: "#777169",
+      h6: "#6f6a63",
       bold: "#0c0a09",
       italic: "#0c0a09",
       code: "#292524",
@@ -368,7 +368,7 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
       link: "#a9583e",
       surface: "#efe9de",
       border: "#e6dfd8",
-      muted: "#6c6a64",
+      muted: "#5f5d58",
       highlightBg: "#f0d9a8",
       // extended: headings ink (coral scarce), code coral-active, hand-tuned
       // body-strong/body/highlight — NOT all the promoteToExtended fallback.
@@ -380,7 +380,7 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
       h6: "#6c6a64",
       bold: "#252523",
       italic: "#3d3d3a",
-      code: "#a9583e",
+      code: "#93492f",
       highlight: "#141413",
       comment: "#8c857a",
     });
@@ -409,15 +409,15 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
       },
       light: {
         bg: "#f5f5f5", fg: "#0c0a09", accent: "#292524", link: "#1d6fb8",
-        surface: "#ffffff", border: "#e7e5e4", muted: "#777169", highlightBg: "#fff3a3",
-        h1: "#0c0a09", h2: "#0c0a09", h3: "#0c0a09", h4: "#0c0a09", h5: "#0c0a09", h6: "#777169",
+        surface: "#ffffff", border: "#e7e5e4", muted: "#6f6a63", highlightBg: "#fff3a3",
+        h1: "#0c0a09", h2: "#0c0a09", h3: "#0c0a09", h4: "#0c0a09", h5: "#0c0a09", h6: "#6f6a63",
         bold: "#0c0a09", italic: "#0c0a09", code: "#292524", highlight: "#1a1300",
       },
       claude: {
         bg: "#faf9f5", fg: "#141413", accent: "#cc785c", link: "#a9583e",
-        surface: "#efe9de", border: "#e6dfd8", muted: "#6c6a64", highlightBg: "#f0d9a8",
+        surface: "#efe9de", border: "#e6dfd8", muted: "#5f5d58", highlightBg: "#f0d9a8",
         h1: "#141413", h2: "#141413", h3: "#141413", h4: "#141413", h5: "#141413", h6: "#6c6a64",
-        bold: "#252523", italic: "#3d3d3a", code: "#a9583e", highlight: "#141413",
+        bold: "#252523", italic: "#3d3d3a", code: "#93492f", highlight: "#141413",
       },
     };
     for (const name of ["dark", "light", "claude"] as const) {
@@ -540,6 +540,78 @@ describe("upgradePristinePreset: only an untouched preset is upgraded", () => {
     expect(parsed!.colors.comment).toBe("#8f887e"); // upgrade still happens when NOTHING was touched
     expect(parsed!.radii).toEqual(legacy.radii);
     expect(parsed!.font).toEqual(legacy.font);
+  });
+});
+
+describe("snapRetiredPreset (D1 AA pass): untouched OLD preset snapshots move to the new values, customs never", () => {
+  const OLD_LIGHT = { muted: "#777169", h6: "#777169" };
+  const OLD_CLAUDE = { muted: "#6c6a64", code: "#a9583e" };
+  const oldLightRaw = () => {
+    const p = builtInTheme("light");
+    return { ...p, colors: { ...p.colors, ...OLD_LIGHT } }; // keeps `comment`
+  };
+  const oldClaudeRaw = () => {
+    const p = builtInTheme("claude");
+    return { ...p, colors: { ...p.colors, ...OLD_CLAUDE } };
+  };
+
+  it("1. old light preset byte-for-byte (comment key present) -> the current preset", () => {
+    const parsed = parseTheme(JSON.stringify(oldLightRaw()));
+    expect(parsed!.colors.muted).toBe("#6f6a63");
+    expect(parsed).toEqual(builtInTheme("light"));
+  });
+
+  it("2. same JSON with a one-character custom muted is kept", () => {
+    const raw = oldLightRaw();
+    raw.colors.muted = "#777168";
+    expect(parseTheme(JSON.stringify(raw))!.colors.muted).toBe("#777168");
+  });
+
+  it("3. a renamed theme is kept", () => {
+    const raw = { ...oldLightRaw(), name: "my-light" };
+    const parsed = parseTheme(JSON.stringify(raw))!;
+    expect(parsed.name).toBe("my-light");
+    expect(parsed.colors.muted).toBe("#777169");
+  });
+
+  it("4. old values + one optional key (quoteBg) is kept", () => {
+    const raw = oldLightRaw();
+    (raw.colors as Record<string, string>).quoteBg = "#abcdef";
+    const parsed = parseTheme(JSON.stringify(raw))!;
+    expect(parsed.colors.muted).toBe("#777169");
+    expect(parsed.colors.quoteBg).toBe("#abcdef");
+  });
+
+  it("5. old values + geometry is kept", () => {
+    const raw = { ...oldLightRaw(), geometry: { blockRadius: "4px" } };
+    const parsed = parseTheme(JSON.stringify(raw))!;
+    expect(parsed.colors.muted).toBe("#777169");
+    expect(parsed.geometry).toEqual({ blockRadius: "4px" });
+  });
+
+  it("6. old claude preset (muted #6c6a64, code #a9583e) -> the current preset", () => {
+    const parsed = parseTheme(JSON.stringify(oldClaudeRaw()));
+    expect(parsed!.colors.muted).toBe("#5f5d58");
+    expect(parsed!.colors.code).toBe("#93492f");
+    expect(parsed).toEqual(builtInTheme("claude"));
+  });
+
+  it("7. idempotent: parse(serialize(parsed)) equals parsed", () => {
+    const parsed = parseTheme(JSON.stringify(oldLightRaw()))!;
+    expect(parseTheme(serializeTheme(parsed))).toEqual(parsed);
+  });
+
+  it("8. pre-2026-08 generation (no comment key) old light -> the current preset via upgradePristinePreset", () => {
+    const raw = oldLightRaw();
+    const { comment: _c, ...noComment } = raw.colors;
+    const parsed = parseTheme(JSON.stringify({ ...raw, colors: noComment }));
+    expect(parsed!.colors.muted).toBe("#6f6a63");
+    expect(parsed).toEqual(builtInTheme("light"));
+  });
+
+  it("the current preset and a retired-dark (nothing retired) pass through unchanged", () => {
+    expect(parseTheme(JSON.stringify(builtInTheme("light")))).toEqual(builtInTheme("light"));
+    expect(parseTheme(JSON.stringify(builtInTheme("dark")))).toEqual(builtInTheme("dark"));
   });
 });
 

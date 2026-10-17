@@ -30,6 +30,9 @@ export function makeWidthSlider(): { el: HTMLElement } {
   // setting → thumb (apply now + on every change, from any writer)
   readingWidthSetting.bind((pct) => {
     input.value = String(pct);
+    // A bare range says nothing about what it controls or where it is.
+    wrap.title = `본문 너비 ${pct}%`;
+    input.setAttribute("aria-valuetext", `${pct}%`);
   });
   // thumb → setting (live while dragging)
   input.addEventListener("input", () => {

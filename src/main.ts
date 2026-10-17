@@ -52,7 +52,9 @@ import { installAutoRestartOnUpdate } from "./update/auto-install";
 import {
   createTitleBar,
   arrangeTitleBar,
+  createDocName,
   createLeftCommandGroup,
+  renderDocName,
   createTitleSlot,
   createViewerSlot,
 } from "./chrome/title-bar";
@@ -1211,23 +1213,31 @@ async function boot() {
   });
 
   // Title-bar order (single contract, arrangeTitleBar owns it): leftGroup
-  // (탐색기 · 최근 · 목차 · 경로열기) · [drag spacer] · 모드 · 테마 · ⚙,
-  // window-controls always last (win/linux). createSettingsButton only builds
-  // the button + lazy modal wiring —
-  // position is this call's job, not modal.ts's (M2 decision). R9: leftGroup
-  // now starts with only openPath — registerSidebarPanel below inserts the
-  // three panel toggle buttons before it, in registration order, so the
-  // "탐색기·최근·목차 first, then open-path" contract is still upheld even
-  // though the group is no longer built with all four in one call.
-  const leftGroup = createLeftCommandGroup({ openPath: prompt.button });
+  // (panel toggles only) · 경로열기 · [viewer caption] · 파일명 · [drag spacer] ·
+  // 모드 · 테마 · ⚙, window-controls always last (win/linux). createSettingsButton
+  // only builds the button + lazy modal wiring — position is this call's job,
+  // not modal.ts's (M2 decision). D1: leftGroup is built EMPTY; registerSidebarPanel
+  // below appends the toggle buttons in registration order, and openPath is a
+  // title-bar-owned part (never rehomed into a rail — it turns the title-bar
+  // itself into the path input).
+  const leftGroup = createLeftCommandGroup();
+  const docName = createDocName();
   arrangeTitleBar(titleBar.el, {
     leftGroup,
+    openPath: prompt.button,
     titleSlot: createTitleSlot(),
+    docName,
     viewerSlot: createViewerSlot(),
     mode: mode.btn,
     theme: themeBtn.btn,
     settings: createSettingsButton(() => shareableVaultsFrom(workspaceStore.get())),
   });
+  // D1 🔴5: the open document's filename, in the title-bar. `subscribe`, NOT
+  // `bind`: `currentFile` is pre-filled from deps.initialFile, so a viewer-file
+  // launch argument (`mermark foo.pdf`) would otherwise seed the label although no
+  // document opened. Notified only when a document mounts (openInWindow) or the
+  // welcome renders (file "") — the label stays empty until then.
+  session.readonlyView.subscribe((s) => renderDocName(docName, s.file));
   // Footer order (single contract, arrangeStatusBar owns it): 브레드크럼 ·
   // spacer · update · width · save · pos (pos far right). M3: the placeholder
   // span is now the real breadcrumb chrome — its content tracks the
@@ -1258,7 +1268,7 @@ async function boot() {
   registerSidebarPanel({ id: "recent", button: recent.button, aside: recent.aside, close: recent.close });
   registerSidebarPanel({ id: "outline", button: outline.button, aside: outline.aside, close: outline.close });
   registerSidebarPanel({ id: "search", button: searchPanel.button, aside: searchPanel.aside, close: searchPanel.close });
-  installSidebarPanels({ workspace, bar: titleBar.el, group: leftGroup, buttonAnchor: prompt.button });
+  installSidebarPanels({ workspace, bar: titleBar.el, group: leftGroup, buttonAnchor: null });
   // The drag sash sits between whichever left sidebar is open and .main-column.
   // DOM order among the asides is arbitrary (installSidebarPanels prepends
   // each in registration order — see its comment above); the sash is
@@ -1562,8 +1572,12 @@ async function boot() {
     if (flashTimer === undefined) flashBaseline = pos.textContent;
     else clearTimeout(flashTimer);
     pos.textContent = msg;
+    // styles.css hides Ln/Col in welcome/viewer states; data-flash is the
+    // exception that keeps this borrowed cell visible while it carries a message.
+    pos.dataset.flash = "";
     flashTimer = setTimeout(() => {
       pos.textContent = flashBaseline;
+      delete pos.dataset.flash;
       flashTimer = undefined;
       flashBaseline = null;
     }, 1200);

@@ -102,16 +102,19 @@ function ensureStyleInjected(): void {
 .code-viewer-code {
   flex: 1; min-height: 0; overflow: auto;
   margin: 0; padding: 8px 0;
-  font-family: var(--mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  font-family: var(--font-mono);
   font-size: calc(1em * var(--viewer-zoom, 1));
   line-height: 1.5;
   counter-reset: code-line;
 }
 .code-viewer-line {
   display: flex;
-  white-space: pre;
   padding-right: 16px;
 }
+/* ONE inline wrapper per row: the only flex item besides the ::before gutter,
+   so whitespace-only text runs between hljs spans are NOT dropped as
+   anonymous flex items (D1 🔴1). min-width:auto -> long lines scroll. */
+.code-viewer-text { flex: none; white-space: pre; }
 .code-viewer-line::before {
   counter-increment: code-line;
   content: counter(code-line);
@@ -185,15 +188,25 @@ function joinRowsWithNewlines(frag: DocumentFragment, rows: readonly HTMLElement
   });
 }
 
+/** One `.code-viewer-line` row holding a single `.code-viewer-text` wrapper
+ *  (D1 🔴1 — see the CSS note). Both renderers fill `text`. Pure factory. */
+function createLineRow(): { row: HTMLElement; text: HTMLElement } {
+  const row = document.createElement("div");
+  row.className = "code-viewer-line";
+  const text = document.createElement("span");
+  text.className = "code-viewer-text";
+  row.appendChild(text);
+  return { row, text };
+}
+
 /** Build one `.code-viewer-line` element per line, un-highlighted
  *  (`textContent` only — this is the ONLY path raw source text ever reaches
  *  the DOM through, never `innerHTML`). Pure factory (no I/O). */
 function renderPlainLines(lines: readonly string[]): DocumentFragment {
   const frag = document.createDocumentFragment();
   const rows = lines.map((line) => {
-    const row = document.createElement("div");
-    row.className = "code-viewer-line";
-    row.textContent = line;
+    const { row, text } = createLineRow();
+    text.textContent = line;
     return row;
   });
   joinRowsWithNewlines(frag, rows);
@@ -206,9 +219,8 @@ function renderPlainLines(lines: readonly string[]): DocumentFragment {
 function renderHighlightedLines(lineHtmls: readonly string[]): DocumentFragment {
   const frag = document.createDocumentFragment();
   const rows = lineHtmls.map((html) => {
-    const row = document.createElement("div");
-    row.className = "code-viewer-line";
-    row.innerHTML = html;
+    const { row, text } = createLineRow();
+    text.innerHTML = html;
     return row;
   });
   joinRowsWithNewlines(frag, rows);

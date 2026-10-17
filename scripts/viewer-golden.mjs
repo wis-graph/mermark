@@ -282,6 +282,8 @@ const result = {
   // per 02_frontend_changes.md's "만지지 않은 것"): cold-load absence/presence,
   // render + style isolation, close cleanup, and zoom.
   gdocx: {},
+  // D1 🔴1 (2026-10-18): code viewer whitespace/indent survives rendering.
+  gcodeWs: {},
   errors: [],
   failedRequests: [],
 };
@@ -1625,6 +1627,37 @@ result.g21.stickyCol0MatchesGutterWidth =
 await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
 
+// ── gcode-ws — code viewer keeps indentation + inter-token spaces (D1 🔴1) ──
+// jsdom cannot see this: Flexbox drops whitespace-only anonymous flex items
+// only in a REAL layout. `innerText` is render-based, so a dropped space is
+// missing from it (textContent would still contain it). Must FAIL on the
+// pre-fix DOM (no .code-viewer-text wrapper, display:flex on the row).
+await rowFor("/mock/vault/sample.ts").click();
+await page.waitForSelector(".code-viewer-line", { timeout: 5000 }).catch(() => {});
+await page.waitForTimeout(600); // dynamic import("highlight.js") + highlight
+result.gcodeWs = await page.evaluate(() => {
+  const rows = [...document.querySelectorAll(".code-viewer-line")];
+  const rendered = rows.map((r) => r.innerText.replace(/\n$/, ""));
+  return {
+    lineCount: rows.length,
+    rendered,
+    indentKept: rendered[8]?.startsWith("  return") ?? false, // "  return `${greeting}...`"
+    indent42Kept: rendered[12] === "  return 42;",
+    exportGapKept: rendered[6]?.startsWith("export function greet") ?? false,
+    importGapKept: rendered[1] === 'import type { Reader } from "./types";',
+    noGluedTokens: !rendered.some((t) => /importtype|returnl|exportfunction|return42/.test(t)),
+  };
+});
+result.gcodeWs.pass =
+  result.gcodeWs.lineCount === 20 &&
+  result.gcodeWs.indentKept &&
+  result.gcodeWs.indent42Kept &&
+  result.gcodeWs.exportGapKept &&
+  result.gcodeWs.importGapKept &&
+  result.gcodeWs.noGluedTokens;
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+
 writeFileSync(out, JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));
 
@@ -1888,6 +1921,7 @@ const pass =
   result.gdocx.editorHostHiddenAfterEsc === false &&
   result.gdocx.paneStyleGoneAfterEsc &&
   result.gdocx.editorStillResponsiveAfterEsc &&
+  result.gcodeWs.pass &&
   result.errors.length === 0;
 
 console.log("\nwrote", out);

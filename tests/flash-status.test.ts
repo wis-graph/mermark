@@ -131,4 +131,37 @@ describe("flashStatus overlap (path.copy / bundle.copy)", () => {
     expect(pos.textContent).toBe("⚠ 경로 복사 실패");
     expect(clipboardWriteText).not.toHaveBeenCalled(); // no web fallback on IPC failure
   });
+
+  // D1 Y15: Ln/Col is hidden in the welcome/viewer states, but a flash borrows
+  // that same cell — `data-flash` is the CSS exception that keeps it visible.
+  it("marks the pos cell with data-flash during a flash and clears it only after the LAST restore", async () => {
+    const { dispatchChord } = await import("../src/shortcuts/registry");
+    await import("../src/main");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const pos = app.querySelector(".status-pos") as HTMLElement;
+    expect(pos.hasAttribute("data-flash")).toBe(false);
+
+    vi.useFakeTimers();
+    dispatchChord("Mod+Alt+C");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pos.hasAttribute("data-flash")).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(600);
+    dispatchChord("Mod+Shift+C"); // overlapping burst
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(650); // first (cancelled) timer's slot passes
+    expect(pos.hasAttribute("data-flash")).toBe(true);
+    await vi.advanceTimersByTimeAsync(600); // last restore fires
+    expect(pos.hasAttribute("data-flash")).toBe(false);
+  });
+
+  // D1 🔴5: the document's filename is on screen while editing.
+  it("shows the open document's basename in .title-bar-doc-name (and nothing else, no marker)", async () => {
+    await import("../src/main");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const label = app.querySelector(".title-bar-doc-name") as HTMLElement;
+    expect(label).toBeTruthy();
+    expect(label.textContent).toBe("flash-doc.md");
+    expect(label.title).toBe("/tmp/flash-doc.md");
+  });
 });

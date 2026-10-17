@@ -33,14 +33,16 @@
 // since the rail set is dynamic (panels register at runtime) — this module
 // only keeps the pure placement rule.
 //
-// R9: the left command group itself now holds ONLY `openPath` — the
-// 탐색기/최근/목차 buttons are inserted by sidebar/registry.ts's
-// registerSidebarPanel/installSidebarPanels, in registration order, just
-// before openPath. "Sidebar toggles first, then open-path" is still the
-// visual contract; it's just enforced by insertion order now instead of a
-// fixed 4-slot shape.
+// D1 (2026-10-18, 디자인 리뷰 🔴3): the left command group now holds ONLY the
+// registered panel toggles (탐색기·최근·목차·워크스페이스·검색 — appended by
+// sidebar/registry.ts in registration order). `openPath` is title-bar-owned and
+// never rehomed: it sits right after the group, because it turns the title-bar
+// ITSELF into the path input (.title-bar.path-editing). The rail only receives
+// the group when it FITS the strip (leftGroupFitsStrip) — a 160px rail, a
+// 300% zoom or many extension panels used to clip it.
 
 import { isMac } from "../shortcuts/keys";
+import { basename } from "../document/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export interface TitleBar {
@@ -48,24 +50,31 @@ export interface TitleBar {
 }
 
 /** The chrome parts arrangeTitleBar lays out, left→right: `leftGroup` (the
- *  탐색기·최근·목차·경로열기 command group — createLeftCommandGroup builds the
- *  `openPath` end of it, sidebar/registry.ts inserts the panel toggles before
- *  it), then a drag spacer, then the `mode`/`theme`/`settings` right
- *  cluster.
+ *  panel-toggle command group — empty from createLeftCommandGroup,
+ *  sidebar/registry.ts appends the toggles in registration order), `openPath`
+ *  (D1: title-bar-owned), the viewer caption `titleSlot`, the document name
+ *  `docName`, a drag spacer, then the `viewerSlot`/`mode`/`theme`/`settings`
+ *  right cluster.
  *
- *  M6: `explorer`/`recent`/`outline`/`openPath` REMOVED from this shape —
- *  they're `leftGroup`'s job now (createLeftCommandGroup), because the group
- *  rehomes as ONE element (rehomeLeftCommandGroup) and a 4-part shape here
- *  would leave that same ordering duplicated in two places. R9: the panel
- *  toggle buttons themselves moved again, into sidebar/registry.ts's
- *  registration order — see createLeftCommandGroup's doc. */
+ *  M6: the panel toggles are `leftGroup`'s job because the group rehomes as
+ *  ONE element (rehomeLeftCommandGroup); R9: they moved into
+ *  sidebar/registry.ts's registration order. D1: `openPath` came back OUT of
+ *  the group so the group's width is just the toggles (see header comment). */
 export interface TitleBarParts {
   leftGroup: HTMLElement;
+  /** The 경로 열기 button. Never rehomed — it stays in the title-bar even while
+   *  a rail is open (D1 🔴3). */
+  openPath: HTMLElement;
   /** Empty until a viewer opens, then the open file's name — the title-bar IS
    *  the viewer's title bar (사용자 지정 2026-07-19: "앱 헤더영역을 이용해서
    *  제목을 사용할 수 있고"). The viewer shell fills and clears it; nothing
    *  else writes here, so an empty slot means "no viewer open". */
   titleSlot: HTMLElement;
+  /** The open DOCUMENT's filename (D1 🔴5) — written ONLY by main.ts's
+   *  `session.readonlyView.subscribe` through renderDocName; hidden by CSS
+   *  while a viewer owns `titleSlot`. Filename ONLY — no save-state marker of
+   *  any kind (user decision: the app autosaves, a marker is noise). */
+  docName: HTMLElement;
   /** Empty until a viewer opens, then the viewer's OWN controls (zoom −/%/+,
    *  close) — rendered as ordinary `.chrome-btn` siblings of mode/theme/
    *  settings so they read as one cluster, not a second, alien toolbar
@@ -96,11 +105,20 @@ export function createViewerSlot(): HTMLElement {
   return el;
 }
 
-/** R9: the group's only title-bar-owned member — the sidebar toggle buttons
- *  are inserted at runtime by sidebar/registry.ts (registerSidebarPanel /
- *  installSidebarPanels), always just before `openPath`. */
-export interface LeftCommandGroupParts {
-  openPath: HTMLElement;
+/** The document-name label (see TitleBarParts.docName). Carries
+ *  `data-tauri-drag-region` (same M1 rule as createTitleSlot). Pure creation. */
+export function createDocName(): HTMLElement {
+  const el = document.createElement("span");
+  el.className = "title-bar-doc-name";
+  el.setAttribute("data-tauri-drag-region", "");
+  return el;
+}
+
+/** Show `file`'s basename (empty file → empty label); the full path is the
+ *  tooltip. Command (void). Deliberately nothing but the name. */
+export function renderDocName(el: HTMLElement, file: string): void {
+  el.textContent = file ? basename(file) : "";
+  el.title = file;
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -147,7 +165,7 @@ function toggleMaximizeWindow(): void {
 
 /** Close the current window. This is `close()`, not `destroy()` — it goes
  *  through the same window-close path main.ts's `onCloseRequested` intercepts
- *  to flush unsaved buffers before the window actually goes away. No-op
+ *  to flush pending buffers before the window actually goes away. No-op
  *  outside a real Tauri runtime. Command (void). */
 function closeWindow(): void {
   if (!isTauriRuntime()) return;
@@ -226,20 +244,16 @@ function createDragSpacer(): HTMLElement {
 }
 
 /** Build the "왼쪽 커맨드 그룹" — the always-together unit that rehomes as ONE
- *  element (rehomeLeftCommandGroup) instead of individually-tracked buttons.
- *  R9: starts with only `openPath`; sidebar/registry.ts inserts the panel
- *  toggle buttons before it at registration time, so the 탐색기·최근·목차·
- *  경로열기 order still lives in exactly one place — just split between this
- *  constructor (openPath) and registration order (the toggles), rather than
- *  a single fixed 4-slot list. Carries its own data-tauri-drag-region (M1
- *  rule): the group can land inside either the title-bar or a rail's
- *  .sidebar-top-strip, and both need the gaps between its buttons to stay
- *  draggable. Pure creation. */
-export function createLeftCommandGroup(p: LeftCommandGroupParts): HTMLElement {
+ *  element (rehomeLeftCommandGroup). D1: EMPTY at creation; sidebar/registry.ts
+ *  appends one toggle button per registered panel, so the toggle order IS the
+ *  registration order and lives in exactly one place. Carries its own
+ *  data-tauri-drag-region (M1 rule): the group can land inside either the
+ *  title-bar or a rail's .sidebar-top-strip, and both need the gaps between its
+ *  buttons to stay draggable. Pure creation. */
+export function createLeftCommandGroup(): HTMLElement {
   const group = document.createElement("div");
   group.className = "left-command-group";
   group.setAttribute("data-tauri-drag-region", "");
-  group.append(p.openPath);
   return group;
 }
 
@@ -264,12 +278,29 @@ export function createSidebarTopStrip(opts?: { platform?: "mac" | "other" }): HT
   return s;
 }
 
+/** Domain rule, pure: does a group of `groupWidth` px fit in `available` px? */
+export function groupFitsWithin(groupWidth: number, available: number): boolean {
+  return groupWidth <= available;
+}
+
+/** Layout query: does the left command group fit in `strip`'s content box?
+ *  The group is `flex: none`, so its own box width IS its content width
+ *  wherever it currently sits (title-bar or strip). jsdom reports 0 for both
+ *  → true (the rehome tests that don't stub widths see "fits"). Pure query. */
+export function leftGroupFitsStrip(group: HTMLElement, strip: HTMLElement): boolean {
+  const cs = getComputedStyle(strip);
+  const padding = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+  return groupFitsWithin(group.getBoundingClientRect().width, strip.clientWidth - padding);
+}
+
 /** The one domain rule this feature has: the left command group lives in the
- *  open rail's strip if there is one, otherwise it returns to the title-bar,
- *  just before the drag spacer. Moving an element drops DOM focus, so a
- *  focused descendant is re-focused after the move. Idempotent — calling
- *  again with the group already in its target home is a no-op (no spurious
- *  focus churn). Command (void). */
+ *  open rail's strip if there is one (callers pass null when the group does not
+ *  fit — leftGroupFitsStrip), otherwise it returns to the START of the
+ *  title-bar's flow (D1: before openPath, which arrangeTitleBar places right
+ *  after the group). Moving an element drops DOM focus, so a focused
+ *  descendant is re-focused after the move. Idempotent — calling again with the
+ *  group already in its target home is a no-op (no spurious focus churn).
+ *  Command (void). */
 export function rehomeLeftCommandGroup(group: HTMLElement, bar: HTMLElement, strip: HTMLElement | null): void {
   const focused = group.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
   if (strip) {
@@ -278,35 +309,32 @@ export function rehomeLeftCommandGroup(group: HTMLElement, bar: HTMLElement, str
       focused?.focus();
     }
   } else {
-    // The group belongs at the START of the bar's flow. Its anchor is the
-    // doc-title slot when one exists (arrangeTitleBar puts titleSlot between
-    // the group and the spacer), else the spacer itself. Anchoring on the
-    // spacer unconditionally would re-insert the group AFTER the title on
-    // every rehome, so opening a viewer visibly shoved the command icons
-    // rightward past the filename (observed 2026-07-19).
-    const anchor =
-      bar.querySelector(":scope > .title-bar-doc-title") ?? bar.querySelector(":scope > .title-spacer");
-    if (group.parentElement !== bar || group.nextElementSibling !== anchor) {
-      bar.insertBefore(group, anchor); // anchor null → append
+    // The group is the FIRST thing in the bar's flow. (Anchoring on the title
+    // slot or spacer re-inserted it AFTER openPath/the title — the 2026-07-19
+    // "icons shoved past the filename" bug, then the D1 openPath variant.)
+    if (bar.firstElementChild !== group) {
+      bar.insertBefore(group, bar.firstElementChild);
       focused?.focus();
     }
   }
 }
 
 /** Arrange the title-bar chrome to the canonical order (design M2 §1, M5
- *  removed 즐겨찾기, M6 folded the left four buttons into `leftGroup` — see
- *  TitleBarParts): leftGroup · titleSlot · [drag spacer] · viewerSlot · 모드 ·
- *  테마 · ⚙ — the two slots are empty until a viewer opens (2026-07-19: a
- *  viewer has no header row of its own; the title-bar is its title bar) —
- *  followed by
- *  the win/linux window-controls cluster (always last, already appended by
+ *  removed 즐겨찾기, M6 folded the panel toggles into `leftGroup`, D1 put
+ *  `openPath` back after it and added the document name): leftGroup · openPath
+ *  · titleSlot · docName · [drag spacer] · viewerSlot · 모드 · 테마 · ⚙ — the
+ *  two viewer slots are empty until a viewer opens (2026-07-19: a viewer has no
+ *  header row of its own; the title-bar is its title bar) — followed by the
+ *  win/linux window-controls cluster (always last, already appended by
  *  createTitleBar). Every part is inserted via insertBeforeWindowControls, so
  *  the window-controls-last rule holds regardless of call order. Command (void). */
 export function arrangeTitleBar(bar: HTMLElement, p: TitleBarParts): void {
   insertBeforeWindowControls(
     bar,
     p.leftGroup,
+    p.openPath,
     p.titleSlot,
+    p.docName,
     createDragSpacer(),
     p.viewerSlot,
     p.mode,

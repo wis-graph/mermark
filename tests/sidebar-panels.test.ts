@@ -83,8 +83,8 @@ describe("registerSidebarPanel / closeOtherSidebarPanels", () => {
 describe("installSidebarPanels: mount contract", () => {
   function setup() {
     const bar = barWithSpacerAnchor();
-    const group = createLeftCommandGroup({ openPath: mk("openPath") });
-    const buttonAnchor = group.querySelector<HTMLElement>('[data-id="openPath"]')!;
+    const group = createLeftCommandGroup();
+    const buttonAnchor = null;
     const workspace = document.createElement("div");
     const main = document.createElement("div");
     workspace.append(main);
@@ -110,7 +110,7 @@ describe("installSidebarPanels: mount contract", () => {
     expect(explorer.aside.firstElementChild?.className).toBe("sidebar-top-strip");
   });
 
-  it("group.children order = registered panel buttons in registration order, then openPath", async () => {
+  it("D1: group.children = the panel buttons only, in registration order (openPath lives in the bar)", async () => {
     const { registerSidebarPanel, installSidebarPanels } = await freshRegistry();
     const { bar, group, buttonAnchor, workspace } = setup();
     registerSidebarPanel(fakePanel("explorer"));
@@ -118,10 +118,10 @@ describe("installSidebarPanels: mount contract", () => {
     registerSidebarPanel(fakePanel("outline"));
     installSidebarPanels({ workspace, bar, group, buttonAnchor });
     const ids = [...group.children].map((c) => (c as HTMLElement).dataset.id);
-    expect(ids).toEqual(["explorer", "recent", "outline", "openPath"]);
+    expect(ids).toEqual(["explorer", "recent", "outline"]);
   });
 
-  it("late registration after install: mounts immediately (aside prepended, strip attached, button inserted before openPath)", async () => {
+  it("late registration after install: mounts immediately (aside prepended, strip attached, button appended to the group end)", async () => {
     const { registerSidebarPanel, installSidebarPanels } = await freshRegistry();
     const { bar, group, buttonAnchor, workspace } = setup();
     registerSidebarPanel(fakePanel("explorer"));
@@ -133,7 +133,7 @@ describe("installSidebarPanels: mount contract", () => {
     expect(workspace.firstElementChild).toBe(late.aside);
     expect(late.aside.firstElementChild?.className).toBe("sidebar-top-strip");
     const ids = [...group.children].map((c) => (c as HTMLElement).dataset.id);
-    expect(ids).toEqual(["explorer", "late", "openPath"]);
+    expect(ids).toEqual(["explorer", "late"]);
   });
 
   it("late registration participates in rehoming: opening its aside moves the group into its strip", async () => {
@@ -166,8 +166,8 @@ describe("installSidebarPanels: mount contract", () => {
 describe("installSidebarPanels: rehoming", () => {
   function setup() {
     const bar = barWithSpacerAnchor();
-    const group = createLeftCommandGroup({ openPath: mk("openPath") });
-    const buttonAnchor = group.querySelector<HTMLElement>('[data-id="openPath"]')!;
+    const group = createLeftCommandGroup();
+    const buttonAnchor = null;
     const workspace = document.createElement("div");
     return { bar, group, buttonAnchor, workspace };
   }
@@ -175,12 +175,14 @@ describe("installSidebarPanels: rehoming", () => {
   async function installed() {
     const { registerSidebarPanel, installSidebarPanels } = await freshRegistry();
     const { bar, group, buttonAnchor, workspace } = setup();
+    const openPath = mk("openPath");
+    bar.insertBefore(openPath, bar.firstChild); // arrangeTitleBar: leftGroup · openPath · …
     const recent = fakePanel("recent");
     const explorer = fakePanel("explorer");
     const outline = fakePanel("outline");
     for (const p of [recent, explorer, outline]) registerSidebarPanel(p);
     installSidebarPanels({ workspace, bar, group, buttonAnchor });
-    return { bar, group, recent, explorer, outline };
+    return { bar, group, recent, explorer, outline, openPath };
   }
 
   it("initial placement: every aside hidden -> the group starts in the bar", async () => {
@@ -205,13 +207,80 @@ describe("installSidebarPanels: rehoming", () => {
     expect(group.parentElement).toBe(outline.aside.querySelector(".sidebar-top-strip"));
   });
 
-  it("closing the last open rail returns the group to the bar, before the spacer", async () => {
-    const { bar, group, explorer } = await installed();
+  it("closing the last open rail returns the group to the bar's FIRST slot, before openPath", async () => {
+    const { bar, group, explorer, openPath } = await installed();
     explorer.aside.hidden = false;
     await Promise.resolve();
     explorer.aside.hidden = true;
     await Promise.resolve();
     expect(group.parentElement).toBe(bar);
-    expect(group.nextElementSibling?.classList.contains("title-spacer")).toBe(true);
+    expect(bar.firstElementChild).toBe(group);
+    expect(group.nextElementSibling).toBe(openPath);
+  });
+
+  // D1 🔴3: a rail too narrow for the group (160px rail, 300% zoom, many
+  // extension panels) must NOT clip it — the group stays in the title-bar.
+  describe("leftGroupFitsStrip: 'rail only if it fits'", () => {
+    function stubWidth(el: HTMLElement, prop: "clientWidth" | "width", value: number) {
+      if (prop === "clientWidth") Object.defineProperty(el, "clientWidth", { configurable: true, get: () => value });
+      else el.getBoundingClientRect = () => ({ width: value, height: 0, top: 0, left: 0, right: value, bottom: 0, x: 0, y: 0, toJSON() {} }) as DOMRect;
+    }
+
+    it("a rail whose strip is narrower than the group leaves the group in the bar", async () => {
+      const { group, bar, explorer } = await installed();
+      const strip = explorer.aside.querySelector<HTMLElement>(".sidebar-top-strip")!;
+      stubWidth(strip, "clientWidth", 100);
+      stubWidth(group, "width", 148);
+      explorer.aside.hidden = false;
+      await Promise.resolve();
+      expect(group.parentElement).toBe(bar);
+    });
+
+    it("when the strip is wide enough the group moves into it", async () => {
+      const { group, explorer } = await installed();
+      const strip = explorer.aside.querySelector<HTMLElement>(".sidebar-top-strip")!;
+      stubWidth(strip, "clientWidth", 239);
+      stubWidth(group, "width", 148);
+      explorer.aside.hidden = false;
+      await Promise.resolve();
+      expect(group.parentElement).toBe(strip);
+    });
+
+    it("a ResizeObserver callback re-evaluates the fit (drag/zoom changes the rail width)", async () => {
+      const callbacks: Array<() => void> = [];
+      const observed: Element[] = [];
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          constructor(cb: () => void) {
+            callbacks.push(cb);
+          }
+          observe(el: Element) {
+            observed.push(el);
+          }
+          disconnect() {}
+          unobserve() {}
+        },
+      );
+      try {
+        const { group, bar, explorer } = await installed();
+        expect(callbacks.length).toBe(1); // ONE observer for all rails
+        expect(observed).toContain(explorer.aside);
+        const strip = explorer.aside.querySelector<HTMLElement>(".sidebar-top-strip")!;
+        stubWidth(strip, "clientWidth", 239);
+        stubWidth(group, "width", 148);
+        explorer.aside.hidden = false;
+        await Promise.resolve();
+        expect(group.parentElement).toBe(strip);
+        stubWidth(strip, "clientWidth", 100); // rail dragged narrower
+        callbacks[0]();
+        expect(group.parentElement).toBe(bar);
+        stubWidth(strip, "clientWidth", 239); // and back
+        callbacks[0]();
+        expect(group.parentElement).toBe(strip);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 });

@@ -404,11 +404,53 @@ export function upgradePristinePreset(
   if (rawColorKeys.some((k) => NEW_GEN_KEYS.includes(k))) return t;
   if (rawHasGeometry) return t;
   const preset = builtInTheme(t.name);
+  const retired = retiredPresetColors(t.name);
   const legacyColorKeys: readonly (keyof Theme["colors"])[] = [...COLOR_KEYS, ...LEGACY_EXTENDED_KEYS];
-  const colorsUnchanged = legacyColorKeys.every((k) => t.colors[k] === preset.colors[k]);
+  // Untouched = matches the current preset OR the preset as an earlier build shipped it.
+  const colorsUnchanged =
+    legacyColorKeys.every((k) => t.colors[k] === preset.colors[k]) ||
+    legacyColorKeys.every((k) => t.colors[k] === retired[k]);
   const radiiUnchanged = RADII_KEYS.every((k) => t.radii[k] === preset.radii[k]);
   const fontUnchanged = t.font.sans === preset.font.sans;
   return colorsUnchanged && radiiUnchanged && fontUnchanged ? preset : t;
+}
+
+/** Preset values an earlier build shipped and a later one retired (D1 AA pass,
+ *  2026-10-18). Only the keys whose value changed are listed. */
+const RETIRED_PRESET_COLORS: Record<PresetName, Partial<Theme["colors"]>> = {
+  dark: {},
+  light: { muted: "#777169", h6: "#777169" },
+  claude: { muted: "#6c6a64", code: "#a9583e" },
+};
+
+/** The full color set a preset had BEFORE its retirement. Pure query. */
+function retiredPresetColors(name: PresetName): Theme["colors"] {
+  return { ...builtInTheme(name).colors, ...RETIRED_PRESET_COLORS[name] };
+}
+
+/** "This saved theme IS the retired preset, byte for byte" — name is a preset,
+ *  no geometry in the raw JSON, radii + font equal the preset, and EVERY color
+ *  key (core + extended + optional, union of both key sets; absent ≡ undefined)
+ *  equals retiredPresetColors(name). Pure query. */
+export function isRetiredPresetSnapshot(t: Theme, rawHasGeometry: boolean): boolean {
+  if (t.name !== "dark" && t.name !== "light" && t.name !== "claude") return false;
+  if (rawHasGeometry || t.geometry) return false;
+  const retiredKeys = RETIRED_PRESET_COLORS[t.name];
+  if (Object.keys(retiredKeys).length === 0) return false; // nothing was retired -> nothing to snap
+  const preset = builtInTheme(t.name);
+  const retired = retiredPresetColors(t.name);
+  const keys = new Set<string>([...Object.keys(t.colors), ...Object.keys(retired)]);
+  const colorsMatch = [...keys].every(
+    (k) => (t.colors as Record<string, string | undefined>)[k] === (retired as Record<string, string | undefined>)[k],
+  );
+  const radiiUnchanged = RADII_KEYS.every((k) => t.radii[k] === preset.radii[k]);
+  return colorsMatch && radiiUnchanged && t.font.sans === preset.font.sans;
+}
+
+/** Snap a retired-preset snapshot to the current builtInTheme(name); anything
+ *  else (any custom edit, any renamed theme) is returned unchanged. Pure. */
+export function snapRetiredPreset(t: Theme, rawHasGeometry: boolean): Theme {
+  return isRetiredPresetSnapshot(t, rawHasGeometry) ? builtInTheme(t.name as PresetName) : t;
 }
 
 /** Promote a 8-key core palette to the full 18-key set: keep any valid explicit
@@ -512,7 +554,7 @@ export function parseTheme(raw: string | null): Theme | null {
   };
   // Object.keys(c) is the RAW colors object as parsed from JSON (pre-promotion) —
   // exactly what upgradePristinePreset needs to detect "no new-gen key present".
-  return upgradePristinePreset(parsed, Object.keys(c), hasRawGeometry);
+  return snapRetiredPreset(upgradePristinePreset(parsed, Object.keys(c), hasRawGeometry), hasRawGeometry);
 }
 
 /** Pretty-printed (2-space) JSON so the textarea is human-editable. Used as the
@@ -614,19 +656,19 @@ export function builtInTheme(name: PresetName): Theme {
         link: "#1d6fb8",
         surface: "#ffffff",
         border: "#e7e5e4",
-        muted: "#777169",
+        muted: "#6f6a63",
         highlightBg: "#fff3a3",
         h1: "#0c0a09",
         h2: "#0c0a09",
         h3: "#0c0a09",
         h4: "#0c0a09",
         h5: "#0c0a09",
-        h6: "#777169",
+        h6: "#6f6a63",
         bold: "#0c0a09",
         italic: "#0c0a09",
         code: "#292524",
         highlight: "#1a1300",
-        // comment: 0.7 the darkness step of --muted (#777169) on this canvas, so it
+        // comment: 0.7 the darkness step of the pre-AA --muted (#777169) on this canvas, so it
         // reads as clearly lighter than fg AND clearly distinguishable from muted —
         // 3.2:1 on bg, 5.7:1 from fg (see _workspace/01_ui_design.md 결정 5).
         comment: "#8f887e",
@@ -654,7 +696,7 @@ export function builtInTheme(name: PresetName): Theme {
         link: "#a9583e",
         surface: "#efe9de",
         border: "#e6dfd8",
-        muted: "#6c6a64",
+        muted: "#5f5d58",
         highlightBg: "#f0d9a8",
         h1: "#141413",
         h2: "#141413",
@@ -664,7 +706,7 @@ export function builtInTheme(name: PresetName): Theme {
         h6: "#6c6a64",
         bold: "#252523",
         italic: "#3d3d3a",
-        code: "#a9583e",
+        code: "#93492f",
         highlight: "#141413",
         // comment: 3.5:1 on the cream canvas, 5.1:1 from ink (결정 5) — warm-stone,
         // consistent with the editorial palette's other muted tones.

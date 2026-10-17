@@ -254,6 +254,19 @@ describe("main workspace wiring", () => {
     expect(mainSource).not.toContain("createTemporaryVault");
   });
 
+  it("D1 🔴5: the document filename label is driven by readonlyView.subscribe (not bind — a viewer-file initialFile must not seed it)", () => {
+    expect(mainSource).toContain("session.readonlyView.subscribe(");
+    expect(mainSource).toContain("renderDocName(");
+    expect(mainSource).not.toMatch(/readonlyView\.bind\([^)]*renderDocName/);
+    expect(mainSource).toContain("docName,");
+  });
+
+  it("D1 🔴3: openPath is a title-bar-owned part, the left group is built empty and the registry appends toggles", () => {
+    expect(mainSource).toContain("createLeftCommandGroup()");
+    expect(mainSource).toContain("buttonAnchor: null");
+    expect(mainSource).not.toContain("createLeftCommandGroup({");
+  });
+
   it("subscribes mermaid-widget's themeForce re-bake BEFORE main's own redraw subscription (order contract: re-bake must land before the redraw re-creates widgets)", () => {
     const rebakeIndex = mainSource.indexOf("subscribeThemeForceRebake();");
     const redrawIndex = mainSource.indexOf("themeForceSetting.subscribe(() => session.current?.refresh());");

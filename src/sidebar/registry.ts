@@ -19,7 +19,7 @@
 // `group` field on SidebarPanel until one actually shows up (YAGNI, same
 // judgment plugin-system.md rev 2 made about its wrapping layer).
 
-import { createSidebarTopStrip, rehomeLeftCommandGroup } from "../chrome/title-bar";
+import { createSidebarTopStrip, leftGroupFitsStrip, rehomeLeftCommandGroup } from "../chrome/title-bar";
 
 export interface SidebarPanel {
   /** NEVER-RENAME contract — same reason a ShortcutAction id never renames
@@ -41,12 +41,15 @@ interface InstallCtx {
   workspace: HTMLElement;
   bar: HTMLElement;
   group: HTMLElement;
+  /** Where a panel's toggle goes in the group: inserted BEFORE this element, or
+   *  appended when null (D1: the group holds only toggles, so main passes null). */
   buttonAnchor: HTMLElement | null;
 }
 
 const panels: SidebarPanel[] = [];
 let ctx: InstallCtx | null = null;
 let observer: MutationObserver | null = null;
+let sizeObserver: ResizeObserver | null = null;
 
 /** Fail fast on a duplicate panel id — a developer error in a single-user
  *  codebase, not a recoverable UI state (mirrors shortcuts/registry.ts's
@@ -70,6 +73,7 @@ function mountSidebarPanel(p: SidebarPanel): void {
   p.aside.prepend(createSidebarTopStrip());
   c.group.insertBefore(p.button, c.buttonAnchor);
   observer!.observe(p.aside, { attributes: true, attributeFilter: ["hidden"] });
+  sizeObserver?.observe(p.aside);
 }
 
 /** Register a left-sidebar panel. Panels register in the order their button
@@ -120,6 +124,15 @@ function railStrip(aside: HTMLElement | null): HTMLElement | null {
   return aside?.querySelector<HTMLElement>(":scope > .sidebar-top-strip") ?? null;
 }
 
+/** The strip the group should live in: the open rail's strip, but only if the
+ *  group FITS there (leftGroupFitsStrip); otherwise null → the title-bar. A
+ *  rail too narrow for the toggles (160px rail, 300% zoom, many extension
+ *  panels) must never clip them. Pure query. */
+function fittingStrip(group: HTMLElement): HTMLElement | null {
+  const strip = railStrip(visibleAside());
+  return strip && leftGroupFitsStrip(group, strip) ? strip : null;
+}
+
 /** Boot-time install: mount every already-registered panel into the shell
  *  and arm the MutationObserver that keeps the left command group homed in
  *  whichever rail is open (title-bar.ts's rehomeLeftCommandGroup — the one
@@ -132,7 +145,12 @@ function railStrip(aside: HTMLElement | null): HTMLElement | null {
 export function installSidebarPanels(opts: InstallCtx): void {
   if (ctx) throw new Error("installSidebarPanels: already installed");
   ctx = opts;
-  observer = new MutationObserver(() => rehomeLeftCommandGroup(opts.group, opts.bar, railStrip(visibleAside())));
+  const rehome = () => rehomeLeftCommandGroup(opts.group, opts.bar, fittingStrip(opts.group));
+  observer = new MutationObserver(rehome);
+  // ONE ResizeObserver for every rail: a sash drag / zoom change alters the
+  // strip's width without flipping `hidden`. Moving the group never resizes an
+  // aside, so this cannot loop. jsdom has no ResizeObserver → feature-detect.
+  if (typeof ResizeObserver === "function") sizeObserver = new ResizeObserver(rehome);
   for (const p of panels) mountSidebarPanel(p);
-  rehomeLeftCommandGroup(opts.group, opts.bar, railStrip(visibleAside())); // initial placement
+  rehome(); // initial placement
 }
