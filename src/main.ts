@@ -39,6 +39,8 @@ import { bindBootSettingSinks } from "./settings/boot-sinks";
 import { createSidebarSash } from "./sidebar/sash";
 import { createSettingsButton } from "./settings/panel/modal";
 import { shareableVaultsFrom } from "./settings/remote-share-panel";
+import { handleCliShareRequest } from "./settings/remote-share-cli";
+import type { CliShareRequestPayload } from "./settings/remote-share-ipc";
 import { copyBundleToClipboard } from "./document/bundle";
 import { copyTextToClipboard } from "./clipboard";
 import { registerHandler, installDispatcher, bindKeybindings, effectiveBinding } from "./shortcuts/registry";
@@ -912,6 +914,9 @@ async function boot() {
       },
       { target: label },
     );
+    // `mermark share on`: 백엔드가 준비된 창 1개에만 emit_to로 배달한다. 반드시 ready보다
+    // 먼저 listen — 순서가 뒤집히면 요청이 유실돼 CLI가 타임아웃까지 매달린다.
+    await listen<CliShareRequestPayload>("cli-share-request", (e) => void handleCliShareRequest(e.payload), { target: label });
     void invoke("register_window_ready");
   };
 

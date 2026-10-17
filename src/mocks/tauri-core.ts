@@ -133,6 +133,11 @@ let attachmentTokenSeq = 0;
 declare global {
   interface Window {
     __mockAcks?: { id: number; outcome: string }[];
+    // `mermark share on` simulation (cli_control.rs): fans a
+    // `cli-share-request` event to this window like the backend does, and
+    // `complete_cli_request` replies land in `__mockCliOutcomes`.
+    __mockCliShareRequest?: (names: string[]) => void;
+    __mockCliOutcomes?: { id: number; outcome: unknown }[];
     // Vault image attachment (single-window-opening Wave 2, Todo 5) test
     // hooks — see the import_vault_attachment/rollback_attachment_import
     // cases below for how each is consumed.
@@ -159,6 +164,7 @@ declare global {
   }
 }
 window.__mockAcks = [];
+window.__mockCliOutcomes = [];
 
 // The path the (mock) watcher is currently armed on. Shared with the event mock
 // (tauri-event.ts) so __mockExternalChange writes the simulated disk content
@@ -455,6 +461,12 @@ let sshTunnelHost: string | null = null;
 // §2: "서버가 꺼져 있어도 유지된다" — the real backend does NOT clear armed
 // vaults on stop, only the axum server task).
 interface MockDevice { id: string; label: string; pairedAtMs: number }
+/** Mirrors `ShareSelection` (remote_share.rs): snake_case on the wire, root
+ *  path deliberately absent. Only a successful start writes it. */
+interface MockShareSelection {
+  bind_mode: "tailscale" | "localhost-only";
+  vaults: Array<{ id: string; display_name: string }>;
+}
 const hostShare: {
   running: boolean;
   bindMode: "tailscale" | "localhost-only";
@@ -462,6 +474,7 @@ const hostShare: {
   vaults: Array<{ id: string; display_name: string }>;
   devices: MockDevice[];
   codeIssuedAtMs: number | null;
+  lastSelection: MockShareSelection | null;
 } = {
   running: false,
   bindMode: "tailscale",
@@ -472,6 +485,30 @@ const hostShare: {
   // by default" philosophy as SAMPLE's kitchen-sink doc above.
   devices: [{ id: "dev-demo", label: "맥북 프로 (데모)", pairedAtMs: Date.now() - 86_400_000 }],
   codeIssuedAtMs: null,
+  lastSelection: null,
+};
+
+// The mock `listen` lives in tauri-event.ts, which already imports this
+// module; to fan events from here without a load-time cycle, tauri-event
+// registers its `fan` function at its own load.
+type MockEventFan = (event: string, payload?: unknown) => void;
+let mockEventFan: MockEventFan | null = null;
+export function registerMockEventFan(fn: MockEventFan): void {
+  mockEventFan = fn;
+}
+/** Mirrors `notify_share_changed` (remote_share.rs): payload-less global event. */
+function notifyShareChanged(): void {
+  mockEventFan?.("remote-share-changed");
+}
+
+let mockCliRequestId = 0;
+window.__mockCliShareRequest = (names: string[]) => {
+  mockCliRequestId += 1;
+  mockEventFan?.("cli-share-request", {
+    id: mockCliRequestId,
+    names,
+    remembered: hostShare.lastSelection,
+  });
 };
 
 /** Explicit test hook for `remote_share_start`'s failure paths, mirroring
@@ -1348,6 +1385,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
         port: hostShare.port,
         vaults: hostShare.vaults,
         devices: hostShare.devices.map((d) => ({ id: d.id, label: d.label, paired_at_ms: d.pairedAtMs })),
+        // Kept while stopped; only a successful start overwrites it.
+        last_selection: hostShare.lastSelection,
       } as T;
     }
     case "remote_share_start": {
@@ -1385,7 +1424,13 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       hostShare.port = port;
       hostShare.vaults = vaults.map((v) => ({ id: v.id, display_name: v.display_name }));
       hostShare.codeIssuedAtMs = null;
+      // record_share_selection: success branch only, ids + display names (no roots).
+      hostShare.lastSelection = {
+        bind_mode: bindMode,
+        vaults: vaults.map((v) => ({ id: v.id, display_name: v.display_name })),
+      };
       console.info("[mock] remote_share_start", bindMode, port, vaults.length, "vaults");
+      notifyShareChanged();
       return undefined as T;
     }
     case "remote_share_stop": {
@@ -1394,6 +1439,17 @@ export async function invoke<T = unknown>(cmd: string, args?: Args): Promise<T> 
       // as remote_share_status's contract above.
       hostShare.running = false;
       console.info("[mock] remote_share_stop");
+      notifyShareChanged();
+      return undefined as T;
+    }
+    case "complete_cli_request": {
+      // Mirrors `complete_cli_request(window, state, id, outcome)`
+      // (cli_control.rs): a void reply to a `cli-share-request`. The mock has
+      // no parked CLI process to wake, so it records the outcome on
+      // window.__mockCliOutcomes for golden/manual checks.
+      const id = Number(a.id ?? -1);
+      console.info("[mock] complete_cli_request", id, a.outcome);
+      window.__mockCliOutcomes?.push({ id, outcome: a.outcome });
       return undefined as T;
     }
     case "remote_issue_code": {

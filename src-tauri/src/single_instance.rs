@@ -240,6 +240,31 @@ impl Routing {
         }
     }
 
+    /// Query: the live window that is ready to receive a control-plane event
+    /// (`cli-share-request`), or `None` while no live window is ready yet.
+    /// Preference mirrors `resolve_recipient` (most recently focused first,
+    /// then `main`) but only considers *ready* windows, since an event
+    /// emitted before the frontend attached its listener is lost; last
+    /// resort is the lexicographically first ready document window so the
+    /// choice is deterministic. Pure: never moves focus, so a command typed
+    /// in a terminal does not pull a window to the front.
+    pub fn ready_recipient(&self, live: &HashSet<String>) -> Option<String> {
+        let usable = |l: &String| live.contains(l.as_str()) && self.ready.contains(l.as_str());
+        if let Some(label) = self.focus_order.iter().find(|l| usable(l)) {
+            return Some(label.clone());
+        }
+        if usable(&"main".to_string()) {
+            return Some("main".to_string());
+        }
+        let mut rest: Vec<&String> = self
+            .ready
+            .iter()
+            .filter(|l| live.contains(l.as_str()) && is_document_window(l))
+            .collect();
+        rest.sort();
+        rest.first().map(|l| (*l).clone())
+    }
+
     /// Deliver `label`'s queue head exactly once, if that window is ready
     /// and nothing of its is already in flight. "In flight" means the head
     /// is marked delivered but not yet acked; `pump` never re-delivers it,
@@ -464,7 +489,7 @@ fn spawn_main_window(app: &tauri::AppHandle) {
 /// `acknowledge_open_request`, `track_window_event`), so a
 /// `run_on_main_thread` closure that re-enters `RoutingState` can never
 /// deadlock against this call's own lock.
-fn apply_actions(app: tauri::AppHandle, actions: Vec<RoutingAction>) {
+pub(crate) fn apply_actions(app: tauri::AppHandle, actions: Vec<RoutingAction>) {
     for action in actions {
         match action {
             RoutingAction::Deliver { label, id, path } => {
@@ -539,6 +564,9 @@ pub fn register_window_ready(window: tauri::WebviewWindow, state: tauri::State<R
     let label = window.label().to_string();
     let actions = with_routing_trace(&state, "ready", None, |routing| routing.mark_ready(&label));
     apply_actions(window.app_handle().clone(), actions);
+    // A `mermark share on` may have arrived while this window was still
+    // booting; now that its listeners are attached, hand it the request.
+    crate::cli_control::deliver_outstanding(window.app_handle());
 }
 
 /// Retires request `id` for the calling window — sent after
@@ -570,6 +598,64 @@ mod tests {
 
     fn live_set(labels: &[&str]) -> HashSet<String> {
         labels.iter().map(|s| s.to_string()).collect()
+    }
+
+    // --- ready_recipient (control-plane window choice) ---
+
+    #[test]
+    fn ready_recipient_prefers_most_recent_ready() {
+        let mut r = Routing::default();
+        r.note_focused("main");
+        r.note_focused("w1"); // [w1, main]
+        r.mark_ready("w1");
+        r.mark_ready("main");
+        assert_eq!(r.ready_recipient(&live_set(&["w1", "main"])), Some("w1".into()));
+    }
+
+    #[test]
+    fn ready_recipient_skips_not_ready_recent() {
+        let mut r = Routing::default();
+        r.note_focused("main");
+        r.note_focused("w1");
+        r.mark_ready("main");
+        assert_eq!(r.ready_recipient(&live_set(&["w1", "main"])), Some("main".into()));
+    }
+
+    #[test]
+    fn ready_recipient_skips_dead_labels() {
+        let mut r = Routing::default();
+        r.note_focused("main");
+        r.note_focused("w1");
+        r.mark_ready("w1");
+        r.mark_ready("main");
+        assert_eq!(r.ready_recipient(&live_set(&["main"])), Some("main".into()));
+    }
+
+    #[test]
+    fn ready_recipient_falls_back_to_sorted_ready() {
+        let mut r = Routing::default();
+        r.mark_ready("w3");
+        r.mark_ready("w2");
+        assert_eq!(r.ready_recipient(&live_set(&["w3", "w2"])), Some("w2".into()));
+    }
+
+    #[test]
+    fn ready_recipient_none_when_nothing_ready() {
+        let mut r = Routing::default();
+        r.note_focused("main");
+        assert_eq!(r.ready_recipient(&live_set(&["main"])), None);
+        assert_eq!(r.ready_recipient(&live_set(&[])), None);
+    }
+
+    #[test]
+    fn ready_recipient_is_pure() {
+        let mut r = Routing::default();
+        r.note_focused("main");
+        r.mark_ready("main");
+        let live = live_set(&["main"]);
+        let before = (r.focus_order.clone(), r.ready.clone(), r.next_id);
+        assert_eq!(r.ready_recipient(&live), r.ready_recipient(&live));
+        assert_eq!((r.focus_order.clone(), r.ready.clone(), r.next_id), before);
     }
 
     // --- pre-ready delivery ---

@@ -56,3 +56,17 @@ export function shareStartErrorMessage(err: unknown, port: number): string {
   }
   return msg;
 }
+
+/** 터미널(`mermark share on`)용 `remote_share_start` 실패 문구. 패널용
+ *  `shareStartErrorMessage`는 "아래 '공유 포트'"처럼 화면 위치를 가리켜 터미널에서는
+ *  무의미하므로 별도 함수로 둔다. 모르는 오류는 원문 그대로(삼키지 않음). Pure query. */
+export function shareStartCliErrorMessage(err: unknown, port: number): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.startsWith("PORT_IN_USE:")) {
+    return `포트 ${port}를 다른 프로그램이 쓰고 있습니다. 설정 › 원격 공유 › 공유 포트를 다른 번호(예: ${suggestAlternativeSharePort(port)})로 바꾼 뒤 다시 실행하세요.`;
+  }
+  if (msg.startsWith("PORT_INVALID:")) {
+    return SHARE_PORT_RANGE_MESSAGE;
+  }
+  return msg;
+}

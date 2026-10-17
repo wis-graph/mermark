@@ -13,6 +13,24 @@ pub enum CliError {
     Missing,
     IsDirectory(PathBuf),
     NotFound(PathBuf),
+    /// `mermark share ...` was malformed. Carries the human-readable reason;
+    /// `run()` prints it with the usage line and exits 2.
+    Usage(String),
+}
+
+/// What `mermark share` asks the running instance to do. Doubles as the wire
+/// shape of the control-socket request (`{"op":"share-on","names":[..]}`), so
+/// the CLI grammar and the protocol cannot drift apart.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "op")]
+pub enum ShareCommand {
+    /// Empty `names` = "use the remembered last selection".
+    #[serde(rename = "share-on")]
+    On { names: Vec<String> },
+    #[serde(rename = "share-off")]
+    Off,
+    #[serde(rename = "share-status")]
+    Status,
 }
 
 /// Where the editor should read its document from. `parse_args` classifies the
@@ -106,6 +124,10 @@ pub fn parse_args(args: &[String], cwd: &Path) -> Result<LaunchArgs, CliError> {
 pub enum Headless {
     Version,
     Bundle,
+    /// `mermark share on|off|status`: a control-socket client, no window and
+    /// no single-instance plugin (the plugin would forward argv and `exit(0)`
+    /// before any result could come back).
+    Share(ShareCommand),
 }
 
 /// Which launch pipeline this process's argv selects, decided once in
@@ -178,6 +200,9 @@ pub fn classify_launch(args: &[String], cwd: &Path) -> Result<LaunchClass, CliEr
     if crate::is_bundle_subcommand(args) {
         return Ok(LaunchClass::Headless(Headless::Bundle));
     }
+    if is_share_subcommand(args) {
+        return Ok(LaunchClass::Headless(Headless::Share(parse_share_command(&args[1..])?)));
+    }
     match parse_args(args, cwd) {
         Ok(parsed @ LaunchArgs { target: Target::Stdin, .. }) => Ok(LaunchClass::Isolated(parsed)),
         Ok(parsed @ LaunchArgs { right: true, .. }) => Ok(LaunchClass::Isolated(parsed)),
@@ -186,6 +211,47 @@ pub fn classify_launch(args: &[String], cwd: &Path) -> Result<LaunchClass, CliEr
         }
         Err(CliError::Missing) => Ok(LaunchClass::SingletonRouted(None)),
         Err(e) => Err(e),
+    }
+}
+
+/// True when the first argv token is exactly `share` (the `bundle`
+/// precedent: a bare token is the subcommand, `./share` is a file).
+pub fn is_share_subcommand(args: &[String]) -> bool {
+    args.first().is_some_and(|a| a == "share")
+}
+
+/// True for a token that looks like a flag. Unlike file launches, `share`
+/// never swallows unknown flags: a mistyped vault name silently eaten as a
+/// flag would share a different vault than the user meant.
+fn is_share_flag(arg: &str) -> bool {
+    arg.starts_with('-')
+}
+
+/// Parse the tokens after `share`. Pure, no I/O.
+pub fn parse_share_command(rest: &[String]) -> Result<ShareCommand, CliError> {
+    let Some(sub) = rest.first() else {
+        return Err(CliError::Usage("share 뒤에 on, off, status 중 하나가 필요합니다".into()));
+    };
+    let operands = &rest[1..];
+    match sub.as_str() {
+        "on" => {
+            let mut names: Vec<String> = Vec::new();
+            for arg in operands {
+                if is_share_flag(arg) {
+                    return Err(CliError::Usage(format!("알 수 없는 옵션: {arg}")));
+                }
+                if !names.contains(arg) {
+                    names.push(arg.clone());
+                }
+            }
+            Ok(ShareCommand::On { names })
+        }
+        "off" | "status" if !operands.is_empty() => {
+            Err(CliError::Usage(format!("share {sub}는 인자를 받지 않습니다")))
+        }
+        "off" => Ok(ShareCommand::Off),
+        "status" => Ok(ShareCommand::Status),
+        other => Err(CliError::Usage(format!("알 수 없는 share 명령: {other}"))),
     }
 }
 
@@ -581,6 +647,7 @@ mod tests {
         let cwd = std::env::temp_dir();
         assert!(!LaunchClass::Headless(Headless::Version).joins_singleton());
         assert!(!LaunchClass::Headless(Headless::Bundle).joins_singleton());
+        assert!(!LaunchClass::Headless(Headless::Share(ShareCommand::Off)).joins_singleton());
         assert!(!LaunchClass::Isolated(LaunchArgs { target: Target::Stdin, right: false })
             .joins_singleton());
         assert!(!LaunchClass::Isolated(LaunchArgs {
@@ -608,5 +675,95 @@ mod tests {
         );
         assert_eq!(LaunchClass::SingletonRouted(None).file_target(), None);
         assert_eq!(LaunchClass::Headless(Headless::Version).file_target(), None);
+    }
+
+    // --- share subcommand ---
+
+    fn sv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+    fn classify(a: &[&str]) -> Result<LaunchClass, CliError> {
+        classify_launch(&sv(a), &std::env::temp_dir())
+    }
+
+    #[test]
+    fn classify_share_on_with_names() {
+        assert_eq!(
+            classify(&["share", "on", "노트", "업무"]).unwrap(),
+            LaunchClass::Headless(Headless::Share(ShareCommand::On {
+                names: vec!["노트".into(), "업무".into()]
+            }))
+        );
+    }
+
+    #[test]
+    fn classify_share_on_without_names() {
+        assert_eq!(
+            classify(&["share", "on"]).unwrap(),
+            LaunchClass::Headless(Headless::Share(ShareCommand::On { names: vec![] }))
+        );
+    }
+
+    #[test]
+    fn classify_share_off_and_status() {
+        assert_eq!(
+            classify(&["share", "off"]).unwrap(),
+            LaunchClass::Headless(Headless::Share(ShareCommand::Off))
+        );
+        assert_eq!(
+            classify(&["share", "status"]).unwrap(),
+            LaunchClass::Headless(Headless::Share(ShareCommand::Status))
+        );
+    }
+
+    #[test]
+    fn share_names_are_deduped_in_order() {
+        assert_eq!(
+            parse_share_command(&sv(&["on", "a", "b", "a"])).unwrap(),
+            ShareCommand::On { names: vec!["a".into(), "b".into()] }
+        );
+    }
+
+    #[test]
+    fn share_usage_errors() {
+        for argv in [
+            &["share"][..],
+            &["share", "start"],
+            &["share", "off", "x"],
+            &["share", "status", "x"],
+            &["share", "on", "--tailscale"],
+            &["share", "on", "-x"],
+        ] {
+            assert!(matches!(classify(argv), Err(CliError::Usage(_))), "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn version_wins_over_share() {
+        assert_eq!(
+            classify(&["--version", "share", "on"]).unwrap(),
+            LaunchClass::Headless(Headless::Version)
+        );
+    }
+
+    #[test]
+    fn share_lookalike_file_is_singleton_routed() {
+        let dir = fixture_dir("classify_share_lookalike");
+        fs::write(dir.join("share"), "# hi").unwrap();
+        let got = classify_launch(&sv(&["./share"]), &dir).unwrap();
+        assert_eq!(got, LaunchClass::SingletonRouted(Some(dir.join("./share"))));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn share_command_wire_roundtrip() {
+        for (cmd, json) in [
+            (ShareCommand::On { names: vec!["a".into()] }, r#"{"op":"share-on","names":["a"]}"#),
+            (ShareCommand::Off, r#"{"op":"share-off"}"#),
+            (ShareCommand::Status, r#"{"op":"share-status"}"#),
+        ] {
+            assert_eq!(serde_json::to_string(&cmd).unwrap(), json);
+            assert_eq!(serde_json::from_str::<ShareCommand>(json).unwrap(), cmd);
+        }
     }
 }

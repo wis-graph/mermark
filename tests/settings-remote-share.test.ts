@@ -9,6 +9,21 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
+// remote-share-changed 구독용 이벤트 버스 목 — 등록된 리스너를 직접 발화한다.
+const changedListeners = new Set<() => void>();
+const unlistenSpy = vi.fn();
+let listenResolveGate: Promise<void> | null = null;
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: async (event: string, cb: () => void) => {
+    if (listenResolveGate) await listenResolveGate;
+    if (event === "remote-share-changed") changedListeners.add(cb);
+    return () => {
+      unlistenSpy();
+      changedListeners.delete(cb);
+    };
+  },
+}));
+
 import { createSettingsButton } from "../src/settings/panel/modal";
 import { registerSetting } from "../src/settings/registry";
 import {
@@ -20,6 +35,7 @@ import {
   toggleVaultId,
   buildVaultsToArm,
   armedIdsFromStatus,
+  pendingSelectionFrom,
   shareableVaultsFrom,
   type VaultOption,
   type ShareStatus,
@@ -106,7 +122,7 @@ describe("remote-share-panel — 순수 함수", () => {
 
 const VAULTS: VaultOption[] = [{ id: "v1", displayName: "노트", root: "/Users/x/notes" }];
 
-const OFF_STATUS: ShareStatus = { running: false, bind_mode: "tailscale", port: DEFAULT_SHARE_PORT, vaults: [], devices: [] };
+const OFF_STATUS: ShareStatus = { running: false, bind_mode: "tailscale", port: DEFAULT_SHARE_PORT, vaults: [], devices: [], last_selection: null };
 
 const RUNNING_STATUS: ShareStatus = {
   running: true,
@@ -114,10 +130,24 @@ const RUNNING_STATUS: ShareStatus = {
   port: DEFAULT_SHARE_PORT,
   vaults: [{ id: "v1", display_name: "노트" }],
   devices: [],
+  last_selection: null,
 };
+
+describe("pendingSelectionFrom", () => {
+  const base = { vaults: [{ id: "armed", display_name: "A" }], bind_mode: "tailscale" as const };
+  it("last_selection이 있으면 그 id·방식", () => {
+    expect(pendingSelectionFrom({ ...base, last_selection: { bind_mode: "localhost-only", vaults: [{ id: "x", display_name: "X" }] } })).toEqual({ armedVaultIds: ["x"], bindMode: "localhost-only" });
+  });
+  it("null이면 armed·status.bind_mode", () => {
+    expect(pendingSelectionFrom({ ...base, last_selection: null })).toEqual({ armedVaultIds: ["armed"], bindMode: "tailscale" });
+  });
+});
 
 describe("remote-share-panel — 설정 패널 통합", () => {
   beforeEach(() => {
+    changedListeners.clear();
+    unlistenSpy.mockReset();
+    listenResolveGate = null;
     localStorage.clear();
     document.body.innerHTML = "";
     mockInvoke.mockReset();
@@ -557,6 +587,71 @@ describe("remote-share-panel — 설정 패널 통합", () => {
       expect(hint).toContain("ssh://");
       expect(hint).toContain("share-port=50000");
       expect(hint).not.toContain("<이름>:50000");
+    });
+  });
+
+  describe("마지막 선택 prefill / remote-share-changed 동기화", () => {
+    const LAST = { bind_mode: "tailscale" as const, vaults: [{ id: "v1", display_name: "노트" }] };
+    const fireChanged = (): void => changedListeners.forEach((cb) => cb());
+    const statusCalls = (): number => mockInvoke.mock.calls.filter((c) => c[0] === "remote_share_status").length;
+
+    it("꺼진 상태 + last_selection이면 해당 볼트가 체크된 채 렌더(재시작 후 prefill)", async () => {
+      mockRoutes({ remote_share_status: () => Promise.resolve({ ...OFF_STATUS, last_selection: LAST }) });
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+      const box = backdrop.querySelector<HTMLInputElement>(".remote-share-checkbox")!;
+      expect(box.checked).toBe(true);
+    });
+
+    it("이벤트 수신 → status 재조회 + 켜짐 표시, 표시 중이던 코드 숨김", async () => {
+      let status: ShareStatus = { ...RUNNING_STATUS, last_selection: LAST };
+      mockRoutes({
+        remote_share_status: () => Promise.resolve(status),
+        remote_issue_code: () => Promise.resolve({ code: "123456", issued_at_ms: Date.now() }),
+      });
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+      backdrop.querySelector<HTMLButtonElement>(".remote-share-issue-btn")!.click();
+      await flush();
+      expect(backdrop.querySelector<HTMLElement>(".remote-share-code")!.hidden).toBe(false);
+      status = { ...OFF_STATUS, last_selection: LAST };
+      const before = statusCalls();
+      fireChanged();
+      await flush();
+      expect(statusCalls()).toBe(before + 1);
+      expect(backdrop.querySelector<HTMLElement>(".remote-share-code")!.hidden).toBe(true);
+      expect(segBtn(backdrop, "켜기").getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("teardown 후 이벤트는 아무 invoke도 만들지 않는다(언리슨됨)", async () => {
+      mockRoutes({});
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+      expect(changedListeners.size).toBe(1);
+      backdrop.querySelector<HTMLButtonElement>(".settings-close")!.click();
+      expect(unlistenSpy).toHaveBeenCalledTimes(1);
+      await flush();
+      const before = mockInvoke.mock.calls.length;
+      fireChanged();
+      await flush();
+      expect(mockInvoke.mock.calls.length).toBe(before);
+    });
+
+    it("listen이 teardown 이후 resolve되면 즉시 해제된다", async () => {
+      mockRoutes({});
+      let release!: () => void;
+      listenResolveGate = new Promise<void>((r) => (release = r));
+      const backdrop = openModal();
+      openRemoteShareTab(backdrop);
+      await flush();
+      backdrop.querySelector<HTMLButtonElement>(".settings-close")!.click();
+      release();
+      await flush();
+      expect(unlistenSpy).toHaveBeenCalledTimes(1);
+      expect(changedListeners.size).toBe(0);
     });
   });
 });

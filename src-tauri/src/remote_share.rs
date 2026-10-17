@@ -116,10 +116,98 @@ struct ShareConfig {
     port: u16,
 }
 
+/// One vault in the remembered selection: identity + a display name for
+/// status/error text. **The root path is deliberately absent** — resolving a
+/// remembered vault always goes through the frontend's *current* registry, so
+/// a vault the user removed from the app can never be re-shared from memory
+/// alone.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RememberedVault {
+    pub id: String,
+    pub display_name: String,
+}
+
+/// "Last selection": the vaults and bind mode of the most recent *successful*
+/// `share_start`. SSOT for what `mermark share on` (no names) turns on. The
+/// only writer is `record_share_selection`, called from `share_start`'s
+/// success branch — both the settings panel and the CLI reach it through
+/// `remote_share_start`, so there is structurally one place that updates it.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ShareSelection {
+    pub bind_mode: BindMode,
+    pub vaults: Vec<RememberedVault>,
+}
+
+/// On-disk envelope of `ShareSelection` (`remote-share-selection.json`).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SelectionFile {
+    version: u32,
+    #[serde(flatten)]
+    selection: ShareSelection,
+}
+
+const SELECTION_FILE_VERSION: u32 = 1;
+
+fn selection_path(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join("remote-share-selection.json")
+}
+
+/// Query: reads the remembered selection from `config_dir`. Missing or
+/// corrupt file => `None` (a corrupt one logs a warning); never blocks app
+/// launch, same tolerance as the paired-device list.
+pub fn load_selection(config_dir: &std::path::Path) -> Option<ShareSelection> {
+    let path = selection_path(config_dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            eprintln!("mermark: failed to read {}: {e}", path.display());
+            return None;
+        }
+    };
+    match serde_json::from_str::<SelectionFile>(&text) {
+        Ok(f) if f.version == SELECTION_FILE_VERSION => Some(f.selection),
+        Ok(f) => {
+            eprintln!("mermark: unsupported remote-share-selection version {}", f.version);
+            None
+        }
+        Err(e) => {
+            eprintln!("mermark: corrupt {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// Command: remembers `armed`/`bind_mode` as the last selection, in memory
+/// and on disk. A disk failure only warns — the server is already up and a
+/// lost memory must not turn a working share into a failed one.
+fn record_share_selection(inner: &mut ShareInner, armed: &[ArmedVault], bind_mode: BindMode) {
+    let selection = ShareSelection {
+        bind_mode,
+        vaults: armed
+            .iter()
+            .map(|v| RememberedVault { id: v.id.clone(), display_name: v.display_name.clone() })
+            .collect(),
+    };
+    let file = SelectionFile { version: SELECTION_FILE_VERSION, selection: selection.clone() };
+    let dir = inner.host.config_dir.clone();
+    let saved = serde_json::to_string(&file)
+        .map_err(|e| e.to_string())
+        .and_then(|json| {
+            std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+            crate::remote_token::atomic_write_0600(&selection_path(&dir), json.as_bytes())
+        });
+    if let Err(e) = saved {
+        eprintln!("mermark: failed to persist last share selection: {e}");
+    }
+    inner.last_selection = Some(selection);
+}
+
 struct ShareInner {
     host: HostState,
     running: Option<RunningServer>,
     config: ShareConfig,
+    last_selection: Option<ShareSelection>,
 }
 
 /// Managed Tauri state for the host's control surface: the live `HostState`
@@ -131,11 +219,27 @@ struct ShareInner {
 /// makes a paired device survive an app restart at all.
 pub struct RemoteShareState {
     inner: Mutex<ShareInner>,
+    /// Serializes `share_start` and `share_stop` end to end. `inner` is a
+    /// std mutex that cannot be held across `.await`, so without this a
+    /// second start/stop can interleave between the first one's "stop old
+    /// server" and "install new server" steps (the CLI makes concurrent
+    /// callers possible: terminal + settings panel).
+    lifecycle: tokio::sync::Mutex<()>,
+    /// Test-only gauge of server tasks still alive.
+    #[cfg(test)]
+    live_servers: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl RemoteShareState {
-    pub fn new(config_dir: PathBuf, devices: Vec<PairedDevice>) -> Self {
+    pub fn new(
+        config_dir: PathBuf,
+        devices: Vec<PairedDevice>,
+        last_selection: Option<ShareSelection>,
+    ) -> Self {
         Self {
+            lifecycle: tokio::sync::Mutex::new(()),
+            #[cfg(test)]
+            live_servers: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             inner: Mutex::new(ShareInner {
                 host: HostState {
                     armed: Arc::new(Mutex::new(Vec::new())),
@@ -145,6 +249,7 @@ impl RemoteShareState {
                 },
                 running: None,
                 config: ShareConfig { bind_mode: BindMode::Tailscale, port: crate::remote_client::DEFAULT_PORT },
+                last_selection,
             }),
         }
     }
@@ -180,6 +285,9 @@ pub struct ShareStatus {
     pub port: u16,
     pub vaults: Vec<ArmedVault>,
     pub devices: Vec<DeviceInfo>,
+    /// IPC-only (never served over HTTP): what `share on` with no names
+    /// would turn on. Kept while stopped and across restarts.
+    pub last_selection: Option<ShareSelection>,
 }
 
 #[tauri::command]
@@ -194,7 +302,7 @@ pub fn remote_share_status(state: tauri::State<'_, RemoteShareState>) -> ShareSt
 /// wrapper plus a same-named-minus-`remote_`-prefix function) purely so its
 /// logic stays testable; `tauri::State<T>` derefs to `&T`, so the wrapper's
 /// `&state` argument satisfies this signature for free.
-fn share_status(state: &RemoteShareState) -> ShareStatus {
+pub(crate) fn share_status(state: &RemoteShareState) -> ShareStatus {
     let inner = state.inner.lock().unwrap();
     // `vaults`/`devices` are materialized into locals *before* the tail
     // struct literal below — not merely for style. `ShareStatus { ... }` as
@@ -208,7 +316,15 @@ fn share_status(state: &RemoteShareState) -> ShareStatus {
     // expression touches a `Mutex` anymore, only plain field reads.
     let vaults = inner.host.armed.lock().unwrap().clone();
     let devices = inner.host.devices.lock().unwrap().iter().map(redact).collect();
-    ShareStatus { running: inner.running.is_some(), bind_mode: inner.config.bind_mode, port: inner.config.port, vaults, devices }
+    let last_selection = inner.last_selection.clone();
+    ShareStatus {
+        running: inner.running.is_some(),
+        bind_mode: inner.config.bind_mode,
+        port: inner.config.port,
+        vaults,
+        devices,
+        last_selection,
+    }
 }
 
 /// Resolves a `BindMode` to the concrete address to bind. `LocalhostOnly` is
@@ -389,13 +505,24 @@ pub async fn remote_share_start(
     bind_mode: BindMode,
     port: u16,
     vaults: Vec<VaultToArm>,
+    app: tauri::AppHandle,
     state: tauri::State<'_, RemoteShareState>,
 ) -> Result<(), String> {
     validate_share_port(port)?;
-    share_start(bind_mode, port, vaults, &state).await
+    share_start(bind_mode, port, vaults, &state).await?;
+    notify_share_changed(&app);
+    Ok(())
 }
 
-async fn share_start(
+/// Tells every window the share state changed (start/stop), so an open
+/// settings panel can re-read `remote_share_status`. No payload: listeners
+/// re-query rather than trust a pushed copy.
+pub(crate) fn notify_share_changed(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    let _ = app.emit("remote-share-changed", ());
+}
+
+pub(crate) async fn share_start(
     bind_mode: BindMode,
     port: u16,
     vaults: Vec<VaultToArm>,
@@ -406,6 +533,7 @@ async fn share_start(
     }
     let armed = arm_vaults(vaults)?;
 
+    let _lifecycle = state.lifecycle.lock().await;
     stop_running(state).await;
 
     let ip = resolve_bind_ip(bind_mode).await?;
@@ -413,7 +541,7 @@ async fn share_start(
     let listener = remote_host::bind(addr).await?;
 
     let mut inner = state.inner.lock().unwrap();
-    *inner.host.armed.lock().unwrap() = armed;
+    *inner.host.armed.lock().unwrap() = armed.clone();
     // A fresh sharing session starts with no live pairing code — any code
     // issued in a previous run is meaningless once the server (and thus the
     // only thing that could ever redeem it) has been torn down and rebuilt.
@@ -422,22 +550,43 @@ async fn share_start(
 
     let host_for_task = inner.host.clone();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    #[cfg(test)]
+    let handle = {
+        let live = state.live_servers.clone();
+        live.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        tokio::spawn(async move {
+            let r = remote_host::run(listener, host_for_task, shutdown_rx).await;
+            live.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            r
+        })
+    };
+    #[cfg(not(test))]
     let handle = tokio::spawn(remote_host::run(listener, host_for_task, shutdown_rx));
     inner.running = Some(RunningServer { shutdown: shutdown_tx, handle });
+    record_share_selection(&mut inner, &armed, bind_mode);
     Ok(())
 }
 
 /// Stops the server if running; a no-op (not an error) if it wasn't — the
 /// settings UI's "off" toggle should never fail just because sharing was
-/// already off.
+/// already off. Returns whether a server was actually running (the CLI says
+/// "already off" vs "turned off"). Never touches the remembered selection.
+pub(crate) async fn share_stop(state: &RemoteShareState) -> bool {
+    let _lifecycle = state.lifecycle.lock().await;
+    let was_running = state.inner.lock().unwrap().running.is_some();
+    stop_running(state).await;
+    was_running
+}
+
 #[tauri::command]
-pub async fn remote_share_stop(state: tauri::State<'_, RemoteShareState>) -> Result<(), String> {
-    stop_running(&state).await;
+pub async fn remote_share_stop(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, RemoteShareState>,
+) -> Result<(), String> {
+    share_stop(&state).await;
+    notify_share_changed(&app);
     Ok(())
 }
-// `remote_share_stop` has no separate `share_stop` split — `stop_running`
-// already takes a plain `&RemoteShareState` and *is* the whole logic, so
-// there's nothing left for a wrapper-vs-logic split to separate.
 
 /// The freshly minted pairing code plus when it was issued, so the UI can
 /// render its own countdown against `remote_host::PAIRING_TTL_MS` without a
@@ -626,7 +775,7 @@ mod tests {
 
     #[test]
     fn sharing_is_off_by_default() {
-        let state = RemoteShareState::new(tmp_config_dir("default"), Vec::new());
+        let state = RemoteShareState::new(tmp_config_dir("default"), Vec::new(), None);
         let status = share_status(&state);
         assert!(!status.running);
         assert!(status.vaults.is_empty());
@@ -638,7 +787,7 @@ mod tests {
     #[test]
     fn constructed_with_previously_paired_devices_reports_them() {
         let devices = vec![PairedDevice { id: "d1".into(), token: "t".into(), label: "맥북".into(), paired_at_ms: 5 }];
-        let state = RemoteShareState::new(tmp_config_dir("loaded"), devices);
+        let state = RemoteShareState::new(tmp_config_dir("loaded"), devices, None);
         let status = share_status(&state);
         assert_eq!(status.devices.len(), 1);
         assert_eq!(status.devices[0].id, "d1");
@@ -648,7 +797,7 @@ mod tests {
     #[tokio::test]
     async fn starting_with_no_vaults_is_refused() {
         let dir = tmp_config_dir("no-vaults");
-        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
         let result = share_start(BindMode::LocalhostOnly, 0, Vec::new(), &state).await;
         assert!(result.is_err());
         assert!(!share_status(&state).running);
@@ -665,7 +814,7 @@ mod tests {
     #[tokio::test]
     async fn starting_with_a_nonexistent_root_is_refused_and_names_the_vault() {
         let dir = tmp_config_dir("bad-root");
-        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
         let good = vec![VaultToArm {
             id: "v1".into(),
             display_name: "노트".into(),
@@ -691,7 +840,7 @@ mod tests {
     #[tokio::test]
     async fn issuing_a_code_before_sharing_is_on_is_refused() {
         let dir = tmp_config_dir("no-code-when-off");
-        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
         assert!(issue_code(&state).is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -705,7 +854,7 @@ mod tests {
     #[tokio::test]
     async fn start_stop_start_succeeds() {
         let dir = tmp_config_dir("lifecycle");
-        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
         let vaults = vec![VaultToArm {
             id: "v1".into(),
             display_name: "노트".into(),
@@ -732,7 +881,7 @@ mod tests {
     #[tokio::test]
     async fn starting_twice_replaces_rather_than_leaking_the_first_server() {
         let dir = tmp_config_dir("double-start");
-        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
         let vaults = vec![VaultToArm {
             id: "v1".into(),
             display_name: "노트".into(),
@@ -750,7 +899,7 @@ mod tests {
     #[test]
     fn revoking_an_unknown_device_reports_false_not_an_error() {
         let dir = tmp_config_dir("revoke-unknown");
-        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
         let removed = revoke_device("nope", &state).unwrap();
         assert!(!removed);
         std::fs::remove_dir_all(&dir).ok();
@@ -760,7 +909,7 @@ mod tests {
     fn revoking_a_known_device_removes_it_and_persists() {
         let dir = tmp_config_dir("revoke-known");
         let devices = vec![PairedDevice { id: "d1".into(), token: "t".into(), label: "맥북".into(), paired_at_ms: 1 }];
-        let state = RemoteShareState::new(dir.clone(), devices);
+        let state = RemoteShareState::new(dir.clone(), devices, None);
 
         let removed = revoke_device("d1", &state).unwrap();
         assert!(removed);
@@ -794,7 +943,7 @@ mod tests {
     #[tokio::test]
     async fn share_start_still_accepts_port_zero_unvalidated() {
         let dir = tmp_config_dir("port-zero-still-ok");
-        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
         let vaults = vec![VaultToArm {
             id: "v1".into(),
             display_name: "노트".into(),
@@ -856,7 +1005,7 @@ mod tests {
     #[tokio::test]
     async fn share_start_surfaces_a_port_conflict_as_port_in_use() {
         let dir = tmp_config_dir("port-conflict");
-        let state = RemoteShareState::new(dir.clone(), Vec::new());
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = occupied.local_addr().unwrap().port();
         let vaults = vec![VaultToArm {
@@ -871,5 +1020,153 @@ mod tests {
 
         drop(occupied);
         std::fs::remove_dir_all(&dir).ok();
+    }
+    // --- last selection SSOT + lifecycle lock (mermark share) ---
+
+    fn one_vault(id: &str, name: &str) -> Vec<VaultToArm> {
+        vec![VaultToArm {
+            id: id.into(),
+            display_name: name.into(),
+            root: std::env::temp_dir().to_string_lossy().into_owned(),
+        }]
+    }
+
+    #[tokio::test]
+    async fn start_records_last_selection() {
+        let dir = tmp_config_dir("rec-sel");
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
+        assert_eq!(share_status(&state).last_selection, None);
+        share_start(BindMode::LocalhostOnly, 0, one_vault("v1", "노트"), &state).await.unwrap();
+        let want = ShareSelection {
+            bind_mode: BindMode::LocalhostOnly,
+            vaults: vec![RememberedVault { id: "v1".into(), display_name: "노트".into() }],
+        };
+        assert_eq!(share_status(&state).last_selection, Some(want.clone()));
+        assert_eq!(load_selection(&dir), Some(want));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(selection_path(&dir)).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        stop_running(&state).await;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn failed_start_does_not_touch_selection() {
+        let dir = tmp_config_dir("fail-sel");
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
+        share_start(BindMode::LocalhostOnly, 0, one_vault("v1", "노트"), &state).await.unwrap();
+        let before = share_status(&state).last_selection;
+        let bad = vec![VaultToArm { id: "v2".into(), display_name: "x".into(), root: "/no/such/dir".into() }];
+        assert!(share_start(BindMode::LocalhostOnly, 0, bad, &state).await.is_err());
+        assert!(share_start(BindMode::LocalhostOnly, 0, Vec::new(), &state).await.is_err());
+        assert_eq!(share_status(&state).last_selection, before);
+        assert_eq!(load_selection(&dir), before);
+        stop_running(&state).await;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn stop_keeps_selection() {
+        let dir = tmp_config_dir("stop-sel");
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
+        share_start(BindMode::LocalhostOnly, 0, one_vault("v1", "노트"), &state).await.unwrap();
+        assert!(share_stop(&state).await);
+        assert!(!share_stop(&state).await, "already off reports false");
+        assert!(share_status(&state).last_selection.is_some());
+        assert!(load_selection(&dir).is_some());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn selection_roundtrip_load_and_tolerance() {
+        let dir = tmp_config_dir("sel-load");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(load_selection(&dir), None, "missing file");
+        std::fs::write(selection_path(&dir), "{not json").unwrap();
+        assert_eq!(load_selection(&dir), None, "corrupt file");
+        std::fs::write(selection_path(&dir), r#"{"version":9,"bind_mode":"tailscale","vaults":[]}"#).unwrap();
+        assert_eq!(load_selection(&dir), None, "unknown version");
+        std::fs::write(
+            selection_path(&dir),
+            r#"{"version":1,"bind_mode":"tailscale","vaults":[{"id":"a","display_name":"A"}]}"#,
+        )
+        .unwrap();
+        let got = load_selection(&dir).unwrap();
+        assert_eq!(got.bind_mode, BindMode::Tailscale);
+        assert_eq!(got.vaults[0].display_name, "A");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn selection_file_has_no_root_paths() {
+        let dir = tmp_config_dir("sel-noroot");
+        let state = RemoteShareState::new(dir.clone(), Vec::new(), None);
+        share_start(BindMode::LocalhostOnly, 0, one_vault("v1", "노트"), &state).await.unwrap();
+        let text = std::fs::read_to_string(selection_path(&dir)).unwrap();
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(!text.contains(&root), "root path leaked into selection file: {text}");
+        assert!(!text.contains("root"));
+        stop_running(&state).await;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn status_wire_has_last_selection_key() {
+        let state = RemoteShareState::new(tmp_config_dir("wire"), Vec::new(), None);
+        let v = serde_json::to_value(share_status(&state)).unwrap();
+        assert!(v.get("last_selection").is_some_and(|x| x.is_null()), "{v}");
+        let sel = ShareSelection {
+            bind_mode: BindMode::LocalhostOnly,
+            vaults: vec![RememberedVault { id: "a".into(), display_name: "A".into() }],
+        };
+        let state = RemoteShareState::new(tmp_config_dir("wire2"), Vec::new(), Some(sel));
+        let v = serde_json::to_value(share_status(&state)).unwrap();
+        assert_eq!(
+            v["last_selection"],
+            serde_json::json!({"bind_mode":"localhost-only","vaults":[{"id":"a","display_name":"A"}]})
+        );
+    }
+
+    /// Two simultaneous starts on the same port: with the lifecycle lock the
+    /// second one stops the first and rebinds (both Ok, one live server);
+    /// without it the second races the first's bind and fails PORT_IN_USE.
+    /// Tolerates a few rounds of noise: tests that spawn child processes
+    /// (fake tailscale scripts) can transiently inherit a listener fd across
+    /// fork and make a legitimate rebind fail — rare, whereas a missing lock
+    /// fails most rounds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_starts_leave_one_server() {
+        let mut failed_rounds = 0;
+        for round in 0..40u16 {
+            let dir = tmp_config_dir(&format!("concurrent-{round}"));
+            let state = Arc::new(RemoteShareState::new(dir.clone(), Vec::new(), None));
+            // Outside the OS ephemeral range (49152+): other tests bind port 0
+            // in parallel and macOS happily hands them a just-freed port.
+            let port = (0..200u16)
+                .map(|k| 20000 + ((std::process::id() as u16).wrapping_mul(37).wrapping_add(round * 7 + k)) % 9000)
+                .find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
+                .expect("a free port");
+            let (sa, sb) = (state.clone(), state.clone());
+            let a = tokio::spawn(async move {
+                share_start(BindMode::LocalhostOnly, port, one_vault("v1", "노트"), &sa).await
+            });
+            let b = tokio::spawn(async move {
+                share_start(BindMode::LocalhostOnly, port, one_vault("v1", "노트"), &sb).await
+            });
+            let (ra, rb) = (a.await.unwrap(), b.await.unwrap());
+            if ra.is_err() || rb.is_err() {
+                failed_rounds += 1;
+                share_stop(&state).await;
+                std::fs::remove_dir_all(&dir).ok();
+                continue;
+            }
+            assert!(share_stop(&state).await);
+            assert_eq!(state.live_servers.load(std::sync::atomic::Ordering::SeqCst), 0, "round {round}");
+            std::fs::remove_dir_all(&dir).ok();
+        }
+        assert!(failed_rounds < 6, "{failed_rounds}/40 concurrent-start rounds failed");
     }
 }

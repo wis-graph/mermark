@@ -6,7 +6,7 @@
 // the in-memory store (so a later read_file sees it) and fans a "file-changed"
 // event out to every registered listener — exactly the shape the real backend
 // emits: { path, generation, text, mtime }.
-import { applyMockExternalChange } from "./tauri-core";
+import { applyMockExternalChange, registerMockEventFan } from "./tauri-core";
 
 export interface Event<T> {
   event: string;
@@ -55,6 +55,10 @@ function fan(event: string, payload: unknown): void {
   const id = nextId++;
   for (const cb of set) cb({ event, id, payload });
 }
+
+// Lets tauri-core's mock commands (remote_share_start/stop) fan backend-emitted
+// events (`remote-share-changed`) through this module's listener map.
+registerMockEventFan(fan);
 
 // Dev hook: simulate an external change to the watched file. Call from the
 // DevTools console (or a CDP golden script) — window.__mockExternalChange("...").

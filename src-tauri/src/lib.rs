@@ -6,6 +6,7 @@ mod attachment_import;
 pub mod attachments;
 mod bundle;
 pub mod cli;
+mod cli_control;
 mod commands;
 mod crypto_token;
 mod epubview;
@@ -194,6 +195,9 @@ fn qa_launch_class_fields(class: &cli::LaunchClass) -> serde_json::Value {
         cli::LaunchClass::Headless(cli::Headless::Bundle) => {
             serde_json::json!({ "class": "headless-bundle" })
         }
+        cli::LaunchClass::Headless(cli::Headless::Share(_)) => {
+            serde_json::json!({ "class": "headless-share" })
+        }
         cli::LaunchClass::Isolated(cli::LaunchArgs { target, right }) => serde_json::json!({
             "class": "isolated",
             "file": match target {
@@ -274,6 +278,11 @@ fn dispatch_bundle(rest: &[String]) -> ! {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Expanded exactly once: the Share client needs the identifier before the
+    // Builder exists (it locates the control socket with it — never a
+    // hardcoded id, so a QA build with another identifier stays isolated),
+    // and `.build(context)` below consumes the same value.
+    let context = tauri::generate_context!();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let cwd = std::env::current_dir().unwrap_or_default();
 
@@ -307,6 +316,10 @@ pub fn run() {
             eprintln!("mermark: {} does not exist.\nusage: mermark <file>", p.display());
             std::process::exit(2);
         }
+        Err(cli::CliError::Usage(msg)) => {
+            eprintln!("mermark: {msg}\nusage: mermark share on [볼트이름...] | off | status");
+            std::process::exit(2);
+        }
         // classify_launch absorbs a missing argument into
         // `SingletonRouted(None)` ("join the singleton, no document")
         // rather than propagating `Missing` as an error.
@@ -330,6 +343,9 @@ pub fn run() {
         }
         cli::LaunchClass::Headless(cli::Headless::Bundle) => {
             dispatch_bundle(&argv[1..]); // never returns (always exits)
+        }
+        cli::LaunchClass::Headless(cli::Headless::Share(cmd)) => {
+            cli_control::run_share_client(cmd.clone(), &context.config().identifier);
         }
         _ => {}
     }
@@ -412,6 +428,7 @@ pub fn run() {
         // (recency/readiness/queues) plus the window-lifecycle hook that
         // feeds it — see `single_instance.rs` module doc.
         .manage(single_instance::RoutingState::default())
+        .manage(cli_control::CliControlState::default())
         .on_window_event(single_instance::track_window_event)
         .invoke_handler(tauri::generate_handler![
             commands::read_file,
@@ -428,6 +445,7 @@ pub fn run() {
             commands::list_drives,
             commands::resolve_image,
             commands::watch_file,
+            cli_control::complete_cli_request,
             commands::unwatch_file,
             commands::copy_to_clipboard,
             attachment_import::import_vault_attachment,
@@ -496,7 +514,26 @@ pub fn run() {
                     eprintln!("mermark: failed to load paired remote devices, starting empty: {e}");
                     Vec::new()
                 });
-                app.manage(remote_share::RemoteShareState::new(config_dir, devices));
+                let last_selection = remote_share::load_selection(&config_dir);
+                // Pin the control-socket directory rule to tauri's own: the
+                // `share` client computes it without an app (cli_control).
+                #[cfg(target_os = "macos")]
+                if let Some(home) = std::env::var_os("HOME") {
+                    debug_assert_eq!(
+                        cli_control::mermark_config_dir(
+                            std::path::Path::new(&home),
+                            &app.config().identifier
+                        ),
+                        config_dir
+                    );
+                }
+                app.manage(remote_share::RemoteShareState::new(config_dir, devices, last_selection));
+                // Only a process that owns the singleton serves the control
+                // socket; `Isolated` windows never bind (two servers would
+                // race for one path).
+                if class.joins_singleton() {
+                    cli_control::start_server(app.handle().clone());
+                }
             }
 
             // `class` was fully decided pre-builder (above); `Headless`
@@ -580,7 +617,7 @@ pub fn run() {
             builder.build()?;
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             // Task 12 fix round 1, Critical 2: the previous shape here —
@@ -607,6 +644,7 @@ pub fn run() {
                 use tauri::Manager;
                 let state = app_handle.state::<remote_ssh::SshTunnels>();
                 remote_ssh::shutdown_all(&state);
+                cli_control::cleanup(app_handle);
             }
         });
 }

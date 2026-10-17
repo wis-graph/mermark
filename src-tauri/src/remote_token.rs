@@ -45,7 +45,7 @@ static TOKEN_TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 /// no second chmod step on the destination that could race a concurrent
 /// reader. Shared by every store in this module (host device list, client
 /// token map) so the atomicity guarantee isn't duplicated per call site.
-fn atomic_write_0600(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write_0600(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp_name = format!(
         "{}.tmp-{}-{}",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("remote-store"),

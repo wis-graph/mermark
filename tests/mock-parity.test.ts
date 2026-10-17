@@ -49,3 +49,73 @@ describe("mock parity: list_drives shape matches the Rust DriveEntry wire shape"
     }
   });
 });
+
+// `mermark share` (터미널 원격 공유): the mock must mirror the Rust
+// `ShareStatus.last_selection` SSOT (remote_share.rs `record_share_selection`:
+// written only by a successful start, kept across stop, untouched by a failed
+// start), the `remote-share-changed` event the backend emits on start/stop,
+// and the void `complete_cli_request` reply command (cli_control.rs).
+describe("mock parity: remote share last_selection / change event / cli reply", () => {
+  const vault = { id: "v1", display_name: "노트", root: "/mock/vault" };
+
+  it("status wire keys are exactly the Rust ShareStatus fields; last_selection starts null", async () => {
+    const status = (await invoke("remote_share_status")) as Record<string, unknown>;
+    expect(Object.keys(status).sort()).toEqual(["bind_mode", "devices", "last_selection", "port", "running", "vaults"]);
+    expect(status.last_selection).toBeNull();
+  });
+
+  it("a failed start leaves last_selection untouched (null)", async () => {
+    await expect(invoke("remote_share_start", { bindMode: "localhost-only", port: 47878, vaults: [] })).rejects.toBeTruthy();
+    const status = (await invoke("remote_share_status")) as { last_selection: unknown };
+    expect(status.last_selection).toBeNull();
+  });
+
+  it("a successful start records {bind_mode, vaults:[{id, display_name}]} (snake_case, no root); stop keeps it", async () => {
+    await invoke("remote_share_start", { bindMode: "localhost-only", port: 47878, vaults: [vault] });
+    const want = { bind_mode: "localhost-only", vaults: [{ id: "v1", display_name: "노트" }] };
+    expect(((await invoke("remote_share_status")) as { last_selection: unknown }).last_selection).toEqual(want);
+    await invoke("remote_share_stop");
+    const after = (await invoke("remote_share_status")) as { running: boolean; last_selection: unknown };
+    expect(after.running).toBe(false);
+    expect(after.last_selection).toEqual(want);
+    // a later failed start still does not clobber it
+    await expect(invoke("remote_share_start", { bindMode: "tailscale", port: 47878, vaults: [] })).rejects.toBeTruthy();
+    expect(((await invoke("remote_share_status")) as { last_selection: unknown }).last_selection).toEqual(want);
+  });
+
+  it("start and stop fan `remote-share-changed` (and a failed start does not)", async () => {
+    const { listen } = await import("../src/mocks/tauri-event");
+    let n = 0;
+    const un = await listen("remote-share-changed", () => {
+      n += 1;
+    });
+    await expect(invoke("remote_share_start", { bindMode: "tailscale", port: 47878, vaults: [] })).rejects.toBeTruthy();
+    expect(n).toBe(0);
+    await invoke("remote_share_start", { bindMode: "localhost-only", port: 47878, vaults: [vault] });
+    expect(n).toBe(1);
+    await invoke("remote_share_stop");
+    expect(n).toBe(2);
+    un();
+  });
+
+  it("complete_cli_request takes {id, outcome} and resolves void", async () => {
+    await expect(
+      invoke("complete_cli_request", { id: 7, outcome: { kind: "started", warnings: [] } }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("__mockCliShareRequest fans `cli-share-request` with {id, names, remembered}", async () => {
+    const { listen } = await import("../src/mocks/tauri-event");
+    const seen: unknown[] = [];
+    const un = await listen("cli-share-request", (e) => {
+      seen.push(e.payload);
+    });
+    window.__mockCliShareRequest?.(["노트"]);
+    un();
+    expect(seen).toHaveLength(1);
+    const p = seen[0] as { id: number; names: string[]; remembered: unknown };
+    expect(p.names).toEqual(["노트"]);
+    expect(typeof p.id).toBe("number");
+    expect(p.remembered).toEqual({ bind_mode: "localhost-only", vaults: [{ id: "v1", display_name: "노트" }] });
+  });
+});

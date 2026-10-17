@@ -170,6 +170,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 const listenMock = vi.fn(
   (event: string, listener: (event: { readonly payload: unknown }) => void, _options?: unknown) => {
     if (event === "cli-open-request") cliRoutingOrder.push("listen");
+    if (event === "cli-share-request") cliRoutingOrder.push("listen-share");
     const listeners = eventListeners.get(event) ?? new Set();
     listeners.add(listener);
     eventListeners.set(event, listeners);
@@ -1118,7 +1119,21 @@ describe("main workspace wiring", () => {
     // Not just "both happened" — listen must complete before register_window_ready
     // is invoked, or a request the backend delivers right after seeing "ready"
     // would be emitted into a webview with no listener yet (design §분기3 순서 계약).
-    expect(cliRoutingOrder).toEqual(["listen", "ready"]);
+    // cli-share-request 리스너도 ready보다 먼저(`mermark share on` 요청 유실 방지).
+    expect(cliRoutingOrder).toEqual(["listen", "listen-share", "ready"]);
+  });
+
+  it("forwards a delivered cli-share-request payload to handleCliShareRequest", async () => {
+    await import("../src/main");
+    await vi.waitFor(() => expect(cliRoutingOrder).toContain("ready"));
+    invokeMock.mockClear();
+    emitEvent("cli-share-request", { id: 3, names: ["없는볼트"], remembered: null });
+    // 해석 실패 경로 — 회신(complete_cli_request)이 정확히 1번 나가고 start는 호출되지 않는다.
+    await vi.waitFor(() => expect(invokeMock.mock.calls.filter((c) => c[0] === "complete_cli_request")).toHaveLength(1));
+    const reply = invokeMock.mock.calls.find((c) => c[0] === "complete_cli_request")![1] as { id: number; outcome: { kind: string } };
+    expect(reply.id).toBe(3);
+    expect(reply.outcome.kind).toBe("failed");
+    expect(invokeMock.mock.calls.some((c) => c[0] === "remote_share_start")).toBe(false);
   });
 
   it("opens a delivered cli-open-request and acknowledges it as opened", async () => {

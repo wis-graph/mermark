@@ -15,61 +15,32 @@
 //
 // 도메인 규칙(카운트다운 만료, 볼트 선택 가능 여부, wire 직렬화)은 DOM과
 // 분리된 순수 함수로 뽑아 vitest로 직접 검증한다(mermark-frontend 스킬 §7).
-import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { attachTeardown } from "./panel/controls";
 import { DEFAULT_SHARE_PORT, remoteSharePortSetting, shareStartErrorMessage, sharePortProblem } from "./remote-share-port";
 import type { Vault, WorkspaceState } from "../workspace/workspace-state";
+import {
+  checkTailscaleAvailable,
+  fetchStatus,
+  issueCode,
+  revokeDevice,
+  startShare,
+  stopShare,
+  type BindMode,
+  type DeviceInfo,
+  type IssuedCode,
+  type ShareStatus,
+  type VaultToArm,
+} from "./remote-share-ipc";
 
-// ── Wire types (Rust 구조체를 그대로 미러링 — task-9a-report.md 시그니처) ──
-
-/** `remote_share.rs`의 `BindMode` — `#[serde(rename_all = "kebab-case")]`라
- *  wire 값은 "tailscale" | "localhost-only". */
-export type BindMode = "tailscale" | "localhost-only";
+// ── Wire types는 remote-share-ipc.ts가 소유 — 기존 import 경로 보존용 re-export ──
+export type { BindMode, VaultToArm, ArmedVaultInfo, DeviceInfo, ShareStatus, IssuedCode } from "./remote-share-ipc";
 
 /** 프론트가 아는 "공유 가능한 볼트" 1개(로컬 workspace state에서 뽑음). */
 export interface VaultOption {
   readonly id: string;
   readonly displayName: string;
   readonly root: string;
-}
-
-/** `remote_share.rs::VaultToArm` — `#[serde(rename_all)]` 없음. Rust 필드명이
- *  그대로 wire JSON 키가 되므로 `display_name`은 절대 camelCase로 보내면 안
- *  된다(mocks/tauri-core.ts의 remote_vaults 주석과 동일한 함정). */
-export interface VaultToArm {
-  readonly id: string;
-  readonly display_name: string;
-  readonly root: string;
-}
-
-/** `remote_host.rs::ArmedVault` — `{id, display_name}`뿐, root는 `#[serde(skip)]`
- *  (호스트가 자기 파일시스템 절대경로를 클라이언트/설정 패널에 흘리지 않음). */
-export interface ArmedVaultInfo {
-  readonly id: string;
-  readonly display_name: string;
-}
-
-/** `remote_share.rs::DeviceInfo` — 토큰은 절대 포함되지 않는다(백엔드가 이미
- *  거부). 이 패널도 토큰을 절대 렌더하지 않는다. */
-export interface DeviceInfo {
-  readonly id: string;
-  readonly label: string;
-  readonly paired_at_ms: number;
-}
-
-/** `remote_share.rs::ShareStatus`. */
-export interface ShareStatus {
-  readonly running: boolean;
-  readonly bind_mode: BindMode;
-  readonly port: number;
-  readonly vaults: readonly ArmedVaultInfo[];
-  readonly devices: readonly DeviceInfo[];
-}
-
-/** `remote_share.rs::IssuedCode`. */
-export interface IssuedCode {
-  readonly code: string;
-  readonly issued_at_ms: number;
 }
 
 // ── 순수 함수(도메인 규칙) — DOM 없이 vitest로 직접 검증 ────────────────────
@@ -130,47 +101,22 @@ export function buildVaultsToArm(options: readonly VaultOption[], armedVaultIds:
   return options.filter((o) => armed.has(o.id)).map((o) => ({ id: o.id, display_name: o.displayName, root: o.root }));
 }
 
+/** 패널의 pending 선택(체크박스·바인드 방식)을 백엔드 상태에서 되돌린다.
+ *  `last_selection`(Rust가 소유한 "마지막 선택")이 있으면 그것 — CLI가 이름 없이 켤 때
+ *  쓰는 값과 같아서, 재시작 직후에도 패널이 CLI와 같은 선택을 보여준다. 없으면 현재 armed.
+ *  Pure query — 이 패널은 기억값을 쓰지 않는다(writer는 Rust share_start 하나). */
+export function pendingSelectionFrom(status: Pick<ShareStatus, "vaults" | "bind_mode" | "last_selection">): { armedVaultIds: string[]; bindMode: BindMode } {
+  if (status.last_selection) {
+    return { armedVaultIds: status.last_selection.vaults.map((v) => v.id), bindMode: status.last_selection.bind_mode };
+  }
+  return { armedVaultIds: armedIdsFromStatus(status), bindMode: status.bind_mode };
+}
+
 /** `ShareStatus.vaults`에서 armed id 목록만 뽑는다 — 재시작 실패 후 백엔드
  *  진실로 되돌아갈 때(`remote_share_status` 재조회) 이 함수로 로컬 pending
  *  선택을 다시 맞춘다. */
 export function armedIdsFromStatus(status: Pick<ShareStatus, "vaults">): string[] {
   return status.vaults.map((v) => v.id);
-}
-
-// ── invoke 래퍼(경계면 — 실패는 절대 삼키지 않고 Error로 던진다) ───────────
-
-async function fetchStatus(): Promise<ShareStatus> {
-  return invoke<ShareStatus>("remote_share_status");
-}
-
-async function startShare(bindMode: BindMode, port: number, vaults: readonly VaultToArm[]): Promise<void> {
-  await invoke<void>("remote_share_start", { bindMode, port, vaults });
-}
-
-async function stopShare(): Promise<void> {
-  await invoke<void>("remote_share_stop");
-}
-
-async function issueCode(): Promise<IssuedCode> {
-  return invoke<IssuedCode>("remote_issue_code");
-}
-
-async function revokeDevice(id: string): Promise<boolean> {
-  return invoke<boolean>("remote_revoke_device", { id });
-}
-
-/** Tailscale 감지 — 사전 프로브(9b fix round 1, finding 3). 이전 라운드는
- *  시작 실패 메시지를 `/tailscale/i`로 매칭하는 반응형 판정이었는데 리뷰에서
- *  세 갈래로 깨졌다: (a) Rust/mock/test 세 곳의 에러 문자열이 서로 안 맞아
- *  리워딩 한 번에 감지가 조용히 죽고, (b) 정규식이 에러 전체를 훑어서
- *  "Tailscale"이 들어간 이름의 볼트 하나가 라디오를 영구히 회색으로
- *  만들었고, (c) `bind 100.x…: Cannot assign requested address` 같은 진짜
- *  실패는 "tailscale"을 아예 언급하지 않아 놓쳤다. `remote_tailscale_available`
- *  (`remote_share.rs`)이 `resolve_bind_ip`와 정확히 같은 탐지 로직을 재사용해
- *  실패 없이도 미리 가부만 묻는다 — 여기 판정과 실제 바인드 시도가 절대
- *  어긋날 수 없다. */
-async function checkTailscaleAvailable(): Promise<boolean> {
-  return invoke<boolean>("remote_tailscale_available");
 }
 
 /** 실패 메시지 추출 — invoke가 던지는 값은 Tauri에서 보통 문자열(`Result<_,
@@ -486,8 +432,9 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
    *  그 결과로 렌더")에만 호출한다. 기기 목록만 갱신할 때는 호출하지
    *  않는다(위 syncRunningAndDevices와 분리한 이유). */
   const syncPendingFromStatus = (status: ShareStatus): void => {
-    bindMode = status.bind_mode;
-    armedVaultIds = armedIdsFromStatus(status);
+    const pending = pendingSelectionFrom(status);
+    bindMode = pending.bindMode;
+    armedVaultIds = pending.armedVaultIds;
   };
 
   /** 전체 재동기화(running/port/devices + pending armedVaultIds/bindMode) —
@@ -673,7 +620,33 @@ export function renderRemoteSharePane(getVaultOptions: () => readonly VaultOptio
   void refreshStatus(); // 마운트 시 백엔드의 "마지막 구성값"으로 미리 채운다(9a 보고서 §2)
   void refreshTailscaleAvailability(); // 마운트 시 Tailscale 가용성을 사전 프로브(finding 3)
 
-  attachTeardown(root, [() => stopCountdown()]);
+  // CLI(`mermark share on|off`)나 다른 창이 공유 상태를 바꾸면 Rust가
+  // `remote-share-changed`를 emit한다 — 열려 있는 패널이 즉시 따라간다. 재시작마다
+  // 백엔드가 페어링 코드를 무효화하므로 화면의 코드도 버린다. busy면 진행 중인 자기
+  // 작업의 finally가 어차피 재동기화한다. listen은 Promise라 teardown이 먼저 올 수 있다.
+  let tornDown = false;
+  let unlisten: (() => void) | null = null;
+  const onShareChanged = (): void => {
+    if (tornDown) return;
+    clearIssuedCode();
+    if (busy) render();
+    else void refreshStatus();
+  };
+  listen("remote-share-changed", onShareChanged)
+    .then((off) => {
+      if (tornDown) off();
+      else unlisten = off;
+    })
+    .catch(() => {}); // 이벤트 버스가 없는 환경(테스트 등)에서는 라이브 갱신만 빠진다
+
+  attachTeardown(root, [
+    () => stopCountdown(),
+    () => {
+      tornDown = true;
+      unlisten?.();
+      unlisten = null;
+    },
+  ]);
 
   return root;
 }

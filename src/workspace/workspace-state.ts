@@ -161,6 +161,11 @@ const selectionIsNoop = (workspace: Workspace, vaultId: string, touchesLastSelec
 const isPersistedVaultKind = (kind: PersistenceKind): boolean => kind === "permanent" || kind === "remote";
 const makeRemoteVaultId = (host: string, remoteVaultId: string): string => `vault-remote-${encodeURIComponent(host)}-${encodeURIComponent(remoteVaultId)}`;
 
+/** localStorage에서 워크스페이스 상태를 새로 읽는다(순수 쿼리 — 쓰기 없음).
+ *  창별 `WorkspaceStore` 캐시는 다른 창의 변경에 낡을 수 있어, 그 시점의 진실이
+ *  필요한 호출부(CLI 공유 요청의 볼트 해석)가 쓴다. */
+export const readPersistedWorkspaceState = (): WorkspaceState => readState();
+
 export class WorkspaceStore {
   private state: WorkspaceState;
   private readonly listeners = new Set<(state: WorkspaceState) => void>();
