@@ -89,12 +89,16 @@ export function isOverridden(overrides: Record<string, string>, id: string): boo
 function renderSwitch<T>(setting: Setting<T>, control: Extract<Control<T>, { kind: "switch" }>): HTMLElement {
   const { row: r, cell } = row("");
   const sw = createSwitch();
-  sw.setAttribute("aria-labelledby", r.querySelector(".settings-row-label")!.id);
+  const label = r.querySelector<HTMLLabelElement>(".settings-row-label")!;
+  sw.setAttribute("aria-labelledby", label.id);
+  // Native label activation: clicking the label text clicks the button once.
+  sw.id = `${label.id}-switch`;
+  label.htmlFor = sw.id;
   sw.addEventListener("click", () => setting.set(Object.is(setting.get(), control.on) ? control.off : control.on));
   cell.appendChild(sw);
   bindRow(r, setting, (v) => sw.setAttribute("aria-checked", String(Object.is(v, control.on))));
   if (control.help) {
-    r.classList.add("settings-row-has-help");
+    r.classList.add("settings-row-has-help", "settings-row-switch-help");
     const hint = document.createElement("div");
     hint.className = "settings-text-help";
     hint.textContent = control.help;

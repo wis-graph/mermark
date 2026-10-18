@@ -2666,6 +2666,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    help-bearing text control gets this automatically. */
 .settings-row-has-help .settings-row-control { flex-wrap: wrap; }
 .settings-row-has-help .settings-text-help { flex-basis: 100%; }
+/* Switch row with help: label and switch share the first line (switch is 18px
+   tall; label line-height matches), the hint drops below. */
+.settings-row-switch-help { align-items: flex-start; }
+.settings-row-switch-help .settings-row-label { line-height: 18px; }
+.settings-row-switch-help .settings-row-control { align-items: flex-start; }
 /* Wraps .settings-select (controls.ts's renderSelect) so the themed chevron
    below can be absolutely positioned against a sized box — a bare <select>
    has no positioning context of its own for a ::after pseudo-element. */

@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Stub the Tauri invoke boundary the same way clipboard.test.ts does:
 // copyTextToClipboard (src/clipboard.ts) is the theme-JSON copy button's only
@@ -389,6 +392,38 @@ describe("switch control (D2c)", () => {
     const id = sw(row).getAttribute("aria-labelledby")!;
     expect(id).toBeTruthy();
     expect(row.querySelector(".settings-row-label")!.id).toBe(id);
+  });
+
+  it("label click toggles exactly once (label[for] -> switch id)", () => {
+    const s = defineSetting<string>({ key: "c.sw6", default: "off" });
+    const row = RENDER.switch(s, { kind: "switch", on: "on", off: "off" });
+    document.body.appendChild(row);
+    const label = row.querySelector<HTMLLabelElement>(".settings-row-label")!;
+    label.textContent = "라벨";
+    expect(sw(row).id).toBeTruthy();
+    expect(label.htmlFor).toBe(sw(row).id);
+    label.click();
+    expect(s.get()).toBe("on");
+    expect(sw(row).getAttribute("aria-checked")).toBe("true");
+    sw(row).click();
+    expect(s.get()).toBe("off");
+    row.remove();
+  });
+
+  it("switch row with help gets settings-row-switch-help; without help it does not", () => {
+    const s = defineSetting<string>({ key: "c.sw7", default: "off" });
+    const h = RENDER.switch(s, { kind: "switch", on: "on", off: "off", help: "x" });
+    const n = RENDER.switch(s, { kind: "switch", on: "on", off: "off" });
+    expect(h.classList.contains("settings-row-switch-help")).toBe(true);
+    expect(n.classList.contains("settings-row-switch-help")).toBe(false);
+  });
+
+  it("CSS: switch-help row aligns label and switch on the first line", () => {
+    const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/styles.css"), "utf8");
+    const rule = (sel: string) => css.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\{([^}]*)\\}"))?.[1] ?? "";
+    expect(rule(".settings-row-switch-help")).toMatch(/align-items:\s*flex-start/);
+    expect(rule(".settings-row-switch-help .settings-row-control")).toMatch(/align-items:\s*flex-start/);
+    expect(rule(".settings-row-switch-help .settings-row-label")).toMatch(/line-height:\s*18px/);
   });
 
   it("help text renders below like the other controls", () => {
