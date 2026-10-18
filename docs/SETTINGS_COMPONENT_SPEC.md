@@ -60,7 +60,7 @@
 
 ---
 
-## 4. 컨트롤 위젯 7종 (동작 계약)
+## 4. 컨트롤 위젯 8종 (동작 계약)
 
 `kind`로 디스패치되는 렌더러 테이블(`controls.ts RENDER`). **모든 컨트롤의 공통 라운드트립 계약**:
 1. 마운트 시 `setting.get()` 값을 반영.
@@ -69,7 +69,8 @@
 
 | kind | 용도 | 값 타입 | 동작 계약 | 현재 사용 항목 |
 |------|------|---------|-----------|----------------|
-| **segmented** | 2~3개 상호배타 선택 | string(1:1) | pill 버튼 그룹, 1개만 active | 프리셋·기본모드·충돌정책·Vim·이미지검색·팬줌·다이어그램테마 (8) |
+| **segmented** | 2~3개 상호배타 선택 | string(1:1) | pill 버튼 그룹, 1개만 active | 프리셋·기본모드·충돌정책·다이어그램테마 (4) — 켜기/끄기 2값은 switch로 이전 |
+| **switch** | 즉시 반영되는 불리언 선호값 | `on`/`off` 값 쌍을 데이터로 지정(`"on"/"off"` 문자열 또는 `true/false`) | `button[role=switch]`(32×18), `aria-checked = Object.is(get(), on)`, 클릭 = 반대 값 set. 저장 key·parse·default 불변(표현만 교체). 서버를 켜는 *액션*(원격 공유 켜기)은 해당 안 됨 — 세그먼트 유지 | Vim·이미지검색·숨김파일·팬줌·HTML 스크립트 (5) + 뷰어 on/off 행 |
 | **select** | N개 중 1개(드롭다운) | string(1:1) | `<select>` + `<option>`, value=setting값 | 글꼴·제목비율 (2) |
 | **slider** | 연속 수치 | number | min/max/step 범위, **현재값 라이브 표시**(단위 포함) | 본문크기·너비·줄간격·자동저장지연 (4) |
 | **text** | 자유 문자열 | string | 텍스트 입력, 선택적 도움말 텍스트 | 웹폰트 (1) |
@@ -77,7 +78,9 @@
 | **keybind** | 단축키 재정의 | Record<actionId,chord>(override만) | §5.5 별도 명세 — 1 setting → N행(action당). effectiveBinding=override??default 표시, 키 캡처·충돌 거부·개별/전체 리셋 | 단축키 (1) |
 | **info** | 정적 안내 | — | 읽기 전용 텍스트(컨트롤 없음) | 플러그인 플레이스홀더 (1) |
 
-**디자인 메모**: 현재 16항목 중 8개가 segmented라 시각적으로 단조롭다. 디자이너는 segmented/select/slider/text를 Claude 디자인 언어로 재가공하되, **kind별 동작 계약(상호배타/1:1/범위+라이브값/자유입력)은 불변**.
+**D2c 갱신**: 불리언은 switch로 옮겨 segmented는 4곳만 남는다. list형 kind(`keybind`·`viewer-toggles`, `isListControl`)는 라벨 셀을 비우고 행 전체 폭을 쓰며, 모든 pane은 상단에 `h2.settings-pane-title`(그룹명)을 갖는다. 단축키 행의 재정의·기본값은 행 hover/focus 시에만, 기본값은 `is-overridden` 행에만 보인다.
+
+**디자인 메모(이력)**: 당시 16항목 중 8개가 segmented라 시각적으로 단조롭다. 디자이너는 segmented/select/slider/text를 Claude 디자인 언어로 재가공하되, **kind별 동작 계약(상호배타/1:1/범위+라이브값/자유입력)은 불변**.
 
 ---
 
@@ -128,9 +131,9 @@
 | 에디터 | 기본 모드 | segmented | 리더/편집 |
 | 에디터 | 자동 저장 지연 | slider | 200–3000ms |
 | 에디터 | 충돌 정책 | segmented | 중단/덮어쓰기 |
-| 에디터 | Vim 모드 | segmented | 켜기/끄기 |
-| 에디터 | 이미지 재귀 검색 | segmented | 켜기/끄기 |
-| Mermaid | 팬/줌 | segmented | 켜기/끄기 |
+| 에디터 | Vim 모드 | switch | 켜기/끄기 |
+| 에디터 | 이미지 재귀 검색 | switch | 켜기/끄기 |
+| Mermaid | 팬/줌 | switch | 켜기/끄기 |
 | Mermaid | 다이어그램 테마 | segmented | 앱따라감/다크/라이트 |
 | 단축키 | 단축키 재정의 | keybind | Record<actionId,chord> (§5.5) |
 | 플러그인 | (플레이스홀더) | info | — |

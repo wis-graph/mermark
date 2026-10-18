@@ -327,6 +327,8 @@ function modeExtensions(mode: PreviewMode) {
     EditorState.readOnly.of(mode === "read"),
     // keep the content focusable in read mode so Mod-e still toggles back
     EditorView.contentAttributes.of({ tabindex: "0" }),
+    // named CSS hook for mode-specific chrome (e.g. read-mode fold markers)
+    EditorView.editorAttributes.of({ class: mode === "read" ? "cm-mode-read" : "cm-mode-edit" }),
     // mark the cursor's line only while editing (read mode has no caret to track)
     ...(mode === "edit" ? [highlightActiveLine()] : []),
   ];

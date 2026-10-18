@@ -24,6 +24,7 @@ export interface SettingUi<T> {
 export type Control<T> =
   | { kind: "segmented"; options: { value: T; label: string }[]; help?: string }
   | { kind: "select"; options: { value: T; label: string }[]; help?: string }
+  | { kind: "switch"; on: T; off: T; help?: string }
   | { kind: "slider"; min: number; max: number; step: number; unit?: string }
   | { kind: "text"; placeholder?: string; help?: string }
   | { kind: "json" }

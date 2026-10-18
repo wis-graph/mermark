@@ -553,6 +553,22 @@ describe("full-editor render smoke", () => {
     expect(view.contentDOM.querySelector(".cm-callout-tip")).not.toBeNull(); // body line class
   });
 
+  it("marks the last line of a callout with cm-callout-last (head+last on a 1-line callout)", () => {
+    const view = mount(host, "intro\n\n> [!tip] t\n> a\n> b");
+    view.dispatch({ selection: { anchor: 0 } });
+    (view as unknown as { measure(): void }).measure();
+    const lines = [...view.contentDOM.querySelectorAll(".cm-callout")];
+    expect(lines).toHaveLength(3);
+    expect(lines.map((l) => l.classList.contains("cm-callout-last"))).toEqual([false, false, true]);
+    view.destroy();
+    const v2 = mount(host, "intro\n\n> [!tip] solo");
+    v2.dispatch({ selection: { anchor: 0 } });
+    (v2 as unknown as { measure(): void }).measure();
+    const one = v2.contentDOM.querySelector(".cm-callout-head")!;
+    expect(one.classList.contains("cm-callout-last")).toBe(true);
+    v2.destroy();
+  });
+
   it("reveals the raw callout head when the caret enters its line, re-conceals on leave", () => {
     const doc = "intro\n\n> [!tip] Pro move\n> body";
     const view = mount(host, doc);

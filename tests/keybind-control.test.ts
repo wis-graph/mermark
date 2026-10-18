@@ -61,6 +61,20 @@ describe("keybind control", () => {
     }
   });
 
+  it("is-overridden tracks the override map (capture sets, 기본값 clears, external set reflects)", () => {
+    const s = keybindSetting("kbc.ovr");
+    bindKeybindings(s);
+    const row = RENDER.keybind(s, { kind: "keybind" });
+    expect(rowFor(row, "vim.toggle").classList.contains("is-overridden")).toBe(false);
+    captureBtn(row, "vim.toggle").click();
+    pressWindow({ metaKey: true, code: "KeyJ" });
+    expect(rowFor(row, "vim.toggle").classList.contains("is-overridden")).toBe(true);
+    rowFor(row, "vim.toggle").querySelector<HTMLButtonElement>(".keybind-reset")!.click();
+    expect(rowFor(row, "vim.toggle").classList.contains("is-overridden")).toBe(false);
+    s.set({ "explorer.toggle": "Mod+L" });
+    expect(rowFor(row, "explorer.toggle").classList.contains("is-overridden")).toBe(true);
+  });
+
   it("capture writes the pressed chord into the setting and reflects it", () => {
     const s = keybindSetting("kbc.b");
     bindKeybindings(s);

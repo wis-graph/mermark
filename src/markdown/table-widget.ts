@@ -62,6 +62,15 @@ function alignOf(spec: string): string | null {
   return null;
 }
 
+/** "This column reads as numbers": every non-empty body cell in column `i`
+ *  looksNumeric (empty cells don't vote; a column with no non-empty body cell
+ *  is NOT numeric). The header inherits the column's alignment from this, not
+ *  from its own label. Pure query. */
+export function isNumericColumn(bodyRows: string[][], i: number): boolean {
+  const cells = bodyRows.map((r) => r[i] ?? "").filter((c) => c.trim() !== "");
+  return cells.length > 0 && cells.every(looksNumeric);
+}
+
 export class TableWidget extends WidgetType {
   constructor(readonly source: string) {
     super();
@@ -87,6 +96,8 @@ export class TableWidget extends WidgetType {
     const headerCells = splitRow(lines[0]);
     const aligns = splitRow(lines[1]).map(alignOf);
 
+    const bodyRows = lines.slice(2).map(splitRow);
+
     const thead = document.createElement("thead");
     const htr = document.createElement("tr");
     headerCells.forEach((cell, i) => {
@@ -97,7 +108,7 @@ export class TableWidget extends WidgetType {
       // class rule with — so a numeric column can still be forced left/center
       // by `:---`/`:--:` even though is-num is present (report-style table,
       // 2026-07-20).
-      if (looksNumeric(cell)) th.classList.add("is-num");
+      if (looksNumeric(cell) || isNumericColumn(bodyRows, i)) th.classList.add("is-num");
       const a = aligns[i];
       if (a) th.style.textAlign = a;
       htr.appendChild(th);
@@ -106,8 +117,7 @@ export class TableWidget extends WidgetType {
     table.appendChild(thead);
 
     const tbody = document.createElement("tbody");
-    for (let r = 2; r < lines.length; r++) {
-      const cells = splitRow(lines[r]);
+    for (const cells of bodyRows) {
       const tr = document.createElement("tr");
       cells.forEach((cell, i) => {
         const td = document.createElement("td");

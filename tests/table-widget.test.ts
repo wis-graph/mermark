@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TableWidget } from "../src/markdown/table-widget";
+import { TableWidget, isNumericColumn } from "../src/markdown/table-widget";
 
 describe("TableWidget — inline links in cells (G)", () => {
   it("renders a link inside a td as a.cm-link[data-href]", () => {
@@ -153,5 +153,27 @@ describe("TableWidget — escaped pipes (\\|) do not split cells", () => {
     expect(tds.length).toBe(2);
     expect(tds[0].textContent).toBe("left|lit");
     expect(tds[1].textContent).toBe("plain");
+  });
+});
+
+describe("isNumericColumn / numeric header alignment (D2b Y10)", () => {
+  it("all non-empty body cells numeric → true; empty cells don't vote", () => {
+    expect(isNumericColumn([["a", "1,000"], ["b", "20"]], 1)).toBe(true);
+    expect(isNumericColumn([["a", "1"], ["b", ""]], 1)).toBe(true);
+  });
+  it("any text cell → false; no body rows or all-empty → false", () => {
+    expect(isNumericColumn([["a", "1"], ["b", "x"]], 1)).toBe(false);
+    expect(isNumericColumn([], 0)).toBe(false);
+    expect(isNumericColumn([["a", ""]], 1)).toBe(false);
+  });
+  it("header of a numeric column gets is-num; text column header does not", () => {
+    const dom = new TableWidget("| 항목 | 금액 |\n|---|---|\n| a | 1,000 |\n| b | 20 |").toDOM();
+    const ths = dom.querySelectorAll("th");
+    expect(ths[0].classList.contains("is-num")).toBe(false);
+    expect(ths[1].classList.contains("is-num")).toBe(true);
+  });
+  it("explicit alignment still wins as inline style", () => {
+    const dom = new TableWidget("| 항목 | 금액 |\n|---|:--|\n| a | 1 |").toDOM();
+    expect((dom.querySelectorAll("th")[1] as HTMLElement).style.textAlign).toBe("left");
   });
 });

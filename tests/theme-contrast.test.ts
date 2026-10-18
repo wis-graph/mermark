@@ -330,3 +330,14 @@ describe("chrome scale tokens exist (D2 G8)", () => {
     expect(declIn(root, "--border-strong")).toContain("color-mix(in srgb, var(--fg) 18%, transparent)");
   });
 });
+
+describe("settings switch non-text contrast (D2c)", () => {
+  for (const theme of THEMES) {
+    it(`${theme}: off track vs surface >= 3:1; thumb vs on track >= 3:1`, () => {
+      const surface = tok("surface", theme);
+      const track = resolveColor("color-mix(in srgb, var(--muted) 75%, var(--surface))", theme);
+      expect(ratio(track, surface)).toBeGreaterThanOrEqual(3);
+      expect(ratio(surface, tok("accent-ui", theme))).toBeGreaterThanOrEqual(3);
+    });
+  }
+});

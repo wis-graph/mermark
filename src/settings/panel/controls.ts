@@ -49,16 +49,58 @@ export function runTeardown(el: HTMLElement): void {
 
 /** Build the labeled row shell every control shares (label cell + control cell).
  *  The control cell is returned for the renderer to fill. */
+let rowSeq = 0;
 function row(label: string): { row: HTMLElement; cell: HTMLElement } {
   const r = document.createElement("div");
   r.className = "settings-row";
   const l = document.createElement("label");
   l.className = "settings-row-label";
+  l.id = `settings-row-label-${++rowSeq}`; // aria-labelledby target (switch)
   l.textContent = label;
   const cell = document.createElement("div");
   cell.className = "settings-row-control";
   r.append(l, cell);
   return { row: r, cell };
+}
+
+/** The one switch DOM: button[role=switch].settings-switch > span.settings-switch-thumb.
+ *  Pure creation; the caller wires aria-checked + click. Shared by renderSwitch and
+ *  renderViewerToggles so there is exactly one switch shape. */
+export function createSwitch(): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "settings-switch";
+  b.setAttribute("role", "switch");
+  b.setAttribute("aria-checked", "false");
+  const thumb = document.createElement("span");
+  thumb.className = "settings-switch-thumb";
+  b.appendChild(thumb);
+  return b;
+}
+
+/** "This action row differs from the default": the override map has its own key
+ *  for `id`. Pure query. */
+export function isOverridden(overrides: Record<string, string>, id: string): boolean {
+  return Object.prototype.hasOwnProperty.call(overrides, id);
+}
+
+/** kind "switch": aria-checked = Object.is(setting.get(), control.on); a click sets
+ *  the opposite value; bindRow keeps it in sync with external changes. */
+function renderSwitch<T>(setting: Setting<T>, control: Extract<Control<T>, { kind: "switch" }>): HTMLElement {
+  const { row: r, cell } = row("");
+  const sw = createSwitch();
+  sw.setAttribute("aria-labelledby", r.querySelector(".settings-row-label")!.id);
+  sw.addEventListener("click", () => setting.set(Object.is(setting.get(), control.on) ? control.off : control.on));
+  cell.appendChild(sw);
+  bindRow(r, setting, (v) => sw.setAttribute("aria-checked", String(Object.is(v, control.on))));
+  if (control.help) {
+    r.classList.add("settings-row-has-help");
+    const hint = document.createElement("div");
+    hint.className = "settings-text-help";
+    hint.textContent = control.help;
+    cell.appendChild(hint);
+  }
+  return r;
 }
 
 function renderSegmented<T>(setting: Setting<T>, control: Extract<Control<T>, { kind: "segmented" }>): HTMLElement {
@@ -548,6 +590,7 @@ function renderKeybind(setting: Setting<Record<string, string>>): HTMLElement {
       const eff = effectiveBinding(action.id);
       chord.textContent = eff ? displayChord(eff) : "미지정";
       chord.classList.toggle("is-unbound", !eff);
+      item.classList.toggle("is-overridden", isOverridden(setting.get(), action.id));
     };
     reflectors.push(reflect);
 
@@ -653,17 +696,9 @@ function renderViewerToggles(setting: Setting<string[]>): HTMLElement {
     label.className = "settings-vtoggle-label";
     label.textContent = viewerDisplayName(v);
 
-    const group = document.createElement("div");
-    group.className = "settings-segmented settings-vtoggle-segmented";
-    const onBtn = document.createElement("button");
-    onBtn.type = "button";
-    onBtn.className = "settings-seg-btn";
-    onBtn.textContent = "켜기";
-    const offBtn = document.createElement("button");
-    offBtn.type = "button";
-    offBtn.className = "settings-seg-btn";
-    offBtn.textContent = "끄기";
-    group.append(onBtn, offBtn);
+    label.id = `settings-vtoggle-label-${++rowSeq}`;
+    const sw = createSwitch();
+    sw.setAttribute("aria-labelledby", label.id);
 
     const write = (enabled: boolean) => {
       const cur = setting.get();
@@ -671,18 +706,15 @@ function renderViewerToggles(setting: Setting<string[]>): HTMLElement {
       if (curEnabled === enabled) return; // SSOT no-op, mirrors defineSetting's own Object.is guard
       setting.set(toggleViewerDisabled(cur, v.id));
     };
-    onBtn.addEventListener("click", () => write(true));
-    offBtn.addEventListener("click", () => write(false));
+    sw.addEventListener("click", () => write(!isViewerEnabled(setting.get(), v.id)));
 
     const reflect = () => {
-      const enabled = isViewerEnabled(setting.get(), v.id);
-      onBtn.setAttribute("aria-pressed", String(enabled));
-      offBtn.setAttribute("aria-pressed", String(!enabled));
+      sw.setAttribute("aria-checked", String(isViewerEnabled(setting.get(), v.id)));
     };
     reflectors.push(reflect);
     reflect();
 
-    item.append(label, group);
+    item.append(label, sw);
     list.appendChild(item);
   }
 
@@ -716,6 +748,7 @@ export const RENDER: {
   ) => HTMLElement;
 } = {
   segmented: (s, c) => renderSegmented(s as Setting<unknown>, c),
+  switch: (s, c) => renderSwitch(s as Setting<unknown>, c),
   select: (s, c) => renderSelect(s as Setting<unknown>, c),
   slider: (s, c) => renderSlider(s as Setting<unknown>, c),
   text: (s, c) => renderText(s as unknown as Setting<string>, c),

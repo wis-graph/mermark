@@ -1454,7 +1454,7 @@ const viewerCategoryBtn = page.locator(".settings-cat", { hasText: "뷰어" }).f
 await viewerCategoryBtn.click();
 await page.waitForTimeout(150);
 const htmlToggleRow = page.locator('.settings-vtoggle-item[data-id="ext.html"]');
-await htmlToggleRow.locator(".settings-seg-btn", { hasText: "켜기" }).click();
+await htmlToggleRow.locator('[role="switch"]').click();
 await page.waitForTimeout(150);
 result.g15.disabledViewersAfterReenable = await page.evaluate(() =>
   localStorage.getItem("mermark.disabledViewers"),
@@ -1491,7 +1491,7 @@ await page.locator(".settings-cat", { hasText: "뷰어" }).first().click();
 await page.waitForTimeout(150);
 await page
   .locator('.settings-vtoggle-item[data-id="ext.pdf"]')
-  .locator(".settings-seg-btn", { hasText: "끄기" })
+  .locator('[role="switch"]')
   .click();
 await page.waitForTimeout(150);
 await page.keyboard.press("Escape");
@@ -1524,7 +1524,7 @@ await page.locator(".settings-cat", { hasText: "뷰어" }).first().click();
 await page.waitForTimeout(150);
 await page
   .locator('.settings-vtoggle-item[data-id="ext.pdf"]')
-  .locator(".settings-seg-btn", { hasText: "켜기" })
+  .locator('[role="switch"]')
   .click();
 await page.waitForTimeout(150);
 await page.keyboard.press("Escape");

@@ -340,11 +340,9 @@ export const vimModeSetting = registerSetting<VimMode>({
     label: "Vim 모드",
     group: "에디터",
     control: {
-      kind: "segmented",
-      options: [
-        { value: "on", label: "켜기" },
-        { value: "off", label: "끄기" },
-      ],
+      kind: "switch",
+      on: "on",
+      off: "off",
     },
   },
 });
@@ -363,11 +361,9 @@ export const recursiveImageSearchSetting = registerSetting<RecursiveImageSearch>
     label: "이미지 재귀 검색",
     group: "에디터",
     control: {
-      kind: "segmented",
-      options: [
-        { value: "on", label: "켜기" },
-        { value: "off", label: "끄기" },
-      ],
+      kind: "switch",
+      on: "on",
+      off: "off",
     },
   },
 });
@@ -388,11 +384,9 @@ export const showHiddenFilesSetting = registerSetting<ShowHiddenFiles>({
     label: "숨김 파일 표시",
     group: "탐색기",
     control: {
-      kind: "segmented",
-      options: [
-        { value: "on", label: "켜기" },
-        { value: "off", label: "끄기" },
-      ],
+      kind: "switch",
+      on: "on",
+      off: "off",
     },
   },
 });
@@ -409,11 +403,9 @@ export const panZoomSetting = registerSetting<PanZoom>({
     label: "팬/줌",
     group: "Mermaid",
     control: {
-      kind: "segmented",
-      options: [
-        { value: "on", label: "켜기" },
-        { value: "off", label: "끄기" },
-      ],
+      kind: "switch",
+      on: "on",
+      off: "off",
     },
   },
 });
@@ -483,11 +475,9 @@ export const htmlScriptsSetting = registerSetting<boolean>({
     label: "HTML 문서 스크립트 실행",
     group: "뷰어",
     control: {
-      kind: "segmented",
-      options: [
-        { value: true, label: "켜기" },
-        { value: false, label: "끄기" },
-      ],
+      kind: "switch",
+      on: true,
+      off: false,
       // _workspace/01_architect_design_htmljs.md §10.6 판정 ③ — Revision 1
       // (per-open 토큰 오리진 + allow-same-origin, §10.3)로 형제 리소스 로드가
       // 실제로 성립하므로 "같은 폴더 파일 읽기"가 참이 된 시점의 정밀화된 문구.

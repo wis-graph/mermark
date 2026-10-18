@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { defineSetting } from "../src/settings/store";
-import { RENDER, runTeardown, attachTeardown } from "../src/settings/panel/controls";
+import { RENDER, runTeardown, attachTeardown, createSwitch, isOverridden } from "../src/settings/panel/controls";
 import { serializeTheme, parseTheme, builtInTheme } from "../src/settings/theme-schema";
 
 beforeEach(() => localStorage.clear());
@@ -339,5 +339,70 @@ describe("registry controls release their subscription on runTeardown", () => {
     runTeardown(el);
     expect(u1).toHaveBeenCalledTimes(1);
     expect(u2).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("switch control (D2c)", () => {
+  const sw = (row: HTMLElement) => row.querySelector<HTMLButtonElement>('button[role="switch"]')!;
+
+  it("createSwitch: button[role=switch].settings-switch > .settings-switch-thumb", () => {
+    const b = createSwitch();
+    expect(b.tagName).toBe("BUTTON");
+    expect(b.getAttribute("role")).toBe("switch");
+    expect(b.classList.contains("settings-switch")).toBe(true);
+    expect(b.querySelector(":scope > .settings-switch-thumb")).not.toBeNull();
+  });
+
+  it("string pair: mount reflects aria-checked, click toggles, external set re-reflects", () => {
+    const s = defineSetting<string>({ key: "c.sw1", default: "off" });
+    const row = RENDER.switch(s, { kind: "switch", on: "on", off: "off" });
+    expect(sw(row).getAttribute("aria-checked")).toBe("false");
+    sw(row).click();
+    expect(s.get()).toBe("on");
+    expect(sw(row).getAttribute("aria-checked")).toBe("true");
+    s.set("off");
+    expect(sw(row).getAttribute("aria-checked")).toBe("false");
+    sw(row).click();
+    sw(row).click();
+    expect(s.get()).toBe("off");
+  });
+
+  it("boolean pair works the same", () => {
+    const s = defineSetting<boolean>({ key: "c.sw2", default: true });
+    const row = RENDER.switch(s, { kind: "switch", on: true, off: false });
+    expect(sw(row).getAttribute("aria-checked")).toBe("true");
+    sw(row).click();
+    expect(s.get()).toBe(false);
+  });
+
+  it("teardown unsubscribes", () => {
+    const s = defineSetting<string>({ key: "c.sw3", default: "off" });
+    const row = RENDER.switch(s, { kind: "switch", on: "on", off: "off" });
+    runTeardown(row);
+    s.set("on");
+    expect(sw(row).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("aria-labelledby points at the row label element", () => {
+    const s = defineSetting<string>({ key: "c.sw4", default: "off" });
+    const row = RENDER.switch(s, { kind: "switch", on: "on", off: "off" });
+    const id = sw(row).getAttribute("aria-labelledby")!;
+    expect(id).toBeTruthy();
+    expect(row.querySelector(".settings-row-label")!.id).toBe(id);
+  });
+
+  it("help text renders below like the other controls", () => {
+    const s = defineSetting<string>({ key: "c.sw5", default: "off" });
+    const row = RENDER.switch(s, { kind: "switch", on: "on", off: "off", help: "도움말" });
+    expect(row.querySelector(".settings-text-help")!.textContent).toBe("도움말");
+    expect(row.classList.contains("settings-row-has-help")).toBe(true);
+  });
+});
+
+describe("isOverridden (D2c)", () => {
+  it("true only for an own key", () => {
+    expect(isOverridden({ a: "Mod+J" }, "a")).toBe(true);
+    expect(isOverridden({}, "a")).toBe(false);
+    expect(isOverridden({}, "toString")).toBe(false);
   });
 });

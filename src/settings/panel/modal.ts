@@ -10,6 +10,21 @@ import { icon } from "../../icons";
 import { renderVersionPane } from "./version-pane";
 import { renderRemoteSharePane, type VaultOption } from "../remote-share-panel";
 
+/** Control kinds that render a whole list in the control cell (many rows from one
+ *  setting) — they take the full row width and carry no label cell text (the pane
+ *  title already says it). Pure query. */
+export function isListControl(kind: Control<unknown>["kind"]): boolean {
+  return kind === "keybind" || kind === "viewer-toggles";
+}
+
+/** The pane's top heading (the category name). Pure creation. */
+export function createPaneTitle(text: string): HTMLElement {
+  const h = document.createElement("h2");
+  h.className = "settings-pane-title";
+  h.textContent = text;
+  return h;
+}
+
 /** Build a ⚙ chrome button that opens the settings modal. Boot-cheap: only the
  *  button is created now; the modal DOM is built on first open. Position is the
  *  CALLER's responsibility (M2: arrangeTitleBar places it in the right cluster) —
@@ -145,7 +160,7 @@ function buildModal(getShareableVaults: () => readonly VaultOption[]): SettingsM
    *  Command/CQS: mutates the DOM, returns nothing. */
   function selectCategory(g: Group): void {
     teardownPane(); // drop the outgoing category's subscriptions before replacing
-    pane.replaceChildren();
+    pane.replaceChildren(createPaneTitle(g.name));
     for (const entry of g.entries) {
       const renderer = RENDER[entry.ui.control.kind] as (
         s: Setting<never>,
@@ -154,7 +169,7 @@ function buildModal(getShareableVaults: () => readonly VaultOption[]): SettingsM
       const labeled = renderer(entry.setting as Setting<never>, entry.ui.control);
       // stamp the label into the row's label cell (controls render an empty one)
       const labelCell = labeled.querySelector(".settings-row-label");
-      if (labelCell) labelCell.textContent = entry.ui.label;
+      if (labelCell && !isListControl(entry.ui.control.kind)) labelCell.textContent = entry.ui.label;
       pane.appendChild(labeled);
     }
     const found = catButtons.find((c) => c.group === g);

@@ -22,7 +22,7 @@ describe("headingScales (heading typescale rule)", () => {
     const [s1, s2, s3, s4] = headingScales("1.25");
     expect(s1).toBeCloseTo(1.25 ** 3, 5); // ≈1.953
     expect(s2).toBeCloseTo(1.25 ** 2, 5); // 1.5625
-    expect(s3).toBeCloseTo(1.25 ** 1.5, 5);
+    expect(s3).toBeCloseTo(1.25 ** 1, 5); // h3 = 20px at 16px body (D2b)
     expect(s4).toBeCloseTo(1.25 ** 0.5, 5);
   });
 

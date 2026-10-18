@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createSettingsButton } from "../src/settings/panel/modal";
+import { createSettingsButton, isListControl, createPaneTitle } from "../src/settings/panel/modal";
+import "../src/settings/app";
 import { registerSetting } from "../src/settings/registry";
 
 // matchMedia is provided by tests/setup.ts; the registry needs at least one
@@ -78,5 +79,45 @@ describe("settings modal (mount + open/close)", () => {
     (bar.querySelector(".settings-btn") as HTMLButtonElement).click();
     const labels = [...document.querySelectorAll(".settings-pane .settings-row-label")].map((l) => l.textContent);
     expect(labels).toContain("X");
+  });
+
+  function openModal(): HTMLElement {
+    const bar = document.createElement("div");
+    document.body.appendChild(bar);
+    bar.append(createSettingsButton(() => []));
+    (bar.querySelector(".settings-btn") as HTMLButtonElement).click();
+    return document.querySelector(".settings-backdrop") as HTMLElement;
+  }
+  function selectCat(backdrop: HTMLElement, name: string): HTMLElement {
+    const b = [...backdrop.querySelectorAll<HTMLElement>(".settings-cat")].find((c) => c.textContent === name)!;
+    b.click();
+    return backdrop.querySelector(".settings-pane") as HTMLElement;
+  }
+
+  it("the pane starts with an h2.settings-pane-title carrying the group name", () => {
+    const backdrop = openModal();
+    const pane = selectCat(backdrop, "에디터");
+    const first = pane.firstElementChild as HTMLElement;
+    expect(first.tagName).toBe("H2");
+    expect(first.classList.contains("settings-pane-title")).toBe(true);
+    expect(first.textContent).toBe("에디터");
+    expect(createPaneTitle("X").className).toBe("settings-pane-title");
+  });
+
+  it("list-type controls (keybind, viewer-toggles) get no label cell text; others keep theirs", () => {
+    const backdrop = openModal();
+    for (const name of ["단축키", "뷰어"]) {
+      const pane = selectCat(backdrop, name);
+      const list = pane.querySelector(".settings-row-keybind, .settings-row-viewer-toggles") as HTMLElement;
+      expect(list.querySelector(".settings-row-label")!.textContent).toBe("");
+    }
+    const pane = selectCat(backdrop, "에디터");
+    expect(pane.querySelector(".settings-row-label")!.textContent).not.toBe("");
+  });
+
+  it("isListControl: only keybind and viewer-toggles", () => {
+    expect(isListControl("keybind")).toBe(true);
+    expect(isListControl("viewer-toggles")).toBe(true);
+    for (const k of ["segmented", "select", "slider", "text", "json", "info", "switch"] as const) expect(isListControl(k)).toBe(false);
   });
 });

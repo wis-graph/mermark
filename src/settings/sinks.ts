@@ -55,9 +55,9 @@ export function cssVarSink<T>(varName: string, format?: (v: T) => string): (v: T
 /** The heading typescale rule in one named place: a ratio → six per-level
  *  scale factors [h1..h6]. CSS calc can't raise a var to a power (and `pow()`
  *  isn't reliably supported), so the powers are computed here in JS and fanned
- *  as six vars by headingScaleSink. h1=ratio³ … h4=√ratio so smaller ratios
+ *  as six vars by headingScaleSink. h1=ratio³ … h3=ratio¹, h4=√ratio so smaller ratios
  *  monotonically flatten the contrast; h5 pins to body size, h6 drops below it
- *  (caption). At ratio 1.25 → [1.953, 1.5625, 1.398, 1.118, 1.0, 0.9], close to
+ *  (caption). At ratio 1.25 → [1.953, 1.5625, 1.25, 1.118, 1.0, 0.9], close to
  *  the previous hand-tuned [2.0, 1.6, 1.32, 1.15, 1.0, 0.9]. Pure (CQS query). */
 export function headingScales(ratio: string): number[] {
   const r = Number(ratio);
@@ -65,7 +65,7 @@ export function headingScales(ratio: string): number[] {
   return [
     base ** 3, // h1
     base ** 2, // h2
-    base ** 1.5, // h3
+    base ** 1, // h3 = 20px at 16px body
     base ** 0.5, // h4
     1.0, // h5 = body size, set apart by weight
     0.9, // h6 = caption/overline below body

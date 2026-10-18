@@ -301,7 +301,7 @@
   /* ACCENT-UI RULE — coral-active: surface 4.19 / bg 4.80 (coral 2.71 / 3.11). */
   --accent-ui: var(--link);
   /* FOCUS RING RULE — solid; any coral dilution drops under 3:1. */
-  --focus-ring: var(--accent-ui);
+  --focus-ring: color-mix(in srgb, var(--fg) 85%, var(--bg)); /* ink, not coral: must not read as the --danger border (D2b) */
   /* SEGMENTED ACTIVE RULE — a card chip, not a coral fill ("coral is scarce"):
      text 17.8:1; the 1px ring (fg 55% / bg) keeps the chip edge >= 3:1 vs the track. */
   --seg-active-bg: color-mix(in srgb, var(--bg) 60%, #fff);
@@ -359,7 +359,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-editor .cm-content {
   max-width: var(--measure, 68%);
   padding: 2rem 1rem;
-  word-break: normal; /* body rule decided in D2b; chrome keep-all (body) must not leak in */
+  word-break: keep-all; /* body text breaks at word boundaries (D2b #3); overflow-wrap from CM lineWrapping backs up long tokens */
   font-family: var(--reading-font, var(--font-sans));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -413,6 +413,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    unambiguously present regardless of hover state. */
 .cm-fold-marker-closed { opacity: 1; color: var(--fg); }
 .cm-editor:hover .cm-fold-marker-closed { opacity: 1; }
+/* Read mode (D2b #4): only collapsed markers stay visible; open ones hide until
+   the pointer is on that gutter cell. Edit mode keeps the .3/.75 behaviour. */
+.cm-editor.cm-mode-read .cm-fold-marker:not(.cm-fold-marker-closed),
+.cm-editor.cm-mode-read:hover .cm-fold-marker:not(.cm-fold-marker-closed) { opacity: 0; }
+.cm-editor.cm-mode-read .cm-foldGutter .cm-gutterElement:hover .cm-fold-marker { opacity: .75; }
 /* fold gutter cells are outside the measure tree (.cm-gutters, not .cm-content),
    so flex-centering here is zoom-guard safe: it repositions the chevron within
    its own gutter cell without touching document metrics. */
@@ -618,7 +623,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   padding-inline-start: var(--code-hang, 0ch);
   text-indent: calc(-1 * var(--code-hang, 0ch));
 }
-.cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: 2.4em; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
+.cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: 2.4em; font-family: var(--font-sans); font-weight: 500; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
 /* Copy-to-clipboard button base (shared by code-block + blockquote copy
    buttons — markdown/copy-button.ts's single DOM factory): fixed to the
    top-right corner of its `position: relative` host, hidden until that host
@@ -657,7 +662,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    down; small diagrams stay natural. A px size declaration (first line `300,400`)
    pins host width/height inline + sets overflow:auto (applyDimensions), so the
    widget overrides this `overflow:hidden` per-axis. */
-.cm-mermaid { position: relative; display: flex; justify-content: center; padding: .8em 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.cm-mermaid { position: relative; display: flex; justify-content: center; padding: .8em 0; overflow: hidden; border: 1px solid var(--block-edge); border-radius: var(--block-radius, var(--radius-md)); }
 /* Pan/zoom is a CSS `transform` on the svg (transform-origin 0 0). At rest
    (scale 1, translate 0) the svg's top-left aligns with the host's, so nothing
    is clipped and centering is symmetric (margin:0 auto). On zoom-in the enlarged
@@ -715,8 +720,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    §2 rounded default just above). */
 .cm-blockquote-first { border-top-left-radius: var(--block-radius, 0); border-top-right-radius: var(--block-radius, 0); padding-top: var(--block-padding, 0); }
 .cm-blockquote-last { border-bottom-left-radius: var(--block-radius, 0); border-bottom-right-radius: var(--block-radius, 0); padding-bottom: var(--block-padding, 0); }
+.cm-callout-last { border-bottom-right-radius: var(--block-radius, 0); }
 .cm-callout { position: relative; background: var(--surface-veil); border-left: 3px solid var(--accent); padding-left: .75em; }
-.cm-callout-head { font-weight: 700; padding-right: 2.2em; /* clears the copy button on the head line */
+.cm-callout-head { border-top-right-radius: var(--block-radius, 0); font-weight: 700; padding-right: 2.2em; /* clears the copy button on the head line */
   /* CALLOUT HEAD RULE: the type hue pulled 45% toward --fg. --fg is white on dark
      (-> light pastel) and ink on light/claude/any custom light theme (-> dark
      shade), so one derived rule holds AA everywhere — no per-theme overrides.
@@ -888,10 +894,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    block box, so painting its background changes zero layout on its own. Still no
    padding: a padded heading line would shift the vertical rhythm the heading-
    cluster rule above is tuned against. */
-.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 2.0)); letter-spacing: var(--h1-tracking, 0); color: var(--h1-color, var(--fg)); background: var(--h1-bg, transparent); }
-.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.6)); letter-spacing: var(--h2-tracking, 0); color: var(--h2-color, var(--fg)); background: var(--h2-bg, transparent); }
-.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.32)); letter-spacing: var(--h3-tracking, 0); color: var(--h3-color, var(--fg)); background: var(--h3-bg, transparent); }
-.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.15)); letter-spacing: var(--h4-tracking, 0); color: var(--h4-color, var(--fg)); background: var(--h4-bg, transparent); }
+.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 1.953)); letter-spacing: var(--h1-tracking, 0); color: var(--h1-color, var(--fg)); background: var(--h1-bg, transparent); }
+.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.563)); letter-spacing: var(--h2-tracking, 0); color: var(--h2-color, var(--fg)); background: var(--h2-bg, transparent); }
+.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.25)); letter-spacing: var(--h3-tracking, 0); color: var(--h3-color, var(--fg)); background: var(--h3-bg, transparent); }
+.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.118)); letter-spacing: var(--h4-tracking, 0); color: var(--h4-color, var(--fg)); background: var(--h4-bg, transparent); }
 .cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); background: var(--h5-bg, transparent); }
 .cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); background: var(--h6-bg, transparent); }
 
@@ -2217,7 +2223,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Report-style table (team-lead spec, 2026-07-20): horizontal rules only, no
    vertical gridlines — border-bottom replaces the old 4-sided grid. */
 .cm-table th, .cm-table td { border: 0; border-bottom: 1px solid var(--border); padding: .4em .6em; word-break: keep-all; min-width: 6ch; }
-.cm-table th { background: var(--surface); font-weight: 700; }
+.cm-table th { background: var(--block-fill); font-weight: 700; text-align: left; }
 /* Zebra striping on even DATA rows only — thead is out of scope (tbody
    scopes the selector), so the header row never stripes. A faint
    readability aid, not a color statement. */
@@ -2237,7 +2243,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-frontmatter-table { border-collapse: collapse; width: 100%; letter-spacing: normal; }
 .cm-frontmatter-key,
 .cm-frontmatter-value { border: 1px solid var(--border); padding: .35em .6em; text-align: left; vertical-align: top; }
-.cm-frontmatter-key { background: var(--surface); font-weight: 600; white-space: nowrap; width: 1%; color: var(--muted, inherit); }
+.cm-frontmatter-key { background: var(--block-fill); font-weight: 600; white-space: nowrap; width: 1%; color: var(--muted, inherit); }
 .cm-frontmatter-value { color: var(--text, inherit); }
 /* Task checkbox: a native <input> kept for click/keyboard/:checked semantics,
    canvas-ized with appearance:none so we draw the box + check ourselves. Sized in
@@ -2537,8 +2543,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 
 /* Header: a caption-uppercase title (12px/600, +0.96px tracking) + a quiet close
    glyph, separated from the body by a hairline-soft rule. */
-.settings-header { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 1em 1.4em; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
-.settings-title { font-size: 12px; font-weight: 600; letter-spacing: .096em; text-transform: uppercase; color: var(--muted); }
+.settings-header { flex: none; display: flex; align-items: center; justify-content: space-between; box-sizing: border-box; height: 48px; padding: 0 var(--space-5); border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+.settings-title { font-size: var(--text-md); font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--fg); }
 .settings-close { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-pill); line-height: 1; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
 .settings-close .icon { width: 16px; height: 16px; }
 .settings-close:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
@@ -2564,7 +2570,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    상태 영역. Tauri v2 웹뷰는 JS confirm/alert가 no-op이라 설치 제안/진행률을
    다이얼로그 대신 이 패널 안에 실제 DOM으로 그린다. */
 .version-pane { display: flex; flex-direction: column; gap: 1.2em; max-width: 420px; }
-.version-pane-heading { font-size: 16px; font-weight: 600; color: var(--fg); }
 .version-pane-number { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fg); }
 .version-check-btn { align-self: flex-start; }
 .version-status { min-height: 2.4em; } /* reserves space so the check/available/error swap doesn't jump the layout */
@@ -2609,7 +2614,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Rows: roomier padding + hairline-soft dividers; label in Inter, control right. */
 .settings-row { display: flex; align-items: center; gap: 1em; padding: .8em 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
 .settings-row:last-child { border-bottom: none; }
-.settings-row-label { flex: none; width: 124px; font-size: 14px; font-weight: 500; color: var(--fg); }
+.settings-row-label { flex: none; width: clamp(140px, 30%, 200px); word-break: keep-all; font-size: 14px; font-weight: 500; color: var(--fg); }
+/* list controls (keybind, viewer-toggles) leave the label cell empty -> collapse it so the list uses the full row */
+.settings-row-label:empty { display: none; }
+.settings-pane-title, .version-pane-heading, .remote-share-heading { margin: 0 0 var(--space-3); font-size: 20px; font-weight: 600; line-height: 1.3; color: var(--fg); }
 .settings-row-control { flex: 1; min-width: 0; display: flex; align-items: center; gap: .6em; }
 .settings-row-json { flex-direction: column; align-items: stretch; }
 .settings-row-json .settings-row-label { width: auto; margin-bottom: .5em; }
@@ -2623,12 +2631,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .settings-seg-btn:hover { color: var(--fg); }
 .settings-seg-btn[aria-pressed="true"] { background: var(--seg-active-bg); color: var(--seg-active-fg); box-shadow: var(--seg-active-ring); }
 
+/* SWITCH (D2 Y5): booleans only — a segmented control stays for 3+ options or a
+   choice between two named values (기본 모드 리더/편집, 공유 켜기 action). */
+.settings-switch { position: relative; flex: none; width: 32px; height: 18px; padding: 0; border: none; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--muted) 75%, var(--surface)); cursor: pointer; transition: background-color .12s ease; }
+.settings-switch[aria-checked="true"] { background: var(--accent-ui); }
+.settings-switch-thumb { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: var(--radius-pill); background: var(--surface); box-shadow: 0 1px 2px rgb(0 0 0 / .2); transition: transform .12s ease; }
+.settings-switch[aria-checked="true"] .settings-switch-thumb { transform: translateX(14px); }
+.settings-switch:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+
 /* Inputs: rounded.md, hairline border, focus → 2px accent border (text-input
    spec: "border thickens to 2px ink"). The 2px swap is padding-neutral because
    box-sizing:border-box keeps the box from shifting on focus. */
 .settings-select,
 .settings-text,
 .settings-json { box-sizing: border-box; background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-md); font: inherit; transition: border-color .12s ease; }
+.settings-select, .settings-text { min-height: var(--control-h-md); }
 /* appearance:none drops the OS-drawn dropdown arrow (Chrome/Safari both paint
    one that clashes with the app's rounded/hairline idiom); the wrapper below
    redraws it as a themed chevron. padding-right reserves room for that
@@ -2638,7 +2655,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .settings-json { width: 100%; padding: .7em .8em; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; resize: vertical; }
 .settings-select:focus,
 .settings-text:focus,
-.settings-json:focus { outline: none; border-color: var(--accent); border-width: 2px; padding: calc(.5em - 1px) calc(.7em - 1px); }
+.settings-json:focus { outline: none; border-color: var(--accent-ui); border-width: 2px; padding: calc(.5em - 1px) calc(.7em - 1px); }
 .settings-select:focus { padding: calc(.45em - 1px) calc(2em - 1px) calc(.45em - 1px) calc(.6em - 1px); }
 .settings-json:focus { padding: calc(.7em - 1px) calc(.8em - 1px); }
 .settings-text-help { margin-top: .4em; font-size: 12px; color: var(--muted); }
@@ -2826,6 +2843,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .keybind-toolbar { display: flex; justify-content: flex-end; }
 /* reset-all / capture / reset are .btn.btn-secondary.btn-sm (button grammar). */
 .keybind-capture.is-capturing { border-color: var(--accent-ui); color: var(--accent-ui); }
+/* Row actions appear on hover / keyboard focus only (opacity keeps them in the tab
+   order); 기본값 shows only on a row that has an override (nothing to reset otherwise). */
+.keybind-capture { opacity: 0; transition: opacity .12s ease; }
+.keybind-item:hover .keybind-capture, .keybind-item:focus-within .keybind-capture, .keybind-capture.is-capturing { opacity: 1; }
+.keybind-item:not(.is-overridden) .keybind-reset { visibility: hidden; }
 .keybind-list { display: flex; flex-direction: column; }
 .keybind-item {
   display: grid; grid-template-columns: 1fr auto auto auto auto; align-items: center;
@@ -2850,7 +2872,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   gap: .5em; padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 .settings-vtoggle-label { color: var(--fg); font-size: 13px; }
-.settings-vtoggle-segmented .settings-seg-btn { font-size: 12px; }
 
 .settings-sidebar-divider {
   height: 1px;
@@ -2865,7 +2886,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    .settings-vtoggle-item 레이아웃을 그대로 빌려 쓴다(새 리스트 CSS를 또
    만들지 않음). */
 .remote-share-pane { display: flex; flex-direction: column; gap: .4em; max-width: 480px; }
-.remote-share-heading { font-size: 16px; font-weight: 600; color: var(--fg); margin-bottom: .4em; }
 .remote-share-error {
   padding: 8px 10px; border-radius: var(--radius-md, 8px); font-size: 13px; line-height: 1.5;
 }

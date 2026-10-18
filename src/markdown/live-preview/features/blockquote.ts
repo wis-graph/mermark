@@ -70,9 +70,12 @@ export const blockquote: InlineFeature = {
         deco: Decoration.replace({ widget: new CalloutHeadWidget(type.key, type.icon, title) }),
         conceal: true,
       });
-      ctx.eachLine(first.to + 1 <= node.to ? first.to + 1 : node.to, node.to, (lf) =>
-        ctx.line(lf, `cm-callout cm-callout-${type.key}`),
-      );
+      let lastLineFrom = first.from;
+      ctx.eachLine(first.to + 1 <= node.to ? first.to + 1 : node.to, node.to, (lf) => {
+        ctx.line(lf, `cm-callout cm-callout-${type.key}`);
+        lastLineFrom = lf;
+      });
+      ctx.line(lastLineFrom, "cm-callout-last"); // same line as -head on a 1-line callout — combines
     } else {
       // Structural first/last boundary (design §4.2): gated on isTopLevelQuote
       // so a nested `>>` never puts a corner class on its INNER Blockquote

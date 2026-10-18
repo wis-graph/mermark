@@ -41,4 +41,18 @@ describe("Editor state config & Vim setting tests", () => {
     expect(editor.view.state.doc.toString()).toBe("new content from disk");
     editor.view.destroy();
   });
+
+  it("marks the editor root with cm-mode-edit / cm-mode-read (CSS hook, D2b)", () => {
+    const editor = mountEditor(host, "# h\n\ntext", "/tmp", "/tmp/doc.md", {});
+    const root = editor.view.dom;
+    editor.setMode("edit");
+    expect(root.classList.contains("cm-mode-edit")).toBe(true);
+    editor.setMode("read");
+    expect(root.classList.contains("cm-mode-read")).toBe(true);
+    expect(root.classList.contains("cm-mode-edit")).toBe(false);
+    editor.setMode("edit");
+    expect(root.classList.contains("cm-mode-edit")).toBe(true);
+    expect(root.classList.contains("cm-mode-read")).toBe(false);
+    editor.view.destroy();
+  });
 });

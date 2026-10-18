@@ -28,12 +28,10 @@ function disabledSetting(key: string) {
 function rowFor(root: HTMLElement, id: string): HTMLElement {
   return root.querySelector<HTMLElement>(`.settings-vtoggle-item[data-id="${id}"]`)!;
 }
-function onBtn(root: HTMLElement, id: string): HTMLButtonElement {
-  return rowFor(root, id).querySelectorAll<HTMLButtonElement>(".settings-seg-btn")[0];
+function switchFor(root: HTMLElement, id: string): HTMLButtonElement {
+  return rowFor(root, id).querySelector<HTMLButtonElement>('button[role="switch"]')!;
 }
-function offBtn(root: HTMLElement, id: string): HTMLButtonElement {
-  return rowFor(root, id).querySelectorAll<HTMLButtonElement>(".settings-seg-btn")[1];
-}
+const checked = (b: HTMLElement) => b.getAttribute("aria-checked");
 
 let counter = 0;
 function uniqueViewer(overrides: Partial<Viewer> = {}): Viewer {
@@ -66,34 +64,33 @@ describe("viewer-toggles control", () => {
     expect(label).toBe(`${v.id} (${v.extensions.join(", ")})`);
   });
 
-  it("mount reflects enabled state (aria-pressed) from the setting", () => {
+  it("mount reflects enabled state (aria-checked) from the setting", () => {
     const v = uniqueViewer();
     const s = disabledSetting("vtc.c");
     s.set([v.id]);
     const row = RENDER["viewer-toggles"](s, { kind: "viewer-toggles" });
-    expect(onBtn(row, v.id).getAttribute("aria-pressed")).toBe("false");
-    expect(offBtn(row, v.id).getAttribute("aria-pressed")).toBe("true");
+    expect(checked(switchFor(row, v.id))).toBe("false");
   });
 
   it("clicking off adds the id to the disabled-set; clicking on removes it (round-trip)", () => {
     const v = uniqueViewer();
     const s = disabledSetting("vtc.d");
     const row = RENDER["viewer-toggles"](s, { kind: "viewer-toggles" });
-    offBtn(row, v.id).click();
+    switchFor(row, v.id).click();
     expect(s.get()).toContain(v.id);
-    expect(onBtn(row, v.id).getAttribute("aria-pressed")).toBe("false");
-    onBtn(row, v.id).click();
+    expect(checked(switchFor(row, v.id))).toBe("false");
+    switchFor(row, v.id).click();
     expect(s.get()).not.toContain(v.id);
-    expect(onBtn(row, v.id).getAttribute("aria-pressed")).toBe("true");
+    expect(checked(switchFor(row, v.id))).toBe("true");
   });
 
   it("an external setting.set updates the row (subscribe/reflect contract)", () => {
     const v = uniqueViewer();
     const s = disabledSetting("vtc.e");
     const row = RENDER["viewer-toggles"](s, { kind: "viewer-toggles" });
-    expect(offBtn(row, v.id).getAttribute("aria-pressed")).toBe("false");
+    expect(checked(switchFor(row, v.id))).toBe("true");
     s.set([v.id]);
-    expect(offBtn(row, v.id).getAttribute("aria-pressed")).toBe("true");
+    expect(checked(switchFor(row, v.id))).toBe("false");
   });
 
   it("teardown unsubscribes: a later external set no longer updates the DOM", () => {
@@ -102,6 +99,6 @@ describe("viewer-toggles control", () => {
     const row = RENDER["viewer-toggles"](s, { kind: "viewer-toggles" });
     runTeardown(row);
     s.set([v.id]);
-    expect(offBtn(row, v.id).getAttribute("aria-pressed")).toBe("false"); // stale reflect, no longer wired
+    expect(checked(switchFor(row, v.id))).toBe("true"); // stale reflect, no longer wired
   });
 });

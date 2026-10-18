@@ -105,18 +105,15 @@ describe("app settings", () => {
   // segmented toggle as its sibling 뷰어 group entries, not a lone select
   // dropdown (a prior consistency defect). Storage format (parse/serialize/
   // default) is untouched — this only locks the presentation layer.
-  it("htmlScriptsSetting renders as a segmented 켜기/끄기 control matching the 뷰어 group", async () => {
+  it("htmlScriptsSetting renders as a switch (on=true/off=false) in the 뷰어 group", async () => {
     await import("../src/settings/app");
     const { groups } = await import("../src/settings/registry");
     const viewerGroup = groups().find((g) => g.name === "뷰어");
     const entry = viewerGroup!.entries.find((e) => e.ui.label === "HTML 문서 스크립트 실행");
     expect(entry).toBeDefined();
-    expect(entry!.ui.control.kind).toBe("segmented");
-    const control = entry!.ui.control as { kind: "segmented"; options: { value: boolean; label: string }[] };
-    expect(control.options).toEqual([
-      { value: true, label: "켜기" },
-      { value: false, label: "끄기" },
-    ]);
+    expect(entry!.ui.control.kind).toBe("switch");
+    const control = entry!.ui.control as { kind: "switch"; on: boolean; off: boolean };
+    expect([control.on, control.off]).toEqual([true, false]);
   });
 
   it("clampFontScale snaps to the bounds and the 0.1 step", async () => {
@@ -538,13 +535,13 @@ describe("app settings", () => {
       expect(vimModeSetting.get()).toBe("off");
     });
 
-    it("belongs to 에디터 group as segmented control", async () => {
+    it("belongs to 에디터 group as switch control", async () => {
       await import("../src/settings/app");
       const { groups } = await import("../src/settings/registry");
       const editorGroup = groups().find((g) => g.name === "에디터");
       const entry = editorGroup!.entries.find((e) => e.ui.label === "Vim 모드");
       expect(entry).toBeDefined();
-      expect(entry!.ui.control.kind).toBe("segmented");
+      expect(entry!.ui.control.kind).toBe("switch");
     });
   });
 
@@ -571,13 +568,13 @@ describe("app settings", () => {
       expect(showHiddenFilesSetting.get()).toBe("off");
     });
 
-    it("belongs to 탐색기 group as segmented control", async () => {
+    it("belongs to 탐색기 group as switch control", async () => {
       await import("../src/settings/app");
       const { groups } = await import("../src/settings/registry");
       const explorerGroup = groups().find((g) => g.name === "탐색기");
       const entry = explorerGroup!.entries.find((e) => e.ui.label === "숨김 파일 표시");
       expect(entry).toBeDefined();
-      expect(entry!.ui.control.kind).toBe("segmented");
+      expect(entry!.ui.control.kind).toBe("switch");
     });
   });
 
@@ -655,5 +652,24 @@ describe("app settings", () => {
       expect(rows).toContain("자동 저장 지연");
       expect(rows).toContain("Vim 모드");
     });
+  });
+});
+
+describe("boolean settings are switches whose on/off values parse (D2c)", () => {
+  it.each([
+    ["Vim 모드", "mermark.vimMode"],
+    ["이미지 재귀 검색", "mermark.recursiveImageSearch"],
+    ["숨김 파일 표시", "mermark.showHiddenFiles"],
+    ["팬/줌", "mermark.panZoom"],
+    ["HTML 문서 스크립트 실행", "mermark.htmlScripts"],
+  ])("%s", async (label) => {
+    await import("../src/settings/app");
+    const { groups } = await import("../src/settings/registry");
+    const entry = groups().flatMap((g) => g.entries).find((e) => e.ui.label === label)!;
+    expect(entry.ui.control.kind).toBe("switch");
+    const c = entry.ui.control as { kind: "switch"; on: unknown; off: unknown };
+    const ser = (entry.setting as any).serialize ?? String;
+    expect(c.on).not.toBe(c.off);
+    expect(typeof ser(c.on)).toBe("string");
   });
 });

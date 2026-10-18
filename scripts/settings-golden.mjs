@@ -180,10 +180,8 @@ async function clickViewerToggle(id, segLabel) {
   await page.evaluate(
     ({ id, segLabel }) => {
       const row = document.querySelector(`.settings-vtoggle-item[data-id="${id}"]`);
-      const btn = Array.from(row.querySelectorAll(".settings-seg-btn")).find(
-        (b) => b.textContent === segLabel,
-      );
-      btn.click();
+      const sw = row.querySelector('[role="switch"]');
+      if ((sw.getAttribute("aria-checked") === "true") !== (segLabel === "켜기")) sw.click();
     },
     { id, segLabel },
   );
@@ -909,10 +907,8 @@ async function clickShowHiddenSeg(segLabel) {
     const row = rows.find(
       (r) => r.querySelector(".settings-row-label")?.textContent?.trim() === "숨김 파일 표시",
     );
-    const btn = Array.from(row.querySelectorAll(".settings-seg-btn")).find(
-      (b) => b.textContent === segLabel,
-    );
-    btn.click();
+    const sw = row.querySelector('[role="switch"]');
+    if ((sw.getAttribute("aria-checked") === "true") !== (segLabel === "켜기")) sw.click();
   }, segLabel);
   await page.waitForTimeout(150);
 }
