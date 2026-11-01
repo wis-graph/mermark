@@ -111,6 +111,7 @@ import {
   shouldMigrateLegacyFavorites,
 } from "./workspace/favorite-vault-migration";
 import { createWorkspaceSidebar } from "./workspace/workspace-sidebar";
+import { createFolderVaultBookmarks } from "./workspace/folder-vault-bookmark";
 import { createVaultSelection } from "./workspace/vault-selection";
 import { createDocumentSession } from "./document/session";
 import { selectVaultView, VaultTabStore } from "./workspace/vault-tabs";
@@ -827,16 +828,13 @@ async function boot() {
     onVirtualRootChange: (label) => {
       if (label !== null) breadcrumb.renderLabel(label);
     },
+    // I2: local vs remote is decided by folder-vault-bookmark.ts from the
+    // browsing vault's kind; the remote branch cannot reach canonicalize_path.
     onToggleVault: (root) => toggleExplorerVault(root),
     isVaultRegistered: (root) => isVaultRegistered(root),
     isRootLocked: () => isVaultRootLocked(currentVault()),
-    // I2: a remote listing has no local folder to bookmark — the toggle
-    // (and its Space-key shortcut) must not even render there, or clicking
-    // it sends a vault-relative name into a LOCAL canonicalize_path call.
-    canBookmarkFolders: () => !isRemoteVault(currentVault()),
-    // T4 (0.17.1): the explorer's right-click context menu. Same
-    // isRemoteVault-derived gate as canBookmarkFolders just above — a
-    // remote vault's row is a vault-relative path, so every one of these
+    // T4 (0.17.1): the explorer's right-click context menu, gated by
+    // rowHasLocalPath: a remote vault's row is a vault-relative path, so every one of these
     // four actions (which all resolve against the LOCAL filesystem) must
     // stay disabled there (rowHasLocalPath, document-vault.ts §T4 doc
     // comment; this repo has hit that exact leak class 6 times already).
@@ -1064,39 +1062,13 @@ async function boot() {
     return normalizePath(resolved);
   };
 
-  const isVaultRegistered = async (root: string): Promise<boolean> => {
-    const canonical = await canonicalizeVaultPath(root);
-    return workspaceStore.get().vaults.some((vault) => vault.rootPath === canonical);
-  };
-
-  const toggleExplorerVault = (root: string): void => {
-    void (async (): Promise<void> => {
-      try {
-        const canonical = await canonicalizeVaultPath(root);
-        const existing = workspaceStore.get().vaults.find((vault) => vault.rootPath === canonical);
-        if (existing) {
-          const wasCurrent = currentVault()?.vaultId === existing.vaultId;
-          workspaceStore.unregisterVault(existing.vaultId);
-          if (wasCurrent) setRoutedVault(undefined);
-        } else {
-          const wasGlobal = currentVault()?.persistenceKind === "global";
-          const registered = workspaceStore.registerCanonicalVault(canonical);
-          if (wasGlobal) {
-            workspaceStore.selectVault(GLOBAL_VAULT_ID);
-            setRoutedVault(workspaceStore.getGlobalVault());
-          } else {
-            setRoutedVault(registered);
-          }
-        }
-      } catch (error) {
-        if (error instanceof WorkspaceStateError || error instanceof Error || typeof error === "string") {
-          window.alert(error instanceof Error ? error.message : error);
-          return;
-        }
-        throw error;
-      }
-    })();
-  };
+  const { isRegistered: isVaultRegistered, toggle: toggleExplorerVault } = createFolderVaultBookmarks({
+    store: workspaceStore,
+    browsingVault: currentVault,
+    canonicalizeLocal: canonicalizeVaultPath,
+    setRoutedVault,
+    reportError: (message) => window.alert(message),
+  });
 
   const workspaceSidebar = createWorkspaceSidebar({
     store: workspaceStore,

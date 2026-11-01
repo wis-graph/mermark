@@ -13,7 +13,7 @@
 // exist yet) but gives a later task the one seam to plug a real remote
 // backend into, with every call site already migrated off direct `invoke`.
 import { invoke } from "@tauri-apps/api/core";
-import type { Vault, RemoteVault } from "../workspace/workspace-state";
+import { REMOTE_VAULT_WIRE_ROOT, type Vault, type RemoteVault } from "../workspace/workspace-state";
 import type { DirEntry, ScanResult, LinkTarget } from "./types";
 import { isRemoteVault } from "./document-vault";
 
@@ -165,8 +165,11 @@ export const remoteConnectionStateFor = async (
   call: typeof invoke = invoke,
 ): Promise<RemoteConnectionState> => {
   try {
+    // Connection state is per (host, remoteVaultId), not per folder vault:
+    // probe the armed vault ROOT so a sub-folder deleted on the host isn't
+    // misread as "호스트가 공유를 껐음".
     await afterTunnel(vault.host, call, () =>
-      call("remote_list_dir", { host: vault.host, vault: vault.remoteVaultId, path: vault.explorerRoot, showHidden: false }),
+      call("remote_list_dir", { host: vault.host, vault: vault.remoteVaultId, path: REMOTE_VAULT_WIRE_ROOT, showHidden: false }),
     );
     return "connected";
   } catch (e) {

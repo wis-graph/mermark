@@ -310,3 +310,8 @@ export function resolveOpenPath(input: string, baseDir: string): string | null {
   if (isAbsoluteLike(trimmed)) return trimmed;
   return baseDir ? `${baseDir}/${trimmed}` : trimmed;
 }
+
+/** Whether `path` can be a LOCAL filesystem path to hand to the backend
+ *  (posix root, Windows drive, UNC). A remote row is a vault-relative name and
+ *  is never local-absolute — the structural guard of the I2 leak. Pure query. */
+export const isLocalAbsolutePath = isResolvedAbsolutePath;

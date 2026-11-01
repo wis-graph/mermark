@@ -2,8 +2,9 @@ import { icon } from "../icons";
 import { renderSidebarButton } from "../sidebar/toggle";
 import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
 import { basename, dirOf, isPathWithin } from "../document/path";
+import { assertNever } from "./vault-routing";
 import { extensionOf, renderEntryGlyph } from "../sidebar/explorer/file-icons";
-import { WorkspaceStateError, anyVaultStillUsesHost, type RemoteVault, type Vault, type WorkspaceState, type WorkspaceStore } from "./workspace-state";
+import { WorkspaceStateError, anyVaultStillUsesHost, isRemoteFolderVault, remoteShareKey, type RemoteVault, type Vault, type WorkspaceState, type WorkspaceStore } from "./workspace-state";
 import type { VaultTabs } from "./vault-tabs";
 import { isVaultCollapsed, setVaultCollapsed } from "./vault-collapse";
 import { badgeFor } from "./add-remote-vault";
@@ -42,7 +43,7 @@ export interface WorkspaceSidebarHandlers {
  *  like `remoteFileHost`'s listing cache (file-host.ts) this mirrors. */
 const BADGE_TTL_MS = 8000;
 const badgeCache = new Map<string, { expires: number; state: RemoteConnectionState }>();
-/** One shared in-flight probe per vaultId (Task 10 fix round 1, Minor) —
+/** One shared in-flight probe per share (`remoteShareKey`) (Task 10 fix round 1, Minor) —
  *  `render()` fires on every store notification (a tab open/close, a badge
  *  itself resolving and re-painting, …), so without this a stale cache entry
  *  would fire a fresh `remote_list_dir` on EVERY one of those renders that
@@ -67,17 +68,17 @@ export function __resetBadgeCachesForTests(): void {
  *  shared maps above) but returns the resolved state so callers can paint
  *  without a second cache read. */
 function probeRemoteConnection(vault: RemoteVault, call: typeof invoke): Promise<RemoteConnectionState> {
-  const pending = badgeProbes.get(vault.vaultId);
+  const pending = badgeProbes.get(remoteShareKey(vault));
   if (pending) return pending;
   const probe = remoteConnectionStateFor(vault, call)
     .then((state) => {
-      badgeCache.set(vault.vaultId, { expires: Date.now() + BADGE_TTL_MS, state });
+      badgeCache.set(remoteShareKey(vault), { expires: Date.now() + BADGE_TTL_MS, state });
       return state;
     })
     .finally(() => {
-      if (badgeProbes.get(vault.vaultId) === probe) badgeProbes.delete(vault.vaultId);
+      if (badgeProbes.get(remoteShareKey(vault)) === probe) badgeProbes.delete(remoteShareKey(vault));
     });
-  badgeProbes.set(vault.vaultId, probe);
+  badgeProbes.set(remoteShareKey(vault), probe);
   return probe;
 }
 
@@ -132,7 +133,7 @@ function paintRecoveryButton(btn: HTMLButtonElement, vault: RemoteVault, state: 
  *  the one this whole feature exists to remove. */
 function renderRemoteBadge(el: HTMLElement, recoverBtn: HTMLButtonElement, vault: RemoteVault, call: typeof invoke, openRepair: (host: string) => void): void {
   const retry = (): void => {
-    badgeCache.delete(vault.vaultId);
+    badgeCache.delete(remoteShareKey(vault));
     renderRemoteBadge(el, recoverBtn, vault, call, openRepair);
   };
   const paint = (state: RemoteConnectionState): void => {
@@ -141,7 +142,7 @@ function renderRemoteBadge(el: HTMLElement, recoverBtn: HTMLButtonElement, vault
     el.className = `workspace-vault-badge workspace-vault-badge--${badge.tone}`;
     paintRecoveryButton(recoverBtn, vault, state, retry, () => openRepair(vault.host));
   };
-  const hit = badgeCache.get(vault.vaultId);
+  const hit = badgeCache.get(remoteShareKey(vault));
   if (hit && hit.expires > Date.now()) { paint(hit.state); return; }
   el.textContent = "확인 중"; el.className = "workspace-vault-badge workspace-vault-badge--checking";
   recoverBtn.hidden = true; // no action while a probe is already in flight
@@ -157,7 +158,7 @@ function renderRemoteBadge(el: HTMLElement, recoverBtn: HTMLButtonElement, vault
  *  uses — just for every remote vault at once instead of one. Command
  *  (void); `render` (closure below) owns the actual DOM/probe work. */
 function invalidateAllRemoteBadges(vaults: readonly Vault[]): void {
-  for (const vault of vaults) if (vault.persistenceKind === "remote") badgeCache.delete(vault.vaultId);
+  for (const vault of vaults) if (vault.persistenceKind === "remote") badgeCache.delete(remoteShareKey(vault));
 }
 
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] => {
@@ -245,22 +246,48 @@ function syncDescendantRowVisibility(rowEls: ReadonlyMap<string, HTMLElement>, r
   }
 }
 
+/** The path-space root a vault owns: permanent = local rootPath, remote =
+ *  armed-vault-relative explorerRoot, global = none. Pure query. */
+function vaultScopeRoot(vault: Vault): string | null {
+  switch (vault.persistenceKind) {
+    case "permanent": return vault.rootPath;
+    case "remote": return vault.explorerRoot;
+    case "global": return null;
+    default: return assertNever(vault);
+  }
+}
+
+/** Whether `parent` strictly contains `child`: same kind (and, for remote,
+ *  same host + remoteVaultId — a different share is another path space), and
+ *  child's root lies strictly inside parent's. Pure query. */
+function vaultContains(parent: Vault, child: Vault): boolean {
+  if (parent.persistenceKind !== child.persistenceKind) return false;
+  if (parent.persistenceKind === "remote" && child.persistenceKind === "remote"
+    && remoteShareKey(parent) !== remoteShareKey(child)) return false;
+  const parentRoot = vaultScopeRoot(parent);
+  const childRoot = vaultScopeRoot(child);
+  if (parentRoot === null || childRoot === null || parentRoot === childRoot) return false;
+  return isPathWithin(childRoot, parentRoot);
+}
+
 /** The nearest registered ancestor of `vault` among `all` — the registered
- *  vault whose root STRICTLY contains `vault`'s root (via `isPathWithin`,
- *  path.ts — reused, not reinvented) with the LONGEST root path (closest
- *  wins over a more distant grandparent). Null when `vault` has no root
- *  (the global vault) or no registered vault contains it (a top-level root).
- *  Pure query. */
+ *  vault that strictly contains it (`vaultContains`) with the LONGEST root
+ *  (closest wins over a more distant grandparent). Null when none. Pure query. */
 function nearestRegisteredParent(vault: Vault, all: readonly Vault[]): Vault | null {
-  if (vault.rootPath === null) return null;
   let best: Vault | null = null;
   for (const candidate of all) {
-    if (candidate.vaultId === vault.vaultId || candidate.rootPath === null) continue;
-    if (candidate.rootPath === vault.rootPath) continue; // defensive: store forbids duplicate roots
-    if (!isPathWithin(vault.rootPath, candidate.rootPath)) continue;
-    if (!best || best.rootPath === null || candidate.rootPath.length > best.rootPath.length) best = candidate;
+    if (candidate.vaultId === vault.vaultId || !vaultContains(candidate, vault)) continue;
+    if (!best || (vaultScopeRoot(candidate) ?? "").length > (vaultScopeRoot(best) ?? "").length) best = candidate;
   }
   return best;
+}
+
+/** Hover title: permanent = local path, remote folder = `host › subpath`,
+ *  everything else = its display name. Pure query. */
+function vaultTitleFor(vault: Vault): string {
+  if (vault.persistenceKind === "permanent") return vault.rootPath;
+  if (isRemoteFolderVault(vault)) return `${vault.host} › ${vault.explorerRoot}`;
+  return vault.displayName;
 }
 
 function compareVaultDisplayOrder(left: Vault, right: Vault): number {
@@ -406,7 +433,7 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
         // distinction.
         const toggle = create("button", "workspace-vault-toggle") as HTMLButtonElement; toggle.type = "button";
         const glyph = create("span", "workspace-vault-glyph"); toggle.append(glyph);
-        const select = create("button", "workspace-vault-select") as HTMLButtonElement; select.type = "button"; select.title = vault.rootPath ?? vault.displayName;
+        const select = create("button", "workspace-vault-select") as HTMLButtonElement; select.type = "button"; select.title = vaultTitleFor(vault);
         const name = create("span", "workspace-vault-name"); name.textContent = vault.displayName; select.append(name);
         // Path label only when this vault's name collides with another one
         // currently on screen — the shared left-truncating component
@@ -547,7 +574,10 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
           // again (there's no local root to just point back at), so the
           // title says so up front instead of letting the only visible
           // button next to a broken badge look consequence-free (item 2).
-          const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = "원격 볼트 해제 — 다시 연결하려면 페어링부터 다시 해야 합니다"; remove.setAttribute("aria-label", `${vault.displayName} 원격 볼트 해제 — 다시 연결하려면 페어링부터 다시 해야 합니다`); remove.append(icon("x")); remove.addEventListener("click", () => {
+          const removeLabel = isRemoteFolderVault(vault)
+            ? "원격 폴더 볼트 해제 — 탐색기에서 다시 등록할 수 있습니다"
+            : "원격 볼트 해제 — 다시 연결하려면 페어링부터 다시 해야 합니다";
+          const remove = create("button", "workspace-vault-action") as HTMLButtonElement; remove.type = "button"; remove.title = removeLabel; remove.setAttribute("aria-label", `${vault.displayName} ${removeLabel}`); remove.append(icon(isRemoteFolderVault(vault) ? "bookmark-filled" : "x")); remove.addEventListener("click", () => {
             try {
               store.unregisterVault(vault.vaultId);
               // Best-effort: free the local tunnel port as soon as the LAST
@@ -555,7 +585,7 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
               // exit's own cleanup (remote_ssh.rs's RunEvent::Exit hook) to
               // get to it. Checked AFTER the removal above, against the
               // post-removal vault list — registerRemoteVault dedupes by
-              // (host, remoteVaultId), not by host alone, so two vaults CAN
+              // (host, remoteVaultId, explorerRoot), not by host alone, so two vaults CAN
               // share one ssh host (fix round 2, Important B); disconnecting
               // unconditionally here would cut the tunnel out from under a
               // sibling vault that's still registered. Fire-and-forget — a
@@ -584,13 +614,12 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
     };
     renderGroup("workspace-vault-group--global", [{ vault: store.getGlobalVault(), level: 1, ancestorIds: [] }]);
     renderGroup("workspace-vault-group--permanent", arrangeVaultHierarchy(permanentVaults), "영구 볼트", empty);
-    // Remote vaults have no rootPath, so arrangeVaultHierarchy's parent/child
-    // nesting (which keys off rootPath containment) never applies to them —
-    // rendered as a flat level-1 list, no empty-state (the group simply
+    // Remote vaults nest by explorerRoot containment within the same
+    // host+remoteVaultId (folder vaults under their share root); no empty-state (the group simply
     // doesn't render when there are none, unlike permanent's "no rows yet"
     // guidance, since there's no registration entry point to point at here
     // other than the + button already in the header).
-    if (remoteVaults.length > 0) renderGroup("workspace-vault-group--remote", remoteVaults.map((vault) => ({ vault, level: 1, ancestorIds: [] })), "원격 볼트");
+    if (remoteVaults.length > 0) renderGroup("workspace-vault-group--remote", arrangeVaultHierarchy(remoteVaults), "원격 볼트");
   };
   store.subscribe(render); render(store.get());
 

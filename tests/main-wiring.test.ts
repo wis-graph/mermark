@@ -197,6 +197,7 @@ const emitEvent = (event: string, payload: unknown): void => {
 };
 
 const mainSource = readFileSync("src/main.ts", "utf8");
+const folderBookmarkSource = readFileSync("src/workspace/folder-vault-bookmark.ts", "utf8");
 const vaultSelectionSource = readFileSync("src/workspace/vault-selection.ts", "utf8");
 const sessionSource = readFileSync("src/document/session.ts", "utf8");
 
@@ -240,6 +241,8 @@ describe("main workspace wiring", () => {
   it("injects the Explorer vault toggle and live root reporting", () => {
     expect(mainSource).toContain("onToggleVault: (root) => toggleExplorerVault(root)");
     expect(mainSource).toContain("isVaultRegistered: (root) =>");
+    expect(mainSource).toContain("createFolderVaultBookmarks(");
+    expect(mainSource).not.toContain("canBookmarkFolders: () => !isRemoteVault(currentVault())");
     expect(mainSource).toContain("onRootChange: (root) => {");
     expect(mainSource).toContain("currentExplorerFolder = root");
     expect(mainSource).not.toContain("onAddVault");
@@ -333,11 +336,14 @@ describe("main workspace wiring", () => {
 
   it("canonicalizes and registers or unregisters the matching permanent vault", () => {
     expect(mainSource).toContain('invoke("canonicalize_path", { path: root })');
-    expect(mainSource).toContain("workspaceStore.registerCanonicalVault(canonical)");
-    expect(mainSource).toContain("workspaceStore.unregisterVault(existing.vaultId)");
+    // The local branch moved verbatim into folder-vault-bookmark.ts (the
+    // router that keeps the remote branch away from canonicalize_path, I2).
+    expect(mainSource).toContain("canonicalizeLocal: canonicalizeVaultPath");
+    expect(folderBookmarkSource).toContain("store.registerCanonicalVault(canonical)");
+    expect(folderBookmarkSource).toContain("store.unregisterVault(existing.vaultId)");
     expect(mainSource).toContain("workspaceStore.subscribe(() => { void explorer.refreshVaultToggles(); });");
     expect(mainSource).not.toContain("explorer.refreshVaultToggles();\n        workspaceSidebar.refresh();");
-    expect(mainSource).toContain("window.alert(error instanceof Error ? error.message : error)");
+    expect(mainSource).toContain("reportError: (message) => window.alert(message)");
   });
 
   it("migrates the removed legacy source without wiring a live favorite model", () => {

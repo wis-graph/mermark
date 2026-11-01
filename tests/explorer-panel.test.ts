@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createExplorerPanel, type DirEntry, type ExplorerHandlers } from "../src/sidebar/explorer/explorer-panel";
 import { WorkspaceStore } from "../src/workspace/workspace-state";
+import { createFolderVaultBookmarks } from "../src/workspace/folder-vault-bookmark";
 
 // ---------------------------------------------------------------------------
 // Explorer LEFT SIDEBAR — a lazy folder tree built from an INJECTED listDir()
@@ -873,6 +874,42 @@ describe("explorer: per-folder permanent-vault toggle", () => {
     folderItem?.focus();
     folderItem?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true }));
     expect(onToggleVault).not.toHaveBeenCalled();
+  });
+
+  // Remote folder vaults: the panel is unchanged — main.ts simply stops
+  // injecting canBookmarkFolders and routes through the folder-vault router.
+  it("remote browsing: toggle renders, registers a folder vault, Space unregisters, canonicalize never called", async () => {
+    localStorage.clear();
+    const store = new WorkspaceStore();
+    const remote = store.registerRemoteVault("h", "rv", "root");
+    const canonicalizeLocal = vi.fn(async (p: string) => p);
+    const b = createFolderVaultBookmarks({ store, browsingVault: () => remote, canonicalizeLocal, setRoutedVault: vi.fn(), reportError: vi.fn() });
+    const panel = await openPanel({
+      listDir: vi.fn(async () => [dir("notes", "notes"), file("a.md", "a.md")]),
+      getBaseDir: () => "",
+      onOpenFile: vi.fn(),
+      onToggleVault: (root) => { void b.toggle(root); },
+      isVaultRegistered: b.isRegistered,
+    });
+    const toggle = () => panel.aside.querySelector<HTMLButtonElement>('[data-path="notes"] .explorer-vault-toggle');
+    expect(toggle()).not.toBeNull();
+    expect(toggle()?.getAttribute("aria-pressed")).toBe("false");
+
+    toggle()!.click();
+    await flush();
+    await panel.refreshVaultToggles();
+    expect(store.get().vaults.some((v) => v.persistenceKind === "remote" && v.explorerRoot === "notes")).toBe(true);
+    expect(toggle()?.getAttribute("aria-pressed")).toBe("true");
+
+    press(panel.aside, "Home");
+    press(panel.aside, "ArrowDown");
+    expect(nameOf(focusedItem(panel.aside))).toBe("notes");
+    treeOf(panel.aside).dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true }));
+    await flush();
+    await panel.refreshVaultToggles();
+    expect(store.get().vaults.some((v) => v.persistenceKind === "remote" && v.explorerRoot === "notes")).toBe(false);
+    expect(toggle()?.getAttribute("aria-pressed")).toBe("false");
+    expect(canonicalizeLocal).not.toHaveBeenCalled();
   });
 
   it("toggles the canonical folder and does not activate the folder row", async () => {

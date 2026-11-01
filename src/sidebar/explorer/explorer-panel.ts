@@ -198,22 +198,15 @@ export interface ExplorerHandlers {
    *  owns canonicalization and persistence; this panel only reports the row's
    *  path. */
   onToggleVault?(root: string): void;
-  /** Filesystem-canonical query used to render each folder toggle's current
-   *  state. The Promise is required because lexical normalization cannot
-   *  resolve symlink/alias identity. */
+  /** Query used to render each folder toggle's current state. Local rows are
+   *  resolved against the filesystem (symlink/alias identity, hence the
+   *  Promise); remote rows are a lexical lookup by vault identity. */
   isVaultRegistered?(root: string): Promise<boolean>;
   isRootLocked?(): boolean;
-  /** Whether the folder-bookmark toggle (`onToggleVault`/`isVaultRegistered`)
-   *  may render at all for the CURRENT root. Absent (or returning `true`)
-   *  means "render as before" — every existing caller keeps working
-   *  unchanged. Final review I2: a remote vault's directories were rendering
-   *  this toggle anyway (`onToggleVault`/`isVaultRegistered` are always
-   *  wired in main.ts), and clicking it called `canonicalize_path` on a
-   *  vault-relative name against the LOCAL filesystem — an `Err` that left
-   *  the row's skeleton on screen forever, or, worse, registered a
-   *  same-named LOCAL folder as a permanent vault if one happened to exist
-   *  at the CWD. A remote listing has no local folder to bookmark in the
-   *  first place, so the toggle must never even render there. */
+  /** Whether the folder-bookmark toggle may render for the CURRENT root.
+   *  Absent (or `true`) = render. Remote vaults no longer need this gate:
+   *  folder-vault-bookmark.ts routes remote rows to remote registration and
+   *  they never reach the local `canonicalize_path` (I2). */
   canBookmarkFolders?(): boolean;
   /** T4 (0.17.1) — the file row's right-click/Shift+F10/Menu-key context
    *  menu. All four are gated the same way: `hasLocalPath` decides whether

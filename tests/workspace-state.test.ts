@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { GLOBAL_VAULT_ID, REMOTE_VAULT_WIRE_ROOT, WorkspaceStateError, WorkspaceStore, anyVaultStillUsesHost, canonicalRootPath, workspaceStorageKey } from "../src/workspace/workspace-state";
+import { GLOBAL_VAULT_ID, REMOTE_VAULT_WIRE_ROOT, WorkspaceStateError, WorkspaceStore, anyVaultStillUsesHost, canonicalRootPath, findRemoteVaultByRoot, isRemoteFolderVault, remoteVaultRootFrom, workspaceStorageKey } from "../src/workspace/workspace-state";
 
 describe("WorkspaceStore", () => {
   beforeEach(() => localStorage.clear());
@@ -178,6 +178,99 @@ describe("WorkspaceStore", () => {
   // persistenceKind === "permanent" and commit's saveState filter dropped
   // everything else, so a remote vault vanished the moment the app restarted.
   describe("remote vaults", () => {
+    describe("remote folder vaults", () => {
+      it.each([
+        ["", ""], ["/", ""], [undefined, ""], [42, ""],
+        ["notes/deep", "notes/deep"], ["/notes/deep/", "notes/deep"], ["notes\\deep", "notes\\deep"],
+        ["notes/./deep", "notes/deep"], ["notes//deep", "notes/deep"],
+        ["notes/../x", null], ["..", null],
+      ])("remoteVaultRootFrom(%j) -> %j", (raw, expected) => {
+        expect(remoteVaultRootFrom(raw)).toBe(expected);
+      });
+
+      it("registers a folder vault with an @-suffixed id and root-vault id unchanged", () => {
+        const store = new WorkspaceStore();
+        const folder = store.registerRemoteVault("wis-macmini", "rv-1", "", "notes/deep");
+        expect(folder).toMatchObject({ explorerRoot: "notes/deep", rootPath: null, displayName: "deep", vaultId: "vault-remote-wis-macmini-rv-1@notes%2Fdeep" });
+        localStorage.clear();
+        expect(new WorkspaceStore().registerRemoteVault("wis-macmini", "rv-1", "원격").vaultId).toBe("vault-remote-wis-macmini-rv-1");
+        localStorage.clear();
+        expect(new WorkspaceStore().registerRemoteVault("wis-macmini", "rv-1", "원격", "/").vaultId).toBe("vault-remote-wis-macmini-rv-1");
+      });
+
+      it("root and folder vault coexist; duplicates (after normalization) are rejected; other host/id is not a duplicate", () => {
+        const store = new WorkspaceStore();
+        store.registerRemoteVault("h", "rv", "root");
+        store.registerRemoteVault("h", "rv", "deep", "notes/deep");
+        expect(store.get().vaults).toHaveLength(2);
+        for (const dup of ["notes/deep", "/notes/deep/"]) {
+          expect(() => store.registerRemoteVault("h", "rv", "x", dup)).toThrowError(expect.objectContaining({ code: "duplicate-root" }));
+        }
+        store.registerRemoteVault("h2", "rv", "deep", "notes/deep");
+        store.registerRemoteVault("h", "rv2", "deep", "notes/deep");
+        expect(store.get().vaults).toHaveLength(4);
+      });
+
+      it("rejects traversal with invalid-path and leaves state untouched", () => {
+        const store = new WorkspaceStore();
+        expect(() => store.registerRemoteVault("h", "rv", "x", "a/../b")).toThrowError(expect.objectContaining({ code: "invalid-path" }));
+        expect(store.get().vaults).toHaveLength(0);
+      });
+
+      it("a folder vault survives a restart", () => {
+        const folder = new WorkspaceStore().registerRemoteVault("h", "rv", "deep", "notes/deep");
+        const restarted = new WorkspaceStore();
+        expect(restarted.getVault(folder.vaultId)).toMatchObject({ explorerRoot: "notes/deep" });
+        expect(restarted.get().workspaces[0]?.vaultIds).toContain(folder.vaultId);
+      });
+
+      it("legacy persisted remote vaults (no explorerRoot / \"/\") restore as the root vault with their id unchanged", () => {
+        const base = { workspaceId: "workspace-default", displayName: "r", persistenceKind: "remote", rootPath: null, host: "h", remoteVaultId: "rv" };
+        localStorage.setItem(workspaceStorageKey, JSON.stringify({
+          currentWorkspaceId: "workspace-default",
+          workspaces: [{ workspaceId: "workspace-default", vaultIds: ["legacy-a", "legacy-b"], currentVaultId: "legacy-a", lastSelectedPermanentVaultId: null }],
+          vaults: [{ ...base, vaultId: "legacy-a" }, { ...base, vaultId: "legacy-b", remoteVaultId: "rv2", explorerRoot: "/" }],
+        }));
+        const store = new WorkspaceStore();
+        expect(store.getVault("legacy-a")).toMatchObject({ explorerRoot: "" });
+        expect(store.getVault("legacy-b")).toMatchObject({ explorerRoot: "" });
+        expect(store.get().workspaces[0]?.currentVaultId).toBe("legacy-a");
+      });
+
+      it("a corrupt persisted explorerRoot is dropped, not promoted to the root", () => {
+        localStorage.setItem(workspaceStorageKey, JSON.stringify({
+          currentWorkspaceId: "workspace-default",
+          workspaces: [{ workspaceId: "workspace-default", vaultIds: ["bad"], currentVaultId: null, lastSelectedPermanentVaultId: null }],
+          vaults: [{ vaultId: "bad", workspaceId: "workspace-default", displayName: "r", persistenceKind: "remote", rootPath: null, host: "h", remoteVaultId: "rv", explorerRoot: "../etc" }],
+        }));
+        const store = new WorkspaceStore();
+        expect(store.get().vaults).toHaveLength(0);
+        expect(store.get().workspaces[0]?.vaultIds).not.toContain("bad");
+      });
+
+      it("findRemoteVaultByRoot / isRemoteFolderVault", () => {
+        const store = new WorkspaceStore();
+        const root = store.registerRemoteVault("h", "rv", "root");
+        const folder = store.registerRemoteVault("h", "rv", "deep", "notes/deep");
+        const perm = store.registerVault("/tmp/x-perm");
+        const { vaults } = store.get();
+        expect(findRemoteVaultByRoot(vaults, "h", "rv", "notes/deep")).toBe(folder);
+        expect(findRemoteVaultByRoot(vaults, "h", "rv", "")).toBe(root);
+        expect(findRemoteVaultByRoot(vaults, "h2", "rv", "notes/deep")).toBeUndefined();
+        expect(findRemoteVaultByRoot(vaults, "h", "rv2", "notes/deep")).toBeUndefined();
+        expect(findRemoteVaultByRoot(vaults, "h", "rv", "other")).toBeUndefined();
+        expect([root, folder, perm, store.getGlobalVault()].map(isRemoteFolderVault)).toEqual([false, true, false, false]);
+      });
+
+      it("anyVaultStillUsesHost stays true while a folder vault of the host remains", () => {
+        const store = new WorkspaceStore();
+        const root = store.registerRemoteVault("ssh://u@h", "rv", "root");
+        store.registerRemoteVault("ssh://u@h", "rv", "deep", "notes/deep");
+        store.unregisterVault(root.vaultId);
+        expect(anyVaultStillUsesHost(store.get().vaults, "ssh://u@h")).toBe(true);
+      });
+    });
+
     it("registers a remote vault, selects it, and survives a reload", () => {
       const firstStore = new WorkspaceStore();
       const remote = firstStore.registerRemoteVault("wis-macmini:47878", "rv-abc", "맥미니 노트");

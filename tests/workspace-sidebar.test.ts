@@ -825,6 +825,22 @@ describe("workspace sidebar", () => {
     });
   });
 
+  describe("share-keyed badge probes (M2)", () => {
+    it("root + folder vaults of one share probe once and retry together", async () => {
+      const store = new WorkspaceStore();
+      store.registerRemoteVault("m2-host", "m2-rv", "root");
+      store.registerRemoteVault("m2-host", "m2-rv", "deep", "notes/deep");
+      const call = vi.fn().mockResolvedValue([]) as unknown as typeof import("@tauri-apps/api/core").invoke;
+      const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+      document.body.append(sidebar.aside);
+      await vi.waitFor(() => expect([...sidebar.aside.querySelectorAll(".workspace-vault-badge")].map((b) => b.textContent)).toEqual(["연결됨", "연결됨"]));
+      expect(call).toHaveBeenCalledTimes(1);
+      const labels = [...sidebar.aside.querySelectorAll(".workspace-vault-badge")].map((b) => b.textContent);
+      expect(labels).toHaveLength(2);
+      expect(new Set(labels).size).toBe(1);
+    });
+  });
+
   // Reconnect UI for a remote vault whose badge is not "connected" — the "×"
   // used to be the ONLY button on a broken row, which meant the sole
   // recovery path from "연결 안 됨" was to unregister the vault and re-pair
@@ -931,6 +947,70 @@ describe("workspace sidebar", () => {
       const disconnect = [...row.querySelectorAll<HTMLButtonElement>(".workspace-vault-action")].find((b) => b.title.includes("해제"))!;
       expect(disconnect.title).toContain("페어링");
       sidebar.destroy();
+    });
+
+    describe("remote folder vaults", () => {
+      const mk = () => {
+        const store = new WorkspaceStore();
+        const call = vi.fn().mockResolvedValue([]) as unknown as typeof import("@tauri-apps/api/core").invoke;
+        return { store, call };
+      };
+      const mount = (store: WorkspaceStore, call: typeof import("@tauri-apps/api/core").invoke) => {
+        const sidebar = createWorkspaceSidebar({ store, onSelectVault: vi.fn(), call });
+        document.body.append(sidebar.aside);
+        const row = (id: string) => sidebar.aside.querySelector<HTMLElement>(`[data-vault-id="${id}"]`)!;
+        return { sidebar, row };
+      };
+      const level = (el: HTMLElement) => el.style.getPropertyValue("--level") || el.dataset.level;
+
+      it("nests folder vaults under their share root, nearest parent wins, other shares / permanent do not nest", () => {
+        const { store, call } = mk();
+        const root = store.registerRemoteVault("fv-host", "rv-1", "루트");
+        const notes = store.registerRemoteVault("fv-host", "rv-1", "", "notes");
+        const deep = store.registerRemoteVault("fv-host", "rv-1", "", "notes/deep");
+        const other = store.registerRemoteVault("fv-host", "rv-2", "", "notes/deep");
+        const { sidebar, row } = mount(store, call);
+        expect([root, notes, deep, other].map((v) => level(row(v.vaultId)))).toEqual(["1", "2", "3", "1"]);
+        const order = [...sidebar.aside.querySelectorAll<HTMLElement>(".workspace-vault-group--remote [data-vault-id]")].map((el) => el.dataset.vaultId).filter((id) => id !== other.vaultId);
+        expect(order).toEqual([root.vaultId, notes.vaultId, deep.vaultId]);
+        sidebar.destroy();
+      });
+
+      it("a folder vault without its share root is level 1", () => {
+        const { store, call } = mk();
+        const only = store.registerRemoteVault("fv-host2", "rv-1", "", "notes/deep");
+        const { sidebar, row } = mount(store, call);
+        expect(level(row(only.vaultId))).toBe("1");
+        sidebar.destroy();
+      });
+
+      it("shows folder name + `host › subpath` title, folder-specific unregister label, and probes the share root", async () => {
+        const { store, call } = mk();
+        store.registerRemoteVault("fv-host3", "rv-1", "루트");
+        const folder = store.registerRemoteVault("fv-host3", "rv-1", "", "notes/deep");
+        const { sidebar, row } = mount(store, call);
+        const el = row(folder.vaultId);
+        expect(el.querySelector(".workspace-vault-name")?.textContent).toBe("deep");
+        expect(el.querySelector<HTMLElement>(".workspace-vault-select")?.title).toBe("fv-host3 › notes/deep");
+        const remove = el.querySelector<HTMLButtonElement>(".workspace-vault-action")!;
+        expect(remove.title).toContain("탐색기에서 다시 등록");
+        expect(remove.title).not.toContain("페어링");
+        expect(el.querySelector(".workspace-vault-badge")).not.toBeNull();
+        await vi.waitFor(() => expect(call).toHaveBeenCalledWith("remote_list_dir", expect.objectContaining({ path: "" })));
+        expect(call).not.toHaveBeenCalledWith("remote_list_dir", expect.objectContaining({ path: "notes/deep" }));
+        sidebar.destroy();
+      });
+
+      it("unregistering a folder vault removes it and does not tear down the ssh tunnel while the root remains", () => {
+        const { store, call } = mk();
+        store.registerRemoteVault("ssh://u@fv-host4", "rv-1", "루트");
+        const folder = store.registerRemoteVault("ssh://u@fv-host4", "rv-1", "", "notes");
+        const { sidebar, row } = mount(store, call);
+        row(folder.vaultId).querySelector<HTMLButtonElement>(".workspace-vault-action")!.click();
+        expect(store.get().vaults.some((v) => v.vaultId === folder.vaultId)).toBe(false);
+        expect(call).not.toHaveBeenCalledWith("remote_ssh_disconnect", expect.anything());
+        sidebar.destroy();
+      });
     });
 
     it("recovers automatically when the window comes back online — invalidates the cache and reprobes without polling", async () => {

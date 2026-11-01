@@ -234,6 +234,13 @@ describe("remoteFileHost / remoteConnectionStateFor — ssh tunnel reconnect (fi
     expect(state).toBe("unreachable");
   });
 
+  it("remoteConnectionStateFor probes the armed vault ROOT even for a folder vault", async () => {
+    const call = vi.fn().mockResolvedValue([]) as never;
+    const folder: RemoteVault = { ...sshVault("plain-host-probe"), explorerRoot: "notes/deep" };
+    expect(await remoteConnectionStateFor(folder, call)).toBe("connected");
+    expect(call).toHaveBeenCalledWith("remote_list_dir", expect.objectContaining({ path: "" }));
+  });
+
   it("remoteConnectionStateFor also reconnects the tunnel for an ssh:// vault before probing", async () => {
     const calls: string[] = [];
     const call = ((cmd: string) => {

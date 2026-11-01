@@ -12,11 +12,24 @@ export type PersistenceKind = "permanent" | "global" | "remote";
  *  the vault root; `resolve_within` rejects a leading `RootDir` component
  *  (i.e. any path starting with `/`), so a `"/"` sent as `path` 404s and the
  *  client misreads that as "호스트가 공유를 껐음". Every place that constructs
- *  or restores a `RemoteVault` MUST use this constant for `explorerRoot`
- *  (`registerRemoteVault` and `readState`'s restore branch, below) — routing
- *  both through one symbol makes it impossible for the two to drift apart the
+ *  or restores a `RemoteVault` MUST route `explorerRoot` through
+ *  `remoteVaultRootFrom` (below), whose root spelling is this constant
+ *  (`registerRemoteVault` and `readState`'s restore branch) — routing both
+ *  through one function makes it impossible for the two to drift apart the
  *  way `"/"` vs. the wire's `""` did. */
 export const REMOTE_VAULT_WIRE_ROOT = "";
+
+/** Normalizes a raw root to its wire form: "/" separators, no leading/trailing
+ *  separator, no empty or "." segments; `""` = the armed vault root. A
+ *  non-string is the legacy "no field" case = root. Any ".." segment yields
+ *  `null` (the host would refuse it anyway, but a traversal in the client's
+ *  identity key would let one folder register under two keys). Pure query. */
+export const remoteVaultRootFrom = (raw: unknown): string | null => {
+  if (typeof raw !== "string") return REMOTE_VAULT_WIRE_ROOT;
+  const segments = raw.split("/").filter((segment) => segment !== "" && segment !== ".");
+  if (segments.includes("..")) return null;
+  return segments.join("/");
+};
 interface VaultBase {
   readonly vaultId: string;
   readonly workspaceId: string;
@@ -35,13 +48,29 @@ export interface GlobalVault extends VaultBase {
 export interface RemoteVault extends VaultBase {
   readonly rootPath: null;
   readonly persistenceKind: "remote";
-  readonly explorerRoot: string;
+  /** Armed-vault-relative root this vault's explorer is locked to. `""` = the
+   *  armed vault root (REMOTE_VAULT_WIRE_ROOT), `"notes/deep"` = a folder
+   *  vault. Always passed through `remoteVaultRootFrom`. */
+  readonly explorerRoot: string; // identity component — never reassign
   /** `wis-macmini` 또는 `wis-macmini:9000` 또는 `ssh://user@host`. */
   readonly host: string;
   /** 호스트가 공유 목록에서 이 볼트에 붙인 안정 id. */
   readonly remoteVaultId: string;
 }
 export type Vault = PermanentVault | GlobalVault | RemoteVault;
+
+/** SSOT for "the same remote share" = `(host, remoteVaultId)`: connection
+ *  state (badge cache/probes/retry) is per share, not per folder vault. */
+export const remoteShareKey = (vault: Pick<RemoteVault, "host" | "remoteVaultId">): string => `${vault.host}\u0000${vault.remoteVaultId}`;
+
+/** Identity lookup `(host, remoteVaultId, explorerRoot)` — the ONE place both
+ *  duplicate detection and the explorer toggle's "is it registered" ask. */
+export const findRemoteVaultByRoot = (vaults: readonly Vault[], host: string, remoteVaultId: string, root: string): RemoteVault | undefined =>
+  vaults.find((v): v is RemoteVault => v.persistenceKind === "remote" && v.host === host && v.remoteVaultId === remoteVaultId && v.explorerRoot === root);
+
+/** A remote vault rooted at a sub-folder of the armed vault. Pure query. */
+export const isRemoteFolderVault = (vault: Vault): vault is RemoteVault =>
+  vault.persistenceKind === "remote" && vault.explorerRoot !== REMOTE_VAULT_WIRE_ROOT;
 export interface Workspace { readonly workspaceId: string; readonly vaultIds: readonly string[]; readonly currentVaultId: string | null; readonly lastSelectedPermanentVaultId: string | null; }
 export interface WorkspaceState { readonly workspaces: readonly Workspace[]; readonly vaults: readonly Vault[]; readonly currentWorkspaceId: string; }
 export type WorkspaceStateErrorCode = "duplicate-root" | "missing-vault" | "invalid-path";
@@ -59,8 +88,8 @@ export const canonicalPath = canonicalRootPath;
 
 /** Whether any *remaining* remote vault is still registered against `host`
  *  — the SSH tunnel for a host (`remote_ssh.rs`, Task 12) is per-HOST, not
- *  per-vault: `registerRemoteVault` above dedupes on `(host, remoteVaultId)`
- *  only, so two vaults from the same host's share list CAN legitimately
+ *  per-vault: `registerRemoteVault` above dedupes on `(host, remoteVaultId, explorerRoot)`,
+ *  so two vaults from the same host's share list CAN legitimately
  *  coexist. Fix round 2, Important B: removing one must not tear the
  *  tunnel down while a sibling vault on the same host is still registered
  *  (the caller checks this *after* the removal it's guarding, against
@@ -106,7 +135,9 @@ const readState = (): WorkspaceState => {
         return [{ vaultId: item.vaultId, workspaceId: item.workspaceId, displayName: item.displayName, persistenceKind: "permanent", rootPath: canonicalRootPath(item.rootPath), explorerRoot: canonicalRootPath(item.rootPath) }];
       }
       if (item.persistenceKind === "remote" && typeof item.host === "string" && typeof item.remoteVaultId === "string") {
-        return [{ vaultId: item.vaultId, workspaceId: item.workspaceId, displayName: item.displayName, persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: item.host, remoteVaultId: item.remoteVaultId }];
+        const root = remoteVaultRootFrom(item.explorerRoot);
+        if (root === null) return []; // corrupt: promoting to the root would duplicate its identity
+        return [{ vaultId: item.vaultId, workspaceId: item.workspaceId, displayName: item.displayName, persistenceKind: "remote", rootPath: null, explorerRoot: root, host: item.host, remoteVaultId: item.remoteVaultId }];
       }
       return [];
     });
@@ -159,7 +190,11 @@ const selectionIsNoop = (workspace: Workspace, vaultId: string, touchesLastSelec
  *  persisted" now goes through this one predicate, so remote joining the
  *  persisted tier only needed a change HERE, not at each call site. */
 const isPersistedVaultKind = (kind: PersistenceKind): boolean => kind === "permanent" || kind === "remote";
-const makeRemoteVaultId = (host: string, remoteVaultId: string): string => `vault-remote-${encodeURIComponent(host)}-${encodeURIComponent(remoteVaultId)}`;
+/** Root vaults keep the pre-folder-vault id (persisted tabs/recents key on it);
+ *  folder vaults append `@<root>` — "@" is always escaped to %40 inside the
+ *  encoded parts, so the suffix can't collide with another id. */
+const makeRemoteVaultId = (host: string, remoteVaultId: string, root: string): string =>
+  `vault-remote-${encodeURIComponent(host)}-${encodeURIComponent(remoteVaultId)}` + (root === REMOTE_VAULT_WIRE_ROOT ? "" : `@${encodeURIComponent(root)}`);
 
 /** localStorage에서 워크스페이스 상태를 새로 읽는다(순수 쿼리 — 쓰기 없음).
  *  창별 `WorkspaceStore` 캐시는 다른 창의 변경에 낡을 수 있어, 그 시점의 진실이
@@ -187,18 +222,22 @@ export class WorkspaceStore {
   }
   /** Registers a paired remote vault (Task 10) — the client-side counterpart
    *  of a permanent registration, except there is no local `rootPath` to
-   *  canonicalize: identity is `(host, remoteVaultId)`, the pair the host
-   *  itself hands back from `remote_vaults`. Deliberately does NOT touch
+   *  canonicalize: identity is `(host, remoteVaultId, explorerRoot)`: the pair the host
+   *  itself hands back from `remote_vaults` plus the folder root. Deliberately does NOT touch
    *  `lastSelectedPermanentVaultId` (unlike `registerCanonicalVault` above) —
    *  that field's name is load-bearing: only a PERMANENT selection may write
    *  it (selectVault mirrors this), so a freshly-paired remote vault becomes
    *  current without being remembered as "the" vault to restore to after a
    *  global excursion. */
-  registerRemoteVault(host: string, remoteVaultId: string, displayName: string): Vault {
+  registerRemoteVault(host: string, remoteVaultId: string, displayName: string, root: string = REMOTE_VAULT_WIRE_ROOT): Vault {
     const workspace = this.currentWorkspace();
-    if (workspace.vaultIds.some((id) => { const v = this.vaultById(id); return v?.persistenceKind === "remote" && v.host === host && v.remoteVaultId === remoteVaultId; }))
-      throw new WorkspaceStateError("duplicate-root", `A vault is already registered for ${host}/${remoteVaultId}`);
-    const vault: Vault = { vaultId: makeRemoteVaultId(host, remoteVaultId), workspaceId: workspace.workspaceId, rootPath: null, displayName: displayName.trim() || remoteVaultId, persistenceKind: "remote", explorerRoot: REMOTE_VAULT_WIRE_ROOT, host, remoteVaultId };
+    const normalized = remoteVaultRootFrom(root);
+    if (normalized === null) throw new WorkspaceStateError("invalid-path", `Invalid remote folder path: ${root}`);
+    const workspaceVaults = workspace.vaultIds.flatMap((id) => { const v = this.vaultById(id); return v ? [v] : []; });
+    if (findRemoteVaultByRoot(workspaceVaults, host, remoteVaultId, normalized))
+      throw new WorkspaceStateError("duplicate-root", `A vault is already registered for ${host}/${remoteVaultId}${normalized ? `/${normalized}` : ""}`);
+    const lastSegment = normalized.split("/").pop() ?? "";
+    const vault: Vault = { vaultId: makeRemoteVaultId(host, remoteVaultId, normalized), workspaceId: workspace.workspaceId, rootPath: null, displayName: displayName.trim() || lastSegment || remoteVaultId, persistenceKind: "remote", explorerRoot: normalized, host, remoteVaultId };
     const nextWorkspace = { ...workspace, vaultIds: [...workspace.vaultIds, vault.vaultId], currentVaultId: vault.vaultId };
     this.commit({ ...this.state, workspaces: this.state.workspaces.map((item) => item.workspaceId === workspace.workspaceId ? nextWorkspace : item), vaults: [...this.state.vaults, vault] });
     return vault;
