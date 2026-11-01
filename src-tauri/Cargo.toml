@@ -174,3 +174,8 @@ tower = { version = "0.4", features = ["util"] }
 # sets per build target, so `cargo test` gets "macros" while a normal
 # `cargo build`/release binary never does.
 tokio = { version = "1", features = ["macros"] }
+
+# Keep only line tables in dev builds: backtraces still show file:line, but
+# target/debug stays a fraction of its full-debuginfo size.
+[profile.dev]
+debug = "line-tables-only"
