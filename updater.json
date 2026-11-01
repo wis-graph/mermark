@@ -1,11 +1,11 @@
 {
-  "version": "0.21.0",
-  "notes": "### Added\n\n- **터미널에서 원격 공유를 켜고 끌 수 있다**: `mermark share on 노트 업무`처럼 볼트 이름을 적으면 그 볼트들을 공유하고, 이름 없이 `mermark share on`이면 마지막으로 공유했던 볼트와 연결 방식으로 다시 켠다. `mermark share off`로 끄고 `mermark share status`로 상태를 본다. 결과는 터미널에 바로 나온다. 앱이 꺼져 있으면 `share on`이 앱을 띄운 뒤 공유를 켠다. 설정 패널에서 켜도 같은 \"마지막 선택\"이 기억되고, 터미널에서 켜면 열려 있는 설정 패널에도 바로 반영된다.\n- **파일 우클릭 메뉴에 확장자별 \"○○로 열기\"**: 이미지와 PDF는 \"미리보기로 열기\", HTML·SVG·PDF·이미지는 \"브라우저로 열기\"가 생겼다. 기본 앱이 다른 앱으로 지정돼 있어도 미리보기·기본 브라우저로 연다. \"기본 앱에서 열기\"는 그대로 있다.\n\n### Fixed\n\n- **\"기본 앱에서 열기\"와 위키링크 첨부 열기가 아무 반응이 없던 문제**: 열기 권한 설정 때문에 모든 경로가 거부되고 있었는데 오류가 조용히 묻혀 있었다. 이제 제대로 열린다. 이전 메뉴에서 PDF 항목은 \"미리보기에서 열기\"라고 쓰여 있었지만 실제로는 기본 앱으로 열려고 했다 — 이름과 동작을 맞췄다.\n- **공유 켜기가 동시에 두 번 들어오면 한쪽이 \"포트 사용 중\"으로 실패하던 문제**.\n\n### Security\n\n- 기본 앱으로 여는 경로가 실행 파일(`.command`, `.app` 안쪽 파일, `.webloc` 등)을 거부한다. 심볼릭 링크로 이름을 위장해도 실제 파일을 기준으로 판단한다.",
-  "pub_date": "2026-10-17T19:16:51Z",
+  "version": "0.22.0",
+  "notes": "### Added\n\n- **원격 볼트에서도 폴더를 볼트로 등록할 수 있다**: 원격 볼트 탐색기에서 폴더 옆 북마크(또는 Space)를 누르면 그 폴더가 사이드바에 볼트로 추가되고, 클릭하면 그 폴더에서 탐색기가 바로 시작한다. 깊은 폴더의 문서를 열 때마다 공유 루트부터 파고 내려갈 필요가 없다. 같은 원격 볼트 아래에 들여써 보이고, 재시작해도 남는다. 북마크를 다시 누르거나 ×로 해제한다. 이미지·위키링크는 폴더 볼트 안에서도 공유된 볼트 전체에서 찾는다. 호스트 쪽은 업데이트하지 않아도 된다.\n- **원격 볼트의 동영상이 재생된다**: 본문의 상대경로 동영상을 클릭하면 호스트에서 받아 재생한다(20 MiB 이하).\n\n### Changed\n\n- **디자인 정리**: 세 테마(라이트·다크·Claude)의 글자 대비를 접근성 기준(AA)에 맞췄다 — 특히 Claude 테마의 콜아웃 제목과 선택된 버튼이 읽기 쉬워졌다. 오류·경고·성공 색, 버튼 크기, 메뉴·모달의 그림자를 하나의 규칙으로 통일했다.\n- **본문**: 한국어가 어절 단위로 줄바꿈된다. H3 크기를 H2와 더 뚜렷이 구분했다. 표 머리글·숫자 열 정렬, 머메이드 테두리, 코드 언어 표시를 다듬었다. 읽기 모드에서는 접힌 곳의 접기 표시만 보인다.\n- **설정 패널**: 켜고 끄는 항목이 스위치로 바뀌었고, 항목 이름을 클릭해도 켜고 꺼진다. 단축키 행의 \"재정의\"는 마우스를 올렸을 때, \"기본값\"은 바꾼 행에만 보인다.\n- **제목 표시줄에 열린 파일 이름이 보인다.** 웰컴 화면과 뷰어에서는 본문 너비 슬라이더와 줄·열 표시가 숨는다.\n- 충돌 처리 설정의 \"덮어쓰기\" 선택지를 없앴다 — 이미 아무 효과가 없던 항목이다.\n\n### Fixed\n\n- **소스 코드 뷰어에서 공백과 들여쓰기가 사라지던 문제**.\n- **업데이트 후 재시작할 때 방금 입력한 내용이 저장되지 않을 수 있던 문제**: 이제 저장이 확인돼야 재시작한다.",
+  "pub_date": "2026-11-01T23:04:11Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzJoVlFJQ3NDaVZZWnRSeUpSeUdteGNpbHZMaUFZTTRaaHE3elN2cTBCVDRoNTlWdFkrVGoyeTVKdFdzaVh2TDJneDNleHAzNFo2RjZRemY5L01wR1FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjY0NTk0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkNNdWpFSEpqdUEzU2d1SEI2VGhJWjlhdC9wSlpuNElwWEgxMElJeTkyNHpFa3BiSi8xTzNLZGM0NzFJN3ZrOEV5VkRmYnNJcVBnTUlLWjZZVnVTVERBPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.21.0/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzAwc21tVmdFVDNDbTNWaCtoSW8wNjM5NHcvUUxCVzVtc0NqVWZiQjk2TTkxWjJXb2sxSEEyVUh1b3NUNkExZnVZallYcC9pMTZGdFprOVFhckN2ckFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNTc0MjM0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnY4ek1ES3lQT2Q3Rld5S3d4S295dkJGYnRQNFh2SDBnN2k1ODZGbnE5eTIrQjgza0J4d1pWWm91OGJ5c3QzVmtxNFQ3WlJqL1FvVkVTMkg3SEtMc0FnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.22.0/mermark.app.tar.gz"
     }
   }
 }
