@@ -89,19 +89,19 @@ describe("flashStatus overlap (path.copy / bundle.copy)", () => {
     // ⌥⌘C: path.copy — first flash of the burst, captures the real baseline.
     dispatchChord("Mod+Alt+C");
     await vi.advanceTimersByTimeAsync(0); // let the clipboard promise settle
-    expect(pos.textContent).toBe("✓ 경로 복사됨");
+    expect(pos.textContent).toBe("경로 복사됨");
 
     // Before the first flash's 1200ms timer fires, ⌘⇧C: bundle.copy overlaps.
-    // Old buggy behavior: `prev` would capture "✓ 경로 복사됨" (not `original`),
+    // Old buggy behavior: `prev` would capture "경로 복사됨" (not `original`),
     // and the first timer would still be live to stomp this one.
     await vi.advanceTimersByTimeAsync(600);
     dispatchChord("Mod+Shift+C");
     await vi.advanceTimersByTimeAsync(0);
-    expect(pos.textContent).toBe("✓ 번들 복사됨");
+    expect(pos.textContent).toBe("번들 복사됨");
 
     // Advance past where the FIRST (cancelled) timer would have fired.
     await vi.advanceTimersByTimeAsync(650);
-    expect(pos.textContent).toBe("✓ 번들 복사됨"); // not stomped back to path msg
+    expect(pos.textContent).toBe("번들 복사됨"); // not stomped back to path msg
 
     // Advance past the second timer's expiry: must restore the real original.
     await vi.advanceTimersByTimeAsync(600);
@@ -128,7 +128,7 @@ describe("flashStatus overlap (path.copy / bundle.copy)", () => {
     // ⌥⌘C: path.copy — the backend invoke rejects, so the failure flash fires.
     dispatchChord("Mod+Alt+C");
     await vi.advanceTimersByTimeAsync(0);
-    expect(pos.textContent).toBe("⚠ 경로 복사 실패");
+    expect(pos.textContent).toBe("경로 복사 실패");
     expect(clipboardWriteText).not.toHaveBeenCalled(); // no web fallback on IPC failure
   });
 

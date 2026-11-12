@@ -231,9 +231,10 @@
   --sidebar-accent: #a8c8e8;
   --sidebar-border: rgba(255,255,255,.14);
   /* BLOCK FILL RULE (see :root's --block-fill comment) — light needs the
-     stronger 8% mix; --surface (4% lighter than --bg here) read as almost no
-     difference at all. */
-  --block-fill: color-mix(in srgb, var(--fg) 8%, var(--bg));
+     stronger 6% mix; --surface (4% lighter than --bg here) read as almost no
+     difference at all. 2026-11 unslop polish: 8% -> 6% (코드·인용 블록이 본문보다
+     무겁게 읽혀 한 단계 낮춤, 경계는 --block-edge 16%가 유지). */
+  --block-fill: color-mix(in srgb, var(--fg) 6%, var(--bg));
   /* BLOCK EDGE RULE (see :root's --block-edge comment) — light needs 16% (2x
      fill) since --border (#e7e5e4) sits only ~5/channel from fill (#e2e2e2). */
   --block-edge: color-mix(in srgb, var(--fg) 16%, var(--bg));
@@ -291,8 +292,9 @@
   --sidebar-accent: #e0906f;
   --sidebar-border: rgba(255,255,255,.12);
   /* BLOCK FILL RULE (see :root's --block-fill comment) — claude also needs
-     the stronger 8% mix; same rationale as light. */
-  --block-fill: color-mix(in srgb, var(--fg) 8%, var(--bg));
+     the stronger 6% mix; same rationale as light (2026-11 unslop polish: 8% -> 6%,
+     경계는 --block-edge 16%가 유지). */
+  --block-fill: color-mix(in srgb, var(--fg) 6%, var(--bg));
   /* BLOCK EDGE RULE (see :root's --block-edge comment) — claude also needs
      the 16% (2x fill) mix; same rationale as light. */
   --block-edge: color-mix(in srgb, var(--fg) 16%, var(--bg));
@@ -623,7 +625,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   padding-inline-start: var(--code-hang, 0ch);
   text-indent: calc(-1 * var(--code-hang, 0ch));
 }
-.cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: 2.4em; font-family: var(--font-sans); font-weight: 500; font-size: .72em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
+.cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: 2.4em; font-family: var(--font-mono); font-weight: 400; font-size: .72em; color: var(--muted); pointer-events: none; }
 /* Copy-to-clipboard button base (shared by code-block + blockquote copy
    buttons — markdown/copy-button.ts's single DOM factory): fixed to the
    top-right corner of its `position: relative` host, hidden until that host
@@ -722,7 +724,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-blockquote-last { border-bottom-left-radius: var(--block-radius, 0); border-bottom-right-radius: var(--block-radius, 0); padding-bottom: var(--block-padding, 0); }
 .cm-callout-last { border-bottom-right-radius: var(--block-radius, 0); }
 .cm-callout { position: relative; background: var(--surface-veil); border-left: 3px solid var(--accent); padding-left: .75em; }
-.cm-callout-head { border-top-right-radius: var(--block-radius, 0); font-weight: 700; padding-right: 2.2em; /* clears the copy button on the head line */
+.cm-callout-head { border-top-right-radius: var(--block-radius, 0); font-weight: 600; padding-right: 2.2em; /* clears the copy button on the head line */
   /* CALLOUT HEAD RULE: the type hue pulled 45% toward --fg. --fg is white on dark
      (-> light pastel) and ink on light/claude/any custom light theme (-> dark
      shade), so one derived rule holds AA everywhere — no per-theme overrides.
@@ -741,7 +743,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-callout-head-widget { display: inline-flex; align-items: center; gap: .4em; }
 .cm-callout-icon { display: inline-flex; align-items: center; }
 .cm-callout-icon .icon { width: 1.1em; height: 1.1em; }
-.cm-callout-title { font-weight: 700; }
+.cm-callout-title { font-weight: 600; }
 /* Per-type colour: soft tint background + accent left rule + head text colour.
    Existing warning/danger colours preserved verbatim. */
 /* Backgrounds/border accents are theme-invariant (low-alpha tints read on both
@@ -1126,7 +1128,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .mode-toggle[data-remote="true"]:hover { background: color-mix(in srgb, var(--warning) 12%, transparent); }
 
 .recovery-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, #000 45%, transparent); }
-.recovery-modal { display: flex; flex-direction: column; gap: 14px; width: min(520px, 92vw); padding: 20px; border-radius: var(--elev-2-radius); background: var(--elev-2-bg); color: var(--fg); border: 1px solid var(--border); box-shadow: var(--elev-2-shadow); }
+.recovery-modal { display: flex; flex-direction: column; gap: 16px; width: min(520px, 92vw); padding: 20px; border-radius: var(--elev-2-radius); background: var(--elev-2-bg); color: var(--fg); border: 1px solid var(--border); box-shadow: var(--elev-2-shadow); }
 .recovery-title { margin: 0; font-size: 16px; }
 .recovery-body { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .recovery-modal details { color: var(--muted); font-size: 12px; }
@@ -1145,7 +1147,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   background: color-mix(in srgb, #000 45%, transparent);
 }
 .conflict-modal {
-  display: flex; flex-direction: column; gap: 14px;
+  display: flex; flex-direction: column; gap: 16px;
   width: min(720px, 92vw); max-height: 84vh;
   padding: 20px; border-radius: var(--elev-2-radius);
   background: var(--elev-2-bg); color: var(--fg);
@@ -1534,11 +1536,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    same technique .excel-viewer-table uses. */
 .sqlite-viewer-table th, .sqlite-viewer-table td {
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--fg) 8%, transparent);
-  padding: 5px 10px; text-align: left; white-space: pre;
+  padding: 4px 10px; text-align: left; white-space: pre;
 }
 .sqlite-viewer-table th {
   position: sticky; top: 0; z-index: 1;
-  background: var(--surface); color: var(--muted); font-weight: 700; text-align: left;
+  background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
 }
 .sqlite-viewer-table tbody tr:nth-child(even) td {
   background: color-mix(in srgb, var(--fg) 3%, transparent);
@@ -1796,7 +1798,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    OWN `.workspace-vault-tabs` (see renderVaultCollapse) — a child vault is a
    sibling `.workspace-vault-row`, never nested inside it, so indent is
    purely a visual relationship, never a visibility one. */
-.workspace-vault-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: .15em; min-width: 0; margin-left: calc((var(--level, 1) - 1) * 14px); }
+.workspace-vault-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: .15em; min-width: 0; margin-left: calc((var(--level, 1) - 1) * 12px); }
 /* Active vault (design_tabbar_visual.md §2.4): the accent band now belongs to
    the whole ROW, not just the `select` pill — the pill used to float the
    glyph/bookmark outside its own highlight and put the left accent bar at the
@@ -1863,20 +1865,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    this split, three simultaneously-open vaults each show a bold active tab
    and the eye can't tell which one is actually current (§1 진단 4). */
 .workspace-vault-tab[data-active="true"] { color: var(--sidebar-fg); }
-/* Active tab in the ACTIVE vault escalates to the row band's own accent
-   language (bar + tint) instead of bold — same "here" signal, one visual
-   grammar. font-weight 500, not 600: 600 smears at 12px Hangul.
-   The LEFT corners go square: an inset bar follows a rounded corner and
-   renders as an arc, and a tinted pill with an arc down its left edge is
-   exactly the bordered-text-input misread that design_tabbar_visual.md §1
-   진단 3 removed from the vault row. The vault band's bar is a straight
-   line because that band is full-bleed; the tab's has to be straight too,
-   or "accent bar = you are here" is two shapes instead of one. */
+/* Active tab in the ACTIVE vault: tint fill only, no bar — the accent bar
+   lives on the vault row alone (a second bar on the tab doubled the signal).
+   font-weight 500, not 600: 600 smears at 12px Hangul. */
 .workspace-vault-row:has(.workspace-vault-select[aria-current="true"]) .workspace-vault-tab[data-active="true"] {
   font-weight: 500;
   background: color-mix(in srgb, var(--sidebar-accent) 10%, transparent);
-  box-shadow: inset 2px 0 var(--sidebar-accent);
-  border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
+  border-radius: var(--radius-sm, 6px);
 }
 .workspace-vault-tab:hover, .workspace-vault-tab:focus-visible, .workspace-vault-tab-close:hover, .workspace-vault-tab-close:focus-visible { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
 /* Hover-reveal (§2.3, §2.5): the hit target stays reserved at 1.7em always —
@@ -1930,13 +1925,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    not on `select` — so `select:focus-visible` and the row's own box-shadow
    are two different elements' box-shadows and never fight over one list.
    The active TAB is the one place this composition still applies: an active
-   tab in the active vault carries its own inset accent bar (rule above) AND
-   can itself receive keyboard focus, so — same technique as
-   .explorer-item.is-selected.is-focused elsewhere — those two shadows are
-   composed into one list here instead of the focus ring silently replacing
-   the bar. */
+   tab in the active vault carries no bar (fill only, rule above); it can still
+   receive keyboard focus, so this rule keeps the same focus ring the generic
+   tab rule paints — it exists only because the :has() rule above would
+   otherwise be the sole box-shadow source for that tab. */
 .workspace-vault-row:has(.workspace-vault-select[aria-current="true"]) .workspace-vault-tab[data-active="true"]:focus-visible {
-  box-shadow: inset 2px 0 var(--sidebar-accent), 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
 }
 /* SIDEBAR ZOOM RULE, same fix as .explorer-glyph below: the folder icon's own
    svg width/height="16" attribute doesn't track --font-scale; CSS always wins once
@@ -2044,7 +2038,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   display: block; width: 100%; text-align: left;
   background: transparent; border: none; border-radius: var(--radius-sm, 6px);
   color: var(--sidebar-fg); font: inherit; font-size: 1em; line-height: 1.4;
-  padding: 3px 8px; cursor: pointer;
+  padding: 4px 8px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background-color .12s ease;
 }
@@ -2105,7 +2099,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    depth and children step in one level deeper. */
 .explorer-label {
   display: flex; align-items: center; gap: 4px;
-  padding: 3px 6px 3px calc(4px + (var(--level, 1) - 1) * 14px);
+  padding: 4px 6px 4px calc(4px + (var(--level, 1) - 1) * 12px);
   border-radius: var(--radius-sm, 6px);
   color: var(--sidebar-fg); line-height: 1.5; cursor: pointer;
   white-space: nowrap; overflow: hidden;
@@ -2223,7 +2217,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Report-style table (team-lead spec, 2026-07-20): horizontal rules only, no
    vertical gridlines — border-bottom replaces the old 4-sided grid. */
 .cm-table th, .cm-table td { border: 0; border-bottom: 1px solid var(--border); padding: .4em .6em; word-break: keep-all; min-width: 6ch; }
-.cm-table th { background: var(--block-fill); font-weight: 700; text-align: left; }
+.cm-table th { background: var(--block-fill); font-weight: 600; text-align: left; }
 /* Zebra striping on even DATA rows only — thead is out of scope (tbody
    scopes the selector), so the header row never stripes. A faint
    readability aid, not a color statement. */
@@ -2556,13 +2550,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    a faint surface-strong tint (color-mix(--fg 6%)) + a left accent bar. */
 .settings-cat { position: relative; text-align: left; background: transparent; color: var(--muted); border: none; border-radius: var(--radius-sm); padding: .6em .8em; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
 .settings-cat:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); color: var(--fg); }
-.settings-cat.active { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); font-weight: 600; }
-.settings-cat.active::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 3px; height: 1.1em; border-radius: var(--radius-pill); background: var(--accent-ui); }
+.settings-cat.active { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); font-weight: 500; }
 /* Custom focus-visible ring (same idiom as .outline-item:focus-visible):
    without this, the browser's default focus outline (a blue rectangle) paints
-   OVER the designed active state (grey bg + left accent bar) every time the
-   modal opens — open() unconditionally focuses the first category. box-shadow
-   (not inset) so it never collides with .active::before's left bar. */
+   OVER the designed active state (grey fill) every time the
+   modal opens — open() unconditionally focuses the first category. */
 .settings-cat:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
 .settings-pane { flex: 1; min-width: 0; padding: 1.4em 1.6em; overflow-y: auto; }
 
@@ -2570,7 +2562,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    상태 영역. Tauri v2 웹뷰는 JS confirm/alert가 no-op이라 설치 제안/진행률을
    다이얼로그 대신 이 패널 안에 실제 DOM으로 그린다. */
 .version-pane { display: flex; flex-direction: column; gap: 1.2em; max-width: 420px; }
-.version-pane-number { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fg); }
+.version-pane-number { font-size: 32px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--fg); }
 .version-check-btn { align-self: flex-start; }
 .version-status { min-height: 2.4em; } /* reserves space so the check/available/error swap doesn't jump the layout */
 .version-status-row { display: flex; align-items: center; gap: .5em; font-size: 15px; color: var(--fg); }
@@ -2856,7 +2848,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .keybind-list { display: flex; flex-direction: column; }
 .keybind-item {
   display: grid; grid-template-columns: 1fr auto auto auto auto; align-items: center;
-  gap: .5em; padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  gap: .5em; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 .keybind-label { color: var(--fg); font-size: 13px; }
 .keybind-chord {
@@ -2874,7 +2866,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .settings-vtoggle-list { display: flex; flex-direction: column; width: 100%; }
 .settings-vtoggle-item {
   display: flex; align-items: center; justify-content: space-between;
-  gap: .5em; padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  gap: .5em; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 .settings-vtoggle-label { color: var(--fg); font-size: 13px; }
 
@@ -2902,7 +2894,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .remote-share-vault-list, .remote-share-device-list { display: flex; flex-direction: column; width: 100%; }
 .remote-share-vault-item { cursor: pointer; gap: .6em; justify-content: flex-start; }
 .remote-share-checkbox { accent-color: var(--accent); width: 15px; height: 15px; flex: none; }
-.remote-share-empty { color: var(--muted); font-size: 13px; padding: 5px 0; }
+.remote-share-empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
 /* issue / revoke buttons are .btn.btn-secondary.btn-sm (button grammar). */
 .remote-share-code { font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; letter-spacing: .06em; color: var(--fg); }
 /* 공유 포트 행 (47878 포트 변경, 2026-09-26) — 인풋은 .settings-text를 그대로
@@ -3042,7 +3034,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .welcome-mark {
   display: none;
   font-size: 2rem;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: -0.02em;
   color: var(--fg);
   text-align: center;
@@ -3085,7 +3077,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   background: var(--bg); color: var(--fg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
-  padding: 3px 6px; font: inherit; min-width: 10em;
+  padding: 4px 6px; font: inherit; min-width: 10em;
 }
 .cm-panel.cm-search .cm-textfield::placeholder { color: var(--muted); }
 .cm-panel.cm-search .cm-textfield:focus-visible {
@@ -3095,10 +3087,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   background: transparent; color: var(--fg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
-  padding: 3px 8px; font: inherit; cursor: pointer;
+  padding: 4px 8px; font: inherit; cursor: pointer;
 }
 .cm-panel.cm-search .cm-button:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
-.cm-panel.cm-search label { display: inline-flex; align-items: center; gap: 3px; color: var(--muted); }
+.cm-panel.cm-search label { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
 .cm-panel.cm-search button[name="close"] {
   margin-left: auto; background: transparent; border: none; color: var(--muted);
   font-size: 1.1em; line-height: 1; cursor: pointer; padding: 2px 6px;
@@ -3111,7 +3103,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   background: transparent; color: var(--muted);
   border: 1px dashed var(--border);
   border-radius: var(--radius-sm, 6px);
-  padding: 3px 8px; font: inherit; font-size: .92em; cursor: pointer;
+  padding: 4px 8px; font: inherit; font-size: .92em; cursor: pointer;
 }
 .cm-panel.cm-search .cm-search-replace-hint:hover { color: var(--fg); border-color: var(--muted); }
 /* Highlight uses --accent (canvas action color), not the sidebar's accent
@@ -3127,7 +3119,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    .recent-item/.explorer-item (glyph + label, hover/focus tokens) so it reads
    as the same family, not a bolted-on widget. --------------------------- */
 .search-input {
-  margin: 6px 8px; padding: 5px 8px; font: inherit;
+  margin: 6px 8px; padding: 4px 8px; font: inherit;
   background: var(--sidebar-bg, var(--bg)); color: var(--sidebar-fg);
   border: 1px solid var(--sidebar-border); border-radius: var(--radius-sm, 6px);
 }

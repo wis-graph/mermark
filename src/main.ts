@@ -1570,7 +1570,7 @@ async function boot() {
       return;
     }
     void copyBundleToClipboard(session.currentFile).then((copied) => {
-      flashStatus(copied ? "✓ 번들 복사됨" : "⚠ 번들 복사 실패");
+      flashStatus(copied ? "번들 복사됨" : "번들 복사 실패");
     });
   });
   // ⌥⌘C: copy the current document's absolute path to the clipboard via the
@@ -1580,7 +1580,7 @@ async function boot() {
   registerHandler("path.copy", () => {
     if (!session.currentFile) return;
     void copyTextToClipboard(session.currentFile).then((ok) =>
-      flashStatus(ok ? "✓ 경로 복사됨" : "⚠ 경로 복사 실패"),
+      flashStatus(ok ? "경로 복사됨" : "경로 복사 실패"),
     );
   });
   // 이미지 첨부 (`vault:` scheme withdrawal): attachImageToVault owns the

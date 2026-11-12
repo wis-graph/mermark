@@ -105,10 +105,10 @@ describe("D2b block family", () => {
     expect(allBlocks(".cm-callout-head")).toMatch(/border-top-right-radius:\s*var\(--block-radius,\s*0\)/);
     expect(allBlocks(".cm-callout-last")).toMatch(/border-bottom-right-radius:\s*var\(--block-radius,\s*0\)/);
   });
-  it("code language label is sans 500", () => {
+  it("code language label is mono 400", () => {
     const b = allBlocks(".cm-codeblock[data-lang]::before");
-    expect(b).toMatch(/font-family:\s*var\(--font-sans\)/);
-    expect(b).toMatch(/font-weight:\s*500/);
+    expect(b).toMatch(/font-family:\s*var\(--font-mono\)/);
+    expect(b).toMatch(/font-weight:\s*400/);
   });
 });
 

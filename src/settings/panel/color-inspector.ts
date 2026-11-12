@@ -54,6 +54,7 @@
 //     에서만 호출된다.
 import type { Setting } from "../store";
 import { absentKind, builtInTheme, isOptionalKey, type PresetName, type Theme } from "../theme-schema";
+import { icon } from "../../icons";
 import { hexToHsl, hslToHex } from "./color-math";
 import { hasBackgroundTab, type ThemeTarget } from "./theme-preview";
 
@@ -405,7 +406,7 @@ export function buildColorInspector(setting: Setting<Theme>, onClose: () => void
     closeBtn.type = "button";
     closeBtn.className = "theme-inspector-close";
     closeBtn.setAttribute("aria-label", "닫기");
-    closeBtn.textContent = "✕";
+    closeBtn.append(icon("x"));
     closeBtn.addEventListener("click", onClose);
     head.append(dotEl, labelEl, hexEl, closeBtn);
     body.appendChild(head);

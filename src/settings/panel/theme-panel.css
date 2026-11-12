@@ -66,8 +66,8 @@
   font: inherit;
   color: inherit;
   cursor: pointer;
-  padding: 1px 3px;
-  margin: -1px -3px;
+  padding: 2px 4px;
+  margin: -2px -4px;
   border-radius: var(--radius-xs, 4px);
   transition: box-shadow .12s ease;
 }
@@ -158,7 +158,7 @@
   align-self: stretch;
   width: 12px;
   margin: 0;
-  padding: 0 3px;
+  padding: 0 3px; /* 3px is deliberate: (12 - 2*3) = 6px visible bar, see comment above */
   background-clip: content-box;
   border-radius: var(--radius-xs, 4px);
 }
@@ -222,10 +222,10 @@
    real editor's `.cm-hr` exactly (styles.css:1738, which also just uses
    `var(--border)` with no other decoration). `border-top` itself is set
    inline by paintTarget (theme-preview.ts) — this rule only resets the
-   `.theme-target` base's padding/margin (1px 3px / -1px -3px), which would
+   `.theme-target` base's padding/margin (2px 4px / -2px -4px), which would
    otherwise misalign a full-width line, and gives the hit area some height
    despite the visual line being 1px. */
-.theme-hr { display: block; width: 100%; height: 0; padding: 5px 0; margin: .35em 0 .55em; }
+.theme-hr { display: block; width: 100%; height: 0; padding: 4px 0; margin: .35em 0 .55em; }
 .theme-status { display: block; width: 100%; text-align: left; font-size: .78em; }
 
 /* ── Floating color inspector (round 2, design decision 7) ────────────
@@ -287,10 +287,10 @@
   border: none;
   border-radius: var(--radius-pill);
   color: var(--muted);
-  font-size: 11px;
   line-height: 1;
   cursor: pointer;
 }
+.theme-inspector-close .icon { width: 14px; height: 14px; }
 .theme-inspector-close:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
 .theme-inspector-close:focus-visible {
   outline: none;
@@ -340,7 +340,7 @@
 }
 .theme-inspector-tab[aria-selected="true"] { background: var(--accent); color: var(--on-accent); }
 
-.theme-inspector-palette { display: flex; gap: 5px; margin-bottom: .7em; flex-wrap: wrap; }
+.theme-inspector-palette { display: flex; gap: 4px; margin-bottom: .7em; flex-wrap: wrap; }
 .theme-chip {
   width: 24px; height: 24px;
   padding: 0;
