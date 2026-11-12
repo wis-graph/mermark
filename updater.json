@@ -1,11 +1,11 @@
 {
-  "version": "0.22.0",
-  "notes": "### Added\n\n- **원격 볼트에서도 폴더를 볼트로 등록할 수 있다**: 원격 볼트 탐색기에서 폴더 옆 북마크(또는 Space)를 누르면 그 폴더가 사이드바에 볼트로 추가되고, 클릭하면 그 폴더에서 탐색기가 바로 시작한다. 깊은 폴더의 문서를 열 때마다 공유 루트부터 파고 내려갈 필요가 없다. 같은 원격 볼트 아래에 들여써 보이고, 재시작해도 남는다. 북마크를 다시 누르거나 ×로 해제한다. 이미지·위키링크는 폴더 볼트 안에서도 공유된 볼트 전체에서 찾는다. 호스트 쪽은 업데이트하지 않아도 된다.\n- **원격 볼트의 동영상이 재생된다**: 본문의 상대경로 동영상을 클릭하면 호스트에서 받아 재생한다(20 MiB 이하).\n\n### Changed\n\n- **디자인 정리**: 세 테마(라이트·다크·Claude)의 글자 대비를 접근성 기준(AA)에 맞췄다 — 특히 Claude 테마의 콜아웃 제목과 선택된 버튼이 읽기 쉬워졌다. 오류·경고·성공 색, 버튼 크기, 메뉴·모달의 그림자를 하나의 규칙으로 통일했다.\n- **본문**: 한국어가 어절 단위로 줄바꿈된다. H3 크기를 H2와 더 뚜렷이 구분했다. 표 머리글·숫자 열 정렬, 머메이드 테두리, 코드 언어 표시를 다듬었다. 읽기 모드에서는 접힌 곳의 접기 표시만 보인다.\n- **설정 패널**: 켜고 끄는 항목이 스위치로 바뀌었고, 항목 이름을 클릭해도 켜고 꺼진다. 단축키 행의 \"재정의\"는 마우스를 올렸을 때, \"기본값\"은 바꾼 행에만 보인다.\n- **제목 표시줄에 열린 파일 이름이 보인다.** 웰컴 화면과 뷰어에서는 본문 너비 슬라이더와 줄·열 표시가 숨는다.\n- 충돌 처리 설정의 \"덮어쓰기\" 선택지를 없앴다 — 이미 아무 효과가 없던 항목이다.\n\n### Fixed\n\n- **소스 코드 뷰어에서 공백과 들여쓰기가 사라지던 문제**.\n- **업데이트 후 재시작할 때 방금 입력한 내용이 저장되지 않을 수 있던 문제**: 이제 저장이 확인돼야 재시작한다.",
-  "pub_date": "2026-11-01T23:04:11Z",
+  "version": "0.22.1",
+  "notes": "### Changed\n\n- **화면 다듬기**: 코드 블록과 인용 블록의 배경을 한 단계 옅게 해 본문보다 무겁게 보이지 않게 했다(라이트·Claude 테마). 코드 언어 표시는 `TS` 대신 `ts`처럼 원래 표기로 보인다. 표 머리글·콜아웃 제목의 굵기를 조금 낮췄다. 워크스페이스에서 열린 탭과 설정 패널의 선택 항목에 겹쳐 있던 강조 막대를 하나로 줄였다. 여백 몇 곳을 같은 간격 단위로 맞췄다.\n- 복사 완료·실패 알림 앞의 ✓·⚠ 기호를 없앴다.",
+  "pub_date": "2026-11-12T14:47:59Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzAwc21tVmdFVDNDbTNWaCtoSW8wNjM5NHcvUUxCVzVtc0NqVWZiQjk2TTkxWjJXb2sxSEEyVUh1b3NUNkExZnVZallYcC9pMTZGdFprOVFhckN2ckFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNTc0MjM0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CnY4ek1ES3lQT2Q3Rld5S3d4S295dkJGYnRQNFh2SDBnN2k1ODZGbnE5eTIrQjgza0J4d1pWWm91OGJ5c3QzVmtxNFQ3WlJqL1FvVkVTMkg3SEtMc0FnPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.22.0/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3pOS25EZ2xrdThrWXcyQ3FyY09sYzhPVmFyR0VSQmRtUnNEc3NVYi9jb2E1ZUJYcmdOcmtJemRqYis2amFYaEliaGVoMDNmSVJGY2FNNlFkaVl3VGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDk0ODYwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmdUTkx2OUh4YUt4SFUraHlBL0g5ZWNSbGZVeWRLTWd4LzJnSFpDRDMwZjdna3VWTEJna2EzKzhJNUtWbWhlbG1ZaGgvZ0RNSEE2b29NWlN6V0o5cUN3PT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.22.1/mermark.app.tar.gz"
     }
   }
 }
