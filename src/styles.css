@@ -579,7 +579,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    codeBg-only intrinsic default IS var(--surface-veil), so an unconfigured
    theme renders this identical chip fill it always has — a value swap, not a
    behavior change. */
-.cm-inline-code { font-family: var(--font-mono); font-size: .875em; line-height: 1; letter-spacing: normal; padding: .1em .3em; border-radius: 4px; background: var(--code-bg, var(--surface-veil)); color: var(--code-color, inherit); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.cm-inline-code { font-family: var(--font-mono); font-weight: 400; font-size: .875em; line-height: 1; letter-spacing: normal; padding: .1em .3em; border-radius: 4px; background: var(--code-bg, var(--surface-veil)); color: var(--code-color, inherit); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 /* <!-- comment --> stays visible (unconcealed) but quiet, so it reads as an
    aside rather than body text. --comment-color is independent from --muted
    (2026-08: "주석도 옅은색하라니까 검정색이랑 구분이 안되네" — muted was too dark
@@ -2216,7 +2216,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    below gave it a job: cells that can't shrink below min-width just scroll
    instead of forcing a column collapse. */
 .cm-table-wrap { overflow-x: auto; padding: .25em 0; }
-.cm-table { table-layout: auto; border-collapse: separate; border-spacing: 0; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); line-height: 1.6; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+/* Matched to the reference app (2026-11-14): .875 type, 1.75 leading, frame + column rules in --block-edge,
+   no row rules (zebra carries the rows), 6px corners, cell text a step softer than body. */
+.cm-table { table-layout: auto; border-collapse: separate; border-spacing: 0; width: 100%; letter-spacing: normal; font-size: calc(var(--block-font-size) * .875); line-height: 1.75; border: 1px solid var(--block-edge); border-radius: 6px; overflow: hidden; color: color-mix(in srgb, var(--fg) 85%, var(--bg)); }
 /* keep-all: CJK breaks only at natural word/space boundaries, never mid-syllable
    (the 1-glyph-per-line collapse this fixes). min-width: 6ch is a floor so a
    narrow CJK column can't be squeezed to zero width. Do NOT add
@@ -2224,7 +2226,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    overflow, which defeats keep-all (CJK collapse would return conditionally). */
 /* Report-style table (team-lead spec, 2026-07-20): horizontal rules only, no
    vertical gridlines — border-bottom replaces the old 4-sided grid. */
-.cm-table th, .cm-table td { border: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: .5em .75em; word-break: keep-all; min-width: 6ch; }
+.cm-table th, .cm-table td { border: 0; border-right: 1px solid var(--block-edge); padding: .6em .95em; vertical-align: top; word-break: keep-all; min-width: 6ch; }
 /* Outer frame is the table's own 1px border; drop the inner hairline on the
    last column / last row so it doesn't double up (border-collapse: separate). */
 .cm-table th:last-child, .cm-table td:last-child { border-right: 0; }
@@ -2232,7 +2234,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Inline code never breaks mid-token in a cell (`?step=N.b`); a wide table
    scrolls inside .cm-table-wrap instead. */
 .cm-table .cm-inline-code, .cm-table code { white-space: nowrap; }
-.cm-table th { background: var(--block-fill); font-weight: 600; text-align: left; }
+/* Table text is already .875, so code inside uses .93 (≈13px, about body-code size) instead of shrinking twice. */
+.cm-table .cm-inline-code { font-size: .93em; }
+.cm-table th { background: var(--block-fill); font-weight: 600; text-align: left; color: var(--fg); }
 /* Zebra striping on even DATA rows only — thead is out of scope (tbody
    scopes the selector), so the header row never stripes. A faint
    readability aid, not a color statement. */

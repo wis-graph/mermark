@@ -31,7 +31,10 @@ describe("2026-11 typography pass", () => {
   it("table: rounded separated-border frame; inline code never breaks mid-token", () => {
     const t = rule(".cm-table");
     expect(t).toMatch(/border-collapse:\s*separate/);
-    expect(t).toMatch(/border-radius:\s*8px/);
+    expect(t).toMatch(/border-radius:\s*6px/);
+    expect(t).toMatch(/border:\s*1px solid var\(--block-edge\)/);
+    // rows are carried by zebra fill, not row rules (reference-matched 2026-11-14)
+    expect(rule(".cm-table th, .cm-table td")).not.toMatch(/border-bottom/);
     expect(css).toMatch(/\.cm-table \.cm-inline-code[^{]*\{\s*white-space:\s*nowrap/);
   });
 
