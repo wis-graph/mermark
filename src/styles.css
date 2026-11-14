@@ -579,7 +579,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    codeBg-only intrinsic default IS var(--surface-veil), so an unconfigured
    theme renders this identical chip fill it always has — a value swap, not a
    behavior change. */
-.cm-inline-code { font-family: var(--font-mono); letter-spacing: normal; padding: .1em .3em; border-radius: 4px; background: var(--code-bg, var(--surface-veil)); color: var(--code-color, inherit); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.cm-inline-code { font-family: var(--font-mono); font-size: .875em; line-height: 1; letter-spacing: normal; padding: .1em .3em; border-radius: 4px; background: var(--code-bg, var(--surface-veil)); color: var(--code-color, inherit); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 /* <!-- comment --> stays visible (unconcealed) but quiet, so it reads as an
    aside rather than body text. --comment-color is independent from --muted
    (2026-08: "주석도 옅은색하라니까 검정색이랑 구분이 안되네" — muted was too dark
@@ -621,7 +621,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    before this feature (the polarity fallback literals below — var(--radius-md),
    .7em, .9em — ARE that zero-drift baseline; a cross-file regression test
    pins them). */
-.cm-codeblock { display: block; margin: 0; position: relative; background: var(--codeblock-bg, var(--block-fill)); color: var(--codeblock-color, inherit); border: 0; border-radius: var(--block-radius, var(--radius-md)); padding: var(--block-padding, 1em) 0; overflow: visible; font-size: var(--block-font-size); line-height: 1.6; }
+.cm-codeblock { display: block; margin: 0; position: relative; background: var(--codeblock-bg, var(--block-fill)); color: var(--codeblock-color, inherit); border: 0; border-radius: var(--block-radius, var(--radius-md)); padding: var(--block-padding, 1em) 0; overflow: visible; font-size: calc(var(--block-font-size) * .875); line-height: 1.6; }
 /* `pre-wrap` preserves whitespace/indentation (like `pre`) but wraps at normal
    break points; `overflow-wrap: anywhere` further breaks inside unbroken
    tokens (long URLs, hashes) so long lines wrap inside the block instead of
@@ -700,7 +700,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-codeblock:hover .cm-copy-btn, .cm-copy-btn:focus-visible { opacity: .8; }
 /* revealed (editing) fenced code keeps a code background, so it still reads as a
    code block while you edit it. */
-.cm-code-line { background: var(--surface-veil); font-family: var(--font-mono); letter-spacing: normal; }
+.cm-code-line { background: var(--surface-veil); font-family: var(--font-mono); letter-spacing: normal; font-size: .875em; line-height: 1.6; }
 /* ```highlight markdown-block (design `_workspace/01_architect_design.md` §4.4):
    a plain line background, toned well below the inline ==mark==='s saturated
    --highlight-bg (that's legible spot-highlighting text, not a full-width fill)
@@ -938,7 +938,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    horizontal advance only) so the ZOOM GUARD holds — the font-size calc lines below
    are unchanged. Per-level negative tracking comes from --hN-tracking (em, so it
    rides --font-scale zoom + the headingRatio scale). */
-.cm-editor .cm-line.cm-heading { font-weight: 600; font-family: var(--font-heading, var(--reading-font, var(--font-sans))); line-height: 1.25; padding-top: .8em; }
+.cm-editor .cm-line.cm-heading { font-weight: 600; font-family: var(--font-heading, var(--reading-font, var(--font-sans))); line-height: 1.25; padding-top: .8em; padding-bottom: .35em; }
 /* Consecutive heading cluster (2026-07-12 design-polish pass): an unbroken
    H3→H4→H5→H6 run had NO vertical rhythm at all (only a source blank line
    separated them from body text) and read as a plain list. The base rule
@@ -950,6 +950,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    the same "CM measures offsetHeight, not margin" rule the block-widget
    spacing above follows (ZOOM GUARD: em only, no font-size here). */
 .cm-editor .cm-line.cm-heading.cm-heading-cont { padding-top: .15em; }
+/* Space below a heading even with no blank line: .35em (h1-h3, base rule) of the
+   heading's own size; h4/h5/h6 override below (smaller). */
 /* ZOOM GUARD: the font-size calc() + letter-spacing are byte-identical to before;
    only `color: var(--hN-color, …)` is appended (theme-editor per-heading colors,
    falling back to the prior visual — --fg for h1~h5, --muted for h6 — so an
@@ -962,9 +964,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-editor .cm-line.cm-h1 { font-weight: 700; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 1.953)); letter-spacing: var(--h1-tracking, 0); color: var(--h1-color, var(--fg)); background: var(--h1-bg, transparent); }
 .cm-editor .cm-line.cm-h2 { font-weight: 700; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.563)); letter-spacing: var(--h2-tracking, 0); color: var(--h2-color, var(--fg)); background: var(--h2-bg, transparent); }
 .cm-editor .cm-line.cm-h3 { font-weight: 700; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.25)); letter-spacing: var(--h3-tracking, 0); color: var(--h3-color, var(--fg)); background: var(--h3-bg, transparent); }
-.cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.118)); letter-spacing: var(--h4-tracking, 0); color: var(--h4-color, var(--fg)); background: var(--h4-bg, transparent); }
-.cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); background: var(--h5-bg, transparent); }
-.cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); background: var(--h6-bg, transparent); }
+.cm-editor .cm-line.cm-h4 { padding-bottom: .3em; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.118)); letter-spacing: var(--h4-tracking, 0); color: var(--h4-color, var(--fg)); background: var(--h4-bg, transparent); }
+.cm-editor .cm-line.cm-h5 { padding-bottom: .25em; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); background: var(--h5-bg, transparent); }
+.cm-editor .cm-line.cm-h6 { padding-bottom: .25em; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); background: var(--h6-bg, transparent); }
 
 /* Top title-bar — custom window chrome, scoped to .main-column (#app =
    column(.workspace = row(sidebar-aside*, sash, .main-column = column(
@@ -2330,7 +2332,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    → (0,3,0), out-specifying CM regardless of source order — the same guard
    the heading typescale rules use (see `.cm-editor .cm-line.cm-hN`). */
 .cm-editor .cm-line.cm-list-line {
-  line-height: 1.6; /* items read as one group, tighter than paragraphs */
   /* GEOMETRY (all em, rides ⌘± zoom). An item's row1 is
        [indent box][marker box][text]
      and starts at the paragraph text edge (--list-pad = CM's own 6px line
@@ -2382,6 +2383,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   padding-inline-start: calc(var(--list-pad) + 1 * var(--list-col));
   text-indent: calc(-1 * var(--list-col));
 }
+/* Continuation line of an item's paragraph (hard-wrap / multi-paragraph): same
+   padding + guides as the d{n} rule above, but NO negative text-indent, so the
+   first row AND soft-wrapped rows all start at the item's text column. Must
+   come after the d{n} rules (equal specificity) so text-indent: 0 wins. */
+.cm-list-cont-indent { display: inline-block; width: 0; overflow: hidden; white-space: pre; vertical-align: top; text-indent: 0; }
 .cm-editor .cm-line.cm-list-d2 {
   --list-depth: 2;
   padding-inline-start: calc(var(--list-pad) + 2 * var(--list-col));
@@ -2457,6 +2463,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
     calc(var(--list-pad) + 4 * var(--list-col) + var(--bullet-cx)) 0;
   background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
 }
+
+.cm-editor .cm-line.cm-list-cont { text-indent: 0; }
 
 /* ── `[[` wikilink autocomplete popup (CodeMirror tooltip) ───────────────────
    CM ships a baked LIGHT base theme for the autocomplete tooltip (white plate,

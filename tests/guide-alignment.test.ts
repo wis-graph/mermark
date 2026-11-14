@@ -35,6 +35,11 @@ describe("indent guide alignment (derived from --bullet-size, not a stale .55em 
     expect(scope).toMatch(/--list-col:\s*1\.75em/);
   });
 
+  it("list lines keep the body line height (no tighter-than-paragraph override)", () => {
+    const scope = css.match(/\.cm-editor \.cm-line\.cm-list-line \{[\s\S]*?\n\}/)![0];
+    expect(scope).not.toMatch(/line-height/);
+  });
+
   it(".cm-bullet is the marker box (--list-col); its dot is sized/placed by --bullet-size/--bullet-cx", () => {
     const box = css.match(/\.cm-bullet \{[^}]*\}/)![0];
     expect(box).toMatch(/width:\s*var\(--list-col/);

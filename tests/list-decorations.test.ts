@@ -74,3 +74,54 @@ describe("list decorations", () => {
     v.destroy();
   });
 });
+
+describe("list continuation lines", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+  const classes = (doc: string) => {
+    const v = mountEditor(host, doc, "/tmp", "/tmp/doc.md", { initialMode: "read" }).view;
+    const out = [...v.contentDOM.querySelectorAll(".cm-line")].map((l) => ({
+      cont: l.classList.contains("cm-list-cont"),
+      list: l.classList.contains("cm-list-line"),
+      depth: l.className.match(/cm-list-d(\d)/)?.[1],
+      ws: l.querySelectorAll(".cm-list-cont-indent").length,
+    }));
+    v.destroy();
+    return out;
+  };
+
+  it("lazy continuation hangs at the item depth", () => {
+    const r = classes("- a\nlazy b");
+    expect(r[1]).toMatchObject({ cont: true, list: true, depth: "1", ws: 0 });
+  });
+  it("2-space, 4-space and tab continuations all get the class and a collapsed indent", () => {
+    for (const ws of ["  ", "    ", "\t"]) {
+      const r = classes(`- a\n${ws}b`);
+      expect(r[1]).toMatchObject({ cont: true, depth: "1", ws: 1 });
+    }
+  });
+  it("second paragraph of the same item is a continuation", () => {
+    const r = classes("- a\n\n  para two\n  wrapped");
+    expect(r[0].cont).toBe(false);
+    expect(r[2]).toMatchObject({ cont: true, depth: "1" });
+    expect(r[3]).toMatchObject({ cont: true, depth: "1" });
+  });
+  it("nested item continuation uses the nested depth", () => {
+    const r = classes("- a\n  - b\n    wrapped b\n  lazy-ish");
+    expect(r[1]).toMatchObject({ cont: false, depth: "2" });
+    expect(r[2]).toMatchObject({ cont: true, depth: "2" });
+  });
+  it("a new item or nested list start is not a continuation", () => {
+    const r = classes("- a\ncont\n- b\n  - c\n1. d");
+    expect(r.map((x) => x.cont)).toEqual([false, true, false, false, false]);
+    expect(r.map((x) => x.depth)).toEqual(["1", "1", "1", "2", "1"]);
+  });
+  it("source text is untouched", () => {
+    const v = mountEditor(host, "- a\n\tb", "/tmp", "/tmp/doc.md", { initialMode: "edit" }).view;
+    expect(v.state.doc.toString()).toBe("- a\n\tb");
+    v.destroy();
+  });
+});

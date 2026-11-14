@@ -1,8 +1,13 @@
 import type { SyntaxNode } from "@lezer/common";
+import type { Line, Text } from "@codemirror/state";
 import { Decoration } from "@codemirror/view";
 import type { InlineFeature } from "../core";
 
 const indentMark = Decoration.mark({ class: "cm-list-indent" });
+// Continuation lines collapse their raw leading whitespace to zero width, so
+// lazy / 2-space / 4-space / tab continuations all start at the text column
+// (padding-inline-start of the line) regardless of the source indentation.
+const contIndentMark = Decoration.mark({ class: "cm-list-cont-indent" });
 
 // P2 (wrap hanging indent) + P3 (nested indent guide) — design:
 // `_workspace/01_architect_design.md` §"P2·wrap hanging indent + P3·인덴트 가이드".
@@ -35,6 +40,26 @@ export function indentRunStart(lineText: string, lineFrom: number, markFrom: num
   return lineFrom + i;
 }
 
+/** Number of leading space/tab characters of `lineText`. */
+export function leadingWhitespaceLength(lineText: string): number {
+  let i = 0;
+  while (i < lineText.length && (lineText[i] === " " || lineText[i] === "\t")) i++;
+  return i;
+}
+
+/** Source lines of a ListItem's `paragraph` that are NOT the item's first line
+ *  (`itemFirstLineNo`): lazy or indented hard-wrap continuations, plus the first
+ *  line of a second paragraph. Nested ListItems own their lines (they are
+ *  siblings of Paragraph in the tree, never inside it), so a new item or nested
+ *  list start is never returned. Pure query. */
+export function continuationLines(doc: Text, paragraph: SyntaxNode, itemFirstLineNo: number): Line[] {
+  const out: Line[] = [];
+  const first = doc.lineAt(paragraph.from).number;
+  const last = doc.lineAt(Math.max(paragraph.from, paragraph.to - 1)).number;
+  for (let n = Math.max(first, itemFirstLineNo + 1); n <= last; n++) out.push(doc.line(n));
+  return out;
+}
+
 /** Depth-based line class for every list item's first source line — drives
  *  hanging indent (P2) and the nested indent guide (P3) purely through CSS.
  *  Nested ListItem nodes are visited independently by the tree walk, so each
@@ -46,6 +71,16 @@ export const listLine: InlineFeature = {
     const depth = Math.min(listItemDepth(node), MAX_DEPTH);
     const line = ctx.state.doc.lineAt(node.from);
     ctx.line(line.from, `cm-list-line cm-list-d${depth}`);
+    // Hard-wrapped / multi-paragraph item text: every later source line of this
+    // item's own paragraphs hangs at the item's text column too.
+    for (let child = node.firstChild; child; child = child.nextSibling) {
+      if (child.name !== "Paragraph") continue;
+      for (const cont of continuationLines(ctx.state.doc, child, line.number)) {
+        ctx.line(cont.from, `cm-list-line cm-list-cont cm-list-d${depth}`);
+        const ws = leadingWhitespaceLength(cont.text);
+        if (ws > 0) ctx.push({ from: cont.from, to: cont.from + ws, deco: contIndentMark, conceal: false });
+      }
+    }
     // Deterministic nesting: the raw indentation run is shown inside a
     // fixed-width box (CSS: (depth-1) * --list-col), so item start depends on
     // the parsed depth, never on how many spaces/tabs the source used. It is a
