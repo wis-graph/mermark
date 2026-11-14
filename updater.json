@@ -1,11 +1,11 @@
 {
-  "version": "0.23.0",
-  "notes": "### Added\n\n- **탐색기에서 열린 파일을 본다**: 탐색기 머리글의 [트리 | 열린 파일] 전환으로 지금 볼트에 열린 문서 목록을 볼 수 있다. 클릭하면 그 문서로 넘어가고 ×로 닫는다. 마지막에 고른 보기는 재시작해도 남는다.\n\n### Changed\n\n- **워크스페이스 사이드바**: 볼트 아래에 펼쳐지던 열린 파일 목록을 없애고, 볼트 이름 오른쪽에 열린 문서 수만 표시한다(없으면 숫자도 없음). 행 높이·들여쓰기·아이콘 위치를 탐색기와 똑같이 맞췄다.\n\n### Fixed\n\n- **보고 있는 탭을 닫으면 다른 볼트로 넘어가던 문제**: 다음 탭의 파일이 하위 볼트 폴더 안에 있으면 그 하위 볼트로 전환되고 같은 파일이 탭에 한 번 더 생겼다.",
-  "pub_date": "2026-11-14T08:32:26Z",
+  "version": "0.23.1",
+  "notes": "### Changed\n\n- **사이드바의 꺾쇠(›)를 없앴다**: 펼침 상태는 폴더 아이콘(열림·닫힘)이 보여 준다. 워크스페이스에서 하위 볼트가 있는 볼트는 폴더 아이콘을 누르면 접히고 펴지며, 이름을 누르면 그 볼트로 들어간다. 탐색기와 열린 파일 보기도 같은 열에 맞췄다.",
+  "pub_date": "2026-11-14T08:48:00Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzR2ME1lOFBoelM3V282ZWZhT1FWRWJoSXZoV2VIbzV3QS9vU2xkaDVYT3NST3FweWtlUFhreFYwU3UzSnlBS2xwMEl4SnQrdHJEeHh4WFNVQWlVY1FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NjQ1MTMwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClFwWEllMWhwc21NUCtaQU5kUkFwSmR2Um5IMGRrYmNQVkZhNzlJcEpwSHlyNVVyZFM2N2pSY0hxZVhESURyckFVb1hnalUvZlFFaEJqRG9CNlRqUUR3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.23.0/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzllZm8xOXFvWHUwamt2dXN2U0l3b2FDOUY3MVlLcW5TOTlJY0hZdkRDNGlsUzZMRjJlVk56STMyTVl3aUVyVXdRWVJTem8xNkNSUm1UZllvb3dJZ1F3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NjQ2MDY0CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CkhHWTE1Z2ppbHhvTlByWXNtTXIzbEJZYW9XNmxKZWV0YXBSOWV1OW9zZm9wclVRc2dvWDJkSFlFNHBmVFNXYlFoUGp3N2ZqMzVoYzRYcTNhVFlZckFBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.23.1/mermark.app.tar.gz"
     }
   }
 }
