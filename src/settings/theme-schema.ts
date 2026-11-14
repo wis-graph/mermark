@@ -404,47 +404,68 @@ export function upgradePristinePreset(
   if (rawColorKeys.some((k) => NEW_GEN_KEYS.includes(k))) return t;
   if (rawHasGeometry) return t;
   const preset = builtInTheme(t.name);
-  const retired = retiredPresetColors(t.name);
+  const generations = retiredPresetGenerations(t.name);
   const legacyColorKeys: readonly (keyof Theme["colors"])[] = [...COLOR_KEYS, ...LEGACY_EXTENDED_KEYS];
   // Untouched = matches the current preset OR the preset as an earlier build shipped it.
   const colorsUnchanged =
     legacyColorKeys.every((k) => t.colors[k] === preset.colors[k]) ||
-    legacyColorKeys.every((k) => t.colors[k] === retired[k]);
+    generations.some((g) => legacyColorKeys.every((k) => t.colors[k] === g[k]));
   const radiiUnchanged = RADII_KEYS.every((k) => t.radii[k] === preset.radii[k]);
   const fontUnchanged = t.font.sans === preset.font.sans;
   return colorsUnchanged && radiiUnchanged && fontUnchanged ? preset : t;
 }
 
-/** Preset values an earlier build shipped and a later one retired (D1 AA pass,
- *  2026-10-18). Only the keys whose value changed are listed. */
-const RETIRED_PRESET_COLORS: Record<PresetName, Partial<Theme["colors"]>> = {
-  dark: {},
-  light: { muted: "#777169", h6: "#777169" },
-  claude: { muted: "#6c6a64", code: "#a9583e" },
-};
-
-/** The full color set a preset had BEFORE its retirement. Pure query. */
-function retiredPresetColors(name: PresetName): Theme["colors"] {
-  return { ...builtInTheme(name).colors, ...RETIRED_PRESET_COLORS[name] };
+/** One past preset value change, recorded as the UNDO patch: applying `undo` on
+ *  top of the preset as it stood right AFTER the change yields the preset as it
+ *  stood right BEFORE. `at` is the commit that changed it. */
+export interface PresetRetirement {
+  readonly at: string;
+  readonly undo: Partial<Theme["colors"]>;
 }
 
-/** "This saved theme IS the retired preset, byte for byte" — name is a preset,
- *  no geometry in the raw JSON, radii + font equal the preset, and EVERY color
- *  key (core + extended + optional, union of both key sets; absent ≡ undefined)
- *  equals retiredPresetColors(name). Pure query. */
+/** Every past color change of every built-in preset, NEWEST FIRST.
+ *
+ *  RULE (enforced by tests/preset-retirement.test.ts): whenever a builtInTheme
+ *  color changes, prepend an entry here holding the previous values. A saved
+ *  theme is a full snapshot taken at time T (loadPreset / status-bar cycle) and is
+ *  applied as inline vars that override CSS, so without an entry users who ever
+ *  loaded the preset stay frozen on the old look forever.
+ *
+ *  Generations are cumulative: gen_k = current preset with undo patches 1..k
+ *  applied (newest to oldest), i.e. the preset exactly as a build k changes ago
+ *  shipped it. */
+export const PRESET_RETIREMENTS: Record<PresetName, readonly PresetRetirement[]> = {
+  dark: [{ at: "cdb016d", undo: { bg: "#0c0a09" } }],
+  light: [
+    { at: "ee26bb1", undo: { bg: "#f5f5f5", surface: "#ffffff" } },
+    { at: "4a6d6ee", undo: { muted: "#777169", h6: "#777169" } },
+  ],
+  claude: [{ at: "4a6d6ee", undo: { muted: "#6c6a64", code: "#a9583e" } }],
+};
+
+/** Full color sets this preset shipped in earlier builds, newest first. Pure query. */
+export function retiredPresetGenerations(name: PresetName): Theme["colors"][] {
+  let colors = { ...builtInTheme(name).colors };
+  return PRESET_RETIREMENTS[name].map((r) => (colors = { ...colors, ...r.undo }));
+}
+
+/** "These colors equal that full set, byte for byte" (union of keys; absent ≡ undefined). */
+function colorsEqual(a: Theme["colors"], b: Theme["colors"]): boolean {
+  const ra = a as Record<string, string | undefined>;
+  const rb = b as Record<string, string | undefined>;
+  return [...new Set([...Object.keys(ra), ...Object.keys(rb)])].every((k) => ra[k] === rb[k]);
+}
+
+/** "This saved theme IS a retired generation of its preset, byte for byte" — name
+ *  is a preset, no geometry in the raw JSON, radii + font equal the preset, and
+ *  EVERY color key equals ANY retired generation. Pure query. */
 export function isRetiredPresetSnapshot(t: Theme, rawHasGeometry: boolean): boolean {
   if (t.name !== "dark" && t.name !== "light" && t.name !== "claude") return false;
   if (rawHasGeometry || t.geometry) return false;
-  const retiredKeys = RETIRED_PRESET_COLORS[t.name];
-  if (Object.keys(retiredKeys).length === 0) return false; // nothing was retired -> nothing to snap
   const preset = builtInTheme(t.name);
-  const retired = retiredPresetColors(t.name);
-  const keys = new Set<string>([...Object.keys(t.colors), ...Object.keys(retired)]);
-  const colorsMatch = [...keys].every(
-    (k) => (t.colors as Record<string, string | undefined>)[k] === (retired as Record<string, string | undefined>)[k],
-  );
   const radiiUnchanged = RADII_KEYS.every((k) => t.radii[k] === preset.radii[k]);
-  return colorsMatch && radiiUnchanged && t.font.sans === preset.font.sans;
+  if (!radiiUnchanged || t.font.sans !== preset.font.sans) return false;
+  return retiredPresetGenerations(t.name).some((g) => colorsEqual(t.colors, g));
 }
 
 /** Snap a retired-preset snapshot to the current builtInTheme(name); anything

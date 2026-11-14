@@ -544,7 +544,7 @@ describe("upgradePristinePreset: only an untouched preset is upgraded", () => {
 });
 
 describe("snapRetiredPreset (D1 AA pass): untouched OLD preset snapshots move to the new values, customs never", () => {
-  const OLD_LIGHT = { muted: "#777169", h6: "#777169" };
+  const OLD_LIGHT = { bg: "#f5f5f5", surface: "#ffffff", muted: "#777169", h6: "#777169" }; // real pre-4a6d6ee snapshot
   const OLD_CLAUDE = { muted: "#6c6a64", code: "#a9583e" };
   const oldLightRaw = () => {
     const p = builtInTheme("light");
