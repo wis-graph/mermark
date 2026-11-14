@@ -147,6 +147,21 @@ export interface InlineFeature {
   view?: Extension;
 }
 
+/** Nodes whose blank lines are CONTENT (code / YAML / TeX), not paragraph gaps. */
+const VERBATIM_BLOCKS = new Set(["FencedCode", "CodeBlock", "Frontmatter", "BlockMath"]);
+
+/** True for a whitespace-only line that is a spacing gap between blocks — i.e.
+ *  NOT inside a code fence / front matter / math block, where a blank line is
+ *  verbatim content and keeps full height. Pure query. */
+export function isBlockGapLine(state: EditorState, lineFrom: number): boolean {
+  const line = state.doc.lineAt(lineFrom);
+  if (line.text.trim() !== "") return false;
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(line.from, 1); n; n = n.parent) {
+    if (VERBATIM_BLOCKS.has(n.name)) return false;
+  }
+  return true;
+}
+
 export function inlinePreview(
   features: InlineFeature[],
   baseDir: string,
@@ -189,6 +204,11 @@ export function inlinePreview(
           for (const f of fs) if (f.enter(node.node, ctx) === false) descend = false;
           return descend;
         },
+      });
+    }
+    for (const { from, to } of view.visibleRanges) {
+      eachLine(state, from, to, (lf) => {
+        if (isBlockGapLine(state, lf)) ctx.line(lf, "cm-blank-line");
       });
     }
     const ranges: Range<Decoration>[] = [];

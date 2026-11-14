@@ -268,10 +268,10 @@ export const readingWidthSetting = registerSetting<number>({
   },
 });
 
-/** Body line-height → --line-height (default 1.8). */
+/** Body line-height → --line-height (default 1.75). */
 export const lineHeightSetting = registerSetting<number>({
   key: "mermark.lineHeight",
-  default: 1.8,
+  default: 1.75,
   parse: numberParse,
   ui: { label: "줄 간격", group: "타이포그래피", control: { kind: "slider", min: 1.2, max: 2.0, step: 0.1 } },
 });

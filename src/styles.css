@@ -65,7 +65,7 @@
   --caret: #ff3b30;
   /* Typography panel vars (SSOT: fontSize/readingWidth/lineHeight settings →
      cssVarSink). Defaults:
-       --editor-font-size 1rem (16px), --measure 68%, --line-height 1.8.
+       --editor-font-size 1rem (16px), --measure 68%, --line-height 1.75.
      --measure is a % of the window (editor) width, held as a pure <n>% number
      by the sink; .cm-content consumes it directly as max-width, so it's
      already window-relative and never overflows (100% = the full window,
@@ -85,7 +85,7 @@
      collapse async mermaid/katex widgets to 0 height). */
   --block-font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1));
   --measure: 68%;
-  --line-height: 1.8;
+  --line-height: 1.75;
   /* Absolute reading-measure cap in em (--measure-em, set by the readingWidth sink
      alongside --measure; 47.5em = 760px at 16px at the default 68%). */
   --measure-em: 47.5;
@@ -400,7 +400,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* P4: text-wrap: pretty re-positions soft-wrap breaks to avoid orphans. It only
    changes WHERE lines break, not line-height/font-size, and block widgets render
    in their own containers outside .cm-line, so it's widget-measure-inert. */
-.cm-editor .cm-line { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1)); line-height: var(--line-height, 1.8); letter-spacing: var(--body-tracking, 0.01em); text-wrap: pretty; }
+.cm-editor .cm-line { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1)); line-height: var(--line-height, 1.75); letter-spacing: var(--body-tracking, 0.01em); text-wrap: pretty; }
+/* Blank source lines are real .cm-lines; at full body line-height every gap
+   between blocks read as a whole extra line. core.ts's isBlockGapLine tags the
+   spacing-only ones (not code/front-matter/math content) so a gap is .75em
+   (12px@16px). em rides --font-scale zoom. The caret still renders: the line
+   keeps a box, only its height shrinks. */
+.cm-editor .cm-line.cm-blank-line { line-height: .75em; height: .75em; }
 /* Caret colour (both paths). drawSelection (enabled for vim visual-selection)
    paints its own `.cm-cursor` element via border-left and ignores caret-color,
    so we colour that border directly; the `.cm-editor` prefix beats CM's runtime
@@ -615,7 +621,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    before this feature (the polarity fallback literals below — var(--radius-md),
    .7em, .9em — ARE that zero-drift baseline; a cross-file regression test
    pins them). */
-.cm-codeblock { display: block; margin: 0; position: relative; background: var(--codeblock-bg, var(--block-fill)); color: var(--codeblock-color, inherit); border: 0; border-radius: var(--block-radius, var(--radius-md)); padding: var(--block-padding, 1.25em) 0; overflow: visible; font-size: var(--block-font-size); line-height: 1.6; }
+.cm-codeblock { display: block; margin: 0; position: relative; background: var(--codeblock-bg, var(--block-fill)); color: var(--codeblock-color, inherit); border: 0; border-radius: var(--block-radius, var(--radius-md)); padding: var(--block-padding, 1em) 0; overflow: visible; font-size: var(--block-font-size); line-height: 1.6; }
 /* `pre-wrap` preserves whitespace/indentation (like `pre`) but wraps at normal
    break points; `overflow-wrap: anywhere` further breaks inside unbroken
    tokens (long URLs, hashes) so long lines wrap inside the block instead of
@@ -932,7 +938,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    horizontal advance only) so the ZOOM GUARD holds — the font-size calc lines below
    are unchanged. Per-level negative tracking comes from --hN-tracking (em, so it
    rides --font-scale zoom + the headingRatio scale). */
-.cm-editor .cm-line.cm-heading { font-weight: 600; font-family: var(--font-heading, var(--reading-font, var(--font-sans))); line-height: 1.25; padding-top: .7em; }
+.cm-editor .cm-line.cm-heading { font-weight: 600; font-family: var(--font-heading, var(--reading-font, var(--font-sans))); line-height: 1.25; padding-top: .8em; }
 /* Consecutive heading cluster (2026-07-12 design-polish pass): an unbroken
    H3→H4→H5→H6 run had NO vertical rhythm at all (only a source blank line
    separated them from body text) and read as a plain list. The base rule
@@ -2191,8 +2197,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    etc.) that keep-all can't wrap — it was dead code before word-break: keep-all
    below gave it a job: cells that can't shrink below min-width just scroll
    instead of forcing a column collapse. */
-.cm-table-wrap { overflow-x: auto; padding: 1em 0; }
-.cm-table { table-layout: auto; border-collapse: separate; border-spacing: 0; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); line-height: 1.7; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.cm-table-wrap { overflow-x: auto; padding: 0; }
+.cm-table { table-layout: auto; border-collapse: separate; border-spacing: 0; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); line-height: 1.6; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 /* keep-all: CJK breaks only at natural word/space boundaries, never mid-syllable
    (the 1-glyph-per-line collapse this fixes). min-width: 6ch is a floor so a
    narrow CJK column can't be squeezed to zero width. Do NOT add
@@ -2200,7 +2206,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    overflow, which defeats keep-all (CJK collapse would return conditionally). */
 /* Report-style table (team-lead spec, 2026-07-20): horizontal rules only, no
    vertical gridlines — border-bottom replaces the old 4-sided grid. */
-.cm-table th, .cm-table td { border: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: .75em 1em; word-break: keep-all; min-width: 6ch; }
+.cm-table th, .cm-table td { border: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: .5em .75em; word-break: keep-all; min-width: 6ch; }
 /* Outer frame is the table's own 1px border; drop the inner hairline on the
    last column / last row so it doesn't double up (border-collapse: separate). */
 .cm-table th:last-child, .cm-table td:last-child { border-right: 0; }
@@ -2309,6 +2315,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    → (0,3,0), out-specifying CM regardless of source order — the same guard
    the heading typescale rules use (see `.cm-editor .cm-line.cm-hN`). */
 .cm-editor .cm-line.cm-list-line {
+  line-height: 1.6; /* items read as one group, tighter than paragraphs */
   /* Hang column = where row1's TEXT starts, so wraps tuck exactly under the
      text (2026-07-12 report: wraps landed .64em deeper than the text column).
      Values are CDP-measured in the default reading font (Inter @16px):

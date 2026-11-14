@@ -246,7 +246,7 @@ describe("app settings", () => {
   it("declares the typography settings with defaults and persistence", async () => {
     const app = await import("../src/settings/app");
     expect(app.fontSizeSetting.get()).toBe(16); // 1rem base
-    expect(app.lineHeightSetting.get()).toBe(1.8);
+    expect(app.lineHeightSetting.get()).toBe(1.75);
     expect(app.readingWidthSetting.get()).toBe(68); // P3: measure is %-of-window-based now
     app.fontSizeSetting.set(18);
     expect(localStorage.getItem("mermark.fontSize")).toBe("18");

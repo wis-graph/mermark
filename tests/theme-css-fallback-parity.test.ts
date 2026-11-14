@@ -210,10 +210,10 @@ describe("block geometry CSS fallback literals (zero-drift default — round 3)"
     return grouped[1]!;
   }
 
-  it(".cm-codeblock: --block-radius falls back to var(--radius-md), --block-padding to 1.25em (2026-11 typography pass)", () => {
+  it(".cm-codeblock: --block-radius falls back to var(--radius-md), --block-padding to 1em (2026-11 typography pass)", () => {
     const block = ruleBlock(".cm-codeblock");
     expect(block).toContain("border-radius: var(--block-radius, var(--radius-md))");
-    expect(block).toContain("padding: var(--block-padding, 1.25em) 0");
+    expect(block).toContain("padding: var(--block-padding, 1em) 0");
   });
 
   it(".cm-blockquote: --block-padding falls back to .75em (unchanged); -first/-last fall back to radius 0 / padding 0 (no prior geometry existed)", () => {
