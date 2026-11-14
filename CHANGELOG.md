@@ -5,6 +5,12 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전은 [유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따른다.
 
+## [0.25.2] - 2026-11-14
+
+### Changed
+
+- **제목·코드 블록·표 주변 간격**: 제목 위아래 여백을 넓혀 섹션이 또렷하게 나뉜다. 코드 블록 위와 표 위아래에도 숨 쉴 틈을 줬다.
+
 ## [0.25.1] - 2026-11-14
 
 ### Changed
