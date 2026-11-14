@@ -1781,6 +1781,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   --sidebar-row-control: calc(20em / 13);
 }
 .sidebar-aside[hidden] { display: none; }
+/* PEEK OVERLAY: 흐름 밖 → main-column 폭 불변, title-bar 아래에서 시작 → 그룹·신호등 비가림.
+   Edge-hover floats the SAME aside (width = --sidebar-width) over the content;
+   top = .title-bar height (36px, == EDGE_ZONE_TOP_PX in sidebar/edge-peek.ts).
+   The sibling rules above (mac inset, sash) are :not([data-peek]) so a peek
+   never changes the layout. z-index 40 < conflict/footnote 50 < menus 60. */
+.sidebar-aside[data-peek] {
+  position: fixed; top: 36px; bottom: 0; left: 0; z-index: 40;
+  box-shadow: var(--elev-1-shadow);
+}
 
 .workspace-header { display: flex; align-items: center; gap: .45em; }
 .workspace-title { flex: 1; }
@@ -1950,6 +1959,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .sidebar-top-strip .chrome-btn { color: var(--sidebar-muted); }
 .sidebar-top-strip .chrome-btn:hover { color: var(--sidebar-fg); background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
 .sidebar-top-strip .chrome-btn[aria-expanded="true"] { color: var(--sidebar-accent); background: color-mix(in srgb, var(--sidebar-accent) 14%, transparent); }
+/* peek overlay starts below the title-bar and the group stays there — no strip. */
+.sidebar-aside[data-peek] > .sidebar-top-strip { display: none; }
 
 /* When the rail is open, the traffic lights sit on the rail (the strip above
    clears them there), NOT on .main-column — .title-bar is no longer the
@@ -1958,7 +1969,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    (above) keeps its full --traffic-light-inset. Same sibling-combinator
    pattern as the sash rule below (aside precedes .main-column in DOM order),
    so open/close tracks via CSS alone — no JS state to sync. */
-.sidebar-aside:not([hidden]) ~ .main-column > .title-bar.mac { padding-left: .5em; }
+.sidebar-aside:not([hidden]):not([data-peek]) ~ .main-column > .title-bar.mac { padding-left: .5em; }
 
 /* Drag sash: a thin divider between the left sidebar rail and .main-column
    (src/sidebar/sash.ts). Visibility is CSS-only — hidden unless a
@@ -1976,7 +1987,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
      interactive. */
   background: transparent;
 }
-.sidebar-aside:not([hidden]) ~ .workspace-sash { display: block; }
+.sidebar-aside:not([hidden]):not([data-peek]) ~ .workspace-sash { display: block; }
 .workspace-sash:hover,
 .workspace-sash.is-dragging {
   background: color-mix(in srgb, var(--accent) 60%, transparent);
@@ -2035,8 +2046,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .explorer-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.explorer-refresh { flex: none; color: var(--sidebar-muted); }
-.explorer-refresh:hover, .explorer-refresh:focus-visible { color: var(--sidebar-fg); }
+.explorer-refresh, .explorer-dock-btn { flex: none; color: var(--sidebar-muted); }
+.explorer-refresh:hover, .explorer-refresh:focus-visible,
+.explorer-dock-btn:hover, .explorer-dock-btn:focus-visible { color: var(--sidebar-fg); }
 /* .explorer-refresh is a .chrome-btn (inline-flex) and the tree/list are flex
    containers — each base rule's `display` beats the UA `[hidden]`, so each
    needs its own override (same trap as .workspace-vault-row[hidden]). */
@@ -2253,7 +2265,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   font-size: inherit;
   width: 1em;
   height: 1em;
-  margin: 0 .4em 0 0;
+  margin: 0 0 0 .125em; /* centre = --bullet-cx, same as the bullet dot */
   vertical-align: -.1em;
   border: 1.5px solid var(--muted);
   border-radius: var(--radius-xs, 4px);
@@ -2290,8 +2302,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* thematic break (---) → a horizontal rule filling the line */
 .cm-hr { display: inline-block; width: 100%; height: 0; margin: 0; border: none; border-top: 1px solid var(--border); vertical-align: middle; }
 
-.cm-bullet { display: inline-block; width: var(--bullet-size); height: var(--bullet-size); border-radius: 50%; background: var(--fg); vertical-align: middle; transform: translateY(-.08em); }
-.cm-bullet-collapsed { box-shadow: 0 0 0 .26em color-mix(in srgb, var(--muted) 50%, transparent); }
+/* The bullet widget IS the marker box (--list-col wide, height of the dot so
+   vertical placement is unchanged); the dot is its ::before at --bullet-cx. */
+.cm-bullet { position: relative; display: inline-block; width: var(--list-col, 1.75em); height: var(--bullet-size, .3em); vertical-align: middle; transform: translateY(-.08em); text-indent: 0; }
+.cm-bullet::before { content: ""; position: absolute; top: 0; left: calc(var(--bullet-cx, .625em) - var(--bullet-size, .3em) / 2); width: var(--bullet-size, .3em); height: var(--bullet-size, .3em); border-radius: 50%; background: var(--muted); }
+.cm-bullet-collapsed::before { box-shadow: 0 0 0 .26em color-mix(in srgb, var(--muted) 50%, transparent); }
 
 /* ── list wrap hanging indent + nested indent guides (P2+P3, one line-class
    family) ────────────────────────────────────────────────────────────────
@@ -2316,75 +2331,100 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    the heading typescale rules use (see `.cm-editor .cm-line.cm-hN`). */
 .cm-editor .cm-line.cm-list-line {
   line-height: 1.6; /* items read as one group, tighter than paragraphs */
-  /* Hang column = where row1's TEXT starts, so wraps tuck exactly under the
-     text (2026-07-12 report: wraps landed .64em deeper than the text column).
-     Values are CDP-measured in the default reading font (Inter @16px):
-     --list-step   = the 4 source spaces of one nesting level (18.64px = 1.165em)
-     --list-marker = concealed bullet dot .3em + the trailing space .29em (9.45px)
-     Bullet rendering itself is untouched — these two vars feed ONLY the
-     padding/text-indent hang math below. */
-  --list-step: 1.165em;
-  --list-marker: .59em;
+  /* GEOMETRY (all em, rides ⌘± zoom). An item's row1 is
+       [indent box][marker box][text]
+     and starts at the paragraph text edge (--list-pad = CM's own 6px line
+     padding, kept) + (depth-1) * --list-col. The marker box is a fixed
+     --list-col wide (list.ts mark `cm-list-marker`), so the TEXT COLUMN is
+     depth * --list-col from the edge for bullet / ordered / task alike, and
+     stays there when the caret reveals the raw "- " (same box, same width).
+     The indent box (list-line.ts mark `cm-list-indent`) is the raw leading
+     whitespace clipped to (depth-1) * --list-col, so nesting never depends on
+     the source's 2-space / 4-space / tab indentation.
+     Hang: padding-inline-start = pad + depth*col, text-indent cancels the
+     depth*col → row1 begins at pad, wrapped rows begin at the text column. */
+  --list-pad: 6px;
+  --list-col: 1.75em;
+  --bullet-size: .3em;
+  --bullet-cx: .625em; /* dot centre inside the marker box (≈ ref .5em indent + dot/2) */
   --guide: color-mix(in srgb, var(--border) 70%, transparent);
-  /* Guide alignment is DERIVED, not a re-measured literal (2026-07-12
-     design-polish batch ③ — the prior .55em was a stale constant that drifted
-     out of sync with the bullet after a marker-metrics change). Two contracts
-     hold regardless of --list-step/--list-marker retuning: (a) hanging indent
-     — text-indent exactly cancels padding-inline-start, so row1 starts at
-     line-local x=0 (CDP-verified); (b) the bullet is row1's leading glyph. So
-     an ancestor's dot CENTER sits at that ancestor's depth-index * --list-step
-     + half the dot's own width — --guide-col below. Each d{n} guide's k-th
-     term (0-based) then targets the ancestor at depth k: k*--list-step +
-     --guide-col. As long as (a)/(b) hold, guides auto-follow any future
-     --list-step/--list-marker/--bullet-size change — no more stale constants. */
-  --bullet-size: .30em;
-  --guide-col: calc(var(--bullet-size) / 2);
 }
-/* Ordered rows keep their visible "1. " marker (digit+period+space = 16.09px
-   ≈ 1em, CDP-measured) — single-digit fit; "10."+ wraps land a touch left, an
-   accepted static-CSS compromise. */
-.cm-editor .cm-line.cm-list-line.cm-list-ordered { --list-marker: 1em; }
+/* Raw indentation → fixed width box. text-indent is inherited, so reset it. */
+.cm-list-indent {
+  display: inline-block;
+  width: calc((var(--list-depth, 1) - 1) * var(--list-col, 1.75em));
+  overflow: hidden;
+  white-space: pre;
+  vertical-align: top;
+  text-indent: 0;
+}
+/* Marker box: wraps the raw "- " / "1. " / "- [ ] " source; when concealed the
+   bullet / checkbox widget fills the same width. */
+.cm-list-marker {
+  display: inline-flex;
+  box-sizing: border-box;
+  width: var(--list-col, 1.75em);
+  white-space: pre;
+  text-indent: 0;
+}
+/* ordered: right-aligned so the period ends ≈ .5em before the text column
+   (the trailing source space is ~.28em of it). Flex-end overflows to the
+   LEFT, so "10." / "100." never push the text column. */
+.cm-list-marker-ordered {
+  justify-content: flex-end;
+  padding-right: .22em;
+  font-variant-numeric: tabular-nums;
+}
+/* task: the revealed raw "- [ ] " is wider than the box, so only a min-width. */
+.cm-list-marker-task { width: auto; min-width: var(--list-col, 1.75em); }
 .cm-editor .cm-line.cm-list-d1 {
-  padding-inline-start: calc(0 * var(--list-step) + var(--list-marker));
-  text-indent: calc(-1 * (0 * var(--list-step) + var(--list-marker)));
+  --list-depth: 1;
+  padding-inline-start: calc(var(--list-pad) + 1 * var(--list-col));
+  text-indent: calc(-1 * var(--list-col));
 }
 .cm-editor .cm-line.cm-list-d2 {
-  padding-inline-start: calc(1 * var(--list-step) + var(--list-marker));
-  text-indent: calc(-1 * (1 * var(--list-step) + var(--list-marker)));
-  background-image: linear-gradient(var(--guide) 0 100%);
+  --list-depth: 2;
+  padding-inline-start: calc(var(--list-pad) + 2 * var(--list-col));
+  text-indent: calc(-2 * var(--list-col));
+  background-image:
+    linear-gradient(var(--guide) 0 100%);
   background-size: 1px 100%;
-  background-position: calc(0 * var(--list-step) + var(--guide-col)) 0;
+  background-position:
+    calc(var(--list-pad) + 0 * var(--list-col) + var(--bullet-cx)) 0;
   background-repeat: no-repeat;
 }
 .cm-editor .cm-line.cm-list-d3 {
-  padding-inline-start: calc(2 * var(--list-step) + var(--list-marker));
-  text-indent: calc(-1 * (2 * var(--list-step) + var(--list-marker)));
+  --list-depth: 3;
+  padding-inline-start: calc(var(--list-pad) + 3 * var(--list-col));
+  text-indent: calc(-3 * var(--list-col));
   background-image:
     linear-gradient(var(--guide) 0 100%),
     linear-gradient(var(--guide) 0 100%);
   background-size: 1px 100%, 1px 100%;
   background-position:
-    calc(0 * var(--list-step) + var(--guide-col)) 0,
-    calc(1 * var(--list-step) + var(--guide-col)) 0;
+    calc(var(--list-pad) + 0 * var(--list-col) + var(--bullet-cx)) 0,
+    calc(var(--list-pad) + 1 * var(--list-col) + var(--bullet-cx)) 0;
   background-repeat: no-repeat, no-repeat;
 }
 .cm-editor .cm-line.cm-list-d4 {
-  padding-inline-start: calc(3 * var(--list-step) + var(--list-marker));
-  text-indent: calc(-1 * (3 * var(--list-step) + var(--list-marker)));
+  --list-depth: 4;
+  padding-inline-start: calc(var(--list-pad) + 4 * var(--list-col));
+  text-indent: calc(-4 * var(--list-col));
   background-image:
     linear-gradient(var(--guide) 0 100%),
     linear-gradient(var(--guide) 0 100%),
     linear-gradient(var(--guide) 0 100%);
   background-size: 1px 100%, 1px 100%, 1px 100%;
   background-position:
-    calc(0 * var(--list-step) + var(--guide-col)) 0,
-    calc(1 * var(--list-step) + var(--guide-col)) 0,
-    calc(2 * var(--list-step) + var(--guide-col)) 0;
+    calc(var(--list-pad) + 0 * var(--list-col) + var(--bullet-cx)) 0,
+    calc(var(--list-pad) + 1 * var(--list-col) + var(--bullet-cx)) 0,
+    calc(var(--list-pad) + 2 * var(--list-col) + var(--bullet-cx)) 0;
   background-repeat: no-repeat, no-repeat, no-repeat;
 }
 .cm-editor .cm-line.cm-list-d5 {
-  padding-inline-start: calc(4 * var(--list-step) + var(--list-marker));
-  text-indent: calc(-1 * (4 * var(--list-step) + var(--list-marker)));
+  --list-depth: 5;
+  padding-inline-start: calc(var(--list-pad) + 5 * var(--list-col));
+  text-indent: calc(-5 * var(--list-col));
   background-image:
     linear-gradient(var(--guide) 0 100%),
     linear-gradient(var(--guide) 0 100%),
@@ -2392,15 +2432,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
     linear-gradient(var(--guide) 0 100%);
   background-size: 1px 100%, 1px 100%, 1px 100%, 1px 100%;
   background-position:
-    calc(0 * var(--list-step) + var(--guide-col)) 0,
-    calc(1 * var(--list-step) + var(--guide-col)) 0,
-    calc(2 * var(--list-step) + var(--guide-col)) 0,
-    calc(3 * var(--list-step) + var(--guide-col)) 0;
+    calc(var(--list-pad) + 0 * var(--list-col) + var(--bullet-cx)) 0,
+    calc(var(--list-pad) + 1 * var(--list-col) + var(--bullet-cx)) 0,
+    calc(var(--list-pad) + 2 * var(--list-col) + var(--bullet-cx)) 0,
+    calc(var(--list-pad) + 3 * var(--list-col) + var(--bullet-cx)) 0;
   background-repeat: no-repeat, no-repeat, no-repeat, no-repeat;
 }
 .cm-editor .cm-line.cm-list-d6 {
-  padding-inline-start: calc(5 * var(--list-step) + var(--list-marker));
-  text-indent: calc(-1 * (5 * var(--list-step) + var(--list-marker)));
+  --list-depth: 6;
+  padding-inline-start: calc(var(--list-pad) + 6 * var(--list-col));
+  text-indent: calc(-6 * var(--list-col));
   background-image:
     linear-gradient(var(--guide) 0 100%),
     linear-gradient(var(--guide) 0 100%),
@@ -2409,11 +2450,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
     linear-gradient(var(--guide) 0 100%);
   background-size: 1px 100%, 1px 100%, 1px 100%, 1px 100%, 1px 100%;
   background-position:
-    calc(0 * var(--list-step) + var(--guide-col)) 0,
-    calc(1 * var(--list-step) + var(--guide-col)) 0,
-    calc(2 * var(--list-step) + var(--guide-col)) 0,
-    calc(3 * var(--list-step) + var(--guide-col)) 0,
-    calc(4 * var(--list-step) + var(--guide-col)) 0;
+    calc(var(--list-pad) + 0 * var(--list-col) + var(--bullet-cx)) 0,
+    calc(var(--list-pad) + 1 * var(--list-col) + var(--bullet-cx)) 0,
+    calc(var(--list-pad) + 2 * var(--list-col) + var(--bullet-cx)) 0,
+    calc(var(--list-pad) + 3 * var(--list-col) + var(--bullet-cx)) 0,
+    calc(var(--list-pad) + 4 * var(--list-col) + var(--bullet-cx)) 0;
   background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
 }
 

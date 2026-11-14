@@ -3,6 +3,7 @@ import { renderEntryGlyph, isEditableTextFile } from "./file-icons";
 import { basename, dirOf, isFilesystemRoot, isPathWithin, normalizePath } from "../../document/path";
 import type { DirEntry, DriveEntry } from "../../document/types";
 import { renderSidebarButton } from "../toggle";
+import { SIDEBAR_PEEK_ATTR, railModeOf, nextModeOnToggle, type RailMode } from "../registry";
 import { isImeComposing } from "../../shortcuts/keys";
 import { openContextMenu } from "../../chrome/context-menu";
 import type { FileAction } from "../../chrome/file-actions/registry";
@@ -72,6 +73,14 @@ export interface ExplorerPanel {
    *  already-open panel's jump never steals focus from wherever the caller's
    *  gesture actually landed. Command (void). */
   jumpToRoot(absPath: string): void;
+  /** Float the panel open as a temporary overlay (edge-hover gesture). No-op
+   *  unless closed. Steals no focus; same tree render path as open(). Command. */
+  peek(): void;
+  /** closed | peek | pinned — derived from the aside DOM. Pure query. */
+  mode(): RailMode;
+  /** Toggle-button / ⌘B / header dock rule: closed→pinned, peek→pinned,
+   *  pinned→closed. Command (void). */
+  toggle(): void;
   /** Hide the sidebar. Idempotent — used by the mutual-exclusion coordinator to
    *  close this when the other left sidebar opens. Command (void). */
   close(): void;
@@ -347,12 +356,26 @@ export function createExplorerPanel({
     header.append(viewSwitch);
   }
   header.append(refreshButton);
+  // Notion-style dock button: » pins a peeking panel, « collapses a pinned one.
+  // Icon-only (no text node — header.textContent stays "탐색기").
+  const dockButton = create("button", "explorer-dock-btn chrome-btn icon-only") as HTMLButtonElement;
+  dockButton.type = "button";
+  header.append(dockButton);
 
   /** Render the toggle button for the current open/closed state (icon + ARIA).
    *  Called at init and on every open()/close() so they never drift. */
   const renderButton = (): void =>
     renderSidebarButton(button, "folder", "탐색기", !aside.hidden, EXPLORER_ASIDE_ID);
   renderButton();
+  /** Dock button glyph + label for the current mode. Command (void). */
+  const renderDock = (): void => {
+    const peeking = railModeOf(aside) === "peek";
+    const label = peeking ? "사이드바 고정" : "사이드바 접기";
+    dockButton.replaceChildren(icon(peeking ? "chevrons-right" : "chevrons-left"));
+    dockButton.title = label;
+    dockButton.setAttribute("aria-label", label);
+  };
+  renderDock();
   const tree = create("div", "explorer-tree");
   tree.setAttribute("role", "tree");
   tree.setAttribute("aria-label", "파일 탐색기");
@@ -363,7 +386,14 @@ export function createExplorerPanel({
   // focus has somewhere better than <body> to go even in that edge case,
   // without inventing a real focus trap.
   tree.tabIndex = -1;
-  const openFilesView = createOpenFilesView(openFiles ?? {
+  const openFilesView = createOpenFilesView(openFiles ? {
+    ...openFiles,
+    onSelect: (...args: Parameters<OpenFilesHandlers["onSelect"]>) => {
+      const result = openFiles.onSelect(...args);
+      closePeekAfterOpen();
+      return result;
+    },
+  } : {
     current: () => ({ scopeId: "", tabs: { vaultId: "", tabs: [], activeTabId: null }, rootPath: null }),
     onSelect: () => undefined,
     onClose: () => undefined,
@@ -1014,6 +1044,7 @@ export function createExplorerPanel({
     if (onOpenWithViewer && canOpenWithViewer?.(basename(path))) onOpenWithViewer(path);
     else if (newWindow && onOpenFileNewWindow) onOpenFileNewWindow(path);
     else onOpenFile(path);
+    closePeekAfterOpen();
   };
 
   /** → key rule: closed folder = open / open folder = step to first child /
@@ -1044,21 +1075,62 @@ export function createExplorerPanel({
    *  decide what to render (open() renders baseDir, jumpToRoot() renders its
    *  target). Named so "reveal the shell" is one rule shared by both open
    *  paths, not two copies of the same three lines. Command (void). */
-  const revealShell = (): void => {
+  const revealShell = (asPeek = false): void => {
+    if (asPeek) aside.setAttribute(SIDEBAR_PEEK_ATTR, "");
+    else aside.removeAttribute(SIDEBAR_PEEK_ATTR);
     aside.hidden = false;
     onOpen?.();
     renderButton();
+    renderDock();
   };
-  const open = () => {
-    revealShell();
+  const showFresh = (asPeek: boolean): void => {
+    revealShell(asPeek);
     childrenCache.clear(); // reopen = fresh view (no stale invalidation to track)
     void renderTree(getBaseDir());
     refreshOpenFiles(); // 열 때 최신화
   };
+  const open = () => showFresh(false);
+  /** Where focus was when a peek began — handed back if the user clicked into
+   *  the floating panel and it then closes. */
+  let peekReturnFocus: Element | null = null;
+  const peek = (): void => {
+    if (railModeOf(aside) !== "closed") return;
+    peekReturnFocus = document.activeElement;
+    showFresh(true);
+  };
+  /** Command: on any close of a PEEK, give focus back to the pre-peek element
+   *  — only if focus is inside the panel and the target is still connected. */
+  const returnFocusFromPeek = (): void => {
+    const target = peekReturnFocus;
+    peekReturnFocus = null;
+    if (railModeOf(aside) !== "peek" || !target?.isConnected) return;
+    if (aside.contains(document.activeElement) && target instanceof HTMLElement) target.focus();
+  };
+  /** peek → pinned without re-rendering the tree (expanded folders and scroll
+   *  survive). Command (void). */
+  const pin = (): void => {
+    aside.removeAttribute(SIDEBAR_PEEK_ATTR);
+    peekReturnFocus = null;
+    renderButton();
+    renderDock();
+  };
   const close = () => {
+    returnFocusFromPeek();
+    aside.removeAttribute(SIDEBAR_PEEK_ATTR);
     aside.hidden = true;
     renderButton();
+    renderDock();
   };
+  const toggle = (): void => {
+    const mode = railModeOf(aside);
+    if (nextModeOnToggle(mode) === "closed") close();
+    else if (mode === "peek") pin();
+    else open();
+  };
+  /** A file opened from a floating panel dismisses it (pinned stays). */
+  function closePeekAfterOpen(): void {
+    if (railModeOf(aside) === "peek") close();
+  }
   const resetToBaseDir = (): void => {
     if (aside.hidden) return; // closed panel reseeds on next open
     childrenCache.clear();
@@ -1144,9 +1216,13 @@ export function createExplorerPanel({
 
   refreshButton.addEventListener("click", () => refreshListing());
 
-  button.addEventListener("click", () => {
-    if (aside.hidden) open();
-    else close();
+  button.addEventListener("click", toggle);
+  dockButton.addEventListener("click", () => {
+    const focusWasInside = aside.contains(document.activeElement);
+    toggle();
+    // Collapsing from the header: the focused dock button just left with the
+    // rail — hand focus to the title-bar toggle (rehome microtask runs first).
+    if (aside.hidden && focusWasInside) queueMicrotask(() => button.focus());
   });
 
   const toggleFocusedVault = (item: HTMLElement): void => {
@@ -1281,6 +1357,9 @@ export function createExplorerPanel({
     resetToBaseDir,
     jumpToRoot,
     close,
+    peek,
+    mode: () => railModeOf(aside),
+    toggle,
     refreshOpenability,
     refreshListing,
     refreshVaultToggles,

@@ -545,6 +545,26 @@ describe("app settings", () => {
     });
   });
 
+  describe("explorerEdgePeekSetting", () => {
+    it("기본 on, 저장 키 mermark.explorerEdgePeek", async () => {
+      const { explorerEdgePeekSetting } = await import("../src/settings/app");
+      expect(explorerEdgePeekSetting.get()).toBe("on");
+      explorerEdgePeekSetting.set("off");
+      expect(localStorage.getItem("mermark.explorerEdgePeek")).toBe("off");
+      expect(explorerEdgePeekSetting.get()).toBe("off");
+    });
+
+    it("탐색기 그룹에서 숨김 파일 표시 바로 다음, switch", async () => {
+      await import("../src/settings/app");
+      const { groups } = await import("../src/settings/registry");
+      const entries = groups().find((g) => g.name === "탐색기")!.entries;
+      const i = entries.findIndex((e) => e.ui.label === "숨김 파일 표시");
+      const next = entries[i + 1];
+      expect(next.ui.label).toBe("가장자리에 마우스를 대면 탐색기 열기");
+      expect(next.ui.control.kind).toBe("switch");
+    });
+  });
+
   describe("showHiddenFilesSetting", () => {
     it("defaults to off and persists under mermark.showHiddenFiles", async () => {
       const { showHiddenFilesSetting } = await import("../src/settings/app");

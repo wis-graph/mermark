@@ -30,14 +30,17 @@ describe("indent guide alignment (derived from --bullet-size, not a stale .55em 
     const scopeMatch = css.match(/\.cm-editor \.cm-line\.cm-list-line \{[\s\S]*?\n\}/);
     expect(scopeMatch).not.toBeNull();
     const scope = scopeMatch![0];
-    expect(scope).toMatch(/--bullet-size:\s*\.30em/);
-    expect(scope).toMatch(/--guide-col:\s*calc\(var\(--bullet-size\)\s*\/\s*2\)/);
+    expect(scope).toMatch(/--bullet-size:\s*\.3em/);
+    expect(scope).toMatch(/--bullet-cx:\s*\.625em/);
+    expect(scope).toMatch(/--list-col:\s*1\.75em/);
   });
 
-  it(".cm-bullet's width/height are var(--bullet-size), not a re-stated literal", () => {
-    const bulletRule = css.match(/\.cm-bullet \{[^}]*\}/)![0];
-    expect(bulletRule).toMatch(/width:\s*var\(--bullet-size\)/);
-    expect(bulletRule).toMatch(/height:\s*var\(--bullet-size\)/);
+  it(".cm-bullet is the marker box (--list-col); its dot is sized/placed by --bullet-size/--bullet-cx", () => {
+    const box = css.match(/\.cm-bullet \{[^}]*\}/)![0];
+    expect(box).toMatch(/width:\s*var\(--list-col/);
+    const dot = css.match(/\.cm-bullet::before \{[^}]*\}/)![0];
+    expect(dot).toMatch(/var\(--bullet-cx/);
+    expect(dot).toMatch(/background:\s*var\(--muted\)/);
   });
 
   it("no .cm-list-d{2..6} guide rule has a raw .55em literal left over", () => {
@@ -46,7 +49,7 @@ describe("indent guide alignment (derived from --bullet-size, not a stale .55em 
     }
   });
 
-  it("every background-position term in d2..d6 uses var(--guide-col)", () => {
+  it("every background-position term in d2..d6 targets the ancestor dot centre (--bullet-cx)", () => {
     const blocks = listGuideBlocks();
     expect(blocks).toHaveLength(5);
     for (const block of blocks) {
@@ -55,8 +58,30 @@ describe("indent guide alignment (derived from --bullet-size, not a stale .55em 
       const terms = posMatch![1].split(",");
       expect(terms.length).toBeGreaterThan(0);
       for (const term of terms) {
-        expect(term).toMatch(/var\(--guide-col\)/);
+        expect(term).toMatch(/var\(--list-pad\) \+ \d+ \* var\(--list-col\) \+ var\(--bullet-cx\)/);
       }
     }
+  });
+});
+
+describe("list geometry contract (text column = depth * 1.75em, hang, deterministic indent)", () => {
+  it("every depth hangs wrapped rows at pad + depth*col and cancels it with text-indent", () => {
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      const b = css.match(new RegExp(`\\.cm-editor \\.cm-line\\.cm-list-d${n} \\{[\\s\\S]*?\\n\\}`))![0];
+      expect(b).toMatch(new RegExp(`--list-depth:\\s*${n};`));
+      expect(b).toMatch(new RegExp(`padding-inline-start:\\s*calc\\(var\\(--list-pad\\) \\+ ${n} \\* var\\(--list-col\\)\\)`));
+      expect(b).toMatch(new RegExp(`text-indent:\\s*calc\\(-${n} \\* var\\(--list-col\\)\\)`));
+    }
+  });
+  it("indent box width depends on depth only, marker box is fixed-width and resets text-indent", () => {
+    expect(css.match(/\.cm-list-indent \{[^}]*\}/)![0]).toMatch(/width:\s*calc\(\(var\(--list-depth[^)]*\) - 1\) \* var\(--list-col/);
+    const m = css.match(/\.cm-list-marker \{[^}]*\}/)![0];
+    expect(m).toMatch(/width:\s*var\(--list-col/);
+    expect(m).toMatch(/text-indent:\s*0/);
+  });
+  it("ordered marker is right-aligned, tabular", () => {
+    const o = css.match(/\.cm-list-marker-ordered \{[^}]*\}/)![0];
+    expect(o).toMatch(/flex-end/);
+    expect(o).toMatch(/tabular-nums/);
   });
 });

@@ -405,6 +405,25 @@ export const showHiddenFilesSetting = registerSetting<ShowHiddenFiles>({
   },
 });
 
+export type ExplorerEdgePeek = "on" | "off";
+/** Hovering the window's left edge peeks the explorer open as a temporary
+ *  overlay (src/sidebar/edge-peek.ts). Read at gesture time (query-style, no
+ *  sink) — main.ts's explorerMayPeek guard. */
+export const explorerEdgePeekSetting = registerSetting<ExplorerEdgePeek>({
+  key: "mermark.explorerEdgePeek",
+  default: "on",
+  parse: (raw) => (raw === "on" || raw === "off" ? raw : null),
+  ui: {
+    label: "가장자리에 마우스를 대면 탐색기 열기",
+    group: "탐색기",
+    control: {
+      kind: "switch",
+      on: "on",
+      off: "off",
+    },
+  },
+});
+
 // ── Mermaid (plugin-registered category) ─────────────────────────────────────
 
 export type PanZoom = "on" | "off";

@@ -77,7 +77,9 @@ describe("shell layout: full-height sidebar rail (style contract)", () => {
   });
 
   it("mac traffic-light inset drops to .5em when the rail is open (sibling-combinator rule exists)", () => {
-    expect(css).toContain(".sidebar-aside:not([hidden]) ~ .main-column > .title-bar.mac { padding-left: .5em; }");
+    // peek 오버레이는 레일을 차지하지 않는다 — 2026-11-14 (:not([data-peek]) 추가)
+    expect(css).toContain(".sidebar-aside:not([hidden]):not([data-peek]) ~ .main-column > .title-bar.mac { padding-left: .5em; }");
+    expect(css).not.toContain(".sidebar-aside:not([hidden]) ~ .main-column > .title-bar.mac");
   });
 
   // Regression guard: the sash's sibling-combinator visibility rule (aside
@@ -85,6 +87,27 @@ describe("shell layout: full-height sidebar rail (style contract)", () => {
   // the design's whole point was keeping aside/sash as direct .workspace
   // children so this selector never needed to change.
   it("regression: the sidebar-open -> sash-visible sibling rule is unchanged", () => {
-    expect(css).toContain(".sidebar-aside:not([hidden]) ~ .workspace-sash { display: block; }");
+    // peek 오버레이는 레일을 차지하지 않는다 — 2026-11-14 (sash 없음: 본문 5px 안 줄어듦)
+    expect(css).toContain(".sidebar-aside:not([hidden]):not([data-peek]) ~ .workspace-sash { display: block; }");
+    expect(css).not.toContain(".sidebar-aside:not([hidden]) ~ .workspace-sash");
+  });
+
+  it("peek overlay: 흐름 밖 fixed, title-bar 아래에서 시작, 새 font-size 없음", () => {
+    const block = ruleBlock(".sidebar-aside[data-peek]");
+    expect(block).toMatch(/position:\s*fixed/);
+    expect(block).toMatch(/top:\s*36px/);
+    expect(block).toMatch(/left:\s*0/);
+    expect(block).toMatch(/bottom:\s*0/);
+    expect(block).toMatch(/z-index:\s*40/);
+    expect(block).toMatch(/box-shadow:\s*var\(--elev-1-shadow\)/);
+    expect(block).not.toMatch(/font-size/);
+    expect(css).toContain(".sidebar-aside[data-peek] > .sidebar-top-strip { display: none; }");
+  });
+
+  it("세 값 묶기: .title-bar height == peek top == EDGE_ZONE_TOP_PX == 36", async () => {
+    const { EDGE_ZONE_TOP_PX } = await import("../src/sidebar/edge-peek");
+    expect(ruleBlock(".title-bar")).toMatch(/height:\s*36px/);
+    expect(ruleBlock(".sidebar-aside[data-peek]")).toMatch(/top:\s*36px/);
+    expect(EDGE_ZONE_TOP_PX).toBe(36);
   });
 });

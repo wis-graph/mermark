@@ -30,7 +30,9 @@ export interface SidebarPanel {
   /** The left-command-group toggle button for this panel. */
   button: HTMLButtonElement;
   /** The rail element. `hidden` is the open/closed SSOT (title-bar.ts's
-   *  documented contract — the same source the CSS sibling rules key off). */
+   *  documented contract — the same source the CSS sibling rules key off).
+   *  An open aside carrying `data-peek` floats over the content instead of
+   *  occupying the rail: it never receives the command group. */
   aside: HTMLElement;
   /** Idempotent close. The mutual-exclusion coordinator calls this
    *  unconditionally on every panel but the one staying open. */
@@ -44,6 +46,25 @@ interface InstallCtx {
   /** Where a panel's toggle goes in the group: inserted BEFORE this element, or
    *  appended when null (D1: the group holds only toggles, so main passes null). */
   buttonAnchor: HTMLElement | null;
+}
+
+/** Marker attribute on an OPEN rail aside that floats (peek) instead of
+ *  occupying the rail. Written only by the owning panel. */
+export const SIDEBAR_PEEK_ATTR = "data-peek";
+
+export type RailMode = "closed" | "peek" | "pinned";
+
+/** The mode of a rail aside, derived from the DOM (hidden / data-peek) — no
+ *  separate state variable to drift. Pure query. */
+export function railModeOf(aside: HTMLElement): RailMode {
+  if (aside.hidden) return "closed";
+  return aside.hasAttribute(SIDEBAR_PEEK_ATTR) ? "peek" : "pinned";
+}
+
+/** Toggle rule: a toggle PINS a floating panel; it closes only a pinned one.
+ *  Pure query — the one place this rule lives. */
+export function nextModeOnToggle(mode: RailMode): "closed" | "pinned" {
+  return mode === "pinned" ? "closed" : "pinned";
 }
 
 const panels: SidebarPanel[] = [];
@@ -72,7 +93,7 @@ function mountSidebarPanel(p: SidebarPanel): void {
   c.workspace.prepend(p.aside);
   p.aside.prepend(createSidebarTopStrip());
   c.group.insertBefore(p.button, c.buttonAnchor);
-  observer!.observe(p.aside, { attributes: true, attributeFilter: ["hidden"] });
+  observer!.observe(p.aside, { attributes: true, attributeFilter: ["hidden", SIDEBAR_PEEK_ATTR] });
   sizeObserver?.observe(p.aside);
 }
 
@@ -111,10 +132,16 @@ export function closeOtherSidebarPanels(keepId: string): void {
   for (const p of panels) if (p.id !== keepId) p.close();
 }
 
-/** Which registered panel's aside is currently open, if any — "at most one
- *  rail is open" read back from the `hidden` SSOT. Pure query. */
-function visibleAside(): HTMLElement | null {
-  return panels.find((p) => !p.aside.hidden)?.aside ?? null;
+/** Is any registered panel open in ANY mode (pinned or peeking)? Pure query —
+ *  the edge-peek guard ("rail completely empty"). */
+export function isAnySidebarPanelVisible(): boolean {
+  return panels.some((p) => !p.aside.hidden);
+}
+
+/** Which registered panel's aside actually OCCUPIES the rail (pinned only — a
+ *  peeking aside floats, so it must not pull the command group in). Pure query. */
+function railOccupant(): HTMLElement | null {
+  return panels.find((p) => railModeOf(p.aside) === "pinned")?.aside ?? null;
 }
 
 /** The window-chrome strip prepended into a rail aside, if it has one. Pure
@@ -129,7 +156,7 @@ function railStrip(aside: HTMLElement | null): HTMLElement | null {
  *  rail too narrow for the toggles (160px rail, 300% zoom, many extension
  *  panels) must never clip them. Pure query. */
 function fittingStrip(group: HTMLElement): HTMLElement | null {
-  const strip = railStrip(visibleAside());
+  const strip = railStrip(railOccupant());
   return strip && leftGroupFitsStrip(group, strip) ? strip : null;
 }
 

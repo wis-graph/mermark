@@ -34,6 +34,7 @@ import {
   isViewerEnabled,
   showHiddenFilesSetting,
   explorerViewSetting,
+  explorerEdgePeekSetting,
 } from "./settings/app";
 import { bindBootSettingSinks } from "./settings/boot-sinks";
 import { createSidebarSash } from "./sidebar/sash";
@@ -59,7 +60,8 @@ import {
   createTitleSlot,
   createViewerSlot,
 } from "./chrome/title-bar";
-import { registerSidebarPanel, closeOtherSidebarPanels, installSidebarPanels } from "./sidebar/registry";
+import { registerSidebarPanel, closeOtherSidebarPanels, installSidebarPanels, isAnySidebarPanelVisible } from "./sidebar/registry";
+import { installEdgePeek } from "./sidebar/edge-peek";
 import { createBreadcrumb } from "./chrome/breadcrumb";
 import { createRecentPanel } from "./sidebar/recent/recent-panel";
 import { createSearchPanel } from "./sidebar/search/search-panel";
@@ -1274,6 +1276,14 @@ async function boot() {
   registerSidebarPanel({ id: "outline", button: outline.button, aside: outline.aside, close: outline.close });
   registerSidebarPanel({ id: "search", button: searchPanel.button, aside: searchPanel.aside, close: searchPanel.close });
   installSidebarPanels({ workspace, bar: titleBar.el, group: leftGroup, buttonAnchor: null });
+  /** Edge-peek domain guard: setting on AND the left rail completely empty. */
+  const explorerMayPeek = (): boolean =>
+    explorerEdgePeekSetting.get() === "on" && !isAnySidebarPanelVisible();
+  installEdgePeek({
+    workspace, aside: explorer.aside, keepTargets: [explorer.button],
+    mayPeek: explorerMayPeek, isPeeking: () => explorer.mode() === "peek",
+    peek: () => explorer.peek(), dismiss: () => explorer.close(),
+  });
   // The drag sash sits between whichever left sidebar is open and .main-column.
   // DOM order among the asides is arbitrary (installSidebarPanels prepends
   // each in registration order — see its comment above); the sash is

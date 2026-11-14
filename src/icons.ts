@@ -153,6 +153,9 @@ const PATHS = {
   "corner-left-up":
     '<path d="M14 15 9 20 4 15"/>' +
     '<path d="M20 4h-7a4 4 0 0 0-4 4v12"/>',
+  // chevrons-left / chevrons-right — sidebar "collapse" / "pin" header button (lucide)
+  "chevrons-left": '<path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/>',
+  "chevrons-right": '<path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/>',
   // chevron-right — generic disclosure arrow (no sidebar row uses it now)
   "chevron-right": '<path d="m9 18 6-6-6-6"/>',
   // hard-drive — explorer: "내 컴퓨터" drive row (list_drives)

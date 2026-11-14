@@ -1,6 +1,6 @@
 import { WidgetType } from "@codemirror/view";
 
-/** An unordered-list bullet, drawn in CSS (not a glyph) so a collapsed item can
+/** An unordered-list bullet, drawn in CSS (not a glyph; the dot is the box's ::before, the box is the full marker column) so a collapsed item can
  *  carry a halo ring around the dot — a state a font character can't express. */
 export class BulletWidget extends WidgetType {
   constructor(readonly collapsed: boolean) {

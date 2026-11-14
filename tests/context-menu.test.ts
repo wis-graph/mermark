@@ -153,3 +153,23 @@ describe("openContextMenu — 구분선 (MENU_SEPARATOR)", () => {
     row.remove();
   });
 });
+
+describe("isContextMenuOpen (edge-peek가 닫힘 보류에 쓰는 쿼리)", () => {
+  it("열림/닫힘을 그대로 반영한다 (Esc, 바깥 mousedown)", async () => {
+    const { isContextMenuOpen } = await import("../src/chrome/context-menu");
+    const row = document.createElement("div");
+    row.tabIndex = 0;
+    document.body.append(row);
+    // 앞선 테스트가 DOM만 지우고 열어둔 메뉴가 있을 수 있다 — 상태를 먼저 비운다.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(isContextMenuOpen()).toBe(false);
+    openContextMenu({ x: 1, y: 1, items: [{ label: "A", onSelect: () => {} }], returnFocusTo: row });
+    expect(isContextMenuOpen()).toBe(true);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(isContextMenuOpen()).toBe(false);
+    openContextMenu({ x: 1, y: 1, items: [{ label: "A", onSelect: () => {} }], returnFocusTo: row });
+    row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(isContextMenuOpen()).toBe(false);
+    row.remove();
+  });
+});

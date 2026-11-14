@@ -284,3 +284,62 @@ describe("installSidebarPanels: rehoming", () => {
     });
   });
 });
+
+describe("peek mode (data-peek): 떠 있는 패널은 레일을 차지하지 않는다", () => {
+  function setup() {
+    const bar = barWithSpacerAnchor();
+    const group = createLeftCommandGroup();
+    const workspace = document.createElement("div");
+    workspace.append(document.createElement("div"));
+    return { bar, group, workspace };
+  }
+
+  it("railModeOf: hidden→closed, hidden=false+data-peek→peek, hidden=false→pinned", async () => {
+    const { railModeOf, SIDEBAR_PEEK_ATTR } = await freshRegistry();
+    const a = document.createElement("aside");
+    a.hidden = true;
+    expect(railModeOf(a)).toBe("closed");
+    a.hidden = false;
+    a.setAttribute(SIDEBAR_PEEK_ATTR, "");
+    expect(railModeOf(a)).toBe("peek");
+    a.removeAttribute(SIDEBAR_PEEK_ATTR);
+    expect(railModeOf(a)).toBe("pinned");
+  });
+
+  it("nextModeOnToggle: closed→pinned, peek→pinned, pinned→closed", async () => {
+    const { nextModeOnToggle } = await freshRegistry();
+    expect(nextModeOnToggle("closed")).toBe("pinned");
+    expect(nextModeOnToggle("peek")).toBe("pinned");
+    expect(nextModeOnToggle("pinned")).toBe("closed");
+  });
+
+  it("isAnySidebarPanelVisible: 전부 닫힘 false / pinned true / peek true", async () => {
+    const { registerSidebarPanel, isAnySidebarPanelVisible, SIDEBAR_PEEK_ATTR } = await freshRegistry();
+    const a = fakePanel("a");
+    registerSidebarPanel(a);
+    expect(isAnySidebarPanelVisible()).toBe(false);
+    a.aside.hidden = false;
+    expect(isAnySidebarPanelVisible()).toBe(true);
+    a.aside.setAttribute(SIDEBAR_PEEK_ATTR, "");
+    expect(isAnySidebarPanelVisible()).toBe(true);
+  });
+
+  it("peek는 그룹을 끌어오지 않고, pin(속성 제거)하면 strip으로 옮긴다", async () => {
+    const { registerSidebarPanel, installSidebarPanels, SIDEBAR_PEEK_ATTR } = await freshRegistry();
+    const { bar, group, workspace } = setup();
+    const p = fakePanel("explorer");
+    registerSidebarPanel(p);
+    installSidebarPanels({ workspace, bar, group, buttonAnchor: null });
+    const homeBefore = group.parentElement;
+    expect(homeBefore).toBe(bar);
+
+    p.aside.setAttribute(SIDEBAR_PEEK_ATTR, "");
+    p.aside.hidden = false;
+    await Promise.resolve();
+    expect(group.parentElement).toBe(bar);
+
+    p.aside.removeAttribute(SIDEBAR_PEEK_ATTR); // attributeFilter에 data-peek가 없으면 RED
+    await Promise.resolve();
+    expect(group.parentElement).toBe(p.aside.querySelector(".sidebar-top-strip"));
+  });
+});

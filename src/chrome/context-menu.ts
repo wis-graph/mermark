@@ -47,6 +47,12 @@ export interface OpenContextMenuOptions {
 
 let activeMenu: { el: HTMLElement; close: () => void } | null = null;
 
+/** Is a context menu open right now? Pure query (reads module state only) —
+ *  the edge-peek controller holds a peeking rail open while one is up. */
+export function isContextMenuOpen(): boolean {
+  return activeMenu !== null;
+}
+
 /** Closes whatever menu is currently open, if any — the single entry point
  *  every dismissal path (Esc, outside click, item select, a new
  *  `openContextMenu` call) routes through, so "only one menu at a time" and
