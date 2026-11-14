@@ -1,11 +1,11 @@
 {
-  "version": "0.25.2",
-  "notes": "### Changed\n\n- **제목·코드 블록·표 주변 간격**: 제목 위아래 여백을 넓혀 섹션이 또렷하게 나뉜다. 코드 블록 위와 표 위아래에도 숨 쉴 틈을 줬다.",
-  "pub_date": "2026-11-14T11:34:50Z",
+  "version": "0.25.3",
+  "notes": "### Changed\n\n- **표 디자인**: 글자를 본문보다 조금 작게 하고 줄 간격을 넉넉하게 했다. 가로 줄을 없애고 줄무늬 배경으로 행을 나누며, 바깥 테두리와 세로 구분선만 남겼다. 셀 내용은 위쪽 정렬이다.\n- 굵게 표시한 문장 안의 코드는 굵게 보이지 않는다.",
+  "pub_date": "2026-11-14T11:52:25Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzdIR0w2ZXo2NlA2YVZtSHZqOE9YeWVTK210b0lyY3YvTlo2U0QxOUhEN0Z0bWNvelJXVkE4VUhIUUJFd2EvZDBWMlpwYVpmMVYvUll4OEJ0bWtOaGdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NjU2MDcyCWZpbGU6bWVybWFyay5hcHAudGFyLmd6Ck1ObjFhS0xjd1BkR0l1RVBwaTNmbTRndWsvS2crbWZCM0hTQTNpQllveWEyV0NqWGNSTlVzUElYSzRjTTJLTlNZT3ZkNnMxclFjOVJWbTRzVGIzbEF3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.25.2/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzVmd2tIRHNvNTdvdktQRjdkbTJDZkc5cThQSnJLMDM2M3I2a2k1YkhwNFhXRFJER3MrNGU2YmdvY2IxYThCWW9mUjhrQzlQR3FVZHZhMldaM2JzUFFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NjU3MTI4CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CndhR0NoM2w0a1pYRVRiRDdkWFpwZWpSZE9aMlozUHBoVlNNakVwM3ptRkZrKzRpcmhlT0h6SVZhTkQzMlpYZnM1TVVzQTB5TW4xcXhXbmwzdnh6NUNnPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.25.3/mermark.app.tar.gz"
     }
   }
 }
