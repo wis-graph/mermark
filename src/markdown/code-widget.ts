@@ -1,5 +1,6 @@
 import { WidgetType } from "@codemirror/view";
 import { createCopyButton } from "./copy-button";
+import { highlightedLines, highlightedLinesNow } from "./code-highlight";
 
 /** How many ch a tab-stop counts as for the hanging-indent measurement below —
  *  the same 2ch tab-to-space equivalence the rest of the editor's monospace
@@ -48,7 +49,9 @@ export class CodeBlockWidget extends WidgetType {
     // shared text node can't express. The clipboard copy button still uses
     // `this.code` (the original joined string), so row-splitting is a
     // toDOM-only presentation detail — eq()/copy are unaffected.
-    for (const line of this.code.split("\n")) {
+    const sourceLines = this.code.split("\n");
+    const rows: HTMLElement[] = [];
+    for (const line of sourceLines) {
       const row = document.createElement("span");
       row.className = "cm-code-row";
       row.style.setProperty("--code-hang", `${codeHangCh(line)}ch`);
@@ -64,7 +67,20 @@ export class CodeBlockWidget extends WidgetType {
         row.textContent = line;
       }
       code.appendChild(row);
+      rows.push(row);
     }
+    // Highlighting: sync if hljs/cache already has it, else plain now and
+    // swapped in when the lazy hljs import resolves (rows are mutated in place
+    // so the layout never jumps). Only hljs's own escaped output hits innerHTML.
+    const apply = (htmls: string[] | null) => {
+      if (!htmls || htmls.length !== rows.length) return;
+      htmls.forEach((html, i) => {
+        if (sourceLines[i] !== "") rows[i].innerHTML = html;
+      });
+    };
+    const now = highlightedLinesNow(this.lang, this.code);
+    if (now) apply(now);
+    else void highlightedLines(this.lang, this.code).then(apply, () => {});
     pre.appendChild(code);
     pre.appendChild(createCopyButton(this.code, "코드 복사", "cm-codeblock-copy"));
     return pre;

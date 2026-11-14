@@ -640,6 +640,48 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   display: block;
   white-space: pre;
 }
+/* Fenced-code syntax colors (code-highlight.ts → hljs classes). Restrained,
+   per-theme palette; the code viewer's .hljs-* rules are scoped by its own
+   vars, so these are scoped to .cm-codeblock. */
+.cm-codeblock {
+  --hl-cmt: var(--muted);
+  --hl-kw: #c678a8;
+  --hl-str: #d9a07a;
+  --hl-num: #b9a1e0;
+  --hl-tag: #6fb7c9;
+  --hl-attr: #8fa6c4;
+  --hl-fn: #d8c58a;
+  --hl-type: #7fbfb0;
+}
+:root[data-theme="light"] .cm-codeblock {
+  --hl-kw: #9b3f7e;
+  --hl-str: #a5502b;
+  --hl-num: #6f4fb0;
+  --hl-tag: #1c6f86;
+  --hl-attr: #4f6b94;
+  --hl-fn: #7a5f12;
+  --hl-type: #1f7566;
+}
+:root[data-theme="claude"] .cm-codeblock {
+  --hl-kw: #8c4a74;
+  --hl-str: #a2552f;
+  --hl-num: #6b52a0;
+  --hl-tag: #2f6f73;
+  --hl-attr: #56688a;
+  --hl-fn: #7d6420;
+  --hl-type: #3c7a68;
+}
+.cm-codeblock .hljs-comment, .cm-codeblock .hljs-quote { color: var(--hl-cmt); font-style: italic; }
+.cm-codeblock .hljs-keyword, .cm-codeblock .hljs-selector-tag, .cm-codeblock .hljs-doctag { color: var(--hl-kw); }
+.cm-codeblock .hljs-string, .cm-codeblock .hljs-regexp, .cm-codeblock .hljs-addition { color: var(--hl-str); }
+.cm-codeblock .hljs-number, .cm-codeblock .hljs-literal, .cm-codeblock .hljs-symbol, .cm-codeblock .hljs-deletion { color: var(--hl-num); }
+.cm-codeblock .hljs-name, .cm-codeblock .hljs-tag { color: var(--hl-tag); }
+.cm-codeblock .hljs-attr, .cm-codeblock .hljs-attribute, .cm-codeblock .hljs-property, .cm-codeblock .hljs-variable, .cm-codeblock .hljs-template-variable { color: var(--hl-attr); }
+.cm-codeblock .hljs-title, .cm-codeblock .hljs-section { color: var(--hl-fn); }
+.cm-codeblock .hljs-type, .cm-codeblock .hljs-built_in, .cm-codeblock .hljs-selector-class, .cm-codeblock .hljs-selector-id { color: var(--hl-type); }
+.cm-codeblock .hljs-meta { color: var(--muted); }
+.cm-codeblock .hljs-strong { font-weight: bold; }
+.cm-codeblock .hljs-emphasis { font-style: italic; }
 .cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .4em; right: 2.6em; font-family: var(--font-mono); font-weight: 400; font-size: .72em; color: var(--muted); pointer-events: none; }
 /* Copy-to-clipboard button base (shared by code-block + blockquote copy
    buttons — markdown/copy-button.ts's single DOM factory): fixed to the
