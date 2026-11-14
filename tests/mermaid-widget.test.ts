@@ -458,14 +458,13 @@ describe("mermaidThemeVariables (mermaid palette derived from the app theme SSOT
     themeJsonSetting.set(builtInTheme("light"));
     const vars = mermaidThemeVariables("light");
     expect(vars.darkMode).toBe(false);
-    expect(vars.background).toBe("#f5f5f5");
-    // surface is pure white in the light preset (tour-02: nodes floated off the
-    // off-white canvas) — mermaidNodeFill tints it toward bg instead of using it
-    // verbatim (2026-07-12 design-polish pass ⑤).
-    expect(vars.primaryColor).toBe("#fafafa");
-    expect(vars.secondaryColor).toBe("#fafafa");
+    expect(vars.background).toBe("#ffffff");
+    // 2026-11: canvas is white and light surface is stone-50 (#fafaf9, not pure
+    // white), so mermaidNodeFill passes it through verbatim.
+    expect(vars.primaryColor).toBe("#fafaf9");
+    expect(vars.secondaryColor).toBe("#fafaf9");
     expect(vars.primaryTextColor).toBe("#0c0a09"); // fg
-    expect(vars.edgeLabelBackground).toBe("#f5f5f5"); // bg — fixes the grey label chip
+    expect(vars.edgeLabelBackground).toBe("#ffffff"); // bg — fixes the grey label chip
   });
 
   it("leaves claude's non-white surface untouched (byte-identical to before ⑤)", () => {

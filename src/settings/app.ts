@@ -237,6 +237,19 @@ export function clampReadingWidth(n: number): number {
   return Math.min(READING_WIDTH_MAX_PCT, Math.max(READING_WIDTH_MIN_PCT, n));
 }
 
+/** The absolute reading-measure cap (in em of the body font) at the default
+ *  width: 47.5em = 760px at 16px. Em-based so ⌘± / font-size changes keep the
+ *  characters-per-line, instead of a px cap that drifts as text grows. */
+const READING_CAP_EM_AT_DEFAULT = 47.5;
+
+/** The slider-scaled absolute cap, in em → --measure-em. Scales linearly with
+ *  the slider (68% = 47.5em, 100% ≈ 69.9em) so the slider stays meaningful in
+ *  wide windows: styles.css takes min(--measure % of window, this cap).
+ *  Pure query. */
+export function readingWidthCapEm(pct: number): number {
+  return Math.round((pct / READING_WIDTH_DEFAULT_PCT) * READING_CAP_EM_AT_DEFAULT * 100) / 100;
+}
+
 /** Reading column width as % of the window (editor) width → --measure (default
  *  68%; window-relative so it reads the same on any monitor/resolution — 100%
  *  fills the window, unlike the old ch-based measure whose fixed char count
@@ -255,10 +268,10 @@ export const readingWidthSetting = registerSetting<number>({
   },
 });
 
-/** Body line-height → --line-height (default 1.6, the current value). */
+/** Body line-height → --line-height (default 1.8). */
 export const lineHeightSetting = registerSetting<number>({
   key: "mermark.lineHeight",
-  default: 1.6,
+  default: 1.8,
   parse: numberParse,
   ui: { label: "줄 간격", group: "타이포그래피", control: { kind: "slider", min: 1.2, max: 2.0, step: 0.1 } },
 });

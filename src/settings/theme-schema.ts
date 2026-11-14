@@ -650,11 +650,11 @@ export function builtInTheme(name: PresetName): Theme {
     return {
       name: "light",
       colors: {
-        bg: "#f5f5f5",
+        bg: "#ffffff",
         fg: "#0c0a09",
         accent: "#292524",
         link: "#1d6fb8",
-        surface: "#ffffff",
+        surface: "#fafaf9",
         border: "#e7e5e4",
         muted: "#6f6a63",
         highlightBg: "#fff3a3",

@@ -330,11 +330,11 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
   it("light matches styles.css:19-27 (core) + the promotion rule (extended)", () => {
     const light = builtInTheme("light");
     expect(light.colors).toEqual({
-      bg: "#f5f5f5",
+      bg: "#ffffff",
       fg: "#0c0a09",
       accent: "#292524",
       link: "#1d6fb8",
-      surface: "#ffffff",
+      surface: "#fafaf9",
       border: "#e7e5e4",
       muted: "#6f6a63",
       highlightBg: "#fff3a3",
@@ -408,8 +408,8 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
         bold: "#ffffff", italic: "#ffffff", code: "#a8c8e8", highlight: "#1a1300",
       },
       light: {
-        bg: "#f5f5f5", fg: "#0c0a09", accent: "#292524", link: "#1d6fb8",
-        surface: "#ffffff", border: "#e7e5e4", muted: "#6f6a63", highlightBg: "#fff3a3",
+        bg: "#ffffff", fg: "#0c0a09", accent: "#292524", link: "#1d6fb8",
+        surface: "#fafaf9", border: "#e7e5e4", muted: "#6f6a63", highlightBg: "#fff3a3",
         h1: "#0c0a09", h2: "#0c0a09", h3: "#0c0a09", h4: "#0c0a09", h5: "#0c0a09", h6: "#6f6a63",
         bold: "#0c0a09", italic: "#0c0a09", code: "#292524", highlight: "#1a1300",
       },
@@ -431,7 +431,7 @@ describe("builtInTheme equals the current styles.css values (zero-drift)", () =>
 
 describe("comment color: independent from muted, with a targeted contrast band (결정 5)", () => {
   const CASES = [
-    { name: "light" as const, bg: "#f5f5f5", fg: "#0c0a09" },
+    { name: "light" as const, bg: "#ffffff", fg: "#0c0a09" },
     { name: "claude" as const, bg: "#faf9f5", fg: "#141413" },
     { name: "dark" as const, bg: "#131110", fg: "#ffffff" },
   ];

@@ -10,6 +10,7 @@ import {
   fontSizeSetting,
   readingWidthSetting,
   lineHeightSetting,
+  readingWidthCapEm,
   sidebarWidthSetting,
   headingRatioSetting,
   headingFontSetting,
@@ -56,6 +57,9 @@ export function bindBootSettingSinks(): void {
   fontFamilySetting.subscribe(composeReadingFont); // re-compose when the select changes
   fontSizeSetting.bind(cssVarSink("--editor-font-size", (px: number) => `${px}px`));
   readingWidthSetting.bind(cssVarSink("--measure", (pct: number) => `${pct}%`));
+  // Same setting, second var: the absolute em cap that scales with the slider
+  // (styles.css .cm-content: min(--measure, --measure-em × body font)).
+  readingWidthSetting.bind(cssVarSink("--measure-em", (pct: number) => String(readingWidthCapEm(pct))));
   lineHeightSetting.bind(cssVarSink("--line-height"));
   // Left sidebar width (drag sash): same setting.bind(cssVarSink) shape as the
   // typography vars above. The sash (created in main.ts, once `workspace` exists) previews

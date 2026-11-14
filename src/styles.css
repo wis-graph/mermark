@@ -65,7 +65,7 @@
   --caret: #ff3b30;
   /* Typography panel vars (SSOT: fontSize/readingWidth/lineHeight settings →
      cssVarSink). Defaults:
-       --editor-font-size 1rem (16px), --measure 68%, --line-height 1.6.
+       --editor-font-size 1rem (16px), --measure 68%, --line-height 1.8.
      --measure is a % of the window (editor) width, held as a pure <n>% number
      by the sink; .cm-content consumes it directly as max-width, so it's
      already window-relative and never overflows (100% = the full window,
@@ -85,7 +85,10 @@
      collapse async mermaid/katex widgets to 0 height). */
   --block-font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1));
   --measure: 68%;
-  --line-height: 1.6;
+  --line-height: 1.8;
+  /* Absolute reading-measure cap in em (--measure-em, set by the readingWidth sink
+     alongside --measure; 47.5em = 760px at 16px at the default 68%). */
+  --measure-em: 47.5;
   /* Reading-column font (Typography fontFamily setting). Falls back to the body
      sans stack so the editor inherits --font-sans when no preference is set. */
   --reading-font: var(--font-sans);
@@ -107,9 +110,9 @@
        h4 display-sm       → -0.005em
        h5 title / h6 caption → 0 (no negative tracking) */
   --body-tracking: 0.01em;
-  --h1-tracking: -0.021em;
-  --h2-tracking: -0.018em;
-  --h3-tracking: -0.014em;
+  --h1-tracking: 0;
+  --h2-tracking: 0;
+  --h3-tracking: 0;
   --h4-tracking: -0.005em;
   --h5-tracking: 0;
   --h6-tracking: 0;
@@ -214,11 +217,11 @@
 }
 :root[data-theme="light"] {
   /* light = brand editorial default */
-  --bg: #f5f5f5;                /* canvas */
+  --bg: #ffffff;                /* canvas — pure white page (2026-11 typography pass) */
   --fg: #0c0a09;                /* ink */
   --accent: #292524;            /* primary — brand's only action color (ink pill) */
-  --link: #1d6fb8;              /* gradient-sky darkened to AA. on #f5f5f5 canvas ≈ 4.6:1, distinct from ink */
-  --surface: #ffffff;           /* surface-card */
+  --link: #1d6fb8;              /* gradient-sky darkened to AA. on the white canvas ≈ 5.0:1, distinct from ink */
+  --surface: #fafaf9;           /* surface-card — stone-50, a faint lift off the white canvas */
   --border: #e7e5e4;            /* hairline */
   --muted: #6f6a63;             /* muted — AA 4.92:1 on the canvas (was #777169, 4.43) */
   --highlight-bg: #fff3a3;      /* soft pastel mark on the bright editorial canvas */
@@ -234,10 +237,18 @@
      stronger 6% mix; --surface (4% lighter than --bg here) read as almost no
      difference at all. 2026-11 unslop polish: 8% -> 6% (코드·인용 블록이 본문보다
      무겁게 읽혀 한 단계 낮춤, 경계는 --block-edge 16%가 유지). */
-  --block-fill: color-mix(in srgb, var(--fg) 6%, var(--bg));
-  /* BLOCK EDGE RULE (see :root's --block-edge comment) — light needs 16% (2x
-     fill) since --border (#e7e5e4) sits only ~5/channel from fill (#e2e2e2). */
+  --block-fill: color-mix(in srgb, var(--fg) 3%, var(--bg));
+  /* 2026-11 typography pass: page is pure white, so the "면" family is very
+     faint — fill 3% (≈#f8f8f8: code block / table header / zebra), inline-code
+     chip 6% (≈#f0f0f0, below). Code blocks and tables no longer draw a
+     --block-edge border; --border hairlines carry table structure. */
+  /* BLOCK EDGE RULE (see :root's --block-edge comment) — still 16% for the
+     quote bar / mermaid frame, which keep an edge. */
   --block-edge: color-mix(in srgb, var(--fg) 16%, var(--bg));
+  /* Translucent (SELECTION PERMEABILITY RULE) ink veil instead of the
+     white-60%-on-white that read as nothing: this IS the inline-code chip
+     (--code-bg → --surface-veil), the revealed .cm-code-line fill and callout. */
+  --surface-veil: color-mix(in srgb, var(--fg) 6%, transparent);
   --elev-1-bg: var(--surface);
 }
 /* claude = the Anthropic editorial palette: tinted-cream canvas + warm-ink text,
@@ -359,7 +370,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    font-size, so async mermaid/katex widgets never collapse to 0 offsetHeight —
    font-size remains forbidden on .cm-content. */
 .cm-editor .cm-content {
-  max-width: var(--measure, 68%);
+  /* min(window %, slider-scaled absolute cap): the cap is em of the body font
+     (editor font-size x zoom), so ⌘± keeps chars-per-line. font-size itself is
+     untouched (ZOOM GUARD). */
+  max-width: min(var(--measure, 68%), calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--measure-em, 47.5)));
   padding: 2rem 1rem;
   word-break: keep-all; /* body text breaks at word boundaries (D2b #3); overflow-wrap from CM lineWrapping backs up long tokens */
   font-family: var(--reading-font, var(--font-sans));
@@ -386,7 +400,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* P4: text-wrap: pretty re-positions soft-wrap breaks to avoid orphans. It only
    changes WHERE lines break, not line-height/font-size, and block widgets render
    in their own containers outside .cm-line, so it's widget-measure-inert. */
-.cm-editor .cm-line { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1)); line-height: var(--line-height, 1.6); letter-spacing: var(--body-tracking, 0.01em); text-wrap: pretty; }
+.cm-editor .cm-line { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1)); line-height: var(--line-height, 1.8); letter-spacing: var(--body-tracking, 0.01em); text-wrap: pretty; }
 /* Caret colour (both paths). drawSelection (enabled for vim visual-selection)
    paints its own `.cm-cursor` element via border-left and ignores caret-color,
    so we colour that border directly; the `.cm-editor` prefix beats CM's runtime
@@ -559,7 +573,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    codeBg-only intrinsic default IS var(--surface-veil), so an unconfigured
    theme renders this identical chip fill it always has — a value swap, not a
    behavior change. */
-.cm-inline-code { font-family: var(--font-mono); letter-spacing: normal; padding: 0 .25em; border-radius: var(--radius-xs, 4px); background: var(--code-bg, var(--surface-veil)); color: var(--code-color, inherit); }
+.cm-inline-code { font-family: var(--font-mono); letter-spacing: normal; padding: .1em .3em; border-radius: 4px; background: var(--code-bg, var(--surface-veil)); color: var(--code-color, inherit); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 /* <!-- comment --> stays visible (unconcealed) but quiet, so it reads as an
    aside rather than body text. --comment-color is independent from --muted
    (2026-08: "주석도 옅은색하라니까 검정색이랑 구분이 안되네" — muted was too dark
@@ -601,14 +615,18 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    before this feature (the polarity fallback literals below — var(--radius-md),
    .7em, .9em — ARE that zero-drift baseline; a cross-file regression test
    pins them). */
-.cm-codeblock { display: block; margin: 0; position: relative; background: var(--codeblock-bg, var(--block-fill)); color: var(--codeblock-color, inherit); border: 1px solid var(--block-edge); border-radius: var(--block-radius, var(--radius-md)); padding: var(--block-padding, .7em) var(--block-padding, .9em); overflow-x: auto; font-size: var(--block-font-size); line-height: 1.5; }
+.cm-codeblock { display: block; margin: 0; position: relative; background: var(--codeblock-bg, var(--block-fill)); color: var(--codeblock-color, inherit); border: 0; border-radius: var(--block-radius, var(--radius-md)); padding: var(--block-padding, 1.25em) 0; overflow: visible; font-size: var(--block-font-size); line-height: 1.6; }
 /* `pre-wrap` preserves whitespace/indentation (like `pre`) but wraps at normal
    break points; `overflow-wrap: anywhere` further breaks inside unbroken
    tokens (long URLs, hashes) so long lines wrap inside the block instead of
    forcing horizontal scroll — read-mode code blocks now wrap like the edit-
    mode `.cm-code-line` (which gets wrapping for free from
    EditorView.lineWrapping on the real editor line). */
-.cm-codeblock code { font-family: var(--font-mono); letter-spacing: normal; }
+.cm-codeblock code { display: block; font-family: var(--font-mono); letter-spacing: normal; padding: 0 var(--block-padding, 1.25em); overflow-x: auto; }
+/* 2026-11 typography pass: no wrapping. The horizontal scroller is the inner
+   <code> (not the <pre>) so the absolutely-positioned lang label and copy
+   button stay anchored to the box instead of scrolling away with the text;
+   horizontal padding lives on <code>, vertical padding (1.25em) on the <pre>. */
 /* Per-row hanging indent (code-widget.ts renders one .cm-code-row per source
    line instead of one shared text blob): pre-wrap/overflow-wrap moved here
    from `.cm-codeblock code` above (de-duplicated, not doubled) because the
@@ -620,12 +638,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    soft-wrap rule above (.cm-list-line). */
 .cm-codeblock .cm-code-row {
   display: block;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding-inline-start: var(--code-hang, 0ch);
-  text-indent: calc(-1 * var(--code-hang, 0ch));
+  white-space: pre;
 }
-.cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .35em; right: 2.4em; font-family: var(--font-mono); font-weight: 400; font-size: .72em; color: var(--muted); pointer-events: none; }
+.cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .4em; right: 2.6em; font-family: var(--font-mono); font-weight: 400; font-size: .72em; color: var(--muted); pointer-events: none; }
 /* Copy-to-clipboard button base (shared by code-block + blockquote copy
    buttons — markdown/copy-button.ts's single DOM factory): fixed to the
    top-right corner of its `position: relative` host, hidden until that host
@@ -896,9 +911,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    block box, so painting its background changes zero layout on its own. Still no
    padding: a padded heading line would shift the vertical rhythm the heading-
    cluster rule above is tuned against. */
-.cm-editor .cm-line.cm-h1 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 1.953)); letter-spacing: var(--h1-tracking, 0); color: var(--h1-color, var(--fg)); background: var(--h1-bg, transparent); }
-.cm-editor .cm-line.cm-h2 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.563)); letter-spacing: var(--h2-tracking, 0); color: var(--h2-color, var(--fg)); background: var(--h2-bg, transparent); }
-.cm-editor .cm-line.cm-h3 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.25)); letter-spacing: var(--h3-tracking, 0); color: var(--h3-color, var(--fg)); background: var(--h3-bg, transparent); }
+.cm-editor .cm-line.cm-h1 { font-weight: 700; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 1.953)); letter-spacing: var(--h1-tracking, 0); color: var(--h1-color, var(--fg)); background: var(--h1-bg, transparent); }
+.cm-editor .cm-line.cm-h2 { font-weight: 700; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.563)); letter-spacing: var(--h2-tracking, 0); color: var(--h2-color, var(--fg)); background: var(--h2-bg, transparent); }
+.cm-editor .cm-line.cm-h3 { font-weight: 700; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.25)); letter-spacing: var(--h3-tracking, 0); color: var(--h3-color, var(--fg)); background: var(--h3-bg, transparent); }
 .cm-editor .cm-line.cm-h4 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.118)); letter-spacing: var(--h4-tracking, 0); color: var(--h4-color, var(--fg)); background: var(--h4-bg, transparent); }
 .cm-editor .cm-line.cm-h5 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); background: var(--h5-bg, transparent); }
 .cm-editor .cm-line.cm-h6 { font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); background: var(--h6-bg, transparent); }
@@ -2135,7 +2150,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    below gave it a job: cells that can't shrink below min-width just scroll
    instead of forcing a column collapse. */
 .cm-table-wrap { overflow-x: auto; padding: 1em 0; }
-.cm-table { table-layout: auto; border-collapse: collapse; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); }
+.cm-table { table-layout: auto; border-collapse: separate; border-spacing: 0; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); line-height: 1.7; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 /* keep-all: CJK breaks only at natural word/space boundaries, never mid-syllable
    (the 1-glyph-per-line collapse this fixes). min-width: 6ch is a floor so a
    narrow CJK column can't be squeezed to zero width. Do NOT add
@@ -2143,12 +2158,19 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    overflow, which defeats keep-all (CJK collapse would return conditionally). */
 /* Report-style table (team-lead spec, 2026-07-20): horizontal rules only, no
    vertical gridlines — border-bottom replaces the old 4-sided grid. */
-.cm-table th, .cm-table td { border: 0; border-bottom: 1px solid var(--border); padding: .4em .6em; word-break: keep-all; min-width: 6ch; }
+.cm-table th, .cm-table td { border: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: .75em 1em; word-break: keep-all; min-width: 6ch; }
+/* Outer frame is the table's own 1px border; drop the inner hairline on the
+   last column / last row so it doesn't double up (border-collapse: separate). */
+.cm-table th:last-child, .cm-table td:last-child { border-right: 0; }
+.cm-table tbody tr:last-child td { border-bottom: 0; }
+/* Inline code never breaks mid-token in a cell (`?step=N.b`); a wide table
+   scrolls inside .cm-table-wrap instead. */
+.cm-table .cm-inline-code, .cm-table code { white-space: nowrap; }
 .cm-table th { background: var(--block-fill); font-weight: 600; text-align: left; }
 /* Zebra striping on even DATA rows only — thead is out of scope (tbody
    scopes the selector), so the header row never stripes. A faint
    readability aid, not a color statement. */
-.cm-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--fg) 3%, transparent); }
+.cm-table tbody tr:nth-child(even) td { background: var(--block-fill); }
 /* Numeric auto right-align (src/text/numeric-cell.ts's looksNumeric, applied
    by table-widget.ts). An explicit markdown align spec (:---/---:/:--:) sets
    an INLINE style on the cell, and inline always outranks a class — so a
