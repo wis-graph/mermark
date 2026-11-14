@@ -153,7 +153,7 @@ const PATHS = {
   "corner-left-up":
     '<path d="M14 15 9 20 4 15"/>' +
     '<path d="M20 4h-7a4 4 0 0 0-4 4v12"/>',
-  // chevron-right — explorer: folder twisty (rotates 90° when expanded)
+  // chevron-right — generic disclosure arrow (no sidebar row uses it now)
   "chevron-right": '<path d="m9 18 6-6-6-6"/>',
   // hard-drive — explorer: "내 컴퓨터" drive row (list_drives)
   "hard-drive":

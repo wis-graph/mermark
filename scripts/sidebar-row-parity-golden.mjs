@@ -4,7 +4,7 @@
 // The vitest style contract (tests/sidebar-row-metrics.test.ts) proves the CSS
 // TEXT consumes one set of row tokens. This golden proves the LIVE GEOMETRY:
 // a workspace vault row sits on the same column grid as an explorer folder row
-// (row height, chevron/glyph/name x, indent step), at zoom 1 AND 1.2, plus the
+// (row height, glyph/name x — no chevron column, indent step), at zoom 1 AND 1.2, plus the
 // open-document count and the explorer's "열린 파일" view smoke.
 //
 //   node scripts/sidebar-row-parity-golden.mjs /tmp/sidebar-row-parity.json
@@ -77,7 +77,7 @@ async function measureExplorerFolderRow() {
     const label = document.querySelector('.explorer-dir[data-path="/mock/vault/notes"] > .explorer-label');
     const r = label.getBoundingClientRect();
     const rel = (sel) => { const el = label.querySelector(sel); if (!el) return null; const b = el.getBoundingClientRect(); return { left: b.left - r.left, abs: b.left - aside.left, width: b.width, height: b.height }; };
-    return { height: r.height, chevron: rel(".explorer-chevron"), glyph: rel(".explorer-glyph"), name: rel(".explorer-name") };
+    return { height: r.height, glyph: rel(".explorer-glyph"), name: rel(".explorer-name") };
   });
 }
 
@@ -89,14 +89,14 @@ async function measureWorkspaceRow(vaultId) {
     const row = document.querySelector(`.workspace-vault-row[data-vault-id="${vaultId}"]`);
     const r = row.getBoundingClientRect();
     const rel = (sel) => { const el = row.querySelector(sel); if (!el) return null; const b = el.getBoundingClientRect(); return { left: b.left - r.left, abs: b.left - aside.left, width: b.width, height: b.height }; };
-    return { height: r.height, chevron: rel(".workspace-vault-chevron"), glyph: rel(".workspace-vault-glyph"), name: rel(".workspace-vault-name") };
+    return { height: r.height, glyph: rel(".workspace-vault-glyph"), name: rel(".workspace-vault-name") };
   }, vaultId);
 }
 
 const near = (a, b, tol = TOL) => a != null && b != null && Math.abs(a - b) <= tol;
 const columnsAgree = (ex, ws) =>
-  near(ex.height, ws.height) && near(ex.chevron?.left, ws.chevron?.left) && near(ex.glyph?.left, ws.glyph?.left) && near(ex.name?.left, ws.name?.left)
-  && near(ex.glyph?.width, ws.glyph?.width) && near(ex.chevron?.width, ws.chevron?.width);
+  near(ex.height, ws.height) && near(ex.glyph?.left, ws.glyph?.left) && near(ex.name?.left, ws.name?.left)
+  && near(ex.glyph?.width, ws.glyph?.width);
 
 const result = { scenarios: {}, errors };
 
@@ -109,18 +109,20 @@ const ws1 = await measureWorkspaceRow(VAULT_ID);
 await page.screenshot({ path: `${shotBase}.workspace-zoom1.png` });
 result.scenarios.S1_columns_zoom1 = {
   explorer: ex1, workspace: ws1,
-  // Expected at zoom 1, relative to the row's left edge: chevron 4 / glyph 24 / name 44.
+  // Expected at zoom 1, relative to the row's left edge: glyph 4 / name 24.
   // Height 28 = the explorer's measured folder row (20px bookmark chip + 2*4 padding);
   // the workspace row takes the same floor via --sidebar-row-control.
-  expected: { chevronLeft: 4, glyphLeft: 24, nameLeft: 44, height: 28 },
+  expected: { glyphLeft: 4, nameLeft: 24, height: 28 },
   agree: columnsAgree(ex1, ws1),
-  matchesExpected: near(ws1.chevron?.left, 4) && near(ws1.glyph?.left, 24) && near(ws1.name?.left, 44) && near(ws1.height, ex1.height) && near(ws1.height, 28),
+  matchesExpected: near(ws1.glyph?.left, 4) && near(ws1.name?.left, 24) && near(ex1.glyph?.left, 4) && near(ex1.name?.left, 24) && near(ws1.height, ex1.height) && near(ws1.height, 28),
 };
 const wsChild = await measureWorkspaceRow(NOTES_ID);
 result.scenarios.S2_indent_step = {
-  parentChevronAbs: ws1.chevron?.abs, childChevronAbs: wsChild.chevron?.abs,
-  step: (wsChild.chevron?.abs ?? NaN) - (ws1.chevron?.abs ?? NaN),
-  pass: near((wsChild.chevron?.abs ?? NaN) - (ws1.chevron?.abs ?? NaN), 12),
+  parentGlyphAbs: ws1.glyph?.abs, childGlyphAbs: wsChild.glyph?.abs,
+  parentNameAbs: ws1.name?.abs, childNameAbs: wsChild.name?.abs,
+  step: (wsChild.glyph?.abs ?? NaN) - (ws1.glyph?.abs ?? NaN),
+  // Leaf (Notes, no children) vs parent (Vault): same grammar, shifted by exactly one indent step.
+  pass: near((wsChild.glyph?.abs ?? NaN) - (ws1.glyph?.abs ?? NaN), 12) && near((wsChild.name?.abs ?? NaN) - (ws1.name?.abs ?? NaN), 12),
 };
 result.scenarios.S4_count = await page.evaluate(({ VAULT_ID, NOTES_ID }) => {
   const count = document.querySelector(`.workspace-vault-row[data-vault-id="${VAULT_ID}"] .workspace-vault-count`);
@@ -140,8 +142,8 @@ result.scenarios.S5_group_label_x = await page.evaluate(() => {
   const row = document.querySelector(".workspace-vault-group--permanent .workspace-vault-row");
   const range = document.createRange(); range.selectNodeContents(label);
   const textLeft = range.getBoundingClientRect().left - aside.left;
-  const chevron = row.querySelector(".workspace-vault-chevron").getBoundingClientRect().left - aside.left;
-  return { textLeft, chevronLeft: chevron, pass: Math.abs(textLeft - chevron) <= 0.5 };
+  const chevron = row.querySelector(".workspace-vault-glyph").getBoundingClientRect().left - aside.left;
+  return { textLeft, glyphLeft: chevron, pass: Math.abs(textLeft - chevron) <= 0.5 };
 });
 
 // ── S3: zoom 1.2 (real persisted SSOT path) ───────────────────────────────

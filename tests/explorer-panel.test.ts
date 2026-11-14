@@ -308,10 +308,11 @@ describe("explorer: folder children nest vertically, not to the right (F)", () =
     const item = panel.aside.querySelector(".explorer-item.explorer-dir") as HTMLElement;
     const label = item.querySelector(":scope > .explorer-label") as HTMLElement;
     expect(label).toBeTruthy();
-    expect(label.querySelector(".explorer-chevron")).toBeTruthy();
+    expect(label.querySelector(".explorer-glyph")).toBeTruthy();
+    expect(item.querySelector(".explorer-chevron")).toBeNull();
     expect(label.querySelector(".explorer-name")).toBeTruthy();
-    // chevron/name are inside label now, not direct flex siblings of the item.
-    expect(item.querySelector(":scope > .explorer-chevron")).toBeNull();
+    // glyph/name are inside label now, not direct flex siblings of the item.
+    expect(item.querySelector(":scope > .explorer-glyph")).toBeNull();
     expect(item.querySelector(":scope > .explorer-name")).toBeNull();
   });
 

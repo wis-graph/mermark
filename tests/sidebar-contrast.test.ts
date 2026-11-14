@@ -153,7 +153,6 @@ describe("sidebar strong-contrast palette (style contract)", () => {
     ".explorer-item > .explorer-label:hover",
     ".explorer-item.is-selected > .explorer-label",
     ".explorer-item.is-focused > .explorer-label",
-    ".explorer-chevron",
     ".explorer-glyph",
     ".explorer-dir > .explorer-label > .explorer-glyph",
     ".explorer-file.is-nonmd > .explorer-label",

@@ -62,8 +62,10 @@ describe("sidebar row metrics (style contract)", () => {
     expect(decl(select, "gap")).toBe("var(--sidebar-row-gap)");
     expect(decl(select, "line-height")).toBe("var(--sidebar-row-line-height)");
     expect(decl(select, "min-height")).toBe("calc(var(--sidebar-row-control) + 2 * var(--sidebar-row-pad-block))");
-    const toggle = block(".workspace-vault-toggle, .workspace-vault-toggle-spacer");
+    const toggle = block(".workspace-vault-toggle");
     expect(decl(toggle, "padding")).toBe("0 var(--sidebar-row-gap) 0 var(--sidebar-row-lead)");
+    // leaf rows have no toggle: the select itself carries the lead
+    expect(decl(block(".workspace-vault-select.is-leaf"), "padding-left")).toBe("var(--sidebar-row-lead)");
     expect(decl(block(".workspace-group-label"), "padding")).toBe(
       "0 var(--sidebar-row-pad-inline) var(--sidebar-row-pad-block) var(--sidebar-row-lead)",
     );
@@ -72,8 +74,8 @@ describe("sidebar row metrics (style contract)", () => {
   it("the open-files list rows use the same tokens", () => {
     expect(decl(block(".explorer-open-files"), "padding")).toBe("var(--sidebar-list-pad)");
     const select = block(".explorer-open-file-select");
-    // glyph column = tree file row's: lead + empty chevron column (16/13em) + gap.
-    expect(decl(select, "padding")).toBe("var(--sidebar-row-pad-block) 0 var(--sidebar-row-pad-block) calc(var(--sidebar-row-lead) + (16em / 13) + var(--sidebar-row-gap))");
+    // glyph column = tree row's: glyph at lead (no chevron column).
+    expect(decl(select, "padding")).toBe("var(--sidebar-row-pad-block) 0 var(--sidebar-row-pad-block) var(--sidebar-row-lead)");
     expect(decl(select, "min-height")).toBe("calc(var(--sidebar-row-control) + 2 * var(--sidebar-row-pad-block))");
     expect(decl(select, "gap")).toBe("var(--sidebar-row-gap)");
     expect(decl(select, "line-height")).toBe("var(--sidebar-row-line-height)");
@@ -81,7 +83,7 @@ describe("sidebar row metrics (style contract)", () => {
   });
 
   it("icon boxes keep the literal 16/13em (zoom contract) and the action chip is 20/13em", () => {
-    for (const sel of [".workspace-vault-chevron", ".workspace-vault-glyph", ".explorer-open-file-glyph"]) {
+    for (const sel of [".workspace-vault-glyph", ".explorer-open-file-glyph"]) {
       const b = block(sel);
       expect(decl(b, "width")).toBe("calc(16em / 13)");
       expect(decl(b, "height")).toBe("calc(16em / 13)");

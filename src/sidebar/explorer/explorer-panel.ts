@@ -622,9 +622,8 @@ export function createExplorerPanel({
     return wrap;
   };
 
-  /** Build one entry row. Folders get a chevron twisty + aria-expanded + a lazy
-   *  children group; files get a spacer (chevron alignment) and are greyed +
-   *  inert when non-markdown. `level` (1-based) drives aria-level + the CSS
+  /** Build one entry row. Folders get aria-expanded + a lazy children group
+   *  (the folder/folder-open glyph shows the state; no twisty); files are greyed + inert when non-markdown. `level` (1-based) drives aria-level + the CSS
    *  indent var, so indentation always matches the announced depth. */
   const makeEntry = async (e: DirEntry, level: number): Promise<HTMLElement> => {
     const kind = e.is_dir ? "explorer-dir" : "explorer-file";
@@ -638,18 +637,16 @@ export function createExplorerPanel({
     if (e.is_dir) item.setAttribute("aria-expanded", "false");
     if (!e.is_dir && !isOpenableEntry(e.name)) item.classList.add("is-nonmd");
 
-    const chevron = create("span", e.is_dir ? "explorer-chevron" : "explorer-chevron explorer-chevron-empty");
-    if (e.is_dir) chevron.append(icon("chevron-right"));
     const glyph = create("span", "explorer-glyph");
     renderEntryGlyph(glyph, e.name, e.is_dir, false);
     const name = create("span", "explorer-name");
     name.textContent = e.name;
     name.title = e.name;
-    // The visible clickable ROW (chevron·glyph·name) is its own flex wrapper, kept
+    // The visible clickable ROW (glyph·name) is its own flex wrapper, kept
     // separate from the children group so a folder's group nests as a vertical
     // block BELOW the label — not as a flex sibling to its RIGHT (the 527faf6 bug).
     const label = create("div", "explorer-label");
-    label.append(chevron, glyph, name);
+    label.append(glyph, name);
     if (e.is_dir && onToggleVault && isVaultRegistered && (canBookmarkFolders?.() ?? true)) {
       const toggle = create("button", "explorer-vault-toggle");
       toggle.type = "button";
@@ -669,7 +666,7 @@ export function createExplorerPanel({
   };
 
   /** Build one "내 컴퓨터" (My Computer) drive row — a leaf, like a file row
-   *  (no children group, no chevron), except its click/Enter target is
+   *  (no children group), except its click/Enter target is
    *  `changeRoot`, handled by `activateItem`'s `.explorer-drive` branch. */
   const makeDriveEntry = (drive: DriveEntry): HTMLElement => {
     const item = create("div", "explorer-item explorer-drive");
@@ -679,14 +676,13 @@ export function createExplorerPanel({
     item.dataset.path = drive.path;
     item.dataset.level = "1";
     item.style.setProperty("--level", "1");
-    const chevron = create("span", "explorer-chevron explorer-chevron-empty");
     const glyph = create("span", "explorer-glyph");
     glyph.append(icon("hard-drive"));
     const name = create("span", "explorer-name");
     name.textContent = drive.display_name;
     name.title = drive.display_name;
     const label = create("div", "explorer-label");
-    label.append(chevron, glyph, name);
+    label.append(glyph, name);
     item.append(label);
     item.title = "이 드라이브를 루트로 (클릭 / Enter)";
     return item;
@@ -897,11 +893,8 @@ export function createExplorerPanel({
         // it can't accumulate.
         up.dataset.path = target.path;
       }
-      // No chevron spacer here (unlike file rows, explorer-panel:299): `..` is a
-      // NAVIGATION row, not a tree node — its glyph sits flush left in the
-      // chevron column, aligned with the folder chevrons above/below it. A
-      // hidden spacer made it the only left-indented row in the tree (2026-07-11
-      // design pass).
+      // `..` is a NAVIGATION row, not a tree node — its glyph sits at the same
+      // lead column as every tree row's glyph (there is no twisty column).
       const upGlyph = create("span", "explorer-glyph");
       upGlyph.append(icon("corner-left-up"));
       const upName = create("span", "explorer-name");

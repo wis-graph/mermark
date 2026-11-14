@@ -27,7 +27,7 @@ const out = process.argv[2] ?? "/tmp/sidebar-zoom.json";
 // Audit 04 (2026-07-11, 🔴 1): the default x.md target has no directory in the
 // mock's list_dir TREE (src/mocks/tauri-core.ts), so the explorer tree never
 // grows a folder row and `.explorer-star` never mounts — the ORIGINAL version
-// of this golden could only ever reach `.explorer-chevron` (a <span>, not a
+// of this golden could only ever reach `.explorer-glyph` (a <span>, not a
 // <button>), so it silently never exercised the 4 button-hosted glyphs the
 // audit flagged (G4/G5/G7/G8). /mock/vault/index.md's dir (/mock/vault) has a
 // real "notes" child folder in that TREE, so opening the explorer here always
@@ -77,7 +77,7 @@ async function openExplorer() {
 /** Reads the computed sizes the design's zoom contract makes claims about:
  *  the sidebar shell (root calc), .sidebar-header (11/13 em child), the
  *  editor's .cm-line (the "1:1 통합" claim — sidebar and editor scale the
- *  SAME --font-scale together), .explorer-chevron (span glyph, the control
+ *  SAME --font-scale together), .explorer-glyph (span glyph, the control
  *  group that always tracked zoom correctly), and — audit 04 🔴 1's permanent
  *  regression guard — the two <button>-hosted glyphs that silently ignored
  *  zoom before `font: inherit` was added: `.explorer-star`. The url points at
@@ -94,7 +94,7 @@ async function readZoomState(label) {
     // line is the base --editor-font-size * --font-scale with nothing else
     // riding on top.
     const cmLine = document.querySelector(".cm-line:not(.cm-heading)");
-    const chevron = document.querySelector(".explorer-chevron");
+    const chevron = document.querySelector(".explorer-glyph");
     const star = document.querySelector(".explorer-star");
     return {
       fontScaleVar: getComputedStyle(document.documentElement).getPropertyValue("--font-scale").trim(),
@@ -105,7 +105,7 @@ async function readZoomState(label) {
       // G4/G5/G7/G8 (audit 04 🔴 1): before the fix these were UA-button-font
       // fixed values (~20.5/13.328/18.453/12.297px) at BOTH scales — same
       // number scale=1 and scale=1.5. After the fix they must equal the
-      // .explorer-chevron/.sidebar-aside pattern: scale with --font-scale.
+      // .explorer-glyph/.sidebar-aside pattern: scale with --font-scale.
       explorerStarWidth: star ? getComputedStyle(star).width : null,
       asideFound: !!aside,
       asideHidden: aside ? aside.hidden : null,
@@ -214,7 +214,7 @@ const afterCmLine = px(after.cmLineFontSize);
 const teardownShell = px(teardown.shellFontSize);
 
 // Audit 04's permanent regression guard: `.explorer-star` MUST scale with
-// --font-scale exactly like `.explorer-chevron` / `.sidebar-aside` do. Before
+// --font-scale exactly like `.explorer-glyph` / `.sidebar-aside` do. Before
 // the `font: inherit` fix it was a UA-button-font fixed value — identical at
 // scale=1 and scale=1.5 — so the strongest single proof this golden can carry
 // is "before != after" alongside the exact px math.

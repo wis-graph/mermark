@@ -398,17 +398,17 @@ export function createWorkspaceSidebar({ store, onSelectVault, onOpen, openDocum
       for (const { vault, level } of rows) {
         const row = create("div", "workspace-vault-row"); row.setAttribute("role", "listitem"); row.dataset.vaultId = vault.vaultId;
         row.style.setProperty("--level", String(level));
-        // Column grammar = the explorer's folder row: [chevron column][folder
-        // glyph][name … count]. Only a row with child vaults owns a collapse
-        // toggle (the chevron); the others keep an EMPTY chevron slot (like an
-        // explorer file row) so the glyph/name columns line up at every level.
-        // Toggle is its own button, not nested inside `select` — a button in a
-        // button is invalid HTML. Its click means collapse/expand; `select`'s
-        // click (glyph, name, count) means entry.
+        // Column grammar = the explorer's folder row: [folder glyph][name …
+        // count]. A row with child vaults wraps its GLYPH in a collapse toggle
+        // button (the folder/folder-open glyph is the only expand cue); a leaf
+        // row keeps the glyph inside `select`. Glyph/name columns line up at
+        // every level either way. Toggle is its own button, not nested inside
+        // `select` — a button in a button is invalid HTML. Its click means
+        // collapse/expand; `select`'s click (name, count) means entry.
         const hasChildren = hasChildVaultRows(vault.vaultId, rows);
         const glyph = create("span", "workspace-vault-glyph");
         const select = create("button", "workspace-vault-select") as HTMLButtonElement; select.type = "button"; select.title = vaultTitleFor(vault);
-        select.append(glyph);
+        if (!hasChildren) { select.classList.add("is-leaf"); select.append(glyph); }
         const name = create("span", "workspace-vault-name"); name.textContent = vault.displayName; select.append(name);
         const documentCount = openDocumentCount?.(vault.vaultId) ?? 0;
         if (documentCount > 0) {
@@ -431,7 +431,7 @@ export function createWorkspaceSidebar({ store, onSelectVault, onOpen, openDocum
           // rather than through a full `render()`, so a keyboard user's focus
           // stays on the toggle after activating it.
           const toggle = create("button", "workspace-vault-toggle") as HTMLButtonElement; toggle.type = "button";
-          const chevron = create("span", "workspace-vault-chevron"); chevron.append(icon("chevron-right")); toggle.append(chevron);
+          toggle.append(glyph);
           let collapsed = isVaultCollapsed(vault.vaultId);
           renderVaultCollapse(toggle, glyph, vault.displayName, collapsed);
           toggle.addEventListener("click", (event) => {
@@ -443,10 +443,7 @@ export function createWorkspaceSidebar({ store, onSelectVault, onOpen, openDocum
           });
           row.append(toggle);
         } else {
-          const spacer = create("span", "workspace-vault-toggle-spacer"); spacer.setAttribute("aria-hidden", "true");
-          const chevron = create("span", "workspace-vault-chevron is-empty"); chevron.append(icon("chevron-right")); spacer.append(chevron);
           renderEntryGlyph(glyph, "", true, false);
-          row.append(spacer);
         }
         row.append(select);
         if (pathLabel) row.append(pathLabel);

@@ -102,18 +102,11 @@ describe("sidebar font-size zoom integration (style contract)", () => {
     return match[1].trim();
   }
 
-  it("T3 (G1): .explorer-chevron box is a 16/13 em fraction", () => {
-    const block = ruleBlock(".explorer-chevron");
-    expect(sizeDecl(block, "width")).toBe("calc(16em / 13)");
-    expect(sizeDecl(block, "height")).toBe("calc(16em / 13)");
-  });
-
-  it("T3 (G2): .explorer-chevron .icon / .explorer-glyph .icon fill their box (100%)", () => {
-    // ruleBlock's grouped-selector fallback tolerates the comma/newline
-    // between the two selector arms — no need to reproduce exact whitespace.
-    const block = ruleBlock(".explorer-chevron .icon");
+  it("T3 (G1/G2): .explorer-glyph .icon fills its box (100%) — the chevron column is gone", () => {
+    const block = ruleBlock(".explorer-glyph .icon");
     expect(sizeDecl(block, "width")).toBe("100%");
     expect(sizeDecl(block, "height")).toBe("100%");
+    expect(css).not.toMatch(/\.explorer-chevron/);
   });
 
   it("T3 (G3): .explorer-glyph box is a 16/13 em fraction (new rule — was unsized, svg attr ruled)", () => {

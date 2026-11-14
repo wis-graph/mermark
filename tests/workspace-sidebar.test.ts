@@ -214,13 +214,11 @@ describe("workspace sidebar", () => {
       expect(openDocumentCountLabel(1)).toBe("열린 문서 1개");
     });
 
-    it("a row without child vaults has an empty chevron spacer and no toggle; the glyph lives in the select button", () => {
+    it("a row without child vaults has no toggle; the glyph is the first child of the select button", () => {
       const { lone, row } = mount();
       const r = row(lone.vaultId);
       expect(r.querySelector(".workspace-vault-toggle")).toBeNull();
-      const spacer = r.querySelector(".workspace-vault-toggle-spacer")!;
-      expect(spacer.getAttribute("aria-hidden")).toBe("true");
-      expect(spacer.querySelector(".workspace-vault-chevron.is-empty")).toBeTruthy();
+      expect(r.querySelector(".workspace-vault-toggle-spacer, .workspace-vault-chevron")).toBeNull();
       const select = r.querySelector(".workspace-vault-select")!;
       expect(select.querySelector(":scope > .workspace-vault-glyph .icon-folder")).toBeTruthy();
       const kids = [...select.children].map((c) => c.className);
@@ -228,15 +226,15 @@ describe("workspace sidebar", () => {
       expect(kids[1]).toBe("workspace-vault-name");
     });
 
-    it("a parent row has a chevron toggle; collapsing hides child rows, swaps the glyph and labels, never enters the vault", () => {
+    it("a parent row wraps its glyph in the collapse toggle; collapsing hides child rows, swaps the glyph and labels, never enters the vault", () => {
       const { parent, child, row, sidebar } = mount();
       const toggle = row(parent.vaultId).querySelector<HTMLButtonElement>("button.workspace-vault-toggle")!;
-      expect(toggle.querySelector(".workspace-vault-chevron")).toBeTruthy();
+      expect(row(parent.vaultId).querySelector(".workspace-vault-chevron")).toBeNull();
       expect(toggle.getAttribute("aria-expanded")).toBe("true");
       expect(toggle.getAttribute("aria-label")).toBe("Notes 하위 볼트 접기");
-      const glyph = row(parent.vaultId).querySelector(".workspace-vault-select .workspace-vault-glyph")!;
+      const glyph = toggle.querySelector(".workspace-vault-glyph")!;
       expect(glyph.querySelector(".icon-folder-open")).toBeTruthy();
-      expect(toggle.querySelector(".workspace-vault-glyph")).toBeNull();
+      expect(row(parent.vaultId).querySelector(".workspace-vault-select .workspace-vault-glyph")).toBeNull();
 
       toggle.click();
       expect(row(child.vaultId).hidden).toBe(true);

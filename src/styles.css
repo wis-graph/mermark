@@ -1799,7 +1799,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   letter-spacing: .02em;
   color: var(--sidebar-muted);
 }
-/* A vault row IS an explorer folder row: [chevron column][folder glyph][name …
+/* A vault row IS an explorer folder row: [folder glyph][name …
    count][actions], same lead/gap/indent/height tokens. `--level` (1-based) is
    set inline by workspace-sidebar.ts; indent is row PADDING so the hover/active
    highlight spans the indent area, like .explorer-label. A collapsed parent
@@ -1827,17 +1827,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Open-document count: muted mono digits at the right edge (0 → no element). The
    select is a <button> with `font: inherit`, so this 11/13 fraction rides zoom. */
 .workspace-vault-count { flex: none; font-family: var(--font-mono); font-size: calc(11em / 13); font-variant-numeric: tabular-nums; color: var(--sidebar-muted); }
-/* Chevron column. The toggle (rows with child vaults) and the spacer (rows
-   without — keeps the glyph/name columns aligned) are the same box: lead +
-   16/13em chevron + gap = 24px wide at zoom 1, full row height (hit target). */
-.workspace-vault-toggle, .workspace-vault-toggle-spacer { flex: none; display: inline-flex; align-items: center; align-self: stretch; width: auto; height: auto; padding: 0 var(--sidebar-row-gap) 0 var(--sidebar-row-lead); border: 0; background: transparent; font: inherit; }
-.workspace-vault-toggle { color: var(--sidebar-muted); cursor: pointer; }
-.workspace-vault-toggle:hover, .workspace-vault-toggle:focus-visible { color: var(--sidebar-fg); }
-.workspace-vault-chevron { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); color: inherit; transition: transform .15s ease; }
-.workspace-vault-chevron .icon { width: 100%; height: 100%; }
-.workspace-vault-toggle[aria-expanded="true"] > .workspace-vault-chevron { transform: rotate(90deg); }
-.workspace-vault-chevron.is-empty { visibility: hidden; }
-@media (prefers-reduced-motion: reduce) { .workspace-vault-chevron { transition: none; } }
+/* Glyph column. A leaf row's glyph is the first child of the select button; a
+   parent row's glyph is wrapped by the toggle button. Both put the glyph at
+   lead and the name at lead + 16/13em + gap (the explorer's grammar). The
+   toggle carries the lead/gap padding itself; a leaf select carries the lead. */
+.workspace-vault-toggle { flex: none; display: inline-flex; align-items: center; align-self: stretch; width: auto; height: auto; padding: 0 var(--sidebar-row-gap) 0 var(--sidebar-row-lead); border: 0; background: transparent; font: inherit; cursor: pointer; }
+.workspace-vault-toggle > .workspace-vault-glyph { transition: color .12s ease; }
+.workspace-vault-toggle:hover > .workspace-vault-glyph, .workspace-vault-toggle:focus-visible > .workspace-vault-glyph { color: var(--sidebar-fg); }
+.workspace-vault-select.is-leaf { padding-left: var(--sidebar-row-lead); }
 /* Row-end action (unregister): hover/focus-within reveal, 20/13em chip = the
    explorer's .explorer-vault-toggle. */
 .workspace-vault-action { flex: none; display: inline-flex; align-items: center; justify-content: center; align-self: center; width: calc(20em / 13); height: calc(20em / 13); margin-inline-start: var(--sidebar-row-gap); padding: 0; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; border-radius: var(--radius-sm, 6px); opacity: 0; transition: background-color .12s ease, opacity .12s ease; }
@@ -2016,7 +2013,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .explorer-open-file { display: flex; align-items: center; min-width: 0; padding-right: var(--sidebar-row-pad-inline); border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
 .explorer-open-file:hover { background: color-mix(in srgb, var(--sidebar-fg) 6%, transparent); }
 .explorer-open-file:has(> .explorer-open-file-select[data-active="true"]) { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); box-shadow: inset 2px 0 0 var(--sidebar-accent); }
-.explorer-open-file-select { display: flex; flex: 1; min-width: 0; align-items: center; gap: var(--sidebar-row-gap); padding: var(--sidebar-row-pad-block) 0 var(--sidebar-row-pad-block) calc(var(--sidebar-row-lead) + (16em / 13) + var(--sidebar-row-gap)); min-height: calc(var(--sidebar-row-control) + 2 * var(--sidebar-row-pad-block)); border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; line-height: var(--sidebar-row-line-height); text-align: left; white-space: nowrap; cursor: pointer; border-radius: var(--radius-sm, 6px); }
+.explorer-open-file-select { display: flex; flex: 1; min-width: 0; align-items: center; gap: var(--sidebar-row-gap); padding: var(--sidebar-row-pad-block) 0 var(--sidebar-row-pad-block) var(--sidebar-row-lead); min-height: calc(var(--sidebar-row-control) + 2 * var(--sidebar-row-pad-block)); border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; line-height: var(--sidebar-row-line-height); text-align: left; white-space: nowrap; cursor: pointer; border-radius: var(--radius-sm, 6px); }
 .explorer-open-file-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); }
 .explorer-open-file-glyph .icon { width: 100%; height: 100%; }
 .explorer-open-file-prefix { flex: none; color: var(--sidebar-muted); }
@@ -2072,26 +2069,19 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .explorer-tree:focus-within .explorer-item.is-selected.is-focused > .explorer-label {
   box-shadow: inset 2px 0 0 var(--sidebar-accent), inset 0 0 0 1.5px var(--sidebar-accent);
 }
-.explorer-chevron { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); color: var(--sidebar-muted); transition: transform .15s ease; }
-.explorer-chevron-empty { visibility: hidden; }
-.explorer-dir[aria-expanded="true"] > .explorer-label > .explorer-chevron { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) { .explorer-chevron { transition: none; } }
 /* G2/G3 (SIDEBAR ZOOM RULE): .explorer-glyph had no CSS size at all — the
    svg's own width="16" height="16" attribute (icons.ts:179~180, shared by
    every 16px icon() consumer, not just the sidebar) was the only thing
    sizing it, and CSS attribute defaults don't scale with --font-scale. CSS
    always wins over the attribute once declared, so these two new rules give
-   the glyph and its chevron sibling the SAME em box (16/13, matching G1) and
+   the glyph an em box (16/13) and
    make the inner <svg> fill that box (100%) instead of trusting the fixed
    attribute. icons.ts itself stays untouched — it's a shared factory used
    well outside the sidebar (e.g. .chrome-btn .icon). */
-.explorer-chevron .icon,
 .explorer-glyph .icon { width: 100%; height: 100%; }
 .explorer-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); color: var(--sidebar-muted); }
 /* Folder glyph carries an accent tint (openable container signal); file glyphs
-   stay --sidebar-muted, and the chevron stays --sidebar-muted (accent is on the
-   glyph only, so the disclosure twisty and the container color are separate
-   signals). `..` (.explorer-up, not .explorer-dir) is excluded → stays
+   stay --sidebar-muted. `..` (.explorer-up, not .explorer-dir) is excluded → stays
    --sidebar-muted. Sidebar var only (no hard-coded hex, no global --accent),
    so all three themes track their own --sidebar-accent. */
 .explorer-dir > .explorer-label > .explorer-glyph { color: var(--sidebar-accent); }
