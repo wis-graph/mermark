@@ -621,7 +621,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    before this feature (the polarity fallback literals below — var(--radius-md),
    .7em, .9em — ARE that zero-drift baseline; a cross-file regression test
    pins them). */
-.cm-codeblock { display: block; margin: 0; position: relative; background: var(--codeblock-bg, var(--block-fill)); color: var(--codeblock-color, inherit); border: 0; border-radius: var(--block-radius, var(--radius-md)); padding: var(--block-padding, 1em) 0; overflow: visible; font-size: calc(var(--block-font-size) * .875); line-height: 1.6; }
+/* Space above a code block (≈8px at 16px body, .5714em of the .875 code font) is drawn INSIDE the widget: CM's height map ignores
+   block-widget margins, so the fill lives on ::after inset from the top. Matched to the reference app (2026-11-14 measurement). */
+.cm-codeblock { display: block; margin: 0; position: relative; isolation: isolate; background: none; color: var(--codeblock-color, inherit); border: 0; border-radius: var(--block-radius, var(--radius-md)); padding: calc(var(--block-padding, 1em) + .5714em) 0 var(--block-padding, 1em); overflow: visible; font-size: calc(var(--block-font-size) * .875); line-height: 1.6; }
+.cm-codeblock::after { content: ""; position: absolute; inset: .5714em 0 0 0; background: var(--codeblock-bg, var(--block-fill)); border-radius: var(--block-radius, var(--radius-md)); z-index: -1; pointer-events: none; }
 /* `pre-wrap` preserves whitespace/indentation (like `pre`) but wraps at normal
    break points; `overflow-wrap: anywhere` further breaks inside unbroken
    tokens (long URLs, hashes) so long lines wrap inside the block instead of
@@ -688,7 +691,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-codeblock .hljs-meta { color: var(--muted); }
 .cm-codeblock .hljs-strong { font-weight: bold; }
 .cm-codeblock .hljs-emphasis { font-style: italic; }
-.cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: .4em; right: 2.6em; font-family: var(--font-mono); font-weight: 400; font-size: .72em; color: var(--muted); pointer-events: none; }
+.cm-codeblock[data-lang]::before { content: attr(data-lang); position: absolute; top: 1.19em; right: 2.6em; font-family: var(--font-mono); font-weight: 400; font-size: .72em; color: var(--muted); pointer-events: none; }
 /* Copy-to-clipboard button base (shared by code-block + blockquote copy
    buttons — markdown/copy-button.ts's single DOM factory): fixed to the
    top-right corner of its `position: relative` host, hidden until that host
@@ -696,6 +699,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    for the code block; the `cm-copy-visible` class for the blockquote, since a
    blockquote has no wrapper element for CSS `:hover` to key off). */
 .cm-copy-btn { position: absolute; top: .4em; right: .4em; width: 1.6em; height: 1.6em; display: inline-flex; align-items: center; justify-content: center; padding: 0; line-height: 1; background: color-mix(in srgb, var(--surface) 85%, transparent); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); cursor: pointer; opacity: 0; transition: opacity .12s ease, color .12s ease; }
+.cm-codeblock > .cm-copy-btn { top: calc(.4em + .5714em); } /* clears the code block's top inset (see .cm-codeblock::after) */
 .cm-copy-btn:hover { opacity: 1; color: var(--fg); }
 .cm-codeblock:hover .cm-copy-btn, .cm-copy-btn:focus-visible { opacity: .8; }
 /* revealed (editing) fenced code keeps a code background, so it still reads as a
@@ -938,7 +942,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    horizontal advance only) so the ZOOM GUARD holds — the font-size calc lines below
    are unchanged. Per-level negative tracking comes from --hN-tracking (em, so it
    rides --font-scale zoom + the headingRatio scale). */
-.cm-editor .cm-line.cm-heading { font-weight: 600; font-family: var(--font-heading, var(--reading-font, var(--font-sans))); line-height: 1.25; padding-top: .8em; padding-bottom: .35em; }
+.cm-editor .cm-line.cm-heading { font-weight: 600; font-family: var(--font-heading, var(--reading-font, var(--font-sans))); line-height: 1.25; padding-top: 1.2em; padding-bottom: .65em; }
 /* Consecutive heading cluster (2026-07-12 design-polish pass): an unbroken
    H3→H4→H5→H6 run had NO vertical rhythm at all (only a source blank line
    separated them from body text) and read as a plain list. The base rule
@@ -964,9 +968,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .cm-editor .cm-line.cm-h1 { font-weight: 700; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h1-scale, 1.953)); letter-spacing: var(--h1-tracking, 0); color: var(--h1-color, var(--fg)); background: var(--h1-bg, transparent); }
 .cm-editor .cm-line.cm-h2 { font-weight: 700; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h2-scale, 1.563)); letter-spacing: var(--h2-tracking, 0); color: var(--h2-color, var(--fg)); background: var(--h2-bg, transparent); }
 .cm-editor .cm-line.cm-h3 { font-weight: 700; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h3-scale, 1.25)); letter-spacing: var(--h3-tracking, 0); color: var(--h3-color, var(--fg)); background: var(--h3-bg, transparent); }
-.cm-editor .cm-line.cm-h4 { padding-bottom: .3em; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.118)); letter-spacing: var(--h4-tracking, 0); color: var(--h4-color, var(--fg)); background: var(--h4-bg, transparent); }
-.cm-editor .cm-line.cm-h5 { padding-bottom: .25em; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); background: var(--h5-bg, transparent); }
-.cm-editor .cm-line.cm-h6 { padding-bottom: .25em; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); background: var(--h6-bg, transparent); }
+.cm-editor .cm-line.cm-h4 { padding-bottom: .55em; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h4-scale, 1.118)); letter-spacing: var(--h4-tracking, 0); color: var(--h4-color, var(--fg)); background: var(--h4-bg, transparent); }
+.cm-editor .cm-line.cm-h5 { padding-bottom: .45em; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h5-scale, 1.0)); letter-spacing: var(--h5-tracking, 0); color: var(--h5-color, var(--fg)); background: var(--h5-bg, transparent); }
+.cm-editor .cm-line.cm-h6 { padding-bottom: .45em; font-size: calc(var(--editor-font-size, 1rem) * var(--font-scale, 1) * var(--h6-scale, 0.9)); letter-spacing: var(--h6-tracking, 0); color: var(--h6-color, var(--muted)); background: var(--h6-bg, transparent); }
 
 /* Top title-bar — custom window chrome, scoped to .main-column (#app =
    column(.workspace = row(sidebar-aside*, sash, .main-column = column(
@@ -2211,7 +2215,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    etc.) that keep-all can't wrap — it was dead code before word-break: keep-all
    below gave it a job: cells that can't shrink below min-width just scroll
    instead of forcing a column collapse. */
-.cm-table-wrap { overflow-x: auto; padding: 0; }
+.cm-table-wrap { overflow-x: auto; padding: .25em 0; }
 .cm-table { table-layout: auto; border-collapse: separate; border-spacing: 0; width: 100%; letter-spacing: normal; font-size: var(--block-font-size); line-height: 1.6; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 /* keep-all: CJK breaks only at natural word/space boundaries, never mid-syllable
    (the 1-glyph-per-line collapse this fixes). min-width: 6ch is a floor so a

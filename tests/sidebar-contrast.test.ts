@@ -261,7 +261,9 @@ describe("sidebar strong-contrast palette (style contract)", () => {
   // a hardcoded one. .cm-callout-note/-quote are untouched (round 2 explicitly
   // excludes callouts from the new targets — 01_ui2_design.md 결정 1).
   it(".cm-codeblock paints --codeblock-bg falling back to the shared --block-fill (surface family preserved)", () => {
-    const block = ruleBlock(".cm-codeblock");
+    // The fill lives on ::after (inset from the top = the space above the block,
+    // drawn inside the widget because CM's height map ignores widget margins).
+    const block = ruleBlock(".cm-codeblock::after");
     expect(block).toMatch(/background:\s*var\(--codeblock-bg,\s*var\(--block-fill\)\)/);
   });
 

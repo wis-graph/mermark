@@ -128,7 +128,7 @@ describe("theme-preview.ts fallback chains match styles.css byte-for-byte (cross
     quoteBar: [{ selector: ".cm-blockquote", varField: "colorVar", fallbackField: "colorFallback" }],
     codeBlock: [
       { selector: ".cm-codeblock", varField: "colorVar", fallbackField: "colorFallback" },
-      { selector: ".cm-codeblock", varField: "bgVar", fallbackField: "bgFallback" },
+      { selector: ".cm-codeblock::after", varField: "bgVar", fallbackField: "bgFallback" },
     ],
     highlightBlock: [{ selector: ".cm-highlight-block", varField: "colorVar", fallbackField: "colorFallback" }],
     comment: [
@@ -212,8 +212,8 @@ describe("block geometry CSS fallback literals (zero-drift default — round 3)"
 
   it(".cm-codeblock: --block-radius falls back to var(--radius-md), --block-padding to 1em (2026-11 typography pass)", () => {
     const block = ruleBlock(".cm-codeblock");
-    expect(block).toContain("border-radius: var(--block-radius, var(--radius-md))");
-    expect(block).toContain("padding: var(--block-padding, 1em) 0");
+    expect(block).toContain("padding: calc(var(--block-padding, 1em) + .5714em) 0 var(--block-padding, 1em)");
+    expect(ruleBlock(".cm-codeblock::after")).toContain("border-radius: var(--block-radius, var(--radius-md))");
   });
 
   it(".cm-blockquote: --block-padding falls back to .75em (unchanged); -first/-last fall back to radius 0 / padding 0 (no prior geometry existed)", () => {
