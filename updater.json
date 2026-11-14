@@ -1,11 +1,11 @@
 {
-  "version": "0.22.1",
-  "notes": "### Changed\n\n- **화면 다듬기**: 코드 블록과 인용 블록의 배경을 한 단계 옅게 해 본문보다 무겁게 보이지 않게 했다(라이트·Claude 테마). 코드 언어 표시는 `TS` 대신 `ts`처럼 원래 표기로 보인다. 표 머리글·콜아웃 제목의 굵기를 조금 낮췄다. 워크스페이스에서 열린 탭과 설정 패널의 선택 항목에 겹쳐 있던 강조 막대를 하나로 줄였다. 여백 몇 곳을 같은 간격 단위로 맞췄다.\n- 복사 완료·실패 알림 앞의 ✓·⚠ 기호를 없앴다.",
-  "pub_date": "2026-11-12T14:47:59Z",
+  "version": "0.23.0",
+  "notes": "### Added\n\n- **탐색기에서 열린 파일을 본다**: 탐색기 머리글의 [트리 | 열린 파일] 전환으로 지금 볼트에 열린 문서 목록을 볼 수 있다. 클릭하면 그 문서로 넘어가고 ×로 닫는다. 마지막에 고른 보기는 재시작해도 남는다.\n\n### Changed\n\n- **워크스페이스 사이드바**: 볼트 아래에 펼쳐지던 열린 파일 목록을 없애고, 볼트 이름 오른쪽에 열린 문서 수만 표시한다(없으면 숫자도 없음). 행 높이·들여쓰기·아이콘 위치를 탐색기와 똑같이 맞췄다.\n\n### Fixed\n\n- **보고 있는 탭을 닫으면 다른 볼트로 넘어가던 문제**: 다음 탭의 파일이 하위 볼트 폴더 안에 있으면 그 하위 볼트로 전환되고 같은 파일이 탭에 한 번 더 생겼다.",
+  "pub_date": "2026-11-14T08:32:26Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrV3pOS25EZ2xrdThrWXcyQ3FyY09sYzhPVmFyR0VSQmRtUnNEc3NVYi9jb2E1ZUJYcmdOcmtJemRqYis2amFYaEliaGVoMDNmSVJGY2FNNlFkaVl3VGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDk0ODYwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmdUTkx2OUh4YUt4SFUraHlBL0g5ZWNSbGZVeWRLTWd4LzJnSFpDRDMwZjdna3VWTEJna2EzKzhJNUtWbWhlbG1ZaGgvZ0RNSEE2b29NWlN6V0o5cUN3PT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.22.1/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzR2ME1lOFBoelM3V282ZWZhT1FWRWJoSXZoV2VIbzV3QS9vU2xkaDVYT3NST3FweWtlUFhreFYwU3UzSnlBS2xwMEl4SnQrdHJEeHh4WFNVQWlVY1FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NjQ1MTMwCWZpbGU6bWVybWFyay5hcHAudGFyLmd6ClFwWEllMWhwc21NUCtaQU5kUkFwSmR2Um5IMGRrYmNQVkZhNzlJcEpwSHlyNVVyZFM2N2pSY0hxZVhESURyckFVb1hnalUvZlFFaEJqRG9CNlRqUUR3PT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.23.0/mermark.app.tar.gz"
     }
   }
 }
