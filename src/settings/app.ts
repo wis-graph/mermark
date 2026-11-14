@@ -10,6 +10,7 @@ import { builtInTheme, parseTheme, serializeTheme, type Theme as ThemeJson, type
 import type { PreviewMode } from "../markdown/live-preview";
 import type { EpubReadingPosition } from "../chrome/viewer/epub-position";
 import type { RecentEntry } from "../sidebar/recent/recent-docs";
+import type { ExplorerView } from "../sidebar/explorer/open-files-view";
 
 const numberParse = (raw: string | null): number | null => {
   if (raw == null) return null;
@@ -710,6 +711,14 @@ export const sidebarWidthSetting = defineSetting<number>({
     const n = numberParse(raw);
     return n == null ? null : clampSidebarWidth(n, window.innerWidth); // corrupt → default; out-of-range → clamp
   },
+});
+
+/** 탐색기 본문 보기(트리 | 열린 파일) — 헤더 토글로만 바뀌는 직접 조작 선호, 전역.
+ *  패널 행 없음(defineSetting) — sidebarWidthSetting과 같은 근거. */
+export const explorerViewSetting = defineSetting<ExplorerView>({
+  key: "mermark.explorerView",
+  default: "tree",
+  parse: (raw) => (raw === "tree" || raw === "open-files" ? raw : null),
 });
 
 // Named zoom commands (CQS: void, single SSOT writer = fontScaleSetting.set).

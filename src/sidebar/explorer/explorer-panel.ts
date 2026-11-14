@@ -7,6 +7,7 @@ import { isImeComposing } from "../../shortcuts/keys";
 import { openContextMenu } from "../../chrome/context-menu";
 import type { FileAction } from "../../chrome/file-actions/registry";
 import { fileRowMenuEntries } from "./file-row-menu";
+import { createOpenFilesView, type ExplorerView, type OpenFilesHandlers } from "./open-files-view";
 
 /** Stable id linking the toggle button (aria-controls) to the aside it toggles. */
 const EXPLORER_ASIDE_ID = "explorer-aside";
@@ -48,6 +49,11 @@ const EXPLORER_ASIDE_ID = "explorer-aside";
 export type { DirEntry };
 
 export interface ExplorerPanel {
+  /** sink — 본문 보기(트리 | 열린 파일) 스왑 + 토글 aria-pressed + 새로고침 버튼 표시.
+   *  진실 원천은 설정 SSOT(`explorerViewSetting`)이고 이 패널의 view는 렌더 캐시다. command */
+  setView(view: ExplorerView): void;
+  /** sink — 열린 파일 목록을 `openFiles.current()`로 다시 그린다. 미주입이면 no-op. command */
+  refreshOpenFiles(): void;
   /** The button to place in the status bar (toggles the sidebar). */
   readonly button: HTMLButtonElement;
   /** The sidebar shell (hidden until first opened). Append as a sibling of the
@@ -129,6 +135,11 @@ export interface ExplorerPanel {
 }
 
 export interface ExplorerHandlers {
+  /** 열린 파일 보기 주입(스냅샷 쿼리 + 선택/닫기 명령). 없으면 보기 전환 UI 자체를
+   *  렌더하지 않는다(`canBookmarkFolders`식 게이팅 — 기존 호출자 무영향). */
+  openFiles?: OpenFilesHandlers;
+  /** 헤더 토글의 SSOT writer. 없으면 토글이 `setView`를 직접 부른다(standalone). */
+  onViewChange?(view: ExplorerView): void;
   /** Read one directory level. Injected so the panel unit-tests with a fake tree
    *  and, in main, is
    *  `(p) => invoke<DirEntry[]>("list_dir", { path: p, showHidden: … })` — the
@@ -277,6 +288,8 @@ export function createExplorerPanel({
   isVaultRegistered,
   isRootLocked,
   canBookmarkFolders,
+  openFiles,
+  onViewChange,
   hasLocalPath,
   openWithActionsFor,
   onOpenInNativeApp,
@@ -304,14 +317,36 @@ export function createExplorerPanel({
   const header = create("div", "explorer-header sidebar-header");
   // Static — path display is now the footer breadcrumb's job (single source
   // of truth), so the header never carries the root path (see renderTree).
-  const headerTitle = create("span");
+  const headerTitle = create("span", "explorer-title");
   headerTitle.textContent = "탐색기";
   const refreshButton = create("button", "explorer-refresh chrome-btn icon-only") as HTMLButtonElement;
   refreshButton.type = "button";
   refreshButton.title = "현재 폴더 새로고침";
   refreshButton.setAttribute("aria-label", "현재 폴더 새로고침");
   refreshButton.append(icon("refresh-cw"));
-  header.append(headerTitle, refreshButton);
+  /** 토글 클릭은 DOM을 직접 바꾸지 않는다(SSOT → sink 단방향): onViewChange가 있으면
+   *  그쪽(설정 write → bind sink → setView)으로, 없으면 standalone으로 setView. command */
+  const requestView = (next: ExplorerView): void => {
+    if (onViewChange) onViewChange(next);
+    else setView(next);
+  };
+  const viewOptions = new Map<ExplorerView, HTMLButtonElement>();
+  header.append(headerTitle);
+  if (openFiles) {
+    const viewSwitch = create("div", "explorer-view-switch");
+    viewSwitch.setAttribute("role", "group");
+    viewSwitch.setAttribute("aria-label", "탐색기 보기");
+    for (const [view, label] of [["tree", "트리"], ["open-files", "열린 파일"]] as const) {
+      const option = create("button", "explorer-view-option") as HTMLButtonElement;
+      option.type = "button"; option.dataset.view = view; option.textContent = label;
+      option.setAttribute("aria-pressed", String(view === "tree"));
+      option.addEventListener("click", () => requestView(view));
+      viewOptions.set(view, option);
+      viewSwitch.append(option);
+    }
+    header.append(viewSwitch);
+  }
+  header.append(refreshButton);
 
   /** Render the toggle button for the current open/closed state (icon + ARIA).
    *  Called at init and on every open()/close() so they never drift. */
@@ -328,7 +363,30 @@ export function createExplorerPanel({
   // focus has somewhere better than <body> to go even in that edge case,
   // without inventing a real focus trap.
   tree.tabIndex = -1;
-  aside.append(header, tree);
+  const openFilesView = createOpenFilesView(openFiles ?? {
+    current: () => ({ scopeId: "", tabs: { vaultId: "", tabs: [], activeTabId: null }, rootPath: null }),
+    onSelect: () => undefined,
+    onClose: () => undefined,
+  });
+  openFilesView.root.hidden = true;
+  let view: ExplorerView = "tree";
+  aside.append(header, tree, openFilesView.root);
+  const refreshOpenFiles = (): void => { if (openFiles) openFilesView.render(); };
+  const setView = (next: ExplorerView): void => {
+    if (!openFiles) return; // 보기 전환은 openFiles 주입 시에만 존재한다
+    view = next;
+    tree.hidden = next !== "tree";
+    openFilesView.root.hidden = next !== "open-files";
+    refreshButton.hidden = next !== "tree"; // 현재 폴더 새로고침은 트리 전용 의미
+    for (const [optionView, option] of viewOptions) option.setAttribute("aria-pressed", String(optionView === next));
+    if (next === "open-files") refreshOpenFiles();
+  };
+  /** focusOwed 상환을 "지금 보이는 보기"로 보낸다: open-files면 목록, tree면 treeTarget().
+   *  숨은 트리 노드에 .focus()하면 포커스가 사라진다. flag 읽기·해제는 호출자 몫. command */
+  const payOwedFocus = (treeTarget: () => void): void => {
+    if (view === "open-files") openFilesView.focusPrimary();
+    else treeTarget();
+  };
   // Per-root cache: a folder's children are read once and reused on re-expand
   // (no re-call). Cleared on root change / panel reopen — MVP has no fs-watch
   // invalidation (lazy read-only tree, "look around this doc lightly").
@@ -890,7 +948,7 @@ export function createExplorerPanel({
       // parameter's doc comment above for why.
       const owesFocus = focusOwed;
       focusOwed = false;
-      if (owesFocus) errorState.querySelector<HTMLButtonElement>(".explorer-root-reselect")?.focus();
+      if (owesFocus) payOwedFocus(() => errorState.querySelector<HTMLButtonElement>(".explorer-root-reselect")?.focus());
       return;
     }
 
@@ -899,12 +957,15 @@ export function createExplorerPanel({
     const owesFocus = focusOwed;
     focusOwed = false;
     const first = visibleItems()[0];
-    if (first) focusItem(first, owesFocus);
+    if (first) {
+      focusItem(first, false); // roving 커서 시드는 항상, DOM 포커스는 보이는 보기로만
+      if (owesFocus) payOwedFocus(() => first.focus());
+    }
     // Nothing to focus at all (root-locked + genuinely empty folder, no `..`
     // row either) — still land somewhere better than <body> when this render
     // owes focus, without inventing a real focus trap (tree.tabIndex=-1, see
     // its declaration above, is programmatic-only).
-    else if (owesFocus) tree.focus();
+    else if (owesFocus) payOwedFocus(() => tree.focus());
   };
 
   /** Change the tree root to `parentPath` (the `..` target, still carrying its
@@ -999,6 +1060,7 @@ export function createExplorerPanel({
     revealShell();
     childrenCache.clear(); // reopen = fresh view (no stale invalidation to track)
     void renderTree(getBaseDir());
+    refreshOpenFiles(); // 열 때 최신화
   };
   const close = () => {
     aside.hidden = true;
@@ -1221,6 +1283,8 @@ export function createExplorerPanel({
   return {
     button,
     aside,
+    setView,
+    refreshOpenFiles,
     resetToBaseDir,
     jumpToRoot,
     close,

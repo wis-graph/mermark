@@ -1,5 +1,5 @@
 // Characterization tests for the FOUR open transactions (T1 openDocument/
-// openDocumentSafely, T2 onSelectVault welcome branch, T3 onCloseTab active
+// openDocumentSafely, T2 onSelectVault welcome branch, T3 closeVaultTab active
 // branch, T4 navigateHistory) and the THREE reload-vs-in-place call sites
 // (R1 explorer, R2 recent, R3 search) main.ts currently hand-rolls — written
 // BEFORE the DocumentSession extraction (_workspace/01_architect_design.md
@@ -195,6 +195,14 @@ function seedRemoteWorkspace(opts: { currentVaultId?: string; host?: string; rem
 const liveEditor = (): { readonly view: EditorView } | undefined =>
   (window as Window & { readonly __mermark?: { readonly view: EditorView } }).__mermark;
 
+/** Drive the real UI to the explorer's "열린 파일" view (open the panel if closed,
+ *  then the header toggle). Tab switching/closing now lives there, not in the
+ *  workspace sidebar. */
+const showOpenFiles = (): void => {
+  if (document.querySelector<HTMLElement>(".explorer-aside")?.hidden) document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+  document.querySelector<HTMLButtonElement>('.explorer-view-option[data-view="open-files"]')?.click();
+};
+
 const closeTabButton = (tabId: string): HTMLButtonElement | null =>
   (document.querySelector<HTMLElement>(`[data-tab-id="${tabId}"]`)?.nextElementSibling as HTMLButtonElement) ?? null;
 
@@ -234,8 +242,8 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
     vi.resetModules();
   });
 
-  // ── T1: openDocument/openDocumentSafely (onSelectTab is the exercised entry) ──
-  describe("T1 — openDocument via onSelectTab", () => {
+  // ── T1: openDocument/openDocumentSafely (selectVaultTab is the exercised entry) ──
+  describe("T1 — openDocument via selectVaultTab", () => {
     it("C1.1: selecting tab b opens it, watcher hands off, recent leads with it", async () => {
       documentContents.set("/P/a.md", "# A");
       documentContents.set("/P/b.md", "# B");
@@ -249,7 +257,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
       watcherEvents.length = 0;
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("B"));
 
@@ -272,7 +280,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       document.querySelector<HTMLButtonElement>('[data-tab-id="c"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("C"));
@@ -299,7 +307,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       document.querySelector<HTMLButtonElement>('[data-tab-id="c"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("C"));
@@ -322,7 +330,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(document.querySelector(".recovery-modal")).not.toBeNull());
 
@@ -345,7 +353,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       await vi.waitFor(() => expect(cmText()).toBe("A"));
       liveEditor()?.view.dispatch({ changes: { from: 0, to: 0, insert: "x" } });
       rejectWrites = true;
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(document.querySelector(".recovery-modal")).not.toBeNull());
 
@@ -369,7 +377,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       await vi.waitFor(() => expect(cmText()).toBe("A"));
       watcherEvents.length = 0;
       liveEditor()?.view.dispatch({ changes: { from: 0, to: 0, insert: "x" } });
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(watcherEvents).toEqual(["unwatch", "watch /P/b.md", "watch /P/a.md"]));
 
@@ -392,7 +400,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
 
       expect(document.querySelector('[data-tab-id="a"]')?.getAttribute("data-active")).toBe("true");
@@ -440,6 +448,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
       document.querySelector<HTMLElement>(`[data-vault-id="${permanentVaultId("/Q")}"] .workspace-vault-select`)?.click();
       // Race it: select tab b (a plain, non-dirty target) while Q's commitBeforeSwitch save is still pending.
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       resolveWrite?.(2);
       await vi.waitFor(() => expect(cmText()).toBe("B"));
@@ -471,8 +480,8 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
     });
   });
 
-  // ── T3: onCloseTab's active-tab branch ───────────────────────────────────
-  describe("T3 — closeActiveTab via onCloseTab", () => {
+  // ── T3: closeVaultTab's active-tab branch ───────────────────────────────────
+  describe("T3 — closeActiveTab via closeVaultTab", () => {
     it("C3.1: closing active tab a with [a,b] mounts b, drops a, hands off the watcher", async () => {
       documentContents.set("/P/a.md", "# A");
       documentContents.set("/P/b.md", "# B");
@@ -482,7 +491,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
       watcherEvents.length = 0;
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       closeTabButton("a")?.click();
       await vi.waitFor(() => expect(cmText()).toBe("B"));
 
@@ -497,7 +506,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       closeTabButton("a")?.click();
       await vi.waitFor(() => expect(document.querySelector(".editor-host")?.classList.contains("welcome-host")).toBe(true));
 
@@ -512,7 +521,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       closeTabButton("a")?.click();
       await vi.waitFor(() => expect(document.querySelector(".recovery-modal")).not.toBeNull());
 
@@ -531,7 +540,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       closeTabButton("a")?.click();
       document.querySelector<HTMLButtonElement>('[data-tab-id="c"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("C"));
@@ -564,7 +573,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("C"));
       watcherEvents.length = 0;
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       closeTabButton("c")?.click(); // begins reading nextTab=b (active close, lifecycle txn)
       closeTabButton("b")?.click(); // inactive close, no lifecycle — vaultTabs.close(b) immediately
       await vi.waitFor(() => expect(document.querySelector('[data-tab-id="b"]')).toBeNull());
@@ -594,7 +603,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("B"));
       watcherEvents.length = 0;
@@ -626,7 +635,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
       rejectedReads.add("/P/a.md"); // it read fine at boot; now becomes unreadable for the history hop
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("B"));
       await goBackChord();
@@ -648,7 +657,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("B"));
       await goBackChord();
@@ -668,7 +677,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("B"));
       liveEditor()?.view.dispatch({ changes: { from: 0, to: 0, insert: "x" } });
@@ -693,7 +702,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("B"));
       liveEditor()?.view.dispatch({ changes: { from: 0, to: 0, insert: "x" } });
@@ -723,7 +732,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("B"));
       document.querySelector<HTMLButtonElement>(".recent-btn")?.click();
@@ -751,7 +760,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
       await vi.waitFor(() => expect(cmText()).toBe("B"));
       deferredReads.set("/P/a.md", { promise: new Promise((resolve) => { resolveA = resolve; }) });
@@ -777,7 +786,7 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
 
       await import("../src/main");
       await vi.waitFor(() => expect(cmText()).toBe("A"));
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+      showOpenFiles();
       document.querySelector<HTMLButtonElement>('[data-tab-id="c"]')?.click(); // history: [a, c]
       await vi.waitFor(() => expect(cmText()).toBe("C"));
       let resolveB: ((value: unknown) => void) | undefined;

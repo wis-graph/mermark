@@ -84,7 +84,7 @@ export function routingTrustsCurrentVault(kind: PersistenceKind | undefined): bo
 
 /** task-8a (Ruling 9): which vault a read should route through when a caller
  *  may already know the TARGET explicitly — `openDocument`'s `targetVault`
- *  (onSelectVault/onSelectTab already know which vault they're switching
+ *  (onSelectVault/selectVaultTab already know which vault they're switching
  *  TO), or `navigateHistory`'s history-entry vault (resolved fresh by id,
  *  never a captured `Vault` object). `explicit` always wins over `fallback`
  *  (typically `currentVault()` — the vault of whatever is open RIGHT NOW,

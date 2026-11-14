@@ -1698,6 +1698,24 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   border-right: 1px solid var(--sidebar-border);
   font-size: calc(13px * var(--font-scale, 1)); color: var(--sidebar-fg);
   user-select: none;
+  /* ROW METRIC TOKENS — the single source of the sidebar row grid. Values are
+     the explorer's own (px, as the explorer always had them); the explorer
+     tree, the workspace vault rows and the explorer's open-files list all
+     consume these, so the panels agree at ANY zoom and the explorer's computed
+     geometry is unchanged. Icon-column widths are deliberately NOT tokens:
+     tests/sidebar-zoom.test.ts T3 pins the literal `calc(16em / 13)`.
+     Guard: tests/sidebar-row-metrics.test.ts. */
+  --sidebar-list-pad: 2px 6px 8px;
+  --sidebar-row-pad-block: 4px;
+  --sidebar-row-pad-inline: 6px;
+  --sidebar-row-lead: 4px;
+  --sidebar-row-gap: 4px;
+  --sidebar-indent-step: 12px;
+  --sidebar-row-line-height: 1.5;
+  /* The tallest control a row carries (the explorer's 20/13em bookmark chip —
+     what makes an explorer row 28px, not 27.5). Rows without that chip take
+     it as a content floor so every row family is the same height at any zoom. */
+  --sidebar-row-control: calc(20em / 13);
 }
 .sidebar-aside[hidden] { display: none; }
 
@@ -1722,7 +1740,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 /* Connection badge (item 3) — 4 distinct tones, never collapsed to one
    generic "실패" pill. "checking" is the async-probe-in-flight state
    (renderRemoteBadge, workspace-sidebar.ts), shown before the first result. */
-.workspace-vault-badge { display: inline-flex; align-items: center; align-self: center; padding: .1em .55em; margin: 0 .3em; border-radius: 999px; font-size: .82em; white-space: nowrap; }
+.workspace-vault-badge { display: inline-flex; align-items: center; align-self: center; padding: .1em .55em; margin-inline-start: var(--sidebar-row-gap); border-radius: 999px; font-size: .82em; white-space: nowrap; }
 .workspace-vault-badge--checking { color: var(--sidebar-muted); background: color-mix(in srgb, var(--sidebar-fg) 6%, transparent); }
 .workspace-vault-badge--ok { color: var(--sidebar-success); background: color-mix(in srgb, var(--sidebar-success) 16%, transparent); }
 .workspace-vault-badge--warn { color: var(--sidebar-warning); background: color-mix(in srgb, var(--sidebar-warning) 16%, transparent); }
@@ -1735,7 +1753,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    step should stay visible without the user first discovering they need to
    hover, and it's already `hidden` outright (via JS) whenever there's
    nothing to recover from. */
-.workspace-vault-recover { display: inline-flex; align-items: center; align-self: center; padding: .1em .5em; margin: 0 .15em; border: 0; border-radius: var(--radius-sm, 6px); background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); color: var(--sidebar-fg); font: inherit; font-size: .8em; white-space: nowrap; cursor: pointer; transition: background-color .12s ease; }
+.workspace-vault-recover { display: inline-flex; align-items: center; align-self: center; padding: .1em .5em; margin-inline-start: var(--sidebar-row-gap); border: 0; border-radius: var(--radius-sm, 6px); background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); color: var(--sidebar-fg); font: inherit; font-size: .8em; white-space: nowrap; cursor: pointer; transition: background-color .12s ease; }
 .workspace-vault-recover:hover, .workspace-vault-recover:focus-visible { background: color-mix(in srgb, var(--sidebar-fg) 16%, transparent); }
 .workspace-vault-recover[hidden] { display: none; }
 
@@ -1764,199 +1782,86 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .remote-vault-dialog-empty { color: var(--sidebar-muted); padding: .3em .4em; }
 /* Drops the font-size override this panel used to declare alone (11px-base),
    so it inherits the ambient 13px-base like outline-empty/recent-empty do.
-   Inline padding is the rows' .4em rather than those panels' .5em because this
-   one renders INSIDE the vault list, under the group heading it belongs to —
-   matching its neighbours' left edge beats matching another panel's number. */
-.workspace-empty { padding: .35em .4em; color: var(--sidebar-muted); }
-.workspace-vault-list { display: flex; flex-direction: column; padding: .25em .4em; }
-/* gap .1em → .25em (design_tabbar_visual.md §2.1): once each vault's tabs sit
-   in their own well surface, the block boundary is already told by that
-   surface — the row spacing only needs to keep two well-blocks from touching,
-   not carry the boundary itself. */
-.workspace-vault-group { display: flex; flex-direction: column; gap: .25em; }
+   Left edge = the rows' first icon column (same x as the group label). */
+.workspace-empty { padding: var(--sidebar-row-pad-block) var(--sidebar-row-pad-inline) var(--sidebar-row-pad-block) var(--sidebar-row-lead); color: var(--sidebar-muted); }
+.workspace-vault-list { display: flex; flex-direction: column; padding: var(--sidebar-list-pad); }
+/* Rows touch (gap 0), exactly like the explorer tree's rows. The group-to-group
+   margin is a structural separator the explorer has no counterpart for. */
+.workspace-vault-group { display: flex; flex-direction: column; gap: 0; }
 .workspace-vault-group + .workspace-vault-group { margin-top: .55em; }
-/* Group heading inside the vault list (the permanent group's "영구 볼트" — the
-   text itself lives in workspace-sidebar.ts with the other UI strings).
-   Typography matches .sidebar-header's tokens (11/13 · 600 · muted, see that
-   rule above) but NOT its padding: that one is a top-of-panel padding, this is
-   a heading mid-list, so it takes the rows' own .4em inline padding and lines
-   up with them. */
+/* Group heading inside the vault list (the permanent group's "영구 볼트").
+   Typography matches .sidebar-header's tokens (11/13 · 600 · muted); the left
+   edge sits on the rows' first icon column (row pad 6px + lead 4px = x 10). */
 .workspace-group-label {
-  padding: 0 .4em .3em;
+  padding: 0 var(--sidebar-row-pad-inline) var(--sidebar-row-pad-block) var(--sidebar-row-lead);
   font-size: calc(11em / 13);
   font-weight: 600;
   letter-spacing: .02em;
   color: var(--sidebar-muted);
 }
-/* Parent-child vault indent (00_request.md #1): `--level` (1-based) is set
-   inline in workspace-sidebar.ts, same convention as the explorer tree's
-   `.explorer-item` (explorer-panel.ts/styles.css above) — reusing that
-   per-level 14px step rather than inventing a new indent unit. margin (not
-   padding) shifts the WHOLE row, so `.workspace-vault-tabs`'s own
-   `calc(2em + .15em)` offset (measured from the row's left edge) still lines
-   up under `select` regardless of depth. A collapsed parent only hides ITS
-   OWN `.workspace-vault-tabs` (see renderVaultCollapse) — a child vault is a
-   sibling `.workspace-vault-row`, never nested inside it, so indent is
-   purely a visual relationship, never a visibility one. */
-.workspace-vault-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: .15em; min-width: 0; margin-left: calc((var(--level, 1) - 1) * 12px); }
-/* Active vault (design_tabbar_visual.md §2.4): the accent band now belongs to
-   the whole ROW, not just the `select` pill — the pill used to float the
-   glyph/bookmark outside its own highlight and put the left accent bar at the
-   pill's edge (row-middle) instead of the row's true left edge, reading as a
-   bordered text input rather than a selected row. `:has()` keeps this a pure
-   read of `select`'s existing aria-current — no new class, no JS change. */
+/* A vault row IS an explorer folder row: [chevron column][folder glyph][name …
+   count][actions], same lead/gap/indent/height tokens. `--level` (1-based) is
+   set inline by workspace-sidebar.ts; indent is row PADDING so the hover/active
+   highlight spans the indent area, like .explorer-label. A collapsed parent
+   only hides its CHILD vault rows (sibling rows, never nested). */
+.workspace-vault-row {
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 0; min-width: 0;
+  padding-left: calc((var(--level, 1) - 1) * var(--sidebar-indent-step));
+  padding-right: var(--sidebar-row-pad-inline);
+  border-radius: var(--radius-sm, 6px);
+  transition: background-color .12s ease;
+}
+.workspace-vault-row:hover { background: color-mix(in srgb, var(--sidebar-fg) 6%, transparent); }
+/* Active vault: the whole ROW carries the accent fill + left bar (same look as
+   the explorer's selected row). :has() reads select's aria-current — no JS. */
 .workspace-vault-row:has(.workspace-vault-select[aria-current="true"]) {
   background: color-mix(in srgb, var(--sidebar-accent) 14%, transparent);
   box-shadow: inset 2px 0 var(--sidebar-accent);
 }
-.workspace-vault-select { display: flex; flex: 1; min-width: 0; align-items: center; gap: .45em; border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; padding: .45em .4em; text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
-.workspace-vault-select:hover, .workspace-vault-action:hover { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
-.workspace-vault-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-/* Tab well (design_tabbar_visual.md §2.1): a vault's tabs sit inside one
-   `--sidebar-well` surface instead of just being indented text — parent/child
-   reads as "contained in", not "two rows at different sizes". margin (not
-   padding) carries the left offset now: toggle's own 2em box + the row's own
-   .15em gap, so the well's left edge optically lines up with `select`'s
-   left edge above it. The strip DIV is always appended (even with zero tabs,
-   workspace-sidebar.ts) so margin/padding both collapse to 0 when empty —
-   otherwise every vault row would show an empty well. */
-.workspace-vault-tabs { display: flex; flex-direction: column; flex-basis: 100%; order: 2; gap: .1em; min-width: 0; background: var(--sidebar-well); border-radius: var(--radius-sm, 6px); padding: .25em; margin: .15em 0 .35em calc(2em + .15em); }
-.workspace-vault-tabs:empty { padding: 0; margin: 0; }
-/* workspace-sidebar.ts sets `.hidden` when the vault row is collapsed.
-   display:flex is unconditional on the base rule above, so [hidden] needs its
-   own override to actually win (an author rule always beats the UA default
-   regardless of matching specificity) — same trap, same fix, as
-   .workspace-error[hidden] above. */
-.workspace-vault-tabs[hidden] { display: none; }
-/* A vault row whose ANCESTOR vault is collapsed (workspace-sidebar.ts's
-   syncDescendantRowVisibility sets `.hidden`). .workspace-vault-row is
-   display:flex, so [hidden] needs its own override — same trap as above. */
+/* A vault row whose ANCESTOR vault is collapsed (syncDescendantRowVisibility
+   sets `.hidden`). .workspace-vault-row is display:flex, so [hidden] needs its
+   own override — an author rule beats the UA default regardless of specificity. */
 .workspace-vault-row[hidden] { display: none; }
-.workspace-vault-tab-row { display: flex; align-items: center; min-width: 0; gap: .2em; }
-/* Tab row grows 21px → ~24px and 10px → 12px font (§2.3): the filename is
-   this panel's body copy, not a caption — it was smaller than the vault name
-   (13px) despite carrying more information. Color steps down to fg-soft
-   (§2.0's 3-tier scale), one notch below the vault name/active-tab fg —
-   inherited by .workspace-vault-tab-name below; .workspace-vault-tab-prefix
-   overrides it back to muted (its own tier, regardless of active state). Now
-   a flex row (icon + prefix + name in one button, §2.3 — wave C) instead of
-   a single text node; ellipsis moves from the button itself onto the name
-   span, the only child allowed to shrink. */
-.workspace-vault-tab { display: flex; align-items: center; gap: .4em; flex: 1; min-width: 0; border: 0; background: transparent; color: var(--sidebar-fg-soft); font: inherit; font-size: calc(12em / 13); padding: .2em .3em; text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
-/* SIDEBAR ZOOM RULE, same fix as .workspace-vault-glyph/.explorer-glyph
-   above: the file icon's own svg width/height attribute (16, from icons.ts's
-   Lucide fallback and material-icon-glyph.ts's stampSvg alike) doesn't track
-   --font-scale, so this + the .icon fill rule give it the shared 16/13 em
-   box. No color override — Material glyphs carry their own baked fill
-   (file-icons.ts's renderEntryGlyph doc comment), so this container is
-   deliberately colorless, unlike the folder toggle's Lucide stroke glyph. */
-.workspace-vault-tab-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); }
-.workspace-vault-tab-glyph .icon { width: 100%; height: 100%; }
-/* D6's folder prefix — always muted regardless of active state (§2.0's
-   3-tier scale buckets "folder prefix" with the group label and muted icons,
-   not with fg/fg-soft), so this explicit color survives being nested inside
-   an active tab's fg-colored button without needing any extra specificity:
-   an explicit rule on the child always wins over an inherited value from the
-   ancestor, no matter how specific the ancestor's own selector is. */
-.workspace-vault-tab-prefix { flex: none; white-space: nowrap; color: var(--sidebar-muted); }
-.workspace-vault-tab-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Active tab in an INACTIVE vault: fg color only, no bar/bg/weight — a "come
-   back here" memory marker, deliberately weaker than the row below. Without
-   this split, three simultaneously-open vaults each show a bold active tab
-   and the eye can't tell which one is actually current (§1 진단 4). */
-.workspace-vault-tab[data-active="true"] { color: var(--sidebar-fg); }
-/* Active tab in the ACTIVE vault: tint fill only, no bar — the accent bar
-   lives on the vault row alone (a second bar on the tab doubled the signal).
-   font-weight 500, not 600: 600 smears at 12px Hangul. */
-.workspace-vault-row:has(.workspace-vault-select[aria-current="true"]) .workspace-vault-tab[data-active="true"] {
-  font-weight: 500;
-  background: color-mix(in srgb, var(--sidebar-accent) 10%, transparent);
-  border-radius: var(--radius-sm, 6px);
-}
-.workspace-vault-tab:hover, .workspace-vault-tab:focus-visible, .workspace-vault-tab-close:hover, .workspace-vault-tab-close:focus-visible { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
-/* Hover-reveal (§2.3, §2.5): the hit target stays reserved at 1.7em always —
-   never display/width toggled — so the filename's ellipsis point never jumps
-   the instant a row is hovered. opacity is the only thing that moves, and a
-   keyboard user tabbing straight to this button still gets it (:focus-within
-   on the tab row below reveals it independent of pointer hover). */
-.workspace-vault-tab-close { flex: none; width: 1.7em; height: 1.7em; border: 0; background: transparent; color: var(--sidebar-muted); padding: .2em; cursor: pointer; border-radius: var(--radius-sm, 6px); opacity: 0; transition: background-color .12s ease, opacity .12s ease; }
-.workspace-vault-tab-row:hover .workspace-vault-tab-close,
-.workspace-vault-tab-row:focus-within .workspace-vault-tab-close {
-  opacity: 1;
-}
-/* The collapse toggle is a structurally new button (glyph moved out of
-   `select`), but visually it reuses .workspace-vault-action's rules verbatim
-   (same selector groups below) rather than inventing its own. It is exempt
-   from the hover-reveal below: it's the only way to see a vault's
-   expand/collapse state, so unlike the bookmark it stays visible always. */
-.workspace-vault-action, .workspace-vault-toggle { display: inline-flex; align-items: center; justify-content: center; gap: .35em; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
-/* Fixed hover chip (§2.5), not the row's own stretch: `.workspace-vault-row`
-   sets `align-items: stretch`, so without `align-self: center` these two
-   would grow to the row's full height and read as a tall bar rather than a
-   pressable icon. `.workspace-vault-tab-close` doesn't need this — it lives
-   inside `.workspace-vault-tab-row`, whose own `align-items: center` never
-   stretched it in the first place, so its §2.3 1.7em square stays as-is. */
-.workspace-vault-action, .workspace-vault-toggle { width: 2em; height: calc(24em / 13); align-self: center; }
-/* Hover-reveal (§2.3, §2.5): same reserved-space-but-opacity-0 treatment as
-   the tab close button above, scoped to the whole vault row instead of one
-   tab row — this and the tab close button together are what took the
-   "always-on icon column" (§1 진단 2) down to zero icons at rest. */
-.workspace-vault-action { opacity: 0; transition: background-color .12s ease, opacity .12s ease; }
+.workspace-vault-select { display: flex; flex: 1; min-width: 0; align-items: center; gap: var(--sidebar-row-gap); border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; line-height: var(--sidebar-row-line-height); padding: var(--sidebar-row-pad-block) 0; min-height: calc(var(--sidebar-row-control) + 2 * var(--sidebar-row-pad-block)); text-align: left; cursor: pointer; border-radius: var(--radius-sm, 6px); }
+.workspace-vault-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+/* Open-document count: muted mono digits at the right edge (0 → no element). The
+   select is a <button> with `font: inherit`, so this 11/13 fraction rides zoom. */
+.workspace-vault-count { flex: none; font-family: var(--font-mono); font-size: calc(11em / 13); font-variant-numeric: tabular-nums; color: var(--sidebar-muted); }
+/* Chevron column. The toggle (rows with child vaults) and the spacer (rows
+   without — keeps the glyph/name columns aligned) are the same box: lead +
+   16/13em chevron + gap = 24px wide at zoom 1, full row height (hit target). */
+.workspace-vault-toggle, .workspace-vault-toggle-spacer { flex: none; display: inline-flex; align-items: center; align-self: stretch; width: auto; height: auto; padding: 0 var(--sidebar-row-gap) 0 var(--sidebar-row-lead); border: 0; background: transparent; font: inherit; }
+.workspace-vault-toggle { color: var(--sidebar-muted); cursor: pointer; }
+.workspace-vault-toggle:hover, .workspace-vault-toggle:focus-visible { color: var(--sidebar-fg); }
+.workspace-vault-chevron { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); color: inherit; transition: transform .15s ease; }
+.workspace-vault-chevron .icon { width: 100%; height: 100%; }
+.workspace-vault-toggle[aria-expanded="true"] > .workspace-vault-chevron { transform: rotate(90deg); }
+.workspace-vault-chevron.is-empty { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) { .workspace-vault-chevron { transition: none; } }
+/* Row-end action (unregister): hover/focus-within reveal, 20/13em chip = the
+   explorer's .explorer-vault-toggle. */
+.workspace-vault-action { flex: none; display: inline-flex; align-items: center; justify-content: center; align-self: center; width: calc(20em / 13); height: calc(20em / 13); margin-inline-start: var(--sidebar-row-gap); padding: 0; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; border-radius: var(--radius-sm, 6px); opacity: 0; transition: background-color .12s ease, opacity .12s ease; }
 .workspace-vault-row:hover .workspace-vault-action,
-.workspace-vault-row:focus-within .workspace-vault-action {
-  opacity: 1;
-}
-/* Same hover/focus color promotion as .explorer-vault-toggle below — a muted
-   icon that reads as "live" once you're actually pointed at or focused on it. */
-.workspace-vault-action:hover, .workspace-vault-action:focus-visible, .workspace-vault-toggle:hover, .workspace-vault-toggle:focus-visible { color: var(--sidebar-fg); }
-/* :active darkens one step past the 8% hover fill (§2.5) — the same icon-scope
-   chips (toggle/action/tab-close), all three, so a press reads consistently
-   across the row regardless of which icon it's on. */
-.workspace-vault-toggle:active, .workspace-vault-action:active, .workspace-vault-tab-close:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
+.workspace-vault-row:focus-within .workspace-vault-action { opacity: 1; }
+.workspace-vault-action:hover, .workspace-vault-action:focus-visible { color: var(--sidebar-fg); background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); }
+.workspace-vault-action:active { background: color-mix(in srgb, var(--sidebar-fg) 12%, transparent); }
 /* focus-visible ring — same idiom as outline-item/recent-item/explorer-vault-toggle. */
 .workspace-vault-select:focus-visible,
 .workspace-vault-toggle:focus-visible,
-.workspace-vault-action:focus-visible,
-.workspace-vault-tab:focus-visible,
-.workspace-vault-tab-close:focus-visible {
+.workspace-vault-action:focus-visible {
   outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
 }
-/* The active vault's accent band now lives on the ROW (`:has()` rule above),
-   not on `select` — so `select:focus-visible` and the row's own box-shadow
-   are two different elements' box-shadows and never fight over one list.
-   The active TAB is the one place this composition still applies: an active
-   tab in the active vault carries no bar (fill only, rule above); it can still
-   receive keyboard focus, so this rule keeps the same focus ring the generic
-   tab rule paints — it exists only because the :has() rule above would
-   otherwise be the sole box-shadow source for that tab. */
-.workspace-vault-row:has(.workspace-vault-select[aria-current="true"]) .workspace-vault-tab[data-active="true"]:focus-visible {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
-}
-/* SIDEBAR ZOOM RULE, same fix as .explorer-glyph below: the folder icon's own
-   svg width/height="16" attribute doesn't track --font-scale; CSS always wins once
-   declared, so this + the .icon fill rule below give it the same 16/13 em box.
-   Colour is inherited from .workspace-vault-toggle (muted by default, promoted
-   to --sidebar-fg on hover/focus above, same as .workspace-vault-action) — the
-   glyph moved out of `select` into its own toggle button. */
-.workspace-vault-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); }
+/* SIDEBAR ZOOM RULE: the folder icon's own svg width/height="16" doesn't track
+   --font-scale; this box + the .icon fill rule give it the shared 16/13 em box.
+   Accent tint = the explorer's folder glyph (.explorer-dir > .explorer-label > .explorer-glyph). */
+.workspace-vault-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); color: var(--sidebar-accent); }
 .workspace-vault-glyph .icon { width: 100%; height: 100%; }
-/* "찬 폴더" (§2.4/§3 5단계): a COLLAPSED vault that still has tabs inside gets
-   its closed-folder outline filled, so "there's something in here" survives
-   the collapse without a count badge or a dot (both explicitly ruled out —
-   the plan's icon-chrome ban). `.has-tabs` is set/cleared in the same
-   command as the glyph swap (workspace-sidebar.ts's renderVaultCollapse), so
-   fill state and collapse state can never drift apart. currentColor, not a
-   fresh color — it tracks whatever the glyph's own hover/focus color
-   promotion already set (muted at rest, fg on hover/focus). */
-.workspace-vault-glyph.has-tabs .icon path { fill: color-mix(in srgb, currentColor 22%, transparent); }
-/* Disambiguation path label (workspace-sidebar.ts appends this — the shared
-   .path-label from src/chrome/path-label.ts — only when two on-screen vaults
-   share a displayName). .workspace-vault-row already wraps
-   (.workspace-vault-tabs above uses the same flex-basis:100% trick), so this
-   just claims its own line between the name row and the tab strip; the
-   left offset is the same glyph-width-plus-gap approximation
-   .recent-item .path-label uses for the same job. */
-.workspace-vault-row .path-label { flex-basis: 100%; order: 1; padding: 0 .4em 0 calc(16em / 13 + 6px); }
+/* Disambiguation path label (the shared .path-label, only when two on-screen
+   vaults share a displayName). The row wraps, so this claims its own line
+   (order 1) under the name; left offset = the NAME column x (lead + two 16px
+   icon columns + two gaps). Denominator 11: .path-label declares
+   font-size calc(11em / 13), so em inside it is 11px-based. */
+.workspace-vault-row .path-label { flex-basis: 100%; order: 1; padding: 0 var(--sidebar-row-pad-inline) 0 calc(var(--sidebar-row-lead) + 2 * (16em / 11) + 2 * var(--sidebar-row-gap)); }
 
 /* Full-height rail's window-chrome band (title-bar.ts createSidebarTopStrip) —
    same 36px height as .title-bar. sticky + an opaque --sidebar-bg: the
@@ -2069,8 +1974,23 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
   display: flex; align-items: center; justify-content: space-between; gap: .4em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.explorer-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .explorer-refresh { flex: none; color: var(--sidebar-muted); }
 .explorer-refresh:hover, .explorer-refresh:focus-visible { color: var(--sidebar-fg); }
+/* .explorer-refresh is a .chrome-btn (inline-flex) and the tree/list are flex
+   containers — each base rule's `display` beats the UA `[hidden]`, so each
+   needs its own override (same trap as .workspace-vault-row[hidden]). */
+.explorer-refresh[hidden] { display: none; }
+.explorer-tree[hidden] { display: none; }
+.explorer-open-files[hidden] { display: none; }
+/* Header view switch [트리 | 열린 파일]. Lives in the 11px-base header; buttons
+   are `font: inherit` (UA button font ignores zoom — audit 04 exception 1) and
+   their box is em of that 11px base (exception 2). */
+.explorer-view-switch { flex: none; display: inline-flex; padding: calc(1em / 11); border-radius: var(--radius-sm, 6px); background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
+.explorer-view-option { height: calc(20em / 11); padding: 0 calc(6em / 11); border: 0; border-radius: var(--radius-xs, 4px); background: transparent; color: var(--sidebar-muted); font: inherit; white-space: nowrap; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
+.explorer-view-option:hover { color: var(--sidebar-fg); }
+.explorer-view-option[aria-pressed="true"] { background: color-mix(in srgb, var(--sidebar-fg) 14%, transparent); color: var(--sidebar-fg); }
+.explorer-view-option:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
 .explorer-empty, .explorer-root-error, .explorer-child-error { padding: .5em 8px; color: var(--sidebar-muted); }
 /* Loading placeholder shown while a listing is in flight (explorer-panel.ts's
    makeSkeleton) — most visible for a remote vault's network round-trip
@@ -2089,7 +2009,24 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
 .explorer-state-message, .search-state-message { min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
 .explorer-root-reselect, .explorer-retry { border: 1px solid var(--sidebar-border); border-radius: var(--radius-sm, 6px); background: transparent; color: var(--sidebar-fg); font: inherit; padding: .2em .5em; cursor: pointer; }
 .explorer-root-reselect:hover, .explorer-root-reselect:focus-visible, .explorer-retry:hover, .explorer-retry:focus-visible { background: color-mix(in srgb, var(--sidebar-fg) 8%, transparent); }
-.explorer-tree { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 2px 6px 8px; }
+.explorer-tree { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: var(--sidebar-list-pad); }
+/* Explorer "열린 파일" body — a flat list of the current vault's tabs, on the
+   same row tokens as the tree (padding/gap/line-height/lead). */
+.explorer-open-files { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: var(--sidebar-list-pad); outline: none; }
+.explorer-open-file { display: flex; align-items: center; min-width: 0; padding-right: var(--sidebar-row-pad-inline); border-radius: var(--radius-sm, 6px); transition: background-color .12s ease; }
+.explorer-open-file:hover { background: color-mix(in srgb, var(--sidebar-fg) 6%, transparent); }
+.explorer-open-file:has(> .explorer-open-file-select[data-active="true"]) { background: color-mix(in srgb, var(--sidebar-accent) 16%, transparent); box-shadow: inset 2px 0 0 var(--sidebar-accent); }
+.explorer-open-file-select { display: flex; flex: 1; min-width: 0; align-items: center; gap: var(--sidebar-row-gap); padding: var(--sidebar-row-pad-block) 0 var(--sidebar-row-pad-block) calc(var(--sidebar-row-lead) + (16em / 13) + var(--sidebar-row-gap)); min-height: calc(var(--sidebar-row-control) + 2 * var(--sidebar-row-pad-block)); border: 0; background: transparent; color: var(--sidebar-fg); font: inherit; line-height: var(--sidebar-row-line-height); text-align: left; white-space: nowrap; cursor: pointer; border-radius: var(--radius-sm, 6px); }
+.explorer-open-file-glyph { flex: none; display: inline-flex; width: calc(16em / 13); height: calc(16em / 13); }
+.explorer-open-file-glyph .icon { width: 100%; height: 100%; }
+.explorer-open-file-prefix { flex: none; color: var(--sidebar-muted); }
+.explorer-open-file-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.explorer-open-file-close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: calc(20em / 13); height: calc(20em / 13); margin-inline-start: var(--sidebar-row-gap); padding: 0; border: 0; border-radius: var(--radius-sm, 6px); background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; opacity: 0; transition: background-color .12s ease, opacity .12s ease; }
+.explorer-open-file-close .icon { width: calc(14em / 13); height: calc(14em / 13); }
+.explorer-open-file:hover .explorer-open-file-close,
+.explorer-open-file:focus-within .explorer-open-file-close { opacity: 1; }
+.explorer-open-file-close:hover, .explorer-open-file-close:focus-visible { color: var(--sidebar-fg); background: color-mix(in srgb, var(--sidebar-fg) 10%, transparent); }
+.explorer-open-file-select:focus-visible, .explorer-open-file-close:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 50%, transparent); }
 /* An item is a vertical BLOCK: its label row on top, its children group below.
    The old row-flex on .explorer-item pulled the children group up beside the
    name (527faf6 bug); the flex now lives on .explorer-label only. */
@@ -2098,10 +2035,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: non
    on the item, inherited here) so indentation always matches the announced
    depth and children step in one level deeper. */
 .explorer-label {
-  display: flex; align-items: center; gap: 4px;
-  padding: 4px 6px 4px calc(4px + (var(--level, 1) - 1) * 12px);
+  display: flex; align-items: center; gap: var(--sidebar-row-gap);
+  padding: var(--sidebar-row-pad-block) var(--sidebar-row-pad-inline) var(--sidebar-row-pad-block) calc(var(--sidebar-row-lead) + (var(--level, 1) - 1) * var(--sidebar-indent-step));
   border-radius: var(--radius-sm, 6px);
-  color: var(--sidebar-fg); line-height: 1.5; cursor: pointer;
+  color: var(--sidebar-fg); line-height: var(--sidebar-row-line-height); cursor: pointer;
   white-space: nowrap; overflow: hidden;
   outline: none;
   transition: background-color .12s ease;

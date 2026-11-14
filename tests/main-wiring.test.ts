@@ -67,7 +67,7 @@ const invokeMock = vi.fn((command: string, args?: unknown): Promise<unknown> => 
   if (command === "list_files_recursive") return Promise.resolve(scanResult);
   // task 10: a paired remote vault's reads go through remote_list_dir/
   // remote_read_file (file-host.ts's remoteFileHost) instead of the local
-  // commands above — wired here so the "drive onSelectTab with a real
+  // commands above — wired here so the "drive selectVaultTab with a real
   // RemoteVault" integration test below exercises the real Explorer +
   // workspace-sidebar click path, not just a spied fileHostFor call.
   if (command === "remote_list_dir") {
@@ -196,6 +196,19 @@ const emitEvent = (event: string, payload: unknown): void => {
   for (const listener of eventListeners.get(event) ?? []) listener({ payload });
 };
 
+/** Drive the real UI to the explorer's "열린 파일" view: open the panel if it is
+ *  closed, then press the header toggle. Tab switching/closing lives there now
+ *  (the workspace sidebar only shows an open-document count). */
+const showOpenFiles = (): void => {
+  if (document.querySelector<HTMLElement>(".explorer-aside")?.hidden) document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+  document.querySelector<HTMLButtonElement>('.explorer-view-option[data-view="open-files"]')?.click();
+};
+/** The active row of the open-files view (brings that view up first). */
+const activeOpenFile = (): HTMLElement | null => {
+  showOpenFiles();
+  return document.querySelector<HTMLElement>('.explorer-open-file-select[data-active="true"]');
+};
+
 const mainSource = readFileSync("src/main.ts", "utf8");
 const folderBookmarkSource = readFileSync("src/workspace/folder-vault-bookmark.ts", "utf8");
 const vaultSelectionSource = readFileSync("src/workspace/vault-selection.ts", "utf8");
@@ -312,10 +325,18 @@ describe("main workspace wiring", () => {
   });
 
   it("routes live tab selection through main; the active-tab close fallback is session.closeActiveTab's, not main's (audit 🟡-2)", () => {
-    expect(mainSource).toContain("onSelectTab: (vault, tab) => {");
+    expect(mainSource).toContain("function selectVaultTab(vault: Vault, tab: VaultTab): Promise<boolean> {");
     expect(mainSource).toContain("const selectedVault = workspaceStore.get().vaults.find((candidate) => candidate.vaultId === vault.vaultId) ?? vault;");
     expect(mainSource).toContain("vaultTabs.select(selectedVault.vaultId, tab.tabId");
-    expect(mainSource).toContain("onCloseTab: (vault, tab) => {");
+    expect(mainSource).toContain("function closeVaultTab(vault: Vault, tab: VaultTab): void {");
+    // The workspace sidebar no longer carries tab handlers; it only counts documents.
+    expect(mainSource).not.toContain("onSel" + "ectTab");
+    expect(mainSource).not.toContain("onClo" + "seTab");
+    expect(mainSource).not.toContain("getTabs:");
+    expect(mainSource).toContain("openDocumentCount: (vaultId) => vaultTabs.get(vaultId).tabs.length");
+    expect(mainSource).toContain("explorerViewSetting.bind(");
+    expect(mainSource.match(/const scheduleOpenFilesRefresh = /g)).toHaveLength(1);
+    expect(mainSource.match(/scheduleOpenFilesRefresh\(\)/g)).toHaveLength(2);
     // The PRE-transaction guard (an inactive tab, or a different vault than
     // routed) still closes with no lifecycle participation, straight in
     // main's handler (design §3.2/C5) — this is the ONLY vaultTabs.close
@@ -341,7 +362,7 @@ describe("main workspace wiring", () => {
     expect(mainSource).toContain("canonicalizeLocal: canonicalizeVaultPath");
     expect(folderBookmarkSource).toContain("store.registerCanonicalVault(canonical)");
     expect(folderBookmarkSource).toContain("store.unregisterVault(existing.vaultId)");
-    expect(mainSource).toContain("workspaceStore.subscribe(() => { void explorer.refreshVaultToggles(); });");
+    expect(mainSource).toContain("workspaceStore.subscribe(() => { void explorer.refreshVaultToggles(); scheduleOpenFilesRefresh(); });");
     expect(mainSource).not.toContain("explorer.refreshVaultToggles();\n        workspaceSidebar.refresh();");
     expect(mainSource).toContain("reportError: (message) => window.alert(message)");
   });
@@ -713,7 +734,7 @@ describe("main workspace wiring", () => {
     await import("../src/main");
     await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
     watcherEvents.length = 0;
-    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    showOpenFiles();
     document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
 
     expect(document.querySelector<HTMLButtonElement>('[data-tab-id="a"]')?.getAttribute("data-active")).toBe("true");
@@ -725,36 +746,10 @@ describe("main workspace wiring", () => {
     expect(document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.getAttribute("data-active")).toBe("true");
   });
 
-  it("keeps roving focus on the active tab while keyboard activation is pending", async () => {
-    let resolveB: ((value: unknown) => void) | undefined;
-    deferredReads.set("/P/b.md", { promise: new Promise<unknown>((resolve) => { resolveB = resolve; }) });
-    documentContents.set("/P/a.md", "# A");
-    localStorage.setItem("mermark.workspaceState", JSON.stringify({
-      workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FP"], currentVaultId: "vault-%2FP", lastSelectedPermanentVaultId: "vault-%2FP" }],
-      vaults: [{ vaultId: "vault-%2FP", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent", explorerRoot: "/P" }],
-      currentWorkspaceId: "workspace-default",
-    }));
-    localStorage.setItem("mermark.vaultTabs.vault-%2FP", JSON.stringify({ vaultId: "vault-%2FP", tabs: [{ tabId: "a", path: "/P/a.md" }, { tabId: "b", path: "/P/b.md" }], activeTabId: "a" }));
-    vi.stubGlobal("location", { search: "?file=/P/a.md" });
-
-    await import("../src/main");
-    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
-    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
-    const active = document.querySelector<HTMLButtonElement>('[data-tab-id="a"]');
-    active?.focus();
-    active?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-
-    expect(active?.getAttribute("aria-selected")).toBe("true");
-    expect(active?.tabIndex).toBe(0);
-    expect(document.activeElement).toBe(active);
-    resolveB?.({ text: "# B", mtime: 2 });
-  });
-
   it.each([
-    ["ArrowRight", "/P/c.md"],
-    ["Home", "/P/a.md"],
-    ["End", "/P/c.md"],
-  ])("restores focus to the selected tab after rejected %s activation recovery is cancelled", async (key, rejectedPath) => {
+    ["c", "/P/c.md"],
+    ["a", "/P/a.md"],
+  ])("keeps the active file selected after a rejected click-switch to tab %s is cancelled", async (targetTab, rejectedPath) => {
     documentContents.set("/P/b.md", "# B");
     rejectedReads.add(rejectedPath);
     localStorage.setItem("mermark.workspaceState", JSON.stringify({
@@ -771,19 +766,97 @@ describe("main workspace wiring", () => {
 
     await import("../src/main");
     await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("B"));
-    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
-    const active = document.querySelector<HTMLButtonElement>('[data-tab-id="b"]');
-    active?.focus();
-    active?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    showOpenFiles();
+    document.querySelector<HTMLButtonElement>(`[data-tab-id="${targetTab}"]`)?.click();
     await vi.waitFor(() => expect(document.querySelector(".recovery-modal")).not.toBeNull());
 
-    expect(active?.getAttribute("aria-selected")).toBe("true");
-    expect(active?.tabIndex).toBe(0);
-    expect(document.activeElement?.closest(".recovery-modal")).not.toBeNull();
+    expect(document.querySelector<HTMLElement>('.explorer-open-file-select[data-active="true"]')?.dataset.tabId).toBe("b");
     document.querySelector<HTMLButtonElement>(".recovery-cancel")?.click();
 
     expect(document.querySelector(".recovery-modal")).toBeNull();
-    expect(document.activeElement).toBe(active);
+    expect(document.querySelector<HTMLElement>('.explorer-open-file-select[data-active="true"]')?.dataset.tabId).toBe("b");
+    expect(document.querySelector(".cm-content")?.textContent).toBe("B");
+  });
+
+  it("replaces the open-files list with the new vault's tabs after a vault switch (scheduleOpenFilesRefresh)", async () => {
+    documentContents.set("/P/a.md", "# A");
+    documentContents.set("/P/b.md", "# B");
+    localStorage.setItem("mermark.workspaceState", JSON.stringify({
+      workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FP", "vault-%2FQ"], currentVaultId: "vault-%2FP", lastSelectedPermanentVaultId: "vault-%2FP" }],
+      vaults: [
+        { vaultId: "vault-%2FP", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent", explorerRoot: "/P" },
+        { vaultId: "vault-%2FQ", workspaceId: "workspace-default", displayName: "Q", rootPath: "/Q", persistenceKind: "permanent", explorerRoot: "/Q" },
+      ],
+      currentWorkspaceId: "workspace-default",
+    }));
+    localStorage.setItem("mermark.vaultTabs.vault-%2FP", JSON.stringify({ vaultId: "vault-%2FP", tabs: [{ tabId: "a", path: "/P/a.md" }, { tabId: "b", path: "/P/b.md" }], activeTabId: "a" }));
+    vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
+    showOpenFiles();
+    expect([...document.querySelectorAll<HTMLElement>(".explorer-open-file-select")].map((el) => el.dataset.tabId)).toEqual(["a", "b"]);
+
+    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    document.querySelector<HTMLElement>('[data-vault-id="vault-%2FQ"] .workspace-vault-select')?.click();
+    await vi.waitFor(() => expect(document.querySelector(".editor-host")?.classList.contains("welcome-host")).toBe(true));
+    showOpenFiles();
+
+    await vi.waitFor(() => expect(document.querySelector(".explorer-open-files .explorer-empty")?.textContent).toBe("열린 파일이 없습니다. 트리에서 파일을 열면 여기에 표시됩니다."));
+    expect(document.querySelector('[data-tab-id="a"]')).toBeNull();
+  });
+
+  it("shows each vault's open-document count on its workspace row and updates it when a file is closed", async () => {
+    documentContents.set("/P/a.md", "# A");
+    documentContents.set("/P/b.md", "# B");
+    localStorage.setItem("mermark.workspaceState", JSON.stringify({
+      workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FP", "vault-%2FQ"], currentVaultId: "vault-%2FP", lastSelectedPermanentVaultId: "vault-%2FP" }],
+      vaults: [
+        { vaultId: "vault-%2FP", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent", explorerRoot: "/P" },
+        { vaultId: "vault-%2FQ", workspaceId: "workspace-default", displayName: "Q", rootPath: "/Q", persistenceKind: "permanent", explorerRoot: "/Q" },
+      ],
+      currentWorkspaceId: "workspace-default",
+    }));
+    localStorage.setItem("mermark.vaultTabs.vault-%2FP", JSON.stringify({ vaultId: "vault-%2FP", tabs: [{ tabId: "a", path: "/P/a.md" }, { tabId: "b", path: "/P/b.md" }], activeTabId: "a" }));
+    vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
+    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    expect(document.querySelector('[data-vault-id="vault-%2FP"] .workspace-vault-count')?.textContent).toBe("2");
+    expect(document.querySelector('[data-vault-id="vault-%2FQ"] .workspace-vault-count')).toBeNull();
+
+    showOpenFiles();
+    const b = document.querySelector<HTMLElement>('[data-tab-id="b"]');
+    (b?.nextElementSibling as HTMLButtonElement | null)?.click();
+    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    expect(document.querySelector('[data-vault-id="vault-%2FP"] .workspace-vault-count')?.textContent).toBe("1");
+  });
+
+  it("restores the persisted explorer view: a saved open-files view shows the list on first open", async () => {
+    documentContents.set("/P/a.md", "# A");
+    documentContents.set("/P/b.md", "# B");
+    localStorage.setItem("mermark.workspaceState", JSON.stringify({
+      workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-%2FP", "vault-%2FQ"], currentVaultId: "vault-%2FP", lastSelectedPermanentVaultId: "vault-%2FP" }],
+      vaults: [
+        { vaultId: "vault-%2FP", workspaceId: "workspace-default", displayName: "P", rootPath: "/P", persistenceKind: "permanent", explorerRoot: "/P" },
+        { vaultId: "vault-%2FQ", workspaceId: "workspace-default", displayName: "Q", rootPath: "/Q", persistenceKind: "permanent", explorerRoot: "/Q" },
+      ],
+      currentWorkspaceId: "workspace-default",
+    }));
+    localStorage.setItem("mermark.vaultTabs.vault-%2FP", JSON.stringify({ vaultId: "vault-%2FP", tabs: [{ tabId: "a", path: "/P/a.md" }, { tabId: "b", path: "/P/b.md" }], activeTabId: "a" }));
+    vi.stubGlobal("location", { search: "?file=/P/a.md" });
+    localStorage.setItem("mermark.explorerView", "open-files");
+
+    await import("../src/main");
+    await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
+    document.querySelector<HTMLButtonElement>(".explorer-btn")?.click();
+
+    expect(document.querySelector<HTMLElement>(".explorer-open-files")?.hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>(".explorer-tree")?.hidden).toBe(true);
+    expect(document.querySelectorAll(".explorer-open-file")).toHaveLength(2);
+    document.querySelector<HTMLButtonElement>('.explorer-view-option[data-view="tree"]')?.click();
+    expect(localStorage.getItem("mermark.explorerView")).toBe("tree");
   });
 
   it("restores the active watcher when a stale B handoff completes after failed C", async () => {
@@ -803,7 +876,7 @@ describe("main workspace wiring", () => {
     await import("../src/main");
     await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
     watcherEvents.length = 0;
-    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    showOpenFiles();
     document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
     await vi.waitFor(() => expect(watcherEvents).toContain("watch /P/b.md"));
     rejectedReads.add("/P/c.md");
@@ -848,7 +921,7 @@ describe("main workspace wiring", () => {
     await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("B"));
     document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
 
-    expect(document.querySelector('.workspace-vault-tab[data-active="true"]')?.getAttribute("title")).toBe("/P/b.md");
+    expect(activeOpenFile()?.getAttribute("title")).toBe("/P/b.md");
     expect(document.querySelector(".cm-content")?.textContent).toBe("B");
     expect(watcherEvents).toEqual(["unwatch", "watch /P/b.md"]);
   });
@@ -994,7 +1067,7 @@ describe("main workspace wiring", () => {
     emitEvent("file-changed", { path: "/P/a.md", generation: "1", text: "# late A", mtime: 2 });
     await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("late A"));
 
-    expect(document.querySelector('.workspace-vault-tab[data-active="true"]')?.getAttribute("title")).toBe("/P/a.md");
+    expect(activeOpenFile()?.getAttribute("title")).toBe("/P/a.md");
     expect(watcherEvents).toEqual(["unwatch"]);
     expect(watcherEvents).not.toContain("watch /P/b.md");
   });
@@ -1042,7 +1115,7 @@ describe("main workspace wiring", () => {
     await vi.waitFor(() => expect(document.querySelector(".recovery-modal")).not.toBeNull());
 
     expect(document.querySelector(".cm-content")?.textContent).toContain("A");
-    expect(document.querySelector('[data-vault-id="vault-%2FP"] .workspace-vault-tab[data-active="true"]')).not.toBeNull();
+    expect(activeOpenFile()).not.toBeNull();
     expect(document.querySelector('[data-vault-id="vault-%2FQ"] .workspace-vault-select')?.getAttribute("aria-current")).toBe("false");
   });
 
@@ -1065,15 +1138,15 @@ describe("main workspace wiring", () => {
     const liveEditor = (window as Window & { readonly __mermark?: { readonly view: EditorView } }).__mermark;
     liveEditor?.view.dispatch({ changes: { from: 0, to: 0, insert: "x" } });
     rejectWrites = true;
-    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
-    document.querySelector<HTMLButtonElement>('[data-vault-id="vault-%2FP"] .workspace-vault-tab-close')?.click();
+    showOpenFiles();
+    document.querySelector<HTMLButtonElement>(".explorer-open-file-close")?.click();
     await vi.waitFor(() => expect(document.querySelector(".recovery-modal")).not.toBeNull());
 
-    expect(document.querySelector('[data-vault-id="vault-%2FP"] .workspace-vault-tab[data-active="true"]')).not.toBeNull();
+    expect(activeOpenFile()).not.toBeNull();
     expect(document.querySelector(".cm-content")?.textContent).toContain("A");
     document.querySelector<HTMLButtonElement>(".recovery-cancel")?.click();
     expect(document.querySelector(".recovery-modal")).toBeNull();
-    expect(document.querySelector('[data-vault-id="vault-%2FP"] .workspace-vault-tab[data-active="true"]')).not.toBeNull();
+    expect(activeOpenFile()).not.toBeNull();
   });
 
   it("retains the active tab when detaching the outgoing watcher is rejected", async () => {
@@ -1091,7 +1164,7 @@ describe("main workspace wiring", () => {
     await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
     watcherEvents.length = 0;
     rejectUnwatch = true;
-    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    showOpenFiles();
     document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
     await vi.waitFor(() => expect(watcherEvents).toContain("unwatch"));
 
@@ -1116,7 +1189,7 @@ describe("main workspace wiring", () => {
     await vi.waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("A"));
     watcherEvents.length = 0;
     rejectWatchPath = "/P/b.md";
-    document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
+    showOpenFiles();
     document.querySelector<HTMLButtonElement>('[data-tab-id="b"]')?.click();
     await vi.waitFor(() => expect(watcherEvents).toEqual(["unwatch", "watch /P/b.md", "watch /P/a.md"]));
 
@@ -1374,7 +1447,7 @@ describe("main workspace wiring", () => {
   // genuine logic regression that happens to keep the same strings). Task 10
   // closed the gap this comment used to describe (RemoteVault now round-trips
   // through the localStorage deserializer, workspace-state.ts's Ruling 21) —
-  // "onSelectTab driven end-to-end with a live RemoteVault" is now covered
+  // "selectVaultTab driven end-to-end with a live RemoteVault" is now covered
   // directly below instead of deferred; the leaf-module behavior itself
   // (wikilink.ts/image.ts honoring a real remote facet value) is separately
   // covered end-to-end by tests/wikilink.test.ts's "remote-vault read-only
@@ -1458,7 +1531,7 @@ describe("main workspace wiring", () => {
       expect(mainSource).not.toContain("installAutoRestartOnUpdate(session.commitBeforeSwitch)");
     });
 
-    it("onSelectVault/onSelectTab pass their own already-known target vault through, not the sidebar's currentVault()", () => {
+    it("onSelectVault/selectVaultTab pass their own already-known target vault through, not the sidebar's currentVault()", () => {
       expect(mainSource).toContain("openDocumentSafely(selection.tab.path, commitSelection, selectedVault)");
       expect(mainSource).toContain("}, selectedVault);");
     });
@@ -1476,12 +1549,12 @@ describe("main workspace wiring", () => {
 
     // Task 10 (Ruling 21's "파생 효과"): now that a RemoteVault round-trips
     // through localStorage, this drives the REAL boot — Explorer navigation,
-    // document open, and a workspace-sidebar tab click — through onSelectTab,
+    // document open, and a workspace-sidebar tab click — through selectVaultTab,
     // instead of only asserting resolveTargetVault/routingTrustsCurrentVault
     // in isolation. Proves fileHostFor actually resolves to remoteFileHost
     // for a live vault reached by clicking through the real UI, not a vault
     // object constructed and passed in by the test.
-    it("drives onSelectTab with a real, persisted RemoteVault and reads through remote_read_file", async () => {
+    it("drives selectVaultTab from the explorer's open-files view with a real, persisted RemoteVault and reads through remote_read_file", async () => {
       localStorage.setItem("mermark.workspaceState", JSON.stringify({
         workspaces: [{ workspaceId: "workspace-default", vaultIds: ["vault-remote-x"], currentVaultId: "vault-remote-x", lastSelectedPermanentVaultId: null }],
         vaults: [{ vaultId: "vault-remote-x", workspaceId: "workspace-default", displayName: "맥미니 노트", persistenceKind: "remote", rootPath: null, explorerRoot: REMOTE_VAULT_WIRE_ROOT, host: "wis-macmini", remoteVaultId: "rv-1" }],
@@ -1507,19 +1580,19 @@ describe("main workspace wiring", () => {
       invokeMock.mockClear();
 
       // Re-select the SAME (already active) tab through the workspace
-      // sidebar — exactly the onSelectTab click path (workspace-sidebar.ts's
+      // sidebar — exactly the selectVaultTab click path (workspace-sidebar.ts's
       // `activate`), not a re-open through the Explorer. A second
-      // remote_read_file call here is proof onSelectTab itself — not just
+      // remote_read_file call here is proof selectVaultTab itself — not just
       // the Explorer's own open handler — resolves the remote backend.
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
-      await vi.waitFor(() => expect(document.querySelector('[data-vault-id="vault-remote-x"] .workspace-vault-tab')).not.toBeNull());
-      const tab = document.querySelector<HTMLButtonElement>('[data-vault-id="vault-remote-x"] .workspace-vault-tab');
+      showOpenFiles();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-open-file-select[data-tab-id]')).not.toBeNull());
+      const tab = document.querySelector<HTMLButtonElement>('.explorer-open-file-select[data-tab-id]');
       tab?.click();
       await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledWith("remote_read_file", expect.objectContaining({ host: "wis-macmini", vault: "rv-1", path: "노트.md" })));
 
       // No WorkspaceStateError surfaced — before Task 10, selectVault threw
       // for any non-"permanent" vault (workspace-state.ts), which this
-      // exact click path would have hit via onSelectTab's
+      // exact click path would have hit via selectVaultTab's
       // `workspaceStore.selectVault(selectedVault.vaultId)`.
       expect(document.querySelector(".workspace-error")?.hasAttribute("hidden")).toBe(true);
     });
@@ -1622,9 +1695,9 @@ describe("main workspace wiring", () => {
 
       // Switch back to the remote vault's already-open tab WITHOUT the
       // recovery modal closing.
-      document.querySelector<HTMLButtonElement>(".workspace-btn")?.click();
-      await vi.waitFor(() => expect(document.querySelector('[data-vault-id="vault-remote-i4"] .workspace-vault-tab')).not.toBeNull());
-      document.querySelector<HTMLButtonElement>('[data-vault-id="vault-remote-i4"] .workspace-vault-tab')?.click();
+      showOpenFiles();
+      await vi.waitFor(() => expect(document.querySelector('.explorer-open-file-select[data-tab-id]')).not.toBeNull());
+      document.querySelector<HTMLButtonElement>('.explorer-open-file-select[data-tab-id]')?.click();
       await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledWith("remote_read_file", expect.objectContaining({ path: "노트.md" })));
       expect(document.querySelector(".recovery-backdrop")).not.toBeNull(); // still open — never closed by the switch
       invokeMock.mockClear();

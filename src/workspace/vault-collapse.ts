@@ -1,6 +1,6 @@
 const storageKey = (vaultId: string): string => `mermark.vaultCollapsed.${vaultId}`;
 
-/** Whether a vault's tab strip is collapsed in the workspace sidebar. Persisted
+/** Whether a vault row's child vault rows are collapsed in the workspace sidebar. Persisted
  *  per vaultId, independent of `mermark.vaultTabs.<id>` (VaultTabStore) — this
  *  is UI layout state, not tab data, so it gets its own key rather than
  *  piggybacking on that schema. No stored key means expanded (the default). */

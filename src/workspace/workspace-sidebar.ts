@@ -1,11 +1,10 @@
 import { icon } from "../icons";
 import { renderSidebarButton } from "../sidebar/toggle";
 import { redundantPathLabel, truncatedPathLabel } from "../chrome/path-label";
-import { basename, dirOf, isPathWithin } from "../document/path";
+import { isPathWithin } from "../document/path";
 import { assertNever } from "./vault-routing";
-import { extensionOf, renderEntryGlyph } from "../sidebar/explorer/file-icons";
+import { renderEntryGlyph } from "../sidebar/explorer/file-icons";
 import { WorkspaceStateError, anyVaultStillUsesHost, isRemoteFolderVault, remoteShareKey, type RemoteVault, type Vault, type WorkspaceState, type WorkspaceStore } from "./workspace-state";
-import type { VaultTabs } from "./vault-tabs";
 import { isVaultCollapsed, setVaultCollapsed } from "./vault-collapse";
 import { badgeFor } from "./add-remote-vault";
 import { remoteConnectionStateFor, evictSshTunnelMemo, type RemoteConnectionState } from "../document/file-host";
@@ -28,10 +27,9 @@ export interface WorkspaceSidebar {
 export interface WorkspaceSidebarHandlers {
   readonly store: WorkspaceStore;
   readonly onSelectVault: (vault: Vault) => void;
-  readonly onSelectTab?: (vault: Vault, tab: VaultTabs["tabs"][number]) => void | Promise<boolean>;
-  readonly onCloseTab?: (vault: Vault, tab: VaultTabs["tabs"][number]) => void;
   onOpen?(): void;
-  readonly getTabs?: (vaultId: string) => VaultTabs;
+  /** 볼트 행 오른쪽에 표시할 열린 문서 개수 쿼리(pure). 미주입이면 0. */
+  readonly openDocumentCount?: (vaultId: string) => number;
   /** Swappable for a spy in tests (pairing dialog + connection badges). */
   readonly call?: typeof invoke;
 }
@@ -165,48 +163,28 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: strin
   const element = document.createElement(tag); if (className) element.className = className; return element;
 };
 
-/** Sync a vault row's collapse toggle — glyph, aria-expanded, labels, and the
- *  tab strip's visibility — in one command so the picture and the state can
- *  never drift apart. Same discipline as the explorer's
- *  renderFolderGlyph/expandFolder/collapseFolder (explorer-panel.ts).
- *  `hasHiddenContent` (`collapsedRowHasHiddenContent`) drives the "찬 폴더"
- *  fill (design_tabbar_visual.md §2.4): a collapsed vault that still hides
- *  something (own tabs OR child vault rows) gets its closed-folder glyph
- *  filled (`.has-tabs`, styles.css) so "there's something in here" survives
- *  the collapse — an empty collapsed vault stays a bare outline. No new
- *  stored state: the caller already has both facts in hand for this render. */
-function renderVaultCollapse(toggle: HTMLButtonElement, glyph: HTMLElement, tabList: HTMLElement, displayName: string, collapsed: boolean, hasHiddenContent: boolean): void {
-  glyph.replaceChildren(icon(collapsed ? "folder" : "folder-open"));
-  glyph.classList.toggle("has-tabs", collapsed && hasHiddenContent);
-  toggle.setAttribute("aria-expanded", String(!collapsed));
-  const label = `${displayName} 탭 ${collapsed ? "펼치기" : "접기"}`;
-  toggle.title = label;
-  toggle.setAttribute("aria-label", label);
-  tabList.hidden = collapsed;
+/** "열린 문서 N개", 0이면 null. pure query */
+export function openDocumentCountLabel(count: number): string | null {
+  return count > 0 ? `열린 문서 ${count}개` : null;
 }
 
-/** D6's one-level folder prefix: the muted "which folder" hint shown before a
- *  tab's filename, or null when none applies. Null cases: the global vault
- *  (no root — nothing to be relative TO, so no folder structure is "this
- *  vault's own"), and a file that lives directly under the vault root
- *  (nothing to disambiguate). Two-or-more levels deep collapses to a bare
- *  "…/" — D6 rules out real tree depth, this just says "there's more" — and
- *  a single level over MAX_PREFIX_CHARS keeps its first N characters and
- *  swaps the tail for "…" rather than silently truncating without a mark.
- *  Pure query — the caller (the tab loop below) decides whether to actually
- *  render it, since that also depends on the PREVIOUS rendered tab's folder. */
-const MAX_PREFIX_CHARS = 10;
-function folderPrefixFor(path: string, vaultRoot: string | null): string | null {
-  if (!vaultRoot) return null;
-  const dir = dirOf(path);
-  if (dir === vaultRoot) return null;
-  if (!dir.startsWith(vaultRoot)) return null; // defensive: a tab outside its own vault's root
-  const relative = dir.slice(vaultRoot.length).replace(/^[\\/]/, "");
-  const segments = relative.split(/[\\/]/).filter(Boolean);
-  if (segments.length === 0) return null;
-  if (segments.length > 1) return "…/";
-  const folder = segments[0] ?? "";
-  return folder.length > MAX_PREFIX_CHARS ? `${folder.slice(0, MAX_PREFIX_CHARS)}…/` : `${folder}/`;
+/** select 버튼의 접근 가능한 이름 — 개수가 없으면 null(내용 텍스트에 맡김). pure query */
+function vaultSelectAccessibleName(displayName: string, count: number): string | null {
+  const label = openDocumentCountLabel(count);
+  return label ? `${displayName}, ${label}` : null;
+}
+
+/** Sync a vault row's collapse toggle — glyph (folder-open/folder), aria-expanded
+ *  and labels — in one command so the picture and the state can never drift
+ *  apart. Same discipline as the explorer's renderFolderGlyph/expandFolder/
+ *  collapseFolder (explorer-panel.ts). Collapsing hides only CHILD vault rows
+ *  (`syncDescendantRowVisibility`). Command (void). */
+function renderVaultCollapse(toggle: HTMLButtonElement, glyph: HTMLElement, displayName: string, collapsed: boolean): void {
+  renderEntryGlyph(glyph, "", true, !collapsed);
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  const label = `${displayName} 하위 볼트 ${collapsed ? "펼치기" : "접기"}`;
+  toggle.title = label;
+  toggle.setAttribute("aria-label", label);
 }
 
 /** One rendered vault row's nesting depth (1-based, matching the explorer
@@ -222,18 +200,15 @@ interface VaultRow {
 
 /** Whether a collapsed ANCESTOR hides this row — any ancestor, so a grandchild
  *  is hidden by a collapsed grandparent even when its own parent is expanded.
- *  The row's own collapse state is irrelevant (that only hides its tab strip).
+ *  The row's own collapse state is irrelevant (that only hides ITS children).
  *  Pure query. */
 function isHiddenByCollapsedAncestor(row: VaultRow, isCollapsed: (vaultId: string) => boolean): boolean {
   return row.ancestorIds.some(isCollapsed);
 }
 
-/** Whether collapsing `vaultId` hides anything beyond an empty strip: its own
- *  tabs, or any child vault row among `rows`. Drives the filled-folder glyph
- *  so a collapsed vault that now hides sub-folders doesn't claim to be empty.
- *  Pure query. */
-function collapsedRowHasHiddenContent(vaultId: string, ownTabCount: number, rows: readonly VaultRow[]): boolean {
-  return ownTabCount > 0 || rows.some((row) => row.ancestorIds.includes(vaultId));
+/** rows 중 vaultId를 조상으로 둔 행이 있는가 — 접기 토글을 렌더할지의 유일한 판정. pure query */
+function hasChildVaultRows(vaultId: string, rows: readonly VaultRow[]): boolean {
+  return rows.some((row) => row.ancestorIds.includes(vaultId));
 }
 
 /** Re-derive every row's `hidden` from the stored collapse states — the one
@@ -305,7 +280,7 @@ function compareVaultDisplayOrder(left: Vault, right: Vault): number {
  *  child's collapse state is its own (vault-collapse.ts) — this function only
  *  decides ORDER/LEVEL/ancestry, never visibility (`syncDescendantRowVisibility`
  *  does, from `ancestorIds`). Children stay sibling rows in the DOM, never
- *  nested inside the parent's tab strip. NOTE: the older "a collapsed parent
+ *  nested inside the parent's row. NOTE: the older "a collapsed parent
  *  never hides its child row" decision was SUPERSEDED on user request
  *  (design §1.1) — the parent row and its toggle stay reachable, so the
  *  children can always be brought back. Pure query. */
@@ -330,7 +305,7 @@ function arrangeVaultHierarchy(vaults: readonly Vault[]): VaultRow[] {
   return rows;
 }
 
-export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCloseTab, onOpen, getTabs, call = invoke }: WorkspaceSidebarHandlers): WorkspaceSidebar {
+export function createWorkspaceSidebar({ store, onSelectVault, onOpen, openDocumentCount, call = invoke }: WorkspaceSidebarHandlers): WorkspaceSidebar {
   const button = create("button", "chrome-btn workspace-btn icon-only");
   const aside = create("aside", "workspace-aside sidebar-aside");
   aside.id = "workspace-aside"; aside.hidden = true;
@@ -423,116 +398,58 @@ export function createWorkspaceSidebar({ store, onSelectVault, onSelectTab, onCl
       for (const { vault, level } of rows) {
         const row = create("div", "workspace-vault-row"); row.setAttribute("role", "listitem"); row.dataset.vaultId = vault.vaultId;
         row.style.setProperty("--level", String(level));
-        // Toggle is its own button, not nested inside `select` — a button
-        // inside a button is invalid HTML, and it made the two controls'
-        // hovers bleed into each other. Its click means collapse/expand;
-        // `select`'s click means entry. `folder-open`/`folder` (the same pair
-        // the explorer's directory rows use) now means expanded/collapsed
-        // only — the old global-vs-permanent reading of this glyph is
-        // dropped, since the "영구 볼트" group label already carries that
-        // distinction.
-        const toggle = create("button", "workspace-vault-toggle") as HTMLButtonElement; toggle.type = "button";
-        const glyph = create("span", "workspace-vault-glyph"); toggle.append(glyph);
+        // Column grammar = the explorer's folder row: [chevron column][folder
+        // glyph][name … count]. Only a row with child vaults owns a collapse
+        // toggle (the chevron); the others keep an EMPTY chevron slot (like an
+        // explorer file row) so the glyph/name columns line up at every level.
+        // Toggle is its own button, not nested inside `select` — a button in a
+        // button is invalid HTML. Its click means collapse/expand; `select`'s
+        // click (glyph, name, count) means entry.
+        const hasChildren = hasChildVaultRows(vault.vaultId, rows);
+        const glyph = create("span", "workspace-vault-glyph");
         const select = create("button", "workspace-vault-select") as HTMLButtonElement; select.type = "button"; select.title = vaultTitleFor(vault);
+        select.append(glyph);
         const name = create("span", "workspace-vault-name"); name.textContent = vault.displayName; select.append(name);
+        const documentCount = openDocumentCount?.(vault.vaultId) ?? 0;
+        if (documentCount > 0) {
+          const countEl = create("span", "workspace-vault-count"); countEl.textContent = String(documentCount); countEl.setAttribute("aria-hidden", "true");
+          select.append(countEl);
+        }
+        const accessibleName = vaultSelectAccessibleName(vault.displayName, documentCount);
+        if (accessibleName) select.setAttribute("aria-label", accessibleName);
         // Path label only when this vault's name collides with another one
         // currently on screen — the shared left-truncating component
         // (src/chrome/path-label.ts), same as recent-item's disambiguation
         // row, never a fresh one. The global vault has no rootPath (nothing
         // to show), so it can never carry this even if its name collides.
         const pathLabel = vault.rootPath && hasNameCollision(vault.displayName) && !redundantPathLabel(vault.rootPath) ? truncatedPathLabel(vault.rootPath) : null;
-        const tabList = create("div", "workspace-vault-tabs"); tabList.setAttribute("role", "tablist"); tabList.setAttribute("aria-orientation", "horizontal"); tabList.setAttribute("aria-label", `${vault.displayName} 탭`);
-        const tabs = getTabs?.(vault.vaultId) ?? { vaultId: vault.vaultId, tabs: [], activeTabId: null };
-        // D7: render in path order, not open order — the STORED order
-        // (tabs.tabs, vaultTabs.ts) is untouched; this is a display-only
-        // sort of a copy, so closing/selecting still reads/writes the real
-        // array by tabId, never by this sorted position. A plain string
-        // comparison (not localeCompare) keeps it deterministic across
-        // locales/environments — "사전순" here just means "consistent", not
-        // language-aware collation.
-        const sortedTabs = [...tabs.tabs].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-        // D6: a prefix only appears when the folder actually CHANGES from the
-        // previous rendered row — tracked against the real folder path, not
-        // the (possibly lossy, e.g. "…/") prefix text, so two different deep
-        // folders that both render "…/" are never mistaken for "the same
-        // folder" and wrongly collapsed together.
-        let previousDir: string | null = null;
-        for (const tab of sortedTabs) {
-          const tabBase = basename(tab.path);
-          const tabExt = extensionOf(tabBase);
-          // D5: the icon already says the type — an extension suffix would
-          // repeat it in text. Only strip when there IS an extension
-          // (extensionOf already excludes dotfiles/trailing dots), so
-          // "README" stays "README" and ".gitignore" stays ".gitignore".
-          const displayName = tabExt ? tabBase.slice(0, tabBase.length - tabExt.length - 1) : tabBase;
-          const dir = dirOf(tab.path);
-          const prefixText = dir === previousDir ? null : folderPrefixFor(tab.path, vault.rootPath);
-          previousDir = dir;
-          const tabRow = create("div", "workspace-vault-tab-row");
-          // Icon + prefix + name share ONE button (§2.3): the icon isn't a
-          // separate control, clicking it opens the tab exactly like
-          // clicking the name does — same D3 "highlight scope = action
-          // scope" reasoning as the vault row, just with no second action to
-          // carve out here.
-          const tabEl = create("button", "workspace-vault-tab") as HTMLButtonElement; tabEl.type = "button"; tabEl.dataset.tabId = tab.tabId; tabEl.title = tab.path;
-          const tabGlyph = create("span", "workspace-vault-tab-glyph"); renderEntryGlyph(tabGlyph, tabBase, false, false); tabEl.append(tabGlyph);
-          if (prefixText) { const prefix = create("span", "workspace-vault-tab-prefix"); prefix.textContent = prefixText; tabEl.append(prefix); }
-          const tabNameEl = create("span", "workspace-vault-tab-name"); tabNameEl.textContent = displayName; tabEl.append(tabNameEl);
-          const selected = tab.tabId === tabs.activeTabId;
-          tabEl.setAttribute("role", "tab"); tabEl.setAttribute("aria-selected", String(selected)); tabEl.tabIndex = selected ? 0 : -1;
-          if (selected) { tabEl.dataset.active = "true"; tabEl.setAttribute("aria-current", "page"); }
-          const commitRoving = (target: VaultTabs["tabs"][number], focus: boolean): void => {
-            const currentList = aside.querySelector<HTMLElement>(`[data-vault-id="${vault.vaultId}"] .workspace-vault-tabs`);
-            const buttons = [...(currentList?.querySelectorAll<HTMLButtonElement>(".workspace-vault-tab") ?? [])];
-            const targetButton = buttons.find((button) => button.dataset.tabId === target.tabId);
-            for (const button of buttons) button.tabIndex = button === targetButton ? 0 : -1;
-            if (focus) targetButton?.focus();
-          };
-          const activate = (target: VaultTabs["tabs"][number], focus: boolean): void => {
-            try {
-              const result = onSelectTab?.(vault, target);
-              if (result && typeof result.then === "function") {
-                void result.then((committed) => { if (committed) commitRoving(target, focus); }).catch(showError);
-              } else {
-                commitRoving(target, focus);
-              }
-            } catch (error) { showError(error); }
-          };
-          tabEl.addEventListener("click", () => activate(tab, false));
-          tabEl.addEventListener("keydown", (event) => {
-            const key = event.key;
-            if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
-            event.preventDefault();
-            // Roving order follows the RENDERED (path-sorted) order, not
-            // tabs.tabs' stored order — otherwise → could visually jump
-            // backwards.
-            const index = sortedTabs.findIndex((candidate) => candidate.tabId === tab.tabId);
-            const nextIndex = key === "Home" ? 0 : key === "End" ? sortedTabs.length - 1 : (index + (key === "ArrowRight" ? 1 : -1) + sortedTabs.length) % sortedTabs.length;
-            const target = sortedTabs[nextIndex];
-            if (target) activate(target, true);
-          });
-          const closeTab = create("button", "workspace-vault-tab-close") as HTMLButtonElement; closeTab.type = "button"; closeTab.title = "탭 닫기"; closeTab.setAttribute("aria-label", `${tabBase} 탭 닫기`); closeTab.append(icon("x")); closeTab.addEventListener("click", (event) => { event.stopPropagation(); onCloseTab?.(vault, tab); });
-          tabRow.append(tabEl, closeTab); tabList.append(tabRow);
-        }
         select.setAttribute("aria-current", workspace.currentVaultId === vault.vaultId ? "true" : "false"); select.addEventListener("click", () => { try { onSelectVault(vault); } catch (error) { showError(error); } });
-        // Collapse state is UI layout, not workspace state — it lives in its
-        // own storage (vault-collapse.ts) and is applied/toggled in place
-        // rather than through a full `render()`, so a keyboard user's focus
-        // stays on the toggle after activating it.
-        let collapsed = isVaultCollapsed(vault.vaultId);
-        const hasHiddenContent = collapsedRowHasHiddenContent(vault.vaultId, tabs.tabs.length, rows);
-        renderVaultCollapse(toggle, glyph, tabList, vault.displayName, collapsed, hasHiddenContent);
-        toggle.addEventListener("click", (event) => {
-          event.stopPropagation();
-          collapsed = !collapsed;
-          setVaultCollapsed(vault.vaultId, collapsed);
-          renderVaultCollapse(toggle, glyph, tabList, vault.displayName, collapsed, hasHiddenContent);
-          syncDescendantRowVisibility(rowEls, rows);
-        });
         rowEls.set(vault.vaultId, row);
-        row.append(toggle, select);
+        if (hasChildren) {
+          // Collapse state is UI layout, not workspace state — it lives in its
+          // own storage (vault-collapse.ts) and is applied/toggled in place
+          // rather than through a full `render()`, so a keyboard user's focus
+          // stays on the toggle after activating it.
+          const toggle = create("button", "workspace-vault-toggle") as HTMLButtonElement; toggle.type = "button";
+          const chevron = create("span", "workspace-vault-chevron"); chevron.append(icon("chevron-right")); toggle.append(chevron);
+          let collapsed = isVaultCollapsed(vault.vaultId);
+          renderVaultCollapse(toggle, glyph, vault.displayName, collapsed);
+          toggle.addEventListener("click", (event) => {
+            event.stopPropagation();
+            collapsed = !collapsed;
+            setVaultCollapsed(vault.vaultId, collapsed);
+            renderVaultCollapse(toggle, glyph, vault.displayName, collapsed);
+            syncDescendantRowVisibility(rowEls, rows);
+          });
+          row.append(toggle);
+        } else {
+          const spacer = create("span", "workspace-vault-toggle-spacer"); spacer.setAttribute("aria-hidden", "true");
+          const chevron = create("span", "workspace-vault-chevron is-empty"); chevron.append(icon("chevron-right")); spacer.append(chevron);
+          renderEntryGlyph(glyph, "", true, false);
+          row.append(spacer);
+        }
+        row.append(select);
         if (pathLabel) row.append(pathLabel);
-        row.append(tabList);
         if (vault.persistenceKind === "permanent") {
           // Reversible, so the title says so instead of reading like a
           // destructive one-way click: unregisterVault only drops the

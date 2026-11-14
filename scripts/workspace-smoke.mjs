@@ -187,7 +187,16 @@ if (ready) {
     const beforeCancelHasMarker = recoveryText.includes(marker);
     await page.locator(".recovery-cancel").click();
     await waitEditor(marker);
-    const out = { modalShown: beforeCancelHasMarker, bufferAfterCancel: (await editor.innerText()).includes(marker), activeTab: await page.locator(".workspace-vault-tab[data-active='true']").getAttribute("title") };
+    // Tabs live in the explorer's "열린 파일" view now (the workspace sidebar only
+    // counts documents). The view is a PERSISTED setting (mermark.explorerView),
+    // so it MUST be switched back to the tree afterwards — later scenarios
+    // (folderStaysExpanded, activeHighlightMoves) drive the tree.
+    const explorerHidden = await page.evaluate(() => document.querySelector(".explorer-aside")?.hidden ?? true);
+    if (explorerHidden) await page.locator(".explorer-btn").click();
+    await page.locator(".explorer-view-option[data-view='open-files']").click();
+    const activeTab = await page.locator(".explorer-open-file-select[data-active='true']").getAttribute("title");
+    await page.locator(".explorer-view-option[data-view='tree']").click();
+    const out = { modalShown: beforeCancelHasMarker, bufferAfterCancel: (await editor.innerText()).includes(marker), activeTab };
     await screenshot("workspace-deletion-recovery-cancelled");
     return out;
   });

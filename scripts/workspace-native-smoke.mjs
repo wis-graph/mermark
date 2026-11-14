@@ -126,18 +126,22 @@ try {
     check("ime.modifier-keeps-explorer-focus", await page.locator(":focus").getAttribute("data-path") === fixtureB && context.pages().length === 1, {});
     await page.keyboard.press("Enter");
     await page.locator(".cm-content").filter({ hasText: "Fixture B" }).waitFor();
-    await page.getByRole("button", { name: "워크스페이스" }).click();
-    const tabs = page.locator(".workspace-vault-tab"); const before = await tabs.count();
-    await tabs.last().focus(); await page.keyboard.press("Home");
-    await page.waitForFunction((path) => document.querySelector(".workspace-vault-tab[data-active='true']")?.getAttribute("title") === path, fixtureA);
-    const homeTitle = await page.locator(".workspace-vault-tab[data-active='true']").getAttribute("title");
-    await page.locator(".workspace-vault-tab[data-active='true']").focus(); await page.keyboard.press("End");
-    await page.waitForFunction((path) => document.querySelector(".workspace-vault-tab[data-active='true']")?.getAttribute("title") === path, fixtureB);
-    const endTitle = await page.locator(".workspace-vault-tab[data-active='true']").getAttribute("title");
-    check("tabs.keyboard-switch", before >= 2 && homeTitle === fixtureA && endTitle === fixtureB, { before, homeTitle, endTitle });
-    await page.getByRole("button", { name: "b.md 탭 닫기" }).click();
-    await page.waitForFunction((count) => document.querySelectorAll(".workspace-vault-tab").length === count - 1, before);
-    check("tabs.close-fallback", await tabs.count() === before - 1 && (await page.locator(".cm-content").innerText()).includes(koreanMarker), { after: await tabs.count() });
+    // Tabs moved from the workspace sidebar to the explorer's "열린 파일" view
+    // (no horizontal roving: Home/End keyboard switching was removed with the strip).
+    if (await page.locator(".explorer-aside").isHidden()) await page.getByRole("button", { name: "탐색기" }).click();
+    await page.locator(".explorer-view-option[data-view='open-files']").click();
+    const rows = page.locator(".explorer-open-file-select"); const before = await rows.count();
+    await page.locator(`.explorer-open-file-select[title="${fixtureA}"]`).click();
+    await page.locator(".cm-content").filter({ hasText: "Fixture A" }).waitFor();
+    const switchedTitle = await page.locator(".explorer-open-file-select[data-active='true']").getAttribute("title");
+    check("openFiles.switch", before >= 2 && switchedTitle === fixtureA, { before, switchedTitle });
+    // Close the ACTIVE tab (re-select B first) so session.closeActiveTab's neighbour fallback runs.
+    await page.locator(`.explorer-open-file-select[title="${fixtureB}"]`).click();
+    await page.locator(".cm-content").filter({ hasText: "Fixture B" }).waitFor();
+    await page.getByRole("button", { name: "b.md 닫기" }).click();
+    await page.waitForFunction((count) => document.querySelectorAll(".explorer-open-file-select").length === count - 1, before);
+    check("openFiles.close-fallback", await rows.count() === before - 1 && (await page.locator(".cm-content").innerText()).includes(koreanMarker), { after: await rows.count() });
+    await page.locator(".explorer-view-option[data-view='tree']").click();
     await page.screenshot({ path: join(evidenceDir, "02-korean-tabs-autosave.png"), fullPage: true }); await context.close();
   }
 

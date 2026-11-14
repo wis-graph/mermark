@@ -33,6 +33,7 @@ import {
   disabledViewersSetting,
   isViewerEnabled,
   showHiddenFilesSetting,
+  explorerViewSetting,
 } from "./settings/app";
 import { bindBootSettingSinks } from "./settings/boot-sinks";
 import { createSidebarSash } from "./sidebar/sash";
@@ -114,7 +115,7 @@ import { createWorkspaceSidebar } from "./workspace/workspace-sidebar";
 import { createFolderVaultBookmarks } from "./workspace/folder-vault-bookmark";
 import { createVaultSelection } from "./workspace/vault-selection";
 import { createDocumentSession } from "./document/session";
-import { selectVaultView, VaultTabStore } from "./workspace/vault-tabs";
+import { selectVaultView, VaultTabStore, type VaultTab } from "./workspace/vault-tabs";
 import { openMermaidLightbox } from "./chrome/viewer/mermaid-lightbox";
 import { registerHwpViewer } from "./chrome/viewer/hwp-viewer";
 import { registerSqliteViewer } from "./chrome/viewer/sqlite-viewer";
@@ -768,7 +769,47 @@ async function boot() {
     });
   }
 
+  /** 볼트 `vault`의 `tab`으로 전환 — 복구 확인(openDocumentSafely) 후 커밋에서만
+   *  selectVault → setRoutedVault → vaultTabs.select. 단일 editor/단일 active watcher 경계.
+   *  탐색기 '열린 파일' 보기가 호출한다(예전 워크스페이스 탭 스트립 핸들러의 본문 그대로). */
+  function selectVaultTab(vault: Vault, tab: VaultTab): Promise<boolean> {
+    const selectedVault = workspaceStore.get().vaults.find((candidate) => candidate.vaultId === vault.vaultId) ?? vault;
+    const scope = tabScopeForVault(selectedVault);
+    return openDocumentSafely(tab.path, () => {
+      workspaceStore.selectVault(selectedVault.vaultId);
+      setRoutedVault(selectedVault);
+      vaultTabs.select(selectedVault.vaultId, tab.tabId, scope);
+    }, selectedVault);
+  }
+  /** 볼트 `vault`의 `tab`을 닫는다 — 비활성 탭/비현재 볼트면 저장소에서만, 현재 볼트의
+   *  활성 탭이면 session.closeActiveTab(다음 탭 열기·복구 확인 트랜잭션). */
+  function closeVaultTab(vault: Vault, tab: VaultTab): void {
+    const currentTabs = vaultTabs.get(vault.vaultId);
+    const wasActive = currentTabs.activeTabId === tab.tabId;
+    const scope = tabScopeForVault(vault);
+    if (!wasActive || currentVault()?.vaultId !== vault.vaultId) {
+      vaultTabs.close(vault.vaultId, tab.tabId, scope);
+      return;
+    }
+    void session.closeActiveTab(vault, tab, scope);
+  }
+
   const explorer = createExplorerPanel({
+    openFiles: {
+      current: () => {
+        const vault = currentVault() ?? workspaceStore.getGlobalVault();
+        return { scopeId: vault.vaultId, tabs: vaultTabs.get(vault.vaultId), rootPath: vault.rootPath };
+      },
+      onSelect: (scopeId, tab) => {
+        const vault = workspaceStore.getVault(scopeId);
+        return vault ? selectVaultTab(vault, tab) : undefined;
+      },
+      onClose: (scopeId, tab) => {
+        const vault = workspaceStore.getVault(scopeId);
+        if (vault) closeVaultTab(vault, tab);
+      },
+    },
+    onViewChange: (view) => explorerViewSetting.set(view),
     listDir: (p) =>
       fileHostFor(currentVault() ?? workspaceStore.getGlobalVault()).listDir(p, showHiddenFilesSetting.get() === "on"),
     getBaseDir: explorerRootForCurrentSelection,
@@ -864,7 +905,7 @@ async function boot() {
   });
 
   // Ruling 9: `targetVault`, when the caller already knows it (onSelectVault/
-  // onSelectTab — switching TO a specific tab's vault), is the vault the
+  // selectVaultTab — switching TO a specific tab's vault), is the vault the
   // READ must go through. Without it, `currentVault()` here is the vault of
   // whatever is STILL open (the switch's SOURCE, not its target) — onCommit
   // (which flips `routedVault` to the target) only runs AFTER this read
@@ -1104,29 +1145,21 @@ async function boot() {
         });
       }
     },
-    onSelectTab: (vault, tab) => {
-      const selectedVault = workspaceStore.get().vaults.find((candidate) => candidate.vaultId === vault.vaultId) ?? vault;
-      const scope = tabScopeForVault(selectedVault);
-      return openDocumentSafely(tab.path, () => {
-        workspaceStore.selectVault(selectedVault.vaultId);
-        setRoutedVault(selectedVault);
-        vaultTabs.select(selectedVault.vaultId, tab.tabId, scope);
-      }, selectedVault);
-    },
-    onCloseTab: (vault, tab) => {
-      const currentTabs = vaultTabs.get(vault.vaultId);
-      const wasActive = currentTabs.activeTabId === tab.tabId;
-      const scope = tabScopeForVault(vault);
-      if (!wasActive || currentVault()?.vaultId !== vault.vaultId) {
-        vaultTabs.close(vault.vaultId, tab.tabId, scope);
-        return;
-      }
-      void session.closeActiveTab(vault, tab, scope);
-    },
-    getTabs: (vaultId) => vaultTabs.get(vaultId),
+    openDocumentCount: (vaultId) => vaultTabs.get(vaultId).tabs.length,
   });
-  workspaceStore.subscribe(() => { void explorer.refreshVaultToggles(); });
-  vaultTabs.subscribe(() => workspaceSidebar.refresh());
+  // 탐색기 보기(트리 | 열린 파일)의 렌더 sink — 진실 원천은 explorerViewSetting.
+  explorerViewSetting.bind((view) => explorer.setView(view));
+  /** 열린 파일 보기는 currentVault()를 읽는다. 볼트 전환 커밋은 workspaceStore.selectVault
+   *  (→ 동기 notify) 다음 줄에서 setRoutedVault를 하므로, notify 안에서 즉시 렌더하면
+   *  '떠나는' 볼트를 그린다. 같은 동기 구간이 끝난 뒤 1회로 합쳐 렌더한다. command */
+  let openFilesRefreshQueued = false;
+  const scheduleOpenFilesRefresh = (): void => {
+    if (openFilesRefreshQueued) return;
+    openFilesRefreshQueued = true;
+    queueMicrotask(() => { openFilesRefreshQueued = false; explorer.refreshOpenFiles(); });
+  };
+  workspaceStore.subscribe(() => { void explorer.refreshVaultToggles(); scheduleOpenFilesRefresh(); });
+  vaultTabs.subscribe(() => { workspaceSidebar.refresh(); scheduleOpenFilesRefresh(); });
 
   // ── Recent documents LEFT SIDEBAR. Same toggle shape as explorer/outline; the
   //    list is read from recentDocsSetting (SSOT — the panel never writes it)

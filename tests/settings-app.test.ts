@@ -655,6 +655,37 @@ describe("app settings", () => {
   });
 });
 
+describe("explorerViewSetting", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.resetModules();
+    vi.stubGlobal("matchMedia", () => ({ matches: false }) as unknown as MediaQueryList);
+  });
+
+  it("defaults to tree", async () => {
+    const { explorerViewSetting } = await import("../src/settings/app");
+    expect(explorerViewSetting.get()).toBe("tree");
+  });
+
+  it("reads a saved open-files and falls back to tree on garbage", async () => {
+    localStorage.setItem("mermark.explorerView", "open-files");
+    let mod = await import("../src/settings/app");
+    expect(mod.explorerViewSetting.get()).toBe("open-files");
+    localStorage.setItem("mermark.explorerView", "garbage");
+    vi.resetModules();
+    mod = await import("../src/settings/app");
+    expect(mod.explorerViewSetting.get()).toBe("tree");
+  });
+
+  it("notifies subscribers once on set", async () => {
+    const { explorerViewSetting } = await import("../src/settings/app");
+    const listener = vi.fn();
+    explorerViewSetting.subscribe(listener);
+    explorerViewSetting.set("open-files");
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("boolean settings are switches whose on/off values parse (D2c)", () => {
   it.each([
     ["Vim 모드", "mermark.vimMode"],

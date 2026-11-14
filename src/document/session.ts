@@ -6,7 +6,7 @@
 // main.ts used, so the moved bodies read byte-identical to what main.ts
 // inlined before (design §3.1: "옮긴 코드가 글자 그대로 유지되게 한다").
 //
-// T2 (onSelectVault welcome)/T3 (onCloseTab)/T4 (navigateHistory) still live
+// T2 (onSelectVault welcome)/T3 (closeVaultTab)/T4 (navigateHistory) still live
 // in main.ts at this commit — they reach this session's private lifecycle
 // counter through a TRANSITIONAL API (`beginLifecycleRequest`/
 // `isCurrentRequest`/`watcherHandoff`/`openInWindow`, all `@internal
@@ -411,13 +411,13 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     targetVault?: Vault,
   ): void {
     // `targetVault`, when the caller already knows it (a vault-crossing
-    // open: onSelectVault/onSelectTab via openDocument above, or
+    // open: onSelectVault/selectVaultTab via openDocument above, or
     // navigateHistory below), wins over routeDocumentPath's own
     // path-based re-derivation — routeDocumentPath can only ever land on
     // "permanent"/"global" (see its own comment), so a remote target passed
     // explicitly would otherwise get silently reclassified. Explicitly
     // setting `routedVault` here covers navigateHistory, which has no
-    // onCommit callback to have already done it (onSelectVault/onSelectTab's
+    // onCommit callback to have already done it (onSelectVault/selectVaultTab's
     // onCommit already did, redundantly but harmlessly).
     const selectedVault = targetVault ?? routeDocumentPath(file);
     // Every real document open resolves SOME vault (permanent/global/remote —
@@ -536,7 +536,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
   }
 
   // Ruling 9: `targetVault`, when the caller already knows it (onSelectVault/
-  // onSelectTab — switching TO a specific tab's vault), is the vault the
+  // selectVaultTab — switching TO a specific tab's vault), is the vault the
   // READ must go through. Without it, `currentVault()` here is the vault of
   // whatever is STILL open (the switch's SOURCE, not its target) — onCommit
   // (which flips `routedVault` to the target) only runs AFTER this read
@@ -664,7 +664,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
     return stillNextPath === nextTab?.path;
   }
 
-  /** T3 (onCloseTab's active-tab branch). The pre-transaction guard (an
+  /** T3 (closeVaultTab's active-tab branch). The pre-transaction guard (an
    *  inactive tab, or a different vault than the one currently routed —
    *  closeable with no lifecycle participation at all) stays in main.ts's
    *  handler (design §3.2/plan C5 — `mainSource`'s own text asserts this).
