@@ -1,11 +1,11 @@
 {
-  "version": "0.24.1",
-  "notes": "### Changed\n\n- **문서 간격을 다시 잡았다**: 0.24.0에서 행간을 넓히면서 문단 사이 빈 줄과 목록 항목까지 함께 벌어졌던 것을 바로잡았다. 문단 안 행간은 1.75로 넉넉하게 두고, 문단 사이 빈 줄은 짧게, 목록은 한 덩어리로 촘촘하게 보인다. 제목은 위쪽 간격이 더 커서 자기 내용에 붙어 보인다. 표의 셀 여백과 코드 블록 여백도 줄였다.",
-  "pub_date": "2026-11-14T09:42:36Z",
+  "version": "0.25.0",
+  "notes": "### Added\n\n- **창 왼쪽 가장자리에 마우스를 대면 탐색기가 잠깐 열린다**: 사이드바가 닫혀 있을 때 왼쪽 끝에 마우스를 잠시 두면 탐색기가 본문 위에 떠서 열린다(본문은 움직이지 않는다). 마우스가 벗어나거나 Esc·바깥 클릭·파일 열기로 닫힌다. 탐색기 머리글의 »를 누르면 고정되고, 고정 상태에서 «를 누르면 접힌다. 설정 › 탐색기에서 끌 수 있다.\n\n### Changed\n\n- **목록 간격을 다시 다듬었다**: 점이 본문 왼쪽 끝 안쪽에 작은 회색 점으로 놓이고, 점과 글자 사이가 넓어졌다. 줄바꿈된 줄은 글자 시작 위치에 맞춰 들어간다. 하위 목록은 원문을 2칸·4칸·탭 어느 것으로 들여썼든 같은 폭으로 들어간다. 번호는 오른쪽 정렬이라 10번이 넘어도 글자 위치가 같고, 체크박스도 같은 줄에 맞췄다. 커서를 올려 `- `가 드러나도 글자가 밀리지 않는다.\n\n### Fixed\n\n- **0.24.0의 흰 배경·코드 칩 색이 일부 사용자에게 적용되지 않던 문제**: 예전에 테마를 바꾼 적이 있으면 그때의 색이 저장돼 새 기본 색을 가리고 있었다. 손대지 않은 예전 기본 색은 이제 현재 기본 색으로 바뀐다(직접 고친 색은 그대로).",
+  "pub_date": "2026-11-14T10:27:49Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzkzMEVONWhyWTFJQ285WWdoR04yd29JRkZmNEVPL0ZMWm9OQUx4aGNwUFZIVzZGY1BkMDBmeXppV3VKaHloUEVlTWlmVWF1bGdnc3R4U2dmRy91TVFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NjQ5MzM5CWZpbGU6bWVybWFyay5hcHAudGFyLmd6CmtacHF6N0dkY1dBYkZYSm5zWEVmK2duV3VUWnVQY3dWcmI4Z2RPMzZpY3lnZFFpSWJOS1RxMXlPb2F1Z2NSL0NpWmRTU1o4RXRQS1R4RmQxR0N5MUNRPT0K",
-      "url": "https://github.com/wis-graph/mermark/releases/download/v0.24.1/mermark.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUmFoNVZuUDIrVzBHR0NQMU5wOFVKSGNabXNRc0xRT0drZDBwZG0rb3NPS1ZCWlFUd3R1Rndad3R4ZGkwQXd4ZHlFMVlMMStrL0VIcURmM3QwN2xzYldYeVd2Mm50N1E0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NjUyMDQ5CWZpbGU6bWVybWFyay5hcHAudGFyLmd6Cml1RGZNditHWnd5NWJFaVZtOVhjRlkyTDhicFhpdHJPcGRuTGdHMTZ2N0t0b2hXVytEUlVnL0VsWVh3ZCs1VFlWUlRXSkRrTm9IYklraU1QNHRwTEJBPT0K",
+      "url": "https://github.com/wis-graph/mermark/releases/download/v0.25.0/mermark.app.tar.gz"
     }
   }
 }
