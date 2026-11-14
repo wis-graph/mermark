@@ -499,6 +499,35 @@ describe("document transactions (characterization — pre-DocumentSession)", () 
       expect(watcherEvents).toEqual(["unwatch", "watch /P/b.md"]);
     });
 
+    it("C3.6: closing active a with neighbor b inside a nested sub-vault keeps the routed vault and does not duplicate b into the sub-vault's tabs", async () => {
+      // /P/sub is its own registered vault, so routeCliFile("/P/sub/b.md")
+      // would route to the sub-vault. The close commit must hand the
+      // ORIGINAL vault to openInWindow instead of re-deriving it by path.
+      documentContents.set("/P/a.md", "# A");
+      documentContents.set("/P/sub/b.md", "# B");
+      seedWorkspace({
+        vaults: [{ root: "/P" }, { root: "/P/sub", displayName: "Notes" }],
+        tabsByRoot: { "/P": [{ tabId: "a", path: "/P/a.md" }, { tabId: "b", path: "/P/sub/b.md" }] },
+        activeTabByRoot: { "/P": "a" },
+      });
+      vi.stubGlobal("location", { search: "?file=/P/a.md" });
+
+      await import("../src/main");
+      await vi.waitFor(() => expect(cmText()).toBe("A"));
+      showOpenFiles();
+      closeTabButton("a")?.click();
+      await vi.waitFor(() => expect(cmText()).toBe("B"));
+      await new Promise((r) => setTimeout(r, 20));
+
+      const tabsOf = (root: string): { path: string }[] =>
+        JSON.parse(localStorage.getItem(`mermark.vaultTabs.${permanentVaultId(root)}`) ?? '{"tabs":[]}').tabs;
+      const bPaths = (root: string) => tabsOf(root).filter((t) => t.path === "/P/sub/b.md");
+      expect(bPaths("/P")).toHaveLength(1);
+      expect(bPaths("/P/sub")).toHaveLength(0);
+      expect(tabsOf("/P/sub")).toHaveLength(0);
+      expect(document.querySelectorAll('[data-tab-id]')).toHaveLength(1);
+    });
+
     it("C3.2: closing the last remaining tab shows welcome with zero tabs", async () => {
       documentContents.set("/P/a.md", "# A");
       seedWorkspace({ vaults: [{ root: "/P" }], tabsByRoot: { "/P": [{ tabId: "a", path: "/P/a.md" }] }, activeTabByRoot: { "/P": "a" } });

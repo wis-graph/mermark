@@ -704,7 +704,7 @@ export function createDocumentSession(deps: DocumentSessionDeps): DocumentSessio
         const nextTabs = vaultTabs.close(vault.vaultId, tab.tabId, scope);
         setRoutedVault(vault);
         const selection = selectVaultView(nextTabs);
-        if (selection.kind === "document" && fresh) openInWindow(selection.tab.path, fresh, {});
+        if (selection.kind === "document" && fresh) openInWindow(selection.tab.path, fresh, {}, vault);
         else renderWelcomeForVault();
       },
     });
